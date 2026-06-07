@@ -61,7 +61,11 @@ export class VersionThinner {
 
     let totalDeleted = 0;
     for (const candidate of candidates) {
-      const deleted = await this.thinItem(candidate.itemId, candidate.type);
+      const deleted = await this.thinItem(
+        candidate.itemId,
+        candidate.type,
+        candidate.tenantId,
+      );
       totalDeleted += deleted;
     }
 
@@ -73,8 +77,14 @@ export class VersionThinner {
     }
   }
 
-  private async thinItem(itemId: string, itemType: string): Promise<number> {
-    const typeSchema = getTypeSchema(itemType);
+  private async thinItem(
+    itemId: string,
+    itemType: string,
+    tenantId: string | null,
+  ): Promise<number> {
+    // Resolve the type within its owning tenant so a custom type's
+    // version_policy is honoured; core types resolve regardless.
+    const typeSchema = getTypeSchema(itemType, tenantId);
     const typePolicy = typeSchema?.version_policy;
     const policy = resolvePolicy(typePolicy, this.globalDefaults);
 

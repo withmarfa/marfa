@@ -13,7 +13,12 @@ import type {
   VersionPolicy,
 } from "@withmarfa/shared";
 
-export type TypeRegistry = ReadonlyMap<string, TypeSchema>;
+/**
+ * A tenant-scoped type lookup: resolves a type id to its schema, or undefined.
+ * Inheritance chains walk through this so a custom type's ancestors resolve in
+ * the same tenant scope. Callers pass `(id) => getTypeSchema(id, tenantId)`.
+ */
+export type TypeResolver = (id: string) => TypeSchema | undefined;
 
 /**
  * Resolves the effective merge policy for a type by walking its parent chain.
@@ -28,15 +33,15 @@ export type TypeRegistry = ReadonlyMap<string, TypeSchema>;
  */
 export function resolveMergePolicy(
   typeId: string,
-  registry: TypeRegistry,
+  resolve: TypeResolver,
 ): MergePolicy {
   const chain: TypeSchema[] = [];
-  let current = registry.get(typeId);
+  let current = resolve(typeId);
   const seen = new Set<string>();
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
     chain.unshift(current);
-    current = current.parent ? registry.get(current.parent) : undefined;
+    current = current.parent ? resolve(current.parent) : undefined;
   }
 
   const fields: Record<string, MergeStrategy> = {};
@@ -58,14 +63,14 @@ export function resolveMergePolicy(
  * Builds the parent chain for `typeId` in root→leaf order, with cycle guard.
  * Returns an empty array if the type is unknown.
  */
-function buildChain(typeId: string, registry: TypeRegistry): TypeSchema[] {
+function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
   const chain: TypeSchema[] = [];
-  let current = registry.get(typeId);
+  let current = resolve(typeId);
   const seen = new Set<string>();
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
     chain.unshift(current);
-    current = current.parent ? registry.get(current.parent) : undefined;
+    current = current.parent ? resolve(current.parent) : undefined;
   }
   return chain;
 }
@@ -89,12 +94,12 @@ function buildChain(typeId: string, registry: TypeRegistry): TypeSchema[] {
  */
 export function resolveTypeSchema(
   typeId: string,
-  registry: TypeRegistry,
+  resolve: TypeResolver,
 ): TypeSchema | undefined {
-  const self = registry.get(typeId);
+  const self = resolve(typeId);
   if (!self) return undefined;
 
-  const chain = buildChain(typeId, registry);
+  const chain = buildChain(typeId, resolve);
 
   // fields: root→leaf, per-key merge.
   const fields: Record<string, FieldDefinition> = {};
@@ -122,7 +127,7 @@ export function resolveTypeSchema(
     versionPolicy = { ...(versionPolicy ?? {}), ...vp };
   }
 
-  const mergePolicy = resolveMergePolicy(typeId, registry);
+  const mergePolicy = resolveMergePolicy(typeId, resolve);
   const hasMergePolicy =
     mergePolicy.fields !== undefined || mergePolicy.default !== undefined;
 

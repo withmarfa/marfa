@@ -89,16 +89,24 @@ export class PgVersionStore implements VersionStore {
   async listThinningCandidates(
     threshold: number,
     limit: number,
-  ): Promise<{ itemId: string; type: string; versionCount: number }[]> {
+  ): Promise<
+    {
+      itemId: string;
+      type: string;
+      tenantId: string | null;
+      versionCount: number;
+    }[]
+  > {
     const rows = await this.db
       .select({
         itemId: versions.item_id,
         type: items.type,
+        tenantId: items.tenant_id,
         versionCount: sql<number>`count(*)::int`,
       })
       .from(versions)
       .innerJoin(items, eq(versions.item_id, items.id))
-      .groupBy(versions.item_id, items.type)
+      .groupBy(versions.item_id, items.type, items.tenant_id)
       .having(sql`count(*) > ${threshold}`)
       .limit(limit);
     return rows;

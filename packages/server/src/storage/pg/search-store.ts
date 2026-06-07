@@ -70,8 +70,9 @@ export class PgSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
+    tenantId?: string,
   ): Promise<void> {
-    const text = extractSearchableText(properties, typeId);
+    const text = extractSearchableText(properties, typeId, tenantId);
     // Concatenate with single-space separators — same shape as the
     // backfill migration so existing rows match write-time semantics.
     const combined = [

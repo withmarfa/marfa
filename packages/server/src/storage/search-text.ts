@@ -54,6 +54,7 @@ export interface SearchableText {
 export function extractSearchableText(
   properties: Record<string, unknown>,
   typeId: string | undefined,
+  tenantId?: string | null,
 ): SearchableText {
   const result: Record<CoreFtsField, string> = {
     title: "",
@@ -62,12 +63,14 @@ export function extractSearchableText(
     name: "",
   };
   for (const field of CORE_FTS_FIELDS) {
-    if (typeId && isFieldSearchableExcluded(typeId, field)) continue;
+    // Resolve the type within its owning tenant so a custom type's
+    // `searchable: false` opt-outs apply; core types resolve regardless.
+    if (typeId && isFieldSearchableExcluded(typeId, field, tenantId)) continue;
     const value = properties[field];
     if (typeof value === "string") result[field] = value;
   }
 
-  const extraFields = typeId ? getSearchableStringFields(typeId) : [];
+  const extraFields = typeId ? getSearchableStringFields(typeId, tenantId) : [];
   const extraParts: string[] = [];
   for (const field of extraFields) {
     const value = properties[field];

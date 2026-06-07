@@ -41,12 +41,51 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   links: { type: "array", items_type: "string" },
 };
 
-// Mutable internally; exposed as ReadonlyMap. System types are tracked
-// separately via SYSTEM_TYPE_IDS so consumers (search exclude, lifecycle
-// override) can recognise them without re-classifying namespaces.
-const _registry = new Map<string, TypeSchema>(
+// Core and system types are global — shipped with @withmarfa/types and shared
+// by every tenant. This map is read-only after construction. System types are
+// tracked separately via SYSTEM_TYPE_IDS so consumers (search exclude,
+// lifecycle override) can recognise them without re-classifying namespaces.
+const _coreRegistry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
 );
+
+/**
+ * Custom types are tenant-scoped. The outer key is the owning tenant's id;
+ * each tenant gets its own inner id→schema map. A custom type registered by
+ * tenant A is therefore invisible to tenant B's lookups — the isolation that
+ * keeps one tenant's type vocabulary out of another's, so one tenant can't
+ * instantiate (or validate against) a type it never defined. The sentinel
+ * `NULL_TENANT` key holds custom types with no tenant (single-tenant
+ * self-hosts, platform-registered types) so the keys-mode flow is unaffected.
+ */
+const _customByTenant = new Map<string, Map<string, TypeSchema>>();
+
+// Sentinel for custom types with no owning tenant — single-tenant self-hosts
+// and platform-registered types. An empty string can't collide with a real
+// tenant id (ids are non-empty), so it's a safe bucket key.
+const NULL_TENANT = "";
+
+function tenantKey(tenantId: string | null | undefined): string {
+  return tenantId ?? NULL_TENANT;
+}
+
+/**
+ * Resolves a type schema for a given tenant: core/system types resolve
+ * globally; custom types resolve only within their owning tenant. A lookup
+ * with no `tenantId` sees core/system plus the null-tenant bucket
+ * (single-tenant self-hosts), never another tenant's custom types. This is the
+ * single resolution primitive every tenant-aware helper below threads through,
+ * including the inheritance-chain walks (a custom type's parent may itself be a
+ * custom type in the same tenant).
+ */
+function resolveSchema(
+  typeId: string,
+  tenantId?: string | null,
+): TypeSchema | undefined {
+  const core = _coreRegistry.get(typeId);
+  if (core) return core;
+  return _customByTenant.get(tenantKey(tenantId))?.get(typeId);
+}
 
 /** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
 export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
@@ -146,12 +185,37 @@ export function getSourceFilter(
   return list.sources;
 }
 
-/** The type registry — all registered type schemas indexed by type identifier. */
-export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _registry;
+/**
+ * The core type registry — the global core + system type schemas by
+ * identifier. Custom (tenant-scoped) types are NOT exposed here; consumers
+ * that need a tenant's full set call `listTypes(tenantId)`, and lookups go
+ * through `getTypeSchema(id, tenantId)`. The OAuth scope allow-list and consent
+ * descriptions read this for the static core-scope enumeration.
+ */
+export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _coreRegistry;
 
-/** Returns the type schema for the given type identifier, or undefined. */
-export function getTypeSchema(typeId: string): TypeSchema | undefined {
-  return _registry.get(typeId);
+/**
+ * Resolves a type schema for a given tenant. Core/system types resolve
+ * globally; custom types resolve only within their owning tenant. A lookup
+ * with no `tenantId` sees core/system plus the null-tenant bucket
+ * (single-tenant self-hosts), never another tenant's custom types.
+ */
+export function getTypeSchema(
+  typeId: string,
+  tenantId?: string | null,
+): TypeSchema | undefined {
+  return resolveSchema(typeId, tenantId);
+}
+
+/**
+ * Lists every type visible to a tenant: the global core + system set plus that
+ * tenant's own custom types. With no `tenantId`, returns core/system plus the
+ * null-tenant bucket — never another tenant's custom types.
+ */
+export function listTypes(tenantId?: string | null): TypeSchema[] {
+  const custom = _customByTenant.get(tenantKey(tenantId));
+  if (!custom) return [..._coreRegistry.values()];
+  return [..._coreRegistry.values(), ...custom.values()];
 }
 
 /**
@@ -223,18 +287,42 @@ export function isPublisherType(id: string): boolean {
   return classifyNamespace(id) === "publisher";
 }
 
-/** Registers a type schema into the in-memory registry. Clears the zod cache. */
-export function registerTypeSchema(schema: TypeSchema): void {
-  _registry.set(schema.id, schema);
-  zodSchemaCache.delete(schema.id);
-  zodSchemaStrictCache.delete(schema.id);
+/**
+ * Registers a custom type schema into the tenant's overlay and clears that
+ * tenant's cached Zod schema for the id. Core/system types are never
+ * registered here (they live in the global map); callers filter them out
+ * before calling. `tenantId` is the owning tenant — omit it only for the
+ * null-tenant bucket (single-tenant self-host / platform).
+ */
+export function registerTypeSchema(
+  schema: TypeSchema,
+  tenantId?: string | null,
+): void {
+  const key = tenantKey(tenantId);
+  let bucket = _customByTenant.get(key);
+  if (!bucket) {
+    bucket = new Map<string, TypeSchema>();
+    _customByTenant.set(key, bucket);
+  }
+  bucket.set(schema.id, schema);
+  // The Zod cache is keyed per tenant, so clearing only this tenant's entry is
+  // both sufficient and necessary — two tenants may hold different schemas
+  // under the same id.
+  zodSchemaCache.delete(zodCacheKey(schema.id, tenantId));
+  zodSchemaStrictCache.delete(zodCacheKey(schema.id, tenantId));
 }
 
-/** Removes a type schema from the in-memory registry. Clears the zod cache. */
-export function unregisterTypeSchema(id: string): void {
-  _registry.delete(id);
-  zodSchemaCache.delete(id);
-  zodSchemaStrictCache.delete(id);
+/**
+ * Removes a custom type schema from the tenant's overlay and clears its cached
+ * Zod schema for that tenant.
+ */
+export function unregisterTypeSchema(
+  id: string,
+  tenantId?: string | null,
+): void {
+  _customByTenant.get(tenantKey(tenantId))?.delete(id);
+  zodSchemaCache.delete(zodCacheKey(id, tenantId));
+  zodSchemaStrictCache.delete(zodCacheKey(id, tenantId));
 }
 
 /**
@@ -245,18 +333,23 @@ export function unregisterTypeSchema(id: string): void {
  */
 export function getResolvedFields(
   typeId: string,
+  tenantId?: string | null,
 ): Record<string, FieldDefinition> | undefined {
-  const schema = TYPE_REGISTRY.get(typeId);
+  const schema = resolveSchema(typeId, tenantId);
   if (!schema) return undefined;
 
   const fields: Record<string, FieldDefinition> = { ...UNIVERSAL_FIELDS };
 
-  // Collect the inheritance chain (parent first, then child)
+  // Collect the inheritance chain (parent first, then child). A custom type's
+  // parent may itself be a custom type, so resolve each ancestor through the
+  // same tenant scope.
   const chain: TypeSchema[] = [];
   let current: TypeSchema | undefined = schema;
   while (current) {
     chain.unshift(current);
-    current = current.parent ? TYPE_REGISTRY.get(current.parent) : undefined;
+    current = current.parent
+      ? resolveSchema(current.parent, tenantId)
+      : undefined;
   }
 
   // Merge fields — later entries override earlier ones
@@ -277,8 +370,11 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
  * and PG `search_vector`) skip them. Fields without the flag default to
  * searchable.
  */
-export function getSearchableStringFields(typeId: string): string[] {
-  const fields = getResolvedFields(typeId);
+export function getSearchableStringFields(
+  typeId: string,
+  tenantId?: string | null,
+): string[] {
+  const fields = getResolvedFields(typeId, tenantId);
   if (!fields) return [];
   return Object.entries(fields)
     .filter(
@@ -300,21 +396,31 @@ export function getSearchableStringFields(typeId: string): string[] {
 export function isFieldSearchableExcluded(
   typeId: string,
   fieldName: string,
+  tenantId?: string | null,
 ): boolean {
-  const fields = getResolvedFields(typeId);
+  const fields = getResolvedFields(typeId, tenantId);
   if (!fields) return false;
   const def = fields[fieldName];
   if (def?.type !== "string") return false;
   return def.searchable === false;
 }
 
-/** Returns true if typeId is a subtype of (or equal to) parentId. */
-export function isSubtypeOf(typeId: string, parentId: string): boolean {
+/**
+ * Returns true if typeId is a subtype of (or equal to) parentId. Resolves the
+ * inheritance chain within the given tenant so custom types (whose ancestors
+ * may also be custom) classify correctly; with no `tenantId` only core/system
+ * types resolve.
+ */
+export function isSubtypeOf(
+  typeId: string,
+  parentId: string,
+  tenantId?: string | null,
+): boolean {
   if (typeId === parentId) return true;
-  let current = TYPE_REGISTRY.get(typeId);
+  let current = resolveSchema(typeId, tenantId);
   while (current?.parent) {
     if (current.parent === parentId) return true;
-    current = TYPE_REGISTRY.get(current.parent);
+    current = resolveSchema(current.parent, tenantId);
   }
   return false;
 }
@@ -394,20 +500,31 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
 // Cache generated Zod schemas to avoid re-creation on every validation call.
 // Two caches: one for the default permissive shape, one for strict — strict
 // mode flips z.looseObject (passes unknown properties) to z.strictObject
-// (rejects them).
+// (rejects them). The key folds in the tenant: two tenants may register
+// different schemas under the same type id, so a tenant-blind cache would
+// serve one tenant's shape to another. Core/system types collapse to a single
+// shared entry under the null-tenant key (they're identical for everyone).
 const zodSchemaCache = new Map<string, z.ZodType>();
 const zodSchemaStrictCache = new Map<string, z.ZodType>();
 
+function zodCacheKey(typeId: string, tenantId?: string | null): string {
+  // Core/system types are global — cache them once under the null-tenant key
+  // regardless of who looked them up, so every tenant shares the same entry.
+  const scope = _coreRegistry.has(typeId) ? NULL_TENANT : tenantKey(tenantId);
+  return `${scope} ${typeId}`;
+}
+
 function getZodSchema(
   typeId: string,
-  options?: { strict?: boolean },
+  options?: { strict?: boolean; tenantId?: string | null },
 ): z.ZodType | undefined {
   const strict = options?.strict === true;
   const cache = strict ? zodSchemaStrictCache : zodSchemaCache;
-  const cached = cache.get(typeId);
+  const key = zodCacheKey(typeId, options?.tenantId);
+  const cached = cache.get(key);
   if (cached) return cached;
 
-  const fields = getResolvedFields(typeId);
+  const fields = getResolvedFields(typeId, options?.tenantId);
   if (!fields) return undefined;
 
   const shape: Record<string, z.ZodType> = {};
@@ -416,7 +533,7 @@ function getZodSchema(
   }
 
   const schema = strict ? z.strictObject(shape) : z.looseObject(shape);
-  cache.set(typeId, schema);
+  cache.set(key, schema);
   return schema;
 }
 
@@ -433,7 +550,7 @@ export type ValidationResult =
 export function validateProperties(
   typeId: string,
   properties: Record<string, unknown>,
-  options?: { strict?: boolean },
+  options?: { strict?: boolean; tenantId?: string | null },
 ): ValidationResult {
   const schema = getZodSchema(typeId, options);
   if (!schema) {
@@ -471,8 +588,9 @@ export function validateProperties(
 export function coerceNullProperties(
   typeId: string,
   properties: Record<string, unknown>,
+  tenantId?: string | null,
 ): Record<string, unknown> {
-  const fields = getResolvedFields(typeId);
+  const fields = getResolvedFields(typeId, tenantId);
   if (!fields) return properties;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(properties)) {
@@ -581,7 +699,10 @@ export type TypeSchemaValidationResult =
       errors: { field: string; message: string; code?: string }[];
     };
 
-export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
+export function validateTypeSchema(
+  input: unknown,
+  tenantId?: string | null,
+): TypeSchemaValidationResult {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return {
       success: false,
@@ -647,7 +768,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
       const seen = new Set<string>();
       while (cursor && !seen.has(cursor)) {
         seen.add(cursor);
-        const ancestor = TYPE_REGISTRY.get(cursor);
+        const ancestor = resolveSchema(cursor, tenantId);
         if (!ancestor) break;
         for (const ancestorFieldName of Object.keys(ancestor.fields)) {
           if (!ancestorFieldOwners.has(ancestorFieldName)) {
@@ -735,7 +856,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         let cursor: string | undefined = obj.parent;
         while (cursor && !seen.has(cursor)) {
           seen.add(cursor);
-          const ancestor = TYPE_REGISTRY.get(cursor);
+          const ancestor = resolveSchema(cursor, tenantId);
           if (!ancestor) break;
           for (const fieldName of Object.keys(ancestor.fields)) {
             visibleFields.add(fieldName);
@@ -824,7 +945,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         let cursor: string | undefined = obj.parent;
         while (cursor && !seen.has(cursor)) {
           seen.add(cursor);
-          const ancestor = TYPE_REGISTRY.get(cursor);
+          const ancestor = resolveSchema(cursor, tenantId);
           if (!ancestor) break;
           for (const fieldName of Object.keys(ancestor.fields)) {
             visibleFields.add(fieldName);
@@ -895,7 +1016,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         message: "Must be a type identifier string",
       });
     } else {
-      const target = TYPE_REGISTRY.get(obj.compatible_with);
+      const target = resolveSchema(obj.compatible_with, tenantId);
       if (!target) {
         errors.push({
           field: "compatible_with",
