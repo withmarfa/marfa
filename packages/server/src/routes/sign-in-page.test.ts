@@ -34,17 +34,16 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 
 describe("renderSignInPage", () => {
-  it("renders both forms with the right action + hidden return_to", () => {
+  it("renders the combined form with the right action + hidden return_to", () => {
     const html = renderSignInPage({
-      mode: "password",
       returnTo: "/auth/authorize?client_id=abc",
       allowSignup: false,
       oidcProviderIds: [],
     });
     expect(html).toContain('<form method="POST" action="/auth/sign-in"');
-    expect(html).toContain(
-      '<input type="hidden" name="mode" value="password">',
-    );
+    // Mode rides the two submit buttons now — no hidden mode field.
+    expect(html).toContain('name="mode" value="password"');
+    expect(html).toContain('name="mode" value="magic"');
     expect(html).toContain(
       '<input type="hidden" name="return_to" value="/auth/authorize?client_id=abc">',
     );
@@ -63,17 +62,17 @@ describe("renderSignInPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("renders email-only form when mode=magic", () => {
+  it("offers the magic-link path as a second submit in the same form", () => {
     const html = renderSignInPage({
-      mode: "magic",
       returnTo: "/",
       allowSignup: false,
       oidcProviderIds: [],
     });
-    expect(html).toContain('value="magic"');
+    // One combined form: email + password + a magic-link submit button.
     expect(html).toContain('name="email"');
-    expect(html).not.toContain('name="password"');
-    expect(html).toContain("Send sign-in link");
+    expect(html).toContain('name="password"');
+    expect(html).toContain('name="mode" value="magic"');
+    expect(html).toContain("Email me a one-time sign-in link");
   });
 
   it("conditionally renders the sign-up link by allowSignup", () => {
@@ -174,24 +173,6 @@ describe("renderSignInPage", () => {
       '<link rel="stylesheet" href="/auth/static/auth.css">',
     );
     expect(html).not.toContain("<style>");
-  });
-
-  it("renders both tabs with the active one marked aria-selected=true", () => {
-    const html = renderSignInPage({
-      mode: "password",
-      returnTo: "/auth/authorize",
-      allowSignup: false,
-      oidcProviderIds: [],
-    });
-    expect(html).toContain('href="/auth/sign-in?mode=password&amp;return_to=');
-    expect(html).toContain('href="/auth/sign-in?mode=magic&amp;return_to=');
-    // Active tab on password mode
-    expect(html).toMatch(
-      /mode=password[^"]*"\s+role="tab"\s+aria-selected="true"/,
-    );
-    expect(html).toMatch(
-      /mode=magic[^"]*"\s+role="tab"\s+aria-selected="false"/,
-    );
   });
 });
 
@@ -317,14 +298,15 @@ describe("GET /auth/sign-in", () => {
     );
   });
 
-  it("renders mode=magic when ?mode=magic is set", async () => {
+  it("renders the combined form (email + password + magic) regardless of ?mode", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/auth/sign-in?mode=magic", {
       headers: { origin: ORIGIN },
     });
     const html = await res.text();
-    expect(html).toContain('value="magic"');
-    expect(html).not.toContain('name="password"');
+    expect(html).toContain('name="email"');
+    expect(html).toContain('name="password"');
+    expect(html).toContain('name="mode" value="magic"');
   });
 
   it("renders sign-up link when allowSignup=true", async () => {

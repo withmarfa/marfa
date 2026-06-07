@@ -31,7 +31,7 @@ export const AUTH_CSS = `/*
  */
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 
   /* Surface tokens. */
   --bg: #fafaf7;
@@ -82,6 +82,55 @@ export const AUTH_CSS = `/*
 
   /* Motion. */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/*
+ * Dark mode follows the device. Every surface reads the tokens above, so
+ * flipping them here re-themes the whole auth surface with no per-selector
+ * change. The primary button inverts naturally: its background is --accent
+ * (now near-white) and its text is --card (now dark).
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0c0d;
+    --card: #161618;
+    --ink: #f5f5f4;
+    --ink-soft: #a1a1aa;
+    --ink-faint: #71717a;
+    --border: #27272a;
+    --border-strong: #3f3f46;
+    --hairline: #1f1f22;
+
+    --accent: #fafaf7;
+    --accent-hover: #e6e6e1;
+
+    --error-bg: #2a1618;
+    --error-border: #5a2a2e;
+    --error-ink: #f3b7b7;
+    --success-bg: #14241a;
+    --success-border: #2c5238;
+    --success-ink: #b7e0c1;
+
+    --section-bg: #161618;
+    --pill-bg: #27272a;
+    --pill-ink: #a1a1aa;
+
+    --added-tint: #14241a;
+    --added-ink: #b7e0c1;
+    --removed-tint: #1f1f22;
+  }
+
+  /* The card shadow is invisible on a dark canvas; a hairline ring reads
+     the panel edge instead. */
+  .card {
+    box-shadow: none;
+  }
+
+  /* The toggle thumb is hardcoded white in the base rules; keep it bright
+     against the darker track. */
+  .toggle__track::before {
+    background: #f5f5f4;
+  }
 }
 
 * {
@@ -169,30 +218,6 @@ h1 {
   background: var(--success-bg);
   border-color: var(--success-border);
   color: var(--success-ink);
-}
-
-/* Tabbed mode-switcher (sign-in: password vs. magic link). */
-.tabs {
-  display: flex;
-  gap: var(--gap-xs);
-  margin: 0 0 var(--gap-lg);
-  border-bottom: 1px solid var(--border);
-}
-.tab {
-  padding: var(--gap-sm) 12px;
-  color: var(--ink-soft);
-  text-decoration: none;
-  font-size: 13px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.tab:hover {
-  color: var(--ink);
-}
-.tab--active {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
-  font-weight: 500;
 }
 
 /* Generic form layout. */
