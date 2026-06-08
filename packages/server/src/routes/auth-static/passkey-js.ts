@@ -167,6 +167,51 @@ export const PASSKEY_JS = `(function () {
     return await verifyRes.json();
   }
 
-  window.MarfaPasskey = { enroll: enroll, signIn: signIn, isSupported: isSupported };
+  /** Map a ceremony / fetch error to friendly copy plus a cancel flag, so a
+   *  page never surfaces the raw WebAuthn DOMException (whose message includes a
+   *  spec URL). \`mode\` is 'signin' or 'enroll' for context-appropriate wording.
+   *  A user dismissing the OS dialog (or it timing out) is a choice, not a
+   *  failure — pages treat \`cancelled\` as a silent dismissal (no error banner). */
+  function describeError(err, mode) {
+    var name = err && err.name;
+    var enrolling = mode === 'enroll';
+    if (name === 'NotAllowedError' || name === 'AbortError') {
+      return { cancelled: true, message: '' };
+    }
+    if (name === 'InvalidStateError') {
+      return {
+        cancelled: false,
+        message: enrolling
+          ? 'You already have a passkey on this device.'
+          : 'That passkey can’t be used here. Try another way to sign in.',
+      };
+    }
+    if (name === 'SecurityError') {
+      return {
+        cancelled: false,
+        message: 'Passkeys need a secure (HTTPS) connection. Check it and try again.',
+      };
+    }
+    if (name === 'NotSupportedError') {
+      return {
+        cancelled: false,
+        message: 'This device can’t use a passkey. Try another way to sign in.',
+      };
+    }
+    // The fetch steps above throw Errors that already carry friendly copy;
+    // pass those through, but guard against any raw WebAuthn spec string.
+    var msg = err && err.message ? String(err.message) : '';
+    if (!msg || /w3\\.org|webauthn|operation either timed out/i.test(msg)) {
+      msg = enrolling ? 'Couldn’t add the passkey. Try again.' : 'Passkey sign-in didn’t work. Try again.';
+    }
+    return { cancelled: false, message: msg };
+  }
+
+  window.MarfaPasskey = {
+    enroll: enroll,
+    signIn: signIn,
+    isSupported: isSupported,
+    describeError: describeError,
+  };
 })();
 `;

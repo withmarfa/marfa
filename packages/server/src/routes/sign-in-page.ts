@@ -60,7 +60,7 @@ const ERROR_MESSAGES: Record<string, string> = {
     "We couldn't send the sign-in link. Check the address and try again.",
   oauth_failed: "Sign-in via that provider failed. Try again.",
   invalid_return_to:
-    "The return address looked unsafe and was ignored. Sign in again.",
+    "That sign-in link looked unsafe, so we ignored where it pointed. Please sign in again.",
 };
 
 function escapeHtml(str: string): string {
@@ -197,7 +197,9 @@ export function renderSignInPage(params: SignInPageParams): string {
       await window.MarfaPasskey.signIn();
       window.location.assign(${JSON.stringify(params.returnTo).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")});
     } catch (err) {
-      setError((err && err.message) || 'Passkey sign-in failed.');
+      var info = window.MarfaPasskey.describeError(err, 'signin');
+      // A cancel / timeout is the user's choice — no scary banner, just re-enable.
+      if (!info.cancelled) setError(info.message);
       btn.disabled = false;
     }
   });

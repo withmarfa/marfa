@@ -36,7 +36,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing_field: "Please fill in every field.",
   password_mismatch: "Passwords don't match. Try again.",
   weak_password: "Password must be at least 8 characters.",
-  email_invalid: "That email address looks malformed.",
+  email_invalid: "That doesn't look like a valid email address.",
   email_exists: "An account with that email already exists. Sign in instead.",
   signup_failed: "Couldn't create the account. Try again.",
   // Username (handle) error messages.
