@@ -63,10 +63,7 @@ describe("HttpTransport — timeout wiring", () => {
         }),
     );
 
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-      50,
-    );
+    const transport = makeTransport(mockFetch, 50);
 
     const start = Date.now();
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
@@ -87,9 +84,7 @@ describe("HttpTransport — network errors", () => {
   it("wraps a rejected fetch in MarfaError with code='network_error' and preserves the original on err.cause", async () => {
     const networkError = new TypeError("fetch failed");
     const mockFetch = vi.fn().mockRejectedValue(networkError);
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -109,9 +104,7 @@ describe("HttpTransport — error-body mapping", () => {
         error: { code: "service_unavailable", message: "down" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -125,9 +118,7 @@ describe("HttpTransport — error-body mapping", () => {
 
   it("falls back to code='unknown' and message='HTTP <status>' when the error body omits both fields", async () => {
     const mockFetch = vi.fn().mockResolvedValue(makeJsonResponse(500, {}));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -155,9 +146,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
         },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(
       transport.request("POST", "/items/bulk-actions"),
@@ -176,9 +165,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
     const mockFetch = vi
       .fn()
       .mockResolvedValue(makeJsonResponse(400, { error: { message: "bad" } }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -195,9 +182,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
         error: { code: "edge_not_found", message: "Edge edg_123 not found" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(
       transport.request("DELETE", "/edges/edg_123"),
@@ -213,9 +198,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
     const mockFetch = vi
       .fn()
       .mockResolvedValue(makeJsonResponse(404, { error: { message: "gone" } }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items/x")).rejects.toSatisfy(
       (err: unknown) =>
@@ -234,9 +217,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
         },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("POST", "/edges")).rejects.toSatisfy(
       (err: unknown) =>
@@ -252,9 +233,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
         error: { code: "token_expired", message: "Access token expired" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -273,9 +252,7 @@ describe("HttpTransport — body-parse failures", () => {
         headers: { "content-type": "application/json" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -294,9 +271,7 @@ describe("HttpTransport — body-parse failures", () => {
         headers: { "content-type": "text/plain" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
@@ -321,9 +296,7 @@ describe("HttpTransport — requestWithStatus", () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(makeJsonResponse(200, { item: { id: "itm_1" } }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     const result = await transport.requestWithStatus<{ item: { id: string } }>(
       "POST",
@@ -337,9 +310,7 @@ describe("HttpTransport — requestWithStatus", () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(makeJsonResponse(201, { item: { id: "itm_2" } }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     const result = await transport.requestWithStatus<{ item: { id: string } }>(
       "POST",
@@ -353,9 +324,7 @@ describe("HttpTransport — requestWithStatus", () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(new Response(null, { status: 204 }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     const result = await transport.requestWithStatus<undefined>(
       "DELETE",
@@ -371,9 +340,7 @@ describe("HttpTransport — requestWithStatus", () => {
         error: { code: "not_found", message: "x" },
       }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(
       transport.requestWithStatus<unknown>("GET", "/items/x"),
@@ -387,9 +354,7 @@ describe("HttpTransport — requestWithStatus", () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(makeJsonResponse(200, { hello: "world" }));
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     const body = await transport.request<{ hello: string }>("GET", "/x");
     expect(body).toEqual({ hello: "world" });
@@ -403,9 +368,7 @@ describe("HttpTransport — no silent retry", () => {
       .mockResolvedValue(
         makeJsonResponse(500, { error: { code: "boom", message: "x" } }),
       );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
+    const transport = makeTransport(mockFetch);
 
     await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
       MarfaError,
@@ -422,10 +385,7 @@ describe("HttpTransport — no silent retry", () => {
           });
         }),
     );
-    const transport = makeTransport(
-      mockFetch as unknown as typeof globalThis.fetch,
-      20,
-    );
+    const transport = makeTransport(mockFetch, 20);
 
     await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
       MarfaError,

@@ -170,7 +170,7 @@ describe("WebhookPoller retry behaviour", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 400 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_400" })]);
     const poller = new WebhookPoller(store);
@@ -184,7 +184,7 @@ describe("WebhookPoller retry behaviour", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 408 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_408" })]);
     const poller = new WebhookPoller(store);
@@ -200,7 +200,7 @@ describe("WebhookPoller retry behaviour", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 429 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_429" })]);
     const poller = new WebhookPoller(store);
@@ -223,7 +223,7 @@ describe("WebhookPoller retry behaviour", () => {
         new Response(null, { status: 429, headers: { "retry-after": "30" } }),
       ),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_429ra" })]);
     const poller = new WebhookPoller(store);
@@ -248,7 +248,7 @@ describe("WebhookPoller retry behaviour", () => {
         }),
       ),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_clamp" })]);
     const poller = new WebhookPoller(store);
@@ -268,7 +268,7 @@ describe("WebhookPoller retry behaviour", () => {
         new Response(null, { status: 503, headers: { "retry-after": "5" } }),
       ),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_503" })]);
     const poller = new WebhookPoller(store);
@@ -287,7 +287,7 @@ describe("WebhookPoller retry behaviour", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 204 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_ok" })]);
     const poller = new WebhookPoller(store);
@@ -364,7 +364,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 200 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const { store, calls } = makeStubStore([]);
     const delivery = makeDelivery({ id: "del_direct_ok" });
@@ -406,7 +406,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 200 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     // A store whose `schedule` returns an id, but whose `claimById`
     // always returns null — i.e. the poller or another direct worker
@@ -472,7 +472,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 200 })),
     );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     let markedSuccess = false;
     const claimed: PendingWebhookDelivery = {

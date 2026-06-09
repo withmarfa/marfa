@@ -455,10 +455,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       connectionId,
       tenantId,
     );
-    return c.json(
-      { inbound_webhooks: rows.map((r) => rowToWire(r) as InboundWebhook) },
-      200,
-    );
+    return c.json({ inbound_webhooks: rows.map((r) => rowToWire(r)) }, 200);
   });
 
   // GET /connections/:id/inbound-webhooks/:webhook_id/deliveries

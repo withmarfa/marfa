@@ -75,7 +75,7 @@ function isInTrusted(
     if (rangeAddr.kind() !== addr.kind()) continue;
     try {
       // kinds match, so the cast to `never` is safe at runtime despite the split typings
-      if (addr.match(range as never)) return true;
+      if (addr.match(range)) return true;
     } catch {
       // should not reach here; ignore if it does
     }

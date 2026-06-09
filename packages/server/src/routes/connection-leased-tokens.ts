@@ -458,7 +458,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     return c.json(
       {
-        leases: rows.map((row) => rowToWire(row) as ConnectionLeasedToken),
+        leases: rows.map((row) => rowToWire(row)),
       },
       200,
     );

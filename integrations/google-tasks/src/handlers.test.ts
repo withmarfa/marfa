@@ -111,7 +111,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
         type: input.type,
         state: "active",
         properties: input.properties ?? {},
-      } as ItemResource);
+      });
       return Promise.resolve({ id, type: input.type });
     },
     updateItem: (id: string, patch: Partial<CreateItemInput>) => {
@@ -305,7 +305,7 @@ describe("google-tasks handleItemEvent — outbound create", () => {
       type: "google.tasks.task",
       state: "active",
       properties: { title: "From Marfa", notes: "Hello there" },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [
@@ -350,7 +350,7 @@ describe("google-tasks handleItemEvent — outbound create", () => {
       type: "google.tasks.task",
       state: "active",
       properties: { title: "Recovery" },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [
@@ -385,7 +385,7 @@ describe("google-tasks handleItemEvent — outbound create", () => {
       type: "google.tasks.task",
       state: "trashed",
       properties: { title: "Trash me" },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [() => new Response(null, { status: 204 })],

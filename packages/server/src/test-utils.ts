@@ -233,7 +233,7 @@ export async function seedOauthBearer(
     disabled: false,
     createdAt: now,
     updatedAt: now,
-  } as Record<string, unknown>);
+  });
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
   const grant = await storage.items.create(

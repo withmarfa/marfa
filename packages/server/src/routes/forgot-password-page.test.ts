@@ -171,10 +171,10 @@ describe("POST /auth/forgot-password (form wrapper)", () => {
     ctx = await createTestContext();
     const captured: string[] = [];
     const original = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((chunk: unknown) => {
+    process.stdout.write = (chunk: unknown) => {
       captured.push(typeof chunk === "string" ? chunk : String(chunk));
       return true;
-    }) as typeof process.stdout.write;
+    };
     try {
       const res = await postForm(ctx, {
         email: "ghost@example.com",

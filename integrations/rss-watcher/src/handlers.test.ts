@@ -159,11 +159,11 @@ function makeFetch(
   responses: { url?: string; status?: number; body: string }[],
 ): typeof fetch {
   let call = 0;
-  return ((): Promise<Response> => {
+  return (): Promise<Response> => {
     const r = responses[call] ?? responses[responses.length - 1]!;
     call += 1;
     return Promise.resolve(new Response(r.body, { status: r.status ?? 200 }));
-  }) as unknown as typeof fetch;
+  };
 }
 
 function urlToString(url: RequestInfo | URL): string {
@@ -265,10 +265,10 @@ describe("RSS Watcher schedule handler", () => {
     });
     let requestedUrl: string | null = null;
     const handler = createScheduleHandler({
-      fetch: ((url: RequestInfo | URL) => {
+      fetch: (url: RequestInfo | URL) => {
         requestedUrl = urlToString(url);
         return Promise.resolve(new Response(FEED_TWO, { status: 200 }));
-      }) as unknown as typeof fetch,
+      },
     });
 
     await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
@@ -282,10 +282,10 @@ describe("RSS Watcher schedule handler", () => {
     const { ctx } = buildContext();
     let requestedUrl: string | null = null;
     const handler = createScheduleHandler({
-      fetch: ((url: RequestInfo | URL) => {
+      fetch: (url: RequestInfo | URL) => {
         requestedUrl = urlToString(url);
         return Promise.resolve(new Response(FEED_TWO, { status: 200 }));
-      }) as unknown as typeof fetch,
+      },
     });
 
     await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));

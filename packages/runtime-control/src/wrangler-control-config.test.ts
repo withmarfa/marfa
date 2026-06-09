@@ -100,7 +100,7 @@ const WEBHOOK_RECEIPT_PRODUCERS = integrationsWithTrigger("webhook")
 
 function loadConfig(): WranglerControlConfig {
   const text = readFileSync(WRANGLER_CONTROL_TOML_PATH, "utf8");
-  return parseToml(text) as WranglerControlConfig; // throws on duplicate keys
+  return parseToml(text); // throws on duplicate keys
 }
 
 describe("wrangler.control.toml — structural freshness", () => {

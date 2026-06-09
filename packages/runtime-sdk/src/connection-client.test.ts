@@ -28,7 +28,7 @@ function makeFetch(
   captured: Captured[],
 ): typeof fetch {
   let i = 0;
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input, init);
     captured.push({
       url: req.url,
@@ -42,7 +42,7 @@ function makeFetch(
       return Promise.resolve(new Response("no responder", { status: 500 }));
     }
     return Promise.resolve(responder(req));
-  }) as typeof fetch;
+  };
 }
 
 describe("ConnectionClient", () => {
@@ -485,7 +485,7 @@ function makeUploadFetch(
   captured: CapturedUpload[],
 ): typeof fetch {
   let i = 0;
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
         ? input
@@ -509,7 +509,7 @@ function makeUploadFetch(
     const responder = responses[i++];
     if (!responder) return new Response("no responder", { status: 500 });
     return responder();
-  }) as typeof fetch;
+  };
 }
 
 describe("ConnectionClient.uploadBlob", () => {

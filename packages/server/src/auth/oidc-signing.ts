@@ -85,7 +85,7 @@ export class OidcSigner {
       publicJwk,
     };
     await storage.settings.set(SIGNING_KEY_SETTINGS_KEY, JSON.stringify(kp));
-    return new OidcSigner(kp, privateKey as SigningKey);
+    return new OidcSigner(kp, privateKey);
   }
 
   /** Mints a signed JWT for the given claims. `iat` and `exp` are stamped

@@ -61,7 +61,7 @@ describe("client.connections.install", () => {
       },
     );
 
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
     const result = await client.connections.install({
       integration_id: "itm_int_42",
       label: "Acme Slack",
@@ -89,7 +89,7 @@ describe("client.connections.install", () => {
       },
     );
 
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
     await client.connections.install({ integration_id: "itm_int_43" });
   });
 
@@ -99,7 +99,7 @@ describe("client.connections.install", () => {
         error: { code: "not_found", message: "Integration not found" },
       }),
     );
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
 
     await expect(
       client.connections.install({ integration_id: "itm_missing" }),
@@ -139,7 +139,7 @@ describe("client.connections.uninstall", () => {
       },
     );
 
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
     const result = await client.connections.uninstall("itm_conn_1");
 
     expect(result).toEqual(fakeResult);
@@ -152,7 +152,7 @@ describe("client.connections.uninstall", () => {
         error: { code: "not_found", message: "Connection not found" },
       }),
     );
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
 
     await expect(
       client.connections.uninstall("itm_missing"),
@@ -172,7 +172,7 @@ describe("client.connections.uninstall", () => {
         },
       }),
     );
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
 
     await expect(client.connections.uninstall("itm_x")).rejects.toMatchObject({
       code: "validation_error",
@@ -228,7 +228,7 @@ describe("client.connections.previewEvent", () => {
       },
     );
 
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
     const result = await client.connections.previewEvent({
       item_id: "itm_note_1",
       event_type: "created",
@@ -260,7 +260,7 @@ describe("client.connections.previewEvent", () => {
       },
     );
 
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
     await client.connections.previewEvent({
       item_id: "itm_note_2",
       event_type: "updated",
@@ -274,7 +274,7 @@ describe("client.connections.previewEvent", () => {
         error: { code: "not_found", message: "Item not found" },
       }),
     );
-    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const client = makeClient(mockFetch);
 
     await expect(
       client.connections.previewEvent({

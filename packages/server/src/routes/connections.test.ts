@@ -74,10 +74,7 @@ async function installFresh(): Promise<{
         publisher: "Acme",
         direction: "both",
         runtime_compatibility: ["hosted"],
-        manifest: manifest(integrationName) as unknown as Record<
-          string,
-          unknown
-        >,
+        manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
       },
     },
@@ -131,10 +128,7 @@ async function createIntegration(): Promise<{
         publisher: "Acme",
         direction: "both",
         runtime_compatibility: ["hosted"],
-        manifest: manifest(integrationName) as unknown as Record<
-          string,
-          unknown
-        >,
+        manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
       },
     },
@@ -523,9 +517,7 @@ async function installItemEventConnection(): Promise<{
         publisher: "Acme",
         direction: "both",
         runtime_compatibility: ["hosted"],
-        manifest: manifestWithItemEventTrigger(
-          integrationName,
-        ) as unknown as Record<string, unknown>,
+        manifest: manifestWithItemEventTrigger(integrationName),
         registered_at: new Date().toISOString(),
       },
     },

@@ -75,7 +75,7 @@ async function createIntegration(
         publisher: manifest.publisher,
         direction: manifest.direction,
         runtime_compatibility: manifest.runtime_compatibility,
-        manifest: manifest as unknown as Record<string, unknown>,
+        manifest: manifest,
         registered_at: new Date().toISOString(),
       },
     },

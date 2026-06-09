@@ -203,7 +203,7 @@ async function ensureIntegrationItem(
         summary: SYNC_MANIFEST.description,
         direction: SYNC_MANIFEST.direction,
         runtime_compatibility: SYNC_MANIFEST.runtime_compatibility,
-        manifest: SYNC_MANIFEST as unknown as Record<string, unknown>,
+        manifest: SYNC_MANIFEST,
         registered_at: new Date().toISOString(),
       },
     },
