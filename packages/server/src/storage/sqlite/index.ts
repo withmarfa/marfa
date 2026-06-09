@@ -187,6 +187,10 @@ export async function createSqliteStorage(
       return { changes: result.rowsAffected };
     },
     async close() {
+      // Drain in-flight fire-and-forget audit writes before closing the
+      // underlying connection, so a late write can't fail against a closed
+      // store. `drain()` never rejects.
+      await auditStore.drain();
       await close();
     },
   };

@@ -189,7 +189,16 @@ export async function createPgStorage(
       // by design.
       return pgDeleteAccountCascade(baseDb, storage, authUserId, cutoffIso);
     },
-    close,
+    // Drain in-flight fire-and-forget audit writes before tearing down the
+    // pool. Without this, an audit insert still in flight when `close()` runs
+    // rejects with CONNECTION_ENDED once the pool ends — an unhandled
+    // rejection (the test harness drops the per-file clone right after close,
+    // making the window easy to hit). Draining lets pending writes settle
+    // first; `drain()` itself never rejects.
+    close: async () => {
+      await auditStore.drain();
+      await close();
+    },
     /** Raw query escape hatch. Originally added for parameterised
      *  mutations in retention tests; now also consumed by
      *  `routes/auth-account.ts` (auth_verification probes via the

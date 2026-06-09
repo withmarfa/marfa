@@ -5,6 +5,7 @@ import type { PaginatedResult } from "@withmarfa/shared";
 import type { AuditStore, AuditEntry } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
+import { AuditWriteTracker } from "../audit-write-tracker.js";
 import { auditLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -34,6 +35,8 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
 }
 
 export class SqliteAuditStore implements AuditStore {
+  private readonly writes = new AuditWriteTracker();
+
   constructor(private db: DrizzleDb) {}
 
   async log(entry: {
@@ -52,19 +55,32 @@ export class SqliteAuditStore implements AuditStore {
     if (entry.client_ip !== undefined && entry.client_ip !== null) {
       detailsBlob.client_ip = entry.client_ip;
     }
-    await this.db
-      .insert(auditLog)
-      .values({
-        id: generateId(),
-        timestamp: new Date().toISOString(),
-        key_id: entry.key_id ?? null,
-        tenant_id: entry.tenant_id ?? null,
-        action: entry.action,
-        resource_type: entry.resource_type,
-        resource_id: entry.resource_id ?? null,
-        details: JSON.stringify(detailsBlob),
-      })
-      .run();
+    // Run the insert under the write tracker: it's tracked so `drain()` can
+    // wait for it before the store closes, and its errors are swallowed so a
+    // late write that loses the race against teardown can never surface as
+    // an unhandled rejection. Callers stay fire-and-forget (`void log(...)`).
+    await this.writes.track(async () => {
+      await this.db
+        .insert(auditLog)
+        .values({
+          id: generateId(),
+          timestamp: new Date().toISOString(),
+          key_id: entry.key_id ?? null,
+          tenant_id: entry.tenant_id ?? null,
+          action: entry.action,
+          resource_type: entry.resource_type,
+          resource_id: entry.resource_id ?? null,
+          details: JSON.stringify(detailsBlob),
+        })
+        .run();
+    });
+  }
+
+  /** Resolve once every in-flight audit write has settled. Called by the
+   *  storage's `close()` so pending fire-and-forget writes drain before the
+   *  underlying connection is closed. */
+  async drain(): Promise<void> {
+    await this.writes.drain();
   }
 
   async list(filters: {
