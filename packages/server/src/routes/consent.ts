@@ -341,8 +341,13 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";
 
-  // Enhancement: keeps the "X enabled" count accurate as toggles flip.
-  // Stops propagation on toggle clicks so a switch inside a summary doesn't collapse the section.
+  // Progressive-enhancement script. Two jobs: (1) flat/diff view — keep the
+  // "X enabled" count accurate as toggles flip; (2) bundle view — a Customise
+  // button reveals the granular scopes, each bundle master toggle drives its
+  // member checkboxes (the ones that actually submit), and member edits
+  // reflect back onto the master. NOTE: the template is minified with
+  // `replace(/\\s+/g, " ")`, which collapses newlines — so it MUST NOT contain
+  // `//` line comments (they would swallow the rest of the script).
   const enhancementScript = `
     (function () {
       var sections = document.querySelectorAll('[data-section]');
@@ -365,9 +370,6 @@ export function renderConsentScreen(params: ConsentParams): string {
         });
       });
 
-      // Bundle view: a Customise button reveals the granular scopes, and
-      // each bundle master toggle drives its member checkboxes (the ones
-      // that actually submit). Member edits reflect back onto the master.
       var customise = document.querySelector('[data-customise]');
       if (customise) {
         customise.addEventListener('click', function () {
