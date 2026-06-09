@@ -26,16 +26,12 @@ export default defineConfig({
     // 6 workers × (3 storage + 1 admin) ≈ 24 peak connections —
     // comfortably under PG default `max_connections=100`. The
     // template-DB pattern makes file-level parallelism safe here.
-    // Vitest 4 removed `poolOptions`; `poolOptions.forks.maxForks` is now the
-    // top-level `maxWorkers`. `minForks` has no v4 equivalent and is dropped —
-    // it only floored the pool at 1 (the default minimum anyway); the cap is
-    // the load-bearing part for the PG connection math above.
     pool: "forks",
-    maxWorkers: 6,
-    // The root workspace runs sibling projects (sdk, shared, integrations) at
-    // the default worker budget. Vitest 4 requires projects with a differing
-    // `maxWorkers` to sit in their own scheduling group — give the server its
-    // own so its capped PG-parallelism budget doesn't clash with theirs.
-    sequence: { groupOrder: 1 },
+    poolOptions: {
+      forks: {
+        maxForks: 6,
+        minForks: 1,
+      },
+    },
   },
 });
