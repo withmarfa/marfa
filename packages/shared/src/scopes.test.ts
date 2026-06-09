@@ -3,12 +3,14 @@ import {
   parseScope,
   isValidScope,
   expandWildcardScopes,
+  expandBundlesToScopes,
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
   scopesToOidcScopes,
   scopeCovers,
 } from "./scopes.js";
+import type { PermissionBundle } from "./scopes.js";
 
 describe("parseScope", () => {
   it("parses a simple read scope", () => {
@@ -284,5 +286,88 @@ describe("OIDC scope literals", () => {
       "metadata.types:write",
     ]);
     expect(perms).toEqual({ types: "write" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Global type wildcard (`*:read` / `*:write`).
+//
+// The generous default permission bundle grants `*:write`, which must parse,
+// project to a `{ "*": <verb> }` type-permission, and thereby match runtime
+// `user.*` types that never appear in the static scope allowlist.
+// ---------------------------------------------------------------------------
+
+describe("global type wildcard scope", () => {
+  it("parses *:read and *:write", () => {
+    expect(parseScope("*:read")).toEqual({ typePattern: "*", operation: "read" });
+    expect(parseScope("*:write")).toEqual({
+      typePattern: "*",
+      operation: "write",
+    });
+    expect(isValidScope("*:read")).toBe(true);
+    expect(isValidScope("*:write")).toBe(true);
+  });
+
+  it("projects *:write into a wildcard type-permission (write trumps read)", () => {
+    expect(scopesToTypePermissions(["*:write"])).toEqual({ "*": "write" });
+    expect(scopesToTypePermissions(["*:read", "*:write"])).toEqual({
+      "*": "write",
+    });
+  });
+
+  it("rejects malformed wildcard scopes", () => {
+    expect(parseScope("**:read")).toBeNull();
+    expect(parseScope("*.foo:read")).toBeNull();
+    expect(parseScope("*")).toBeNull();
+  });
+});
+
+describe("metadata.edge_types sub-resource scope", () => {
+  it("parses as a metadata sub-resource", () => {
+    expect(parseScope("metadata.edge_types:write")).toEqual({
+      typePattern: "metadata.edge_types",
+      operation: "write",
+      kind: "metadata",
+      subresource: "edge_types",
+    });
+  });
+
+  it("projects into metadata_permissions under the edge_types key", () => {
+    expect(scopesToMetadataPermissions(["metadata.edge_types:write"])).toEqual({
+      edge_types: "write",
+    });
+  });
+});
+
+describe("expandBundlesToScopes", () => {
+  const bundles: PermissionBundle[] = [
+    {
+      id: "read",
+      label: "Read your stuff",
+      description: "",
+      scopes: ["*:read", "edge.*:read", "metadata:read"],
+      default_on: true,
+    },
+    {
+      id: "write",
+      label: "Write your stuff",
+      description: "",
+      scopes: ["*:read", "*:write", "metadata.types:write"],
+      default_on: true,
+    },
+  ];
+
+  it("returns the de-duplicated, sorted union of bundle scopes", () => {
+    expect(expandBundlesToScopes(bundles)).toEqual([
+      "*:read",
+      "*:write",
+      "edge.*:read",
+      "metadata.types:write",
+      "metadata:read",
+    ]);
+  });
+
+  it("returns empty for no bundles", () => {
+    expect(expandBundlesToScopes([])).toEqual([]);
   });
 });
