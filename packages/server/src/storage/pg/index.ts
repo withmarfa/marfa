@@ -187,12 +187,7 @@ export async function createPgStorage(
       // The cascade runs on the unwrapped base instance — auth_* tables
       // are RLS-bypassed and this operation crosses tenant/auth boundaries
       // by design.
-      return pgDeleteAccountCascade(
-        baseDb,
-        storage as Storage,
-        authUserId,
-        cutoffIso,
-      );
+      return pgDeleteAccountCascade(baseDb, storage, authUserId, cutoffIso);
     },
     close,
     /** Raw query escape hatch. Originally added for parameterised

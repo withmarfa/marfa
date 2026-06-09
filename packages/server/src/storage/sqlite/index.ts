@@ -162,12 +162,7 @@ export async function createSqliteStorage(
       authUserId: string,
       cutoffIso: string,
     ): Promise<boolean> => {
-      return sqliteDeleteAccountCascade(
-        db,
-        storage as unknown as Storage,
-        authUserId,
-        cutoffIso,
-      );
+      return sqliteDeleteAccountCascade(db, storage, authUserId, cutoffIso);
     },
     betterAuthDb: baseDb,
     betterAuthDialect: "sqlite" as const,

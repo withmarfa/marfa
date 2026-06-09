@@ -60,7 +60,7 @@ describe("performInstall — happy path", () => {
           publisher: "Acme",
           direction: "both",
           runtime_compatibility: ["hosted"],
-          manifest: manifest() as unknown as Record<string, unknown>,
+          manifest: manifest(),
           registered_at: new Date().toISOString(),
         },
       },
@@ -71,7 +71,7 @@ describe("performInstall — happy path", () => {
       apiKeyId: adminKey.id,
       tenantId: undefined,
       integrationItemId: integration.id,
-      manifest: manifest() as unknown as Record<string, unknown>,
+      manifest: manifest(),
       label: "direct install",
     });
 
@@ -299,7 +299,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
           publisher: "Acme",
           direction: "both",
           runtime_compatibility: ["hosted"],
-          manifest: manifest() as unknown as Record<string, unknown>,
+          manifest: manifest(),
           registered_at: new Date().toISOString(),
         },
       },
@@ -361,7 +361,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       apiKeyId: adminKey.id,
       tenantId: undefined,
       integrationItemId: integrationId,
-      manifest: manifest() as unknown as Record<string, unknown>,
+      manifest: manifest(),
       label: "with-credential-ref",
       credentialRef: credentialId,
     });
@@ -392,7 +392,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         apiKeyId: adminKey.id,
         tenantId: undefined,
         integrationItemId: integrationId,
-        manifest: manifest() as unknown as Record<string, unknown>,
+        manifest: manifest(),
         label: "bad-credential-ref",
         credentialRef: "itm_credref_does_not_exist",
       }),
@@ -419,7 +419,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         apiKeyId: adminKey.id,
         tenantId: undefined,
         integrationItemId: integrationId,
-        manifest: manifest() as unknown as Record<string, unknown>,
+        manifest: manifest(),
         label: "wrong-kind-credential-ref",
         credentialRef: wrongKindCredential.id,
       }),
@@ -451,7 +451,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       apiKeyId: adminKey.id,
       tenantId: undefined,
       integrationItemId: integrationId,
-      manifest: manifest() as unknown as Record<string, unknown>,
+      manifest: manifest(),
       label: "with-api-token-credential",
       credentialRef: apiTokenCredential.id,
     });
@@ -474,7 +474,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       apiKeyId: adminKey.id,
       tenantId: undefined,
       integrationItemId: integrationId,
-      manifest: manifest() as unknown as Record<string, unknown>,
+      manifest: manifest(),
       label: "no-credential-ref",
     });
 

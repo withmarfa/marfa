@@ -90,8 +90,8 @@ export function withIdempotentConsent<
       const existing = (await adapter.findOne({
         model: OAUTH_CONSENT_MODEL,
         where: [
-          { field: "clientId", value: clientId as string | number | boolean },
-          { field: "userId", value: userId as string | number | boolean },
+          { field: "clientId", value: clientId },
+          { field: "userId", value: userId },
         ],
         select: ["id"],
       })) as ExistingConsent | null;

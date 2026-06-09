@@ -79,7 +79,7 @@ async function seedClient(
     disabled: false,
     createdAt: now,
     updatedAt: now,
-  } as Record<string, unknown>);
+  });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return clientId;
 }
@@ -548,7 +548,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         ctx.storage.betterAuthDialect === "pg"
           ? wideScopes
           : JSON.stringify(wideScopes),
-    } as Record<string, unknown>);
+    });
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
     // Verify the token exists (sanity).
@@ -625,7 +625,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         ctx.storage.betterAuthDialect === "pg"
           ? sameScopes
           : JSON.stringify(sameScopes),
-    } as Record<string, unknown>);
+    });
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
     // Re-consent with the SAME scope set.

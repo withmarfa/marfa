@@ -114,7 +114,7 @@ export async function acquireStreamRls(
   }
   const streamDb = drizzle(reservedSql, {
     schema,
-  }) as unknown as PgDb;
+  });
 
   let released = false;
   const release = async (): Promise<void> => {

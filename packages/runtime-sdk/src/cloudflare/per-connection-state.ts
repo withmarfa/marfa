@@ -23,7 +23,6 @@
  * Cloudflare type dependency.
  */
 import { computeNextRunAt } from "../cron.js";
-import type { CursorStorageAdapter } from "../cursor-store.js";
 import {
   PerConnectionStateCore,
   type PerConnectionInternalState,
@@ -54,7 +53,7 @@ export class PerConnectionState implements DurableObject {
     this.state = state;
     this.env = env;
     const internal: PerConnectionInternalState = {
-      storage: state.storage as unknown as CursorStorageAdapter,
+      storage: state.storage,
     };
     this.core = new PerConnectionStateCore(internal);
   }

@@ -111,7 +111,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
         type: input.type,
         state: "active",
         properties: input.properties ?? {},
-      } as ItemResource);
+      });
       return Promise.resolve({ id, type: input.type });
     },
     updateItem: (id: string, patch: Partial<CreateItemInput>) => {

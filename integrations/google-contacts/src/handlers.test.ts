@@ -107,7 +107,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
         type: input.type,
         state: "active",
         properties: input.properties ?? {},
-      } as ItemResource);
+      });
       return Promise.resolve({ id, type: input.type });
     },
     updateItem: (id: string, patch: Partial<CreateItemInput>) => {
@@ -328,7 +328,7 @@ describe("google-contacts handleItemEvent — outbound create", () => {
         family_name: "Turing",
         emails: [JSON.stringify({ value: "alan@cl.cam.ac.uk", type: "work" })],
       },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [
@@ -367,7 +367,7 @@ describe("google-contacts handleItemEvent — outbound create", () => {
       type: "google.contacts.contact",
       state: "active",
       properties: { title: "Recovery" },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [
@@ -406,7 +406,7 @@ describe("google-contacts handleItemEvent — outbound update with etag concurre
         given_name: "Patched",
         etag: "stale-etag",
       },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [
@@ -459,7 +459,7 @@ describe("google-contacts handleItemEvent — trash", () => {
       type: "google.contacts.contact",
       state: "trashed",
       properties: { title: "Trash me" },
-    } as ItemResource;
+    };
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
       proxyResponses: [() => new Response(null, { status: 204 })],

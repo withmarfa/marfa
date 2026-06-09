@@ -400,7 +400,7 @@ async function proxyJson<T>(ctx: ConnectionContext, path: string): Promise<T> {
       `youtube GET ${path} -> ${String(resp.status)} ${text.slice(0, 300)}`,
     );
   }
-  return (await resp.json()) as T;
+  return await resp.json();
 }
 
 /** Wire an upstream channel as a `google.youtube.channel` Marfa item,
