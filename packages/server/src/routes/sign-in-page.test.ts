@@ -34,16 +34,19 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 
 describe("renderSignInPage", () => {
-  it("renders the combined form with the right action + hidden return_to", () => {
+  it("renders the password view with the right action + hidden return_to", () => {
     const html = renderSignInPage({
       returnTo: "/auth/authorize?client_id=abc",
       allowSignup: false,
       oidcProviderIds: [],
     });
     expect(html).toContain('<form method="POST" action="/auth/sign-in"');
-    // Mode rides the two submit buttons now — no hidden mode field.
+    // Default view submits mode=password; the one-time-email path is a GET form
+    // to its own screen, distinguished by button text from the magic submit.
     expect(html).toContain('name="mode" value="password"');
-    expect(html).toContain('name="mode" value="magic"');
+    expect(html).toContain('<form method="GET" action="/auth/sign-in">');
+    expect(html).toContain("Email me a one-time sign-in link");
+    expect(html).not.toContain("Email me a sign-in link");
     expect(html).toContain(
       '<input type="hidden" name="return_to" value="/auth/authorize?client_id=abc">',
     );
@@ -62,17 +65,31 @@ describe("renderSignInPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("offers the magic-link path as a second submit in the same form", () => {
-    const html = renderSignInPage({
+  it("puts the one-time-email path on its own screen, linked from the password view", () => {
+    const passwordView = renderSignInPage({
       returnTo: "/",
       allowSignup: false,
       oidcProviderIds: [],
     });
-    // One combined form: email + password + a magic-link submit button.
-    expect(html).toContain('name="email"');
-    expect(html).toContain('name="password"');
-    expect(html).toContain('name="mode" value="magic"');
-    expect(html).toContain("Email me a one-time sign-in link");
+    // Password view: a GET form to the one-time-email screen, not an inline
+    // submit. Distinguished from the magic view by the button text.
+    expect(passwordView).toContain("Email me a one-time sign-in link");
+    expect(passwordView).toContain(
+      '<form method="GET" action="/auth/sign-in">',
+    );
+    expect(passwordView).not.toContain("Email me a sign-in link");
+
+    const magicView = renderSignInPage({
+      mode: "magic",
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    // Magic view: email-only form + the magic submit + a way back. No password.
+    expect(magicView).toContain('name="email"');
+    expect(magicView).toContain('name="mode" value="magic"');
+    expect(magicView).not.toContain('name="password"');
+    expect(magicView).toContain("Back to password sign-in");
   });
 
   it("conditionally renders the sign-up link by allowSignup", () => {
@@ -298,15 +315,16 @@ describe("GET /auth/sign-in", () => {
     );
   });
 
-  it("renders the combined form (email + password + magic) regardless of ?mode", async () => {
+  it("renders the one-time-email view (email only, no password) when ?mode=magic", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/auth/sign-in?mode=magic", {
       headers: { origin: ORIGIN },
     });
     const html = await res.text();
     expect(html).toContain('name="email"');
-    expect(html).toContain('name="password"');
     expect(html).toContain('name="mode" value="magic"');
+    expect(html).not.toContain('name="password"');
+    expect(html).toContain("Back to password sign-in");
   });
 
   it("renders sign-up link when allowSignup=true", async () => {

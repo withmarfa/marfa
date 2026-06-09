@@ -6,14 +6,14 @@
  * to Better Auth's JSON API and translates success/failure back into 302
  * redirects so the no-JavaScript path works.
  *
- * Password and passwordless (magic link) share a single form and one
- * email field. The two submit buttons each carry `name="mode"` — "Sign
- * in" submits `mode=password`, "Email me a one-time sign-in link" submits
- * `mode=magic` — so a browser sends the clicked button's value and the
- * handler dispatches on it. The form is `novalidate`, so the optional
- * password isn't required when the user takes the magic-link path; the
- * server does the field validation. A passkey button (revealed only on
- * capable browsers) and any configured OIDC providers sit below.
+ * Two single-purpose views, selected by `?mode`. The default (`password`)
+ * view is email + password. The one-time email link is its own focused
+ * screen (`mode=magic`) — just an email field — reached via a link that
+ * carries `return_to` so the OAuth round-trip survives the hop. Because each
+ * form is single-purpose its fields are genuinely required, so the browser
+ * validates them (no `novalidate`, no submitting a password form with a blank
+ * password). A passkey button (revealed only on capable browsers) and any
+ * configured OIDC providers sit under the password view's alternatives stack.
  *
  * References the shared stylesheet at `/auth/static/auth.css` via
  * the `renderAuthLayout` helper; no inline `<style>` block.
@@ -23,10 +23,9 @@ import { renderAuthLayout } from "./auth-layout.js";
 
 interface SignInPageParams {
   /**
-   * Accepted for URL compatibility (redirect URLs from the POST handler
-   * still carry `?mode=…`), but no longer changes the layout — password
-   * and magic link share one combined form now. Kept so the GET handler
-   * can pass the parsed value through without a type error.
+   * Which view to render: `password` (default — email + password) or
+   * `magic` (the focused one-time-email screen). The GET handler parses it
+   * from `?mode`; the POST handler preserves it across redirects.
    */
   mode?: "password" | "magic";
   /**
@@ -61,7 +60,7 @@ const ERROR_MESSAGES: Record<string, string> = {
     "We couldn't send the sign-in link. Check the address and try again.",
   oauth_failed: "Sign-in via that provider failed. Try again.",
   invalid_return_to:
-    "The return address looked unsafe and was ignored. Sign in again.",
+    "That sign-in link looked unsafe, so we ignored where it pointed. Please sign in again.",
 };
 
 function escapeHtml(str: string): string {
@@ -89,13 +88,12 @@ export function renderSignInPage(params: SignInPageParams): string {
     ? `<div class="banner banner--success" role="status">Check your email for a sign-in link.</div>`
     : "";
 
-  // One combined form. The two submit buttons each carry `name="mode"`,
-  // so the browser sends the clicked button's value and the POST handler
-  // dispatches password vs. magic-link off it. `novalidate` keeps the
-  // optional password from blocking the magic-link path client-side; the
-  // server validates the fields it needs per mode.
-  const signInForm = `
-    <form method="POST" action="/auth/sign-in" class="form" novalidate>
+  const isMagic = params.mode === "magic";
+
+  // Password view form — email + password, both required (single-purpose form,
+  // so the browser validates and there's no blank-password jank).
+  const passwordForm = `
+    <form method="POST" action="/auth/sign-in" class="form">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <label class="field">
         <span class="field__label">Email</span>
@@ -110,32 +108,58 @@ export function renderSignInPage(params: SignInPageParams): string {
         <span class="field__label">Password</span>
         <input type="password"
                name="password"
-               autocomplete="current-password">
+               required
+               autocomplete="current-password"
+               aria-required="true">
       </label>
       <button type="submit" name="mode" value="password" class="btn btn--primary">Sign in</button>
-      <button type="submit" name="mode" value="magic" class="btn">Email me a one-time sign-in link</button>
     </form>
   `;
 
-  const oidcButtons = params.oidcProviderIds.length
-    ? `
-      <div class="separator" role="separator" aria-orientation="horizontal">
-        <span>or</span>
-      </div>
-      <div class="oidc">
-        ${params.oidcProviderIds
-          .map(
-            (id) => `
-          <form method="POST" action="/auth/sign-in/provider/${escapeHtml(id)}">
-            <input type="hidden" name="return_to" value="${safeReturnTo}">
-            <button type="submit" class="btn btn--oidc">Continue with ${escapeHtml(toHumanProvider(id))}</button>
-          </form>
-        `,
-          )
-          .join("")}
-      </div>
-    `
-    : "";
+  // One-time-email view form — just an email field; the server emails a link.
+  const magicForm = `
+    <form method="POST" action="/auth/sign-in" class="form">
+      <input type="hidden" name="return_to" value="${safeReturnTo}">
+      <label class="field">
+        <span class="field__label">Email</span>
+        <input type="email"
+               name="email"
+               required
+               autocomplete="email"
+               autofocus
+               aria-required="true">
+      </label>
+      <button type="submit" name="mode" value="magic" class="btn btn--primary">Email me a sign-in link</button>
+    </form>
+  `;
+
+  // Switch to the one-time-email view via a GET form (a real navigation that
+  // works without JS, and renders as a plain `.btn` so it needs no new CSS —
+  // the stylesheet is cached for an hour, so reusing existing classes keeps the
+  // button correct even on a stale cache). The browser URL-encodes the hidden
+  // fields, so the OAuth context folded into `return_to` survives the hop.
+  const toMagicForm = `
+    <form method="GET" action="/auth/sign-in">
+      <input type="hidden" name="mode" value="magic">
+      <input type="hidden" name="return_to" value="${safeReturnTo}">
+      <button type="submit" class="btn btn--oidc">Email me a one-time sign-in link</button>
+    </form>
+  `;
+  // Back link to the password view — a plain text link is the right weight.
+  const toPasswordHref = `/auth/sign-in?${buildQuery({ return_to: params.returnTo })}`;
+
+  // Provider buttons only — no separator/wrapper of their own; they share the
+  // password view's single alternatives stack below.
+  const oidcButtons = params.oidcProviderIds
+    .map(
+      (id) => `
+        <form method="POST" action="/auth/sign-in/provider/${escapeHtml(id)}">
+          <input type="hidden" name="return_to" value="${safeReturnTo}">
+          <button type="submit" class="btn btn--oidc">Continue with ${escapeHtml(toHumanProvider(id))}</button>
+        </form>
+      `,
+    )
+    .join("");
 
   const signupLink = params.allowSignup
     ? `<p class="aux">No account yet?
@@ -143,18 +167,13 @@ export function renderSignInPage(params: SignInPageParams): string {
        </p>`
     : "";
 
-  // Passkey sign-in button. Hidden by default and revealed by the inline
-  // script only on browsers that support WebAuthn AND are running in a
-  // secure context. The script lives inline (rather than in passkey.js)
-  // because it needs to read `params.returnTo` to redirect on success.
-  const passkeyButton = `
+  // Passkey button — just the button (the shared stack provides the separator);
+  // hidden by default and revealed by the inline script only on browsers that
+  // support WebAuthn in a secure context. The script lives inline (rather than
+  // in passkey.js) because it needs `params.returnTo` to redirect on success.
+  const passkeyBlock = `
     <div id="passkey-block" hidden>
-      <div class="separator" role="separator" aria-orientation="horizontal">
-        <span>or</span>
-      </div>
-      <div class="oidc">
-        <button id="passkey-signin" type="button" class="btn btn--oidc">Use a passkey</button>
-      </div>
+      <button id="passkey-signin" type="button" class="btn btn--oidc">Use a passkey</button>
       <div id="passkey-error" class="banner banner--error" role="alert" hidden style="margin-top:12px"></div>
     </div>
   `;
@@ -178,29 +197,51 @@ export function renderSignInPage(params: SignInPageParams): string {
       await window.MarfaPasskey.signIn();
       window.location.assign(${JSON.stringify(params.returnTo).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")});
     } catch (err) {
-      setError((err && err.message) || 'Passkey sign-in failed.');
+      var info = window.MarfaPasskey.describeError(err, 'signin');
+      // A cancel / timeout is the user's choice — no scary banner, just re-enable.
+      if (!info.cancelled) setError(info.message);
       btn.disabled = false;
     }
   });
 })();
   `.trim();
 
-  const bodyHtml = `
+  // Password view: email + password, then a single "or" alternatives stack
+  // (one-time email link, passkey when supported, OIDC providers), then the
+  // optional sign-up link and the passkey script.
+  const passwordBody = `
     <h1>Sign in to Marfa</h1>
     <p class="lede">Your data layer, in one place.</p>
     ${errorBanner}
     ${successBanner}
-    ${signInForm}
-    ${passkeyButton}
-    ${oidcButtons}
+    ${passwordForm}
+    <div class="separator" role="separator" aria-orientation="horizontal">
+      <span>or</span>
+    </div>
+    <div class="oidc">
+      ${toMagicForm}
+      ${passkeyBlock}
+      ${oidcButtons}
+    </div>
     ${signupLink}
     <script src="/auth/static/passkey.js"></script>
     <script>${passkeyScript}</script>
   `;
 
+  // One-time-email view: a focused screen with just the email field and a way
+  // back to the password form.
+  const magicBody = `
+    <h1>Sign in to Marfa</h1>
+    <p class="lede">Enter your email and we'll send you a one-time sign-in link — no password needed.</p>
+    ${errorBanner}
+    ${successBanner}
+    ${magicForm}
+    <p class="aux"><a href="${toPasswordHref}">Back to password sign-in</a></p>
+  `;
+
   return renderAuthLayout({
     title: "Sign in to Marfa",
-    bodyHtml,
+    bodyHtml: isMagic ? magicBody : passwordBody,
   });
 }
 

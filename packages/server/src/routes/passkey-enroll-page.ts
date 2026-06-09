@@ -66,7 +66,9 @@ export function renderPasskeyEnrollPage(
       await window.MarfaPasskey.enroll();
       show('passkey-success');
     } catch (err) {
-      setError((err && err.message) || 'Passkey enrolment failed.');
+      var info = window.MarfaPasskey.describeError(err, 'enroll');
+      // A cancel / timeout is the user's choice — no scary banner.
+      if (!info.cancelled) setError(info.message);
     } finally {
       btn.disabled = false;
     }

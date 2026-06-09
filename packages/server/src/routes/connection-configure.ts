@@ -401,10 +401,13 @@ export function connectionConfigureRoutes(
     try {
       calendars = await fetchCalendars({ connectionId: id, tenantId });
     } catch (err) {
+      // Keep the raw cause in the server log; show the user calm, curated copy
+      // rather than the upstream error string.
+      console.error("connection-configure: failed to load calendars", err);
       setNoStore(c);
       return c.html(
         renderConfigureError(
-          `Could not load calendars: ${err instanceof Error ? err.message : String(err)}`,
+          "We couldn't load your calendars right now. This is usually temporary — try again in a moment. If it keeps happening, reconnect the integration.",
         ),
         502,
       );
