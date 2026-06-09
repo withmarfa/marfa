@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.32.1",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config --local core.hooksPath hooks || true",
