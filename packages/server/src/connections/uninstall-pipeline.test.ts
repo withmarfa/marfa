@@ -64,7 +64,7 @@ async function installFresh(): Promise<{
         publisher: "Acme",
         direction: "both",
         runtime_compatibility: ["hosted"],
-        manifest: manifest() as unknown as Record<string, unknown>,
+        manifest: manifest(),
         registered_at: new Date().toISOString(),
       },
     },

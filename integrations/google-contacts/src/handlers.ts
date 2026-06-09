@@ -440,7 +440,7 @@ async function updateContactWithRefetchOnStaleEtag(
     const itemWithFreshEtag: ItemResource = {
       ...item,
       properties: { ...item.properties, etag: fresh.etag ?? "" },
-    } as ItemResource;
+    };
     return updateContactWithRefetchOnStaleEtag(
       ctx,
       cursor,

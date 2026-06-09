@@ -1638,7 +1638,7 @@ export function itemRoutes(storage: Storage) {
       if (snapshot) {
         await publish({
           type: "deleted",
-          item: { ...snapshot, state: "trashed" as ItemState },
+          item: { ...snapshot, state: "trashed" },
           tenantId: tid,
         });
       }

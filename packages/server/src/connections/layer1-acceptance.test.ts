@@ -49,7 +49,7 @@ interface MintResp {
  *  apiUrl is the magic prefix the SDK's ConnectionClient sees;
  *  everything past it is the path the in-process server expects. */
 function makeAppFetch(app: TestContext["app"], apiUrl: string): typeof fetch {
-  return ((input: string | URL | Request, init?: RequestInit) => {
+  return (input: string | URL | Request, init?: RequestInit) => {
     const urlStr =
       typeof input === "string"
         ? input
@@ -60,7 +60,7 @@ function makeAppFetch(app: TestContext["app"], apiUrl: string): typeof fetch {
       ? urlStr.slice(apiUrl.length)
       : urlStr;
     return Promise.resolve(app.request(path, init));
-  }) as typeof fetch;
+  };
 }
 
 async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {

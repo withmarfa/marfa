@@ -334,7 +334,7 @@ describe("handleItemEvent — multi-calendar outbound", () => {
         starts_at: "2026-06-01T10:00:00Z",
         ends_at: "2026-06-01T11:00:00Z",
       },
-    } as ItemResource;
+    };
 
     const { ctx, proxyCalls } = buildContext({
       connectionRecord: multiCalendarConnection(),
@@ -375,7 +375,7 @@ describe("handleItemEvent — multi-calendar outbound", () => {
         ends_at: "2026-07-05",
         all_day: true,
       },
-    } as ItemResource;
+    };
 
     const { ctx, proxyCalls } = buildContext({
       connectionRecord: multiCalendarConnection(),
@@ -414,7 +414,7 @@ describe("handleItemEvent — multi-calendar outbound", () => {
         ends_at: "2026-09-12T10:00:00",
         timezone: "America/New_York",
       },
-    } as ItemResource;
+    };
 
     const { ctx, proxyCalls } = buildContext({
       connectionRecord: multiCalendarConnection(),

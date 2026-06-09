@@ -126,7 +126,7 @@ export async function acquireStreamRls(
   // connection (postgres-js's reserve semantics).
   const streamDb = drizzle(reservedSql, {
     schema,
-  }) as unknown as PgDb;
+  });
 
   let released = false;
   const release = async (): Promise<void> => {

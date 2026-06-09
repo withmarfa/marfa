@@ -57,7 +57,7 @@ interface MarfaFetchOptions {
 }
 
 function mockMarfaFetch(opts: MarfaFetchOptions = {}): typeof fetch {
-  return ((input: RequestInfo | URL) => {
+  return (input: RequestInfo | URL) => {
     const url =
       typeof input === "string"
         ? input
@@ -105,7 +105,7 @@ function mockMarfaFetch(opts: MarfaFetchOptions = {}): typeof fetch {
       );
     }
     return Promise.resolve(new Response("not found", { status: 404 }));
-  }) as typeof fetch;
+  };
 }
 
 describe("POST /connections/:id/verify", () => {

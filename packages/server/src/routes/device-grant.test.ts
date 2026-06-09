@@ -70,7 +70,7 @@ async function createClient(c: TestContext): Promise<string> {
     disabled: false,
     createdAt: now,
     updatedAt: now,
-  } as Record<string, unknown>);
+  });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return clientId;
 }

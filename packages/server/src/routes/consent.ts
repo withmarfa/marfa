@@ -230,7 +230,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       return {
         typePattern,
         operation,
-      } as ParsedScope;
+      };
     });
     sections.push({
       label: "No longer requested",

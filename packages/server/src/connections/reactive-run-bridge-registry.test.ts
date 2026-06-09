@@ -73,7 +73,7 @@ async function createIntegration(
         publisher: m.publisher,
         direction: m.direction,
         runtime_compatibility: m.runtime_compatibility,
-        manifest: m as unknown as Record<string, unknown>,
+        manifest: m,
         registered_at: new Date().toISOString(),
       },
     },
@@ -296,7 +296,7 @@ describe("bridge fanout via in-process pubsub", () => {
       body: { body: { integration_name: string; connection_id: string } };
     }
     const captured: Captured[] = [];
-    const stubFetch: typeof fetch = ((
+    const stubFetch: typeof fetch = (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -311,7 +311,7 @@ describe("bridge fanout via in-process pubsub", () => {
         body: JSON.parse(init?.body as string) as Captured["body"],
       });
       return Promise.resolve(new Response(null, { status: 202 }));
-    }) as typeof fetch;
+    };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
@@ -374,7 +374,7 @@ describe("bridge fanout via in-process pubsub", () => {
 
     const fastDeliveries: string[] = [];
     let slowAttempts = 0;
-    const stubFetch: typeof fetch = ((
+    const stubFetch: typeof fetch = (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -395,7 +395,7 @@ describe("bridge fanout via in-process pubsub", () => {
       }
       fastDeliveries.push(body.body.connection_id);
       return Promise.resolve(new Response(null, { status: 202 }));
-    }) as typeof fetch;
+    };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
@@ -469,7 +469,7 @@ describe("bridge fanout via in-process pubsub", () => {
       body: { body: { integration_name: string; connection_id: string } };
     }
     const captured: Captured[] = [];
-    const stubFetch: typeof fetch = ((
+    const stubFetch: typeof fetch = (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -484,7 +484,7 @@ describe("bridge fanout via in-process pubsub", () => {
         body: JSON.parse(init?.body as string) as Captured["body"],
       });
       return Promise.resolve(new Response(null, { status: 202 }));
-    }) as typeof fetch;
+    };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
@@ -581,7 +581,7 @@ describe("bridge fanout via in-process pubsub", () => {
       fastDeliverAt: new Map<string, number>(),
     };
 
-    const stubFetch: typeof fetch = ((
+    const stubFetch: typeof fetch = (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -602,7 +602,7 @@ describe("bridge fanout via in-process pubsub", () => {
         captured.fastDeliverAt.set(body.body.connection_id, Date.now());
       }
       return Promise.resolve(new Response(null, { status: 202 }));
-    }) as typeof fetch;
+    };
 
     const SLOW_TIMEOUT_MS = 200;
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -693,7 +693,7 @@ describe("bridge failure-tracking (T-171)", () => {
     const healthyDeliveries = { count: 0 };
     const responseHolder = opts.deadResponseHolder ?? { ok: false };
 
-    const stubFetch: typeof fetch = ((
+    const stubFetch: typeof fetch = (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
@@ -715,7 +715,7 @@ describe("bridge failure-tracking (T-171)", () => {
         return Promise.resolve(new Response(null, { status: 202 }));
       }
       return Promise.resolve(new Response(null, { status: 202 }));
-    }) as typeof fetch;
+    };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
@@ -919,17 +919,15 @@ describe("T-233 — unmapped integration handling", () => {
       integrationRef: intUnmapped,
     });
 
-    const stubFetch: typeof fetch = (() =>
-      Promise.resolve(new Response(null, { status: 202 }))) as typeof fetch;
+    const stubFetch: typeof fetch = () =>
+      Promise.resolve(new Response(null, { status: 202 }));
     const stubFetchSpy = ((...args: Parameters<typeof fetch>) =>
       stubFetch(...args)) as typeof fetch;
     let fetchCalls = 0;
-    const trackingFetch: typeof fetch = ((
-      ...args: Parameters<typeof fetch>
-    ) => {
+    const trackingFetch: typeof fetch = (...args: Parameters<typeof fetch>) => {
       fetchCalls++;
       return stubFetchSpy(...args);
-    }) as typeof fetch;
+    };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       // Resolver returns null for THIS integration only — other

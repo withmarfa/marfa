@@ -106,7 +106,7 @@ function loadConfig(): WranglerControlConfig {
   // entry throw on parse. The throw is the load-bearing invariant —
   // any future "Just append my new binding to the last entry" mistake
   // fails CI loudly.
-  return parseToml(text) as WranglerControlConfig;
+  return parseToml(text);
 }
 
 describe("wrangler.control.toml — structural freshness (T-245)", () => {

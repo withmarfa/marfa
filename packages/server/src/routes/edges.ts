@@ -347,7 +347,7 @@ export function edgeRoutes(storage: Storage) {
     // Reject attempts to change immutable fields — extra insurance beyond
     // the schema (Zod only accepts `properties` in the body, but guard against
     // future body-schema relaxation).
-    const bodyKeys = Object.keys(body as object);
+    const bodyKeys = Object.keys(body);
     for (const k of bodyKeys) {
       if (k !== "properties") {
         throw new MarfaError(

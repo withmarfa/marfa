@@ -76,7 +76,7 @@ function isInTrusted(
     try {
       // ipaddr.js typings split IPv4/IPv6 match overloads; the kinds match
       // so the unsafe cast is OK at runtime.
-      if (addr.match(range as never)) return true;
+      if (addr.match(range)) return true;
     } catch {
       // mismatched kinds shouldn't reach here, but ignore if they do
     }

@@ -489,10 +489,7 @@ export function connectionConfigureRoutes(
     // would then complain the default-write calendar isn't ticked
     // (because it lost the rest of the array).
     const form = await c.req.parseBody({ all: true });
-    const parsed = parseConfigurePayload(
-      form as Record<string, unknown>,
-      validTargetTypes,
-    );
+    const parsed = parseConfigurePayload(form, validTargetTypes);
     if (!parsed.ok) {
       setNoStore(c);
       return c.html(renderConfigureError(parsed.error), 400);

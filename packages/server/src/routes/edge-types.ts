@@ -7,12 +7,7 @@ import {
   unregisterEdgeTypeSchema,
   isValidTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  EdgeCardinality,
-  EdgeCascade,
-  EdgeTypeSchema,
-  FieldDefinition,
-} from "@withmarfa/shared";
+import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -224,10 +219,10 @@ export function edgeTypeRoutes(storage: Storage) {
       id: body.id,
       ...(body.label !== undefined && { label: body.label }),
       ...(body.description !== undefined && { description: body.description }),
-      cardinality: body.cardinality as EdgeCardinality,
+      cardinality: body.cardinality,
       source_type_constraints: body.source_type_constraints ?? ["*"],
       target_type_constraints: body.target_type_constraints ?? ["*"],
-      cascade_on_delete: (body.cascade_on_delete ?? "orphan") as EdgeCascade,
+      cascade_on_delete: body.cascade_on_delete ?? "orphan",
       property_schema: (body.property_schema ?? {}) as Record<
         string,
         FieldDefinition

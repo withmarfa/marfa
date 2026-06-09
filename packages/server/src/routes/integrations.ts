@@ -279,7 +279,7 @@ export function integrationRoutes(
       summary: manifest.description,
       direction: manifest.direction,
       runtime_compatibility: manifest.runtime_compatibility,
-      manifest: manifest as unknown as Record<string, unknown>,
+      manifest: manifest,
       registered_at: now,
     };
     const item = await storage.items.create(

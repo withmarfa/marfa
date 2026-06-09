@@ -224,7 +224,7 @@ export async function seedOauthBearer(
     disabled: false,
     createdAt: now,
     updatedAt: now,
-  } as Record<string, unknown>);
+  });
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
   // Project the system.connection app-grant. The /security page reads

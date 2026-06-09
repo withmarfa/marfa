@@ -123,7 +123,7 @@ function inMemoryCursor(snapshot: Record<string, unknown>): {
  *  multiple integrations can share the singleton runtime-sdk registry
  *  inside the test process. */
 function makeAppFetch(apiUrl: string): typeof fetch {
-  return ((input: string | URL | Request, init?: RequestInit) => {
+  return (input: string | URL | Request, init?: RequestInit) => {
     const urlStr =
       typeof input === "string"
         ? input
@@ -134,7 +134,7 @@ function makeAppFetch(apiUrl: string): typeof fetch {
       ? urlStr.slice(apiUrl.length)
       : urlStr;
     return Promise.resolve(ctx.app.request(path, init));
-  }) as typeof fetch;
+  };
 }
 
 function makeDirectDispatch(

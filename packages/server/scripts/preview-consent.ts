@@ -143,7 +143,7 @@ for (const fixture of FIXTURES) {
       const operationPart = lastColon > 0 ? literal.slice(lastColon + 1) : "";
       const operation: ParsedScope["operation"] =
         operationPart === "write" ? "write" : "read";
-      allScopes.push({ typePattern, operation } as ParsedScope);
+      allScopes.push({ typePattern, operation });
     }
   }
   const descriptions = buildScopeDescriptions(allScopes);

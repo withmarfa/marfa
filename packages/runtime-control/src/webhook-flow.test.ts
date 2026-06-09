@@ -64,7 +64,7 @@ function mockMarfaFetch(
     fail?: boolean;
   } = {},
 ): typeof fetch {
-  return ((input: RequestInfo | URL) => {
+  return (input: RequestInfo | URL) => {
     const url =
       typeof input === "string"
         ? input
@@ -81,7 +81,7 @@ function mockMarfaFetch(
       );
     }
     return Promise.resolve(new Response("not found", { status: 404 }));
-  }) as typeof fetch;
+  };
 }
 
 async function sign(body: ArrayBuffer, secret: string): Promise<string> {

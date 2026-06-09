@@ -358,7 +358,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     originatingConnectionId: cycle.originatingConnectionId,
     hopCount: cycle.hopCount,
     eventId,
-  } as ItemEventWithId);
+  });
   return eventId;
 }
 
@@ -397,7 +397,7 @@ export async function publishEdge(
     originatingConnectionId: cycle.originatingConnectionId,
     hopCount: cycle.hopCount,
     eventId,
-  } as EdgeEventWithId);
+  });
   return eventId;
 }
 

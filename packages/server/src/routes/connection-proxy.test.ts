@@ -153,7 +153,7 @@ type FetchHandler = (req: { url: string; init: RequestInit }) => Response;
 
 function installFetchScript(handlers: FetchHandler[]): { calls: number } {
   const state = { calls: 0 };
-  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+  globalThis.fetch = (...args: Parameters<typeof fetch>) => {
     const arg0 = args[0];
     const url =
       typeof arg0 === "string"
@@ -170,7 +170,7 @@ function installFetchScript(handlers: FetchHandler[]): { calls: number } {
     }
     state.calls += 1;
     return Promise.resolve(next({ url, init }));
-  }) as typeof fetch;
+  };
   return state;
 }
 

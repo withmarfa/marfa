@@ -932,14 +932,14 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     obj.version_policy !== null &&
     !Array.isArray(obj.version_policy)
   ) {
-    schema.version_policy = obj.version_policy as VersionPolicy;
+    schema.version_policy = obj.version_policy;
   }
   if (
     typeof obj.merge_policy === "object" &&
     obj.merge_policy !== null &&
     !Array.isArray(obj.merge_policy)
   ) {
-    schema.merge_policy = obj.merge_policy as MergePolicy;
+    schema.merge_policy = obj.merge_policy;
   }
 
   return { success: true, data: schema };

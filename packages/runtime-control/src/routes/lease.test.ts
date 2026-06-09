@@ -25,7 +25,7 @@ interface FetchCall {
 }
 
 function mockMarfaFetch(captured: FetchCall[]): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
         ? input
@@ -55,14 +55,14 @@ function mockMarfaFetch(captured: FetchCall[]): typeof fetch {
       );
     }
     return Promise.resolve(new Response("nope", { status: 404 }));
-  }) as typeof fetch;
+  };
 }
 
 function buildTestEnv(): ControlPlaneEnv {
   return {
     MARFA_API_URL: "https://staging.test",
     MARFA_RUNTIME_BROKER_KEY: "broker-key-test",
-  } as unknown as ControlPlaneEnv;
+  };
 }
 
 describe("POST /lease/:connection_id/runtime (T-260)", () => {

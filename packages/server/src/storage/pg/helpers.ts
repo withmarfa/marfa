@@ -1,11 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import type {
-  Item,
-  ItemState,
-  Metadata,
-  Tier,
-  Version,
-} from "@withmarfa/shared";
+import type { Item, ItemState, Metadata, Version } from "@withmarfa/shared";
 import type { items, metadata, versions } from "./schema.js";
 
 type ItemRow = typeof items.$inferSelect;
@@ -14,9 +8,7 @@ type VersionRow = typeof versions.$inferSelect;
 
 export function rowToItem(row: ItemRow): Item {
   const tier =
-    row.tier === "library" || row.tier === "feed"
-      ? (row.tier as Tier)
-      : undefined;
+    row.tier === "library" || row.tier === "feed" ? row.tier : undefined;
   return {
     id: row.id,
     type: row.type,

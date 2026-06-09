@@ -59,7 +59,7 @@ export class PgTenantStore implements TenantStore {
       .from(tenants)
       .where(eq(tenants.id, id));
     if (!row?.config) return null;
-    return row.config as TenantConfig;
+    return row.config;
   }
 
   async updateConfig(id: string, config: TenantConfig): Promise<void> {

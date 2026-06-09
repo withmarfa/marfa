@@ -82,7 +82,7 @@ interface FetchHarnessOpts {
 
 function buildFetchHarness(opts: FetchHarnessOpts): typeof fetch {
   const ackCalls = opts.ackCalls ?? [];
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
         ? input
@@ -192,7 +192,7 @@ function buildFetchHarness(opts: FetchHarnessOpts): typeof fetch {
         headers: { "content-type": "application/json" },
       }),
     );
-  }) as unknown as typeof fetch;
+  };
 }
 
 function mkMessage(

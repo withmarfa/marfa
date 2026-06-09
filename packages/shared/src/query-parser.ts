@@ -377,7 +377,7 @@ function parseValue(token: Token): FilterValue {
     case TokenKind.Number:
     case TokenKind.Boolean:
     case TokenKind.Null:
-      return token.value as FilterValue;
+      return token.value;
     default:
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -499,7 +499,7 @@ export function parseFilter(input: string): FilterExpression {
         );
       }
 
-      logical = logValue as LogicalOp;
+      logical = logValue;
       pos++;
 
       // Must have another condition after a logical operator

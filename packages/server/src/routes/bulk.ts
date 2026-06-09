@@ -29,7 +29,7 @@ import {
   isValidTypeIdentifier,
   ITEM_STATES,
 } from "@withmarfa/shared";
-import type { ItemState, Item } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
@@ -773,7 +773,7 @@ export function bulkRoutes(storage: Storage) {
       const page = await storage.items.list({
         tenantId,
         type: filter.type,
-        state: filter.state as ItemState | undefined,
+        state: filter.state,
         source: filter.source,
         tier: filter.tier,
         tags: filter.tags,
