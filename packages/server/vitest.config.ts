@@ -20,18 +20,20 @@ export default defineConfig({
     testTimeout: 20_000,
     hookTimeout: 60_000,
 
-    // Cap worker forks to keep PG resource contention sane. The
-    // template-DB pattern serialises clones briefly (CREATE DATABASE
-    // FROM TEMPLATE), and each per-file pool holds a few connections.
-    // 6 workers × (3 storage + 1 admin) ≈ 24 peak connections —
-    // comfortably under PG default `max_connections=100`. The
-    // template-DB pattern makes file-level parallelism safe here.
+    // Forks pool: each test file runs in its own child process, so the
+    // process-global pubsub EventEmitter and the cycle-context
+    // AsyncLocalStorage stay isolated per file. The template-DB pattern
+    // (one cloned database per file, see storage/pg/test-template.ts)
+    // makes that file-level parallelism PG-safe.
+    //
+    // Worker count is left at Vitest's default (cpus - 1). Pinning a
+    // project-level `maxWorkers` here would differ from the sibling
+    // projects' default, which forces Vitest to split this project into
+    // its own `sequence.groupOrder` scheduling group; that re-grouping
+    // starves the timing-sensitive cycle-attribution pubsub test under
+    // CI scheduling. Connection pressure is bounded instead by the
+    // per-file pool size (maxPoolSize: 3 in test-utils.ts) — see the
+    // connection-cap note in this package's CLAUDE.md.
     pool: "forks",
-    poolOptions: {
-      forks: {
-        maxForks: 6,
-        minForks: 1,
-      },
-    },
   },
 });
