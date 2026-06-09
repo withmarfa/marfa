@@ -37,7 +37,7 @@
  * visually-styled checkboxes so submission shape doesn't change.
  */
 
-import type { ParsedScope } from "@withmarfa/shared";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 
@@ -70,6 +70,15 @@ interface ConsentParams {
    * renders flat.
    */
   priorScopes?: readonly string[];
+  /**
+   * The configured permission bundles. When present (and not a re-consent
+   * diff), the screen renders the four-checkbox bundle view: one toggle per
+   * bundle (all on), with the granular scopes tucked behind a "Customise"
+   * disclosure. When absent, the screen falls back to the flat
+   * Identity / Read / Read-&-write grouping. The form contract is identical
+   * either way — the submitted `scopes` checkboxes carry literal values.
+   */
+  bundles?: PermissionBundle[];
   /**
    * When set, renders an inline error banner above the form. Used when
    * the page is reached via a redirect from a failed consent submission
@@ -109,16 +118,24 @@ export function renderConsentScreen(params: ConsentParams): string {
   const descriptionFor = (typePattern: string): string | undefined =>
     params.descriptions?.[typePattern];
 
-  /** A single grant-this-permission row — toggle on the right. */
-  const scopeRow = (scope: ParsedScope, opts?: { checked?: boolean }) => {
+  /** A single grant-this-permission row — toggle on the right. When
+   *  `bundleId` is set the checkbox is tagged so the bundle master toggle
+   *  can drive it (and member edits can reflect back onto the master). */
+  const scopeRow = (
+    scope: ParsedScope,
+    opts?: { checked?: boolean; bundleId?: string },
+  ) => {
     const literal = scopeLiteralFor(scope);
     const description = descriptionFor(scope.typePattern);
     const human = description ?? literal; // literal fallback is rare; every core/OIDC scope has a description
     const checked = opts?.checked === false ? "" : "checked";
+    const memberAttr = opts?.bundleId
+      ? ` data-bundle-member="${escapeHtml(opts.bundleId)}"`
+      : "";
     return `<label class="scope-row">
       <span class="scope-row__text">${escapeHtml(human)}</span>
       <span class="toggle">
-        <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" ${checked}>
+        <input type="checkbox" name="scopes" value="${escapeHtml(literal)}"${memberAttr} ${checked}>
         <span class="toggle__track" aria-hidden="true"></span>
       </span>
     </label>`;
@@ -178,71 +195,142 @@ export function renderConsentScreen(params: ConsentParams): string {
   const safeClientId = escapeHtml(params.clientId);
   const safeOauthQuery = escapeHtml(params.oauthQuery);
   const showDiff = params.priorScopes !== undefined;
+  const showBundles =
+    !showDiff && Array.isArray(params.bundles) && params.bundles.length > 0;
 
-  const sections: SectionDescriptor[] = [];
+  /** Four-bucket view: one master toggle per bundle (all on by default),
+   *  with each bundle's granular scopes tucked behind a "Customise"
+   *  disclosure. The submitted `scopes` checkboxes live inside each bundle
+   *  (checked + hidden), so the no-JS fallback grants the full default set;
+   *  JS links each master toggle to its members and Customise reveals them.
+   *  The decision handler's contract is unchanged — it reads `scopes`. */
+  const renderBundles = (): string => {
+    const assigned = new Set<string>();
+    const groups = (params.bundles ?? [])
+      .map((bundle) => {
+        const inBundle = new Set(bundle.scopes);
+        const members = params.scopes.filter((s) => {
+          const lit = scopeLiteralFor(s);
+          if (assigned.has(lit) || !inBundle.has(lit)) return false;
+          assigned.add(lit);
+          return true;
+        });
+        return { bundle, members };
+      })
+      .filter((g) => g.members.length > 0);
 
-  if (showDiff) {
-    const nextLiterals = params.scopes.map(scopeLiteralFor);
-    const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
-    const parsedByLiteral = new Map<string, ParsedScope>();
-    for (const scope of params.scopes) {
-      parsedByLiteral.set(scopeLiteralFor(scope), scope);
-    }
-    const lookup = (lits: readonly string[]): ParsedScope[] =>
-      lits
-        .map((lit) => parsedByLiteral.get(lit))
-        .filter((s): s is ParsedScope => s !== undefined);
+    const residual = params.scopes.filter(
+      (s) => !assigned.has(scopeLiteralFor(s)),
+    );
 
-    sections.push({
-      label: "New permissions",
-      hint: "These were not part of the previous grant.",
-      modifier: "added",
-      scopes: lookup(diff.added),
-    });
-    sections.push({
-      label: "Previously granted",
-      modifier: "kept",
-      scopes: lookup(diff.kept),
-    });
+    const bundleBlocks = groups
+      .map(({ bundle, members }) => {
+        const granular = members
+          .map((s) => scopeRow(s, { bundleId: bundle.id }))
+          .join("");
+        return `<div class="bundle">
+          <label class="bundle-row">
+            <span class="bundle-row__text">
+              <span class="bundle-row__label">${escapeHtml(bundle.label)}</span>
+              <span class="bundle-row__desc">${escapeHtml(bundle.description)}</span>
+            </span>
+            <span class="toggle">
+              <input type="checkbox" class="bundle-toggle" data-bundle-toggle="${escapeHtml(bundle.id)}" checked aria-label="${escapeHtml(bundle.label)}">
+              <span class="toggle__track" aria-hidden="true"></span>
+            </span>
+          </label>
+          <div class="bundle-scopes" data-bundle-scopes hidden>${granular}</div>
+        </div>`;
+      })
+      .join("");
 
-    // Wrap removed literals in ParsedScope objects so the render loop stays uniform.
-    const removedAsParsed: ParsedScope[] = diff.removed.map((literal) => {
-      const lastColon = literal.lastIndexOf(":");
-      const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
-      const operationPart = lastColon > 0 ? literal.slice(lastColon + 1) : "";
-      const operation: ParsedScope["operation"] =
-        operationPart === "write" ? "write" : "read";
-      return {
-        typePattern,
-        operation,
-      } as ParsedScope;
-    });
-    sections.push({
-      label: "No longer requested",
-      hint: "These were granted before but the app is not asking for them now. They will be dropped.",
-      modifier: "removed",
-      scopes: removedAsParsed,
-    });
+    // Requested scopes that belong to no bundle (e.g. offline_access).
+    // Granted by default, surfaced only under Customise so the four-box
+    // view stays clean.
+    const residualBlock =
+      residual.length > 0
+        ? `<div class="bundle bundle--residual">
+            <div class="bundle-scopes" data-bundle-scopes hidden>
+              <p class="bundle-scopes__head">Other</p>
+              ${residual.map((s) => scopeRow(s)).join("")}
+            </div>
+          </div>`
+        : "";
+
+    return `<div class="bundles">${bundleBlocks}${residualBlock}</div>
+      <button type="button" class="customise-toggle" data-customise aria-expanded="false">Customise permissions</button>`;
+  };
+
+  let contentHtml: string;
+  if (showBundles) {
+    contentHtml = renderBundles();
   } else {
-    const oidcScopes = params.scopes.filter((s) => s.kind === "oidc");
-    const readScopes = params.scopes.filter((s) => s.operation === "read");
-    const writeScopes = params.scopes.filter((s) => s.operation === "write");
+    const sections: SectionDescriptor[] = [];
 
-    sections.push({
-      label: "Identity",
-      scopes: oidcScopes,
-    });
-    sections.push({
-      label: "Read",
-      scopes: readScopes,
-    });
-    sections.push({
-      label: "Read & write",
-      scopes: writeScopes,
-    });
+    if (showDiff) {
+      const nextLiterals = params.scopes.map(scopeLiteralFor);
+      const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
+      const parsedByLiteral = new Map<string, ParsedScope>();
+      for (const scope of params.scopes) {
+        parsedByLiteral.set(scopeLiteralFor(scope), scope);
+      }
+      const lookup = (lits: readonly string[]): ParsedScope[] =>
+        lits
+          .map((lit) => parsedByLiteral.get(lit))
+          .filter((s): s is ParsedScope => s !== undefined);
+
+      sections.push({
+        label: "New permissions",
+        hint: "These were not part of the previous grant.",
+        modifier: "added",
+        scopes: lookup(diff.added),
+      });
+      sections.push({
+        label: "Previously granted",
+        modifier: "kept",
+        scopes: lookup(diff.kept),
+      });
+
+      // Wrap removed literals in ParsedScope objects so the render loop stays uniform.
+      const removedAsParsed: ParsedScope[] = diff.removed.map((literal) => {
+        const lastColon = literal.lastIndexOf(":");
+        const typePattern =
+          lastColon > 0 ? literal.slice(0, lastColon) : literal;
+        const operationPart = lastColon > 0 ? literal.slice(lastColon + 1) : "";
+        const operation: ParsedScope["operation"] =
+          operationPart === "write" ? "write" : "read";
+        return {
+          typePattern,
+          operation,
+        } as ParsedScope;
+      });
+      sections.push({
+        label: "No longer requested",
+        hint: "These were granted before but the app is not asking for them now. They will be dropped.",
+        modifier: "removed",
+        scopes: removedAsParsed,
+      });
+    } else {
+      const oidcScopes = params.scopes.filter((s) => s.kind === "oidc");
+      const readScopes = params.scopes.filter((s) => s.operation === "read");
+      const writeScopes = params.scopes.filter((s) => s.operation === "write");
+
+      sections.push({
+        label: "Identity",
+        scopes: oidcScopes,
+      });
+      sections.push({
+        label: "Read",
+        scopes: readScopes,
+      });
+      sections.push({
+        label: "Read & write",
+        scopes: writeScopes,
+      });
+    }
+
+    contentHtml = sections.map(renderSection).join("");
   }
-
-  const sectionsHtml = sections.map(renderSection).join("");
 
   const titleText = showDiff ? "Update access" : "Allow access";
   const ledeText = showDiff
@@ -276,6 +364,36 @@ export function renderConsentScreen(params: ConsentParams): string {
           row.addEventListener('click', function (e) { e.stopPropagation(); });
         });
       });
+
+      // Bundle view: a Customise button reveals the granular scopes, and
+      // each bundle master toggle drives its member checkboxes (the ones
+      // that actually submit). Member edits reflect back onto the master.
+      var customise = document.querySelector('[data-customise]');
+      if (customise) {
+        customise.addEventListener('click', function () {
+          var open = customise.getAttribute('aria-expanded') === 'true';
+          document.querySelectorAll('[data-bundle-scopes]').forEach(function (el) {
+            if (open) el.setAttribute('hidden', ''); else el.removeAttribute('hidden');
+          });
+          customise.setAttribute('aria-expanded', open ? 'false' : 'true');
+          customise.textContent = open ? 'Customise permissions' : 'Hide details';
+        });
+      }
+      document.querySelectorAll('[data-bundle-toggle]').forEach(function (master) {
+        var id = master.getAttribute('data-bundle-toggle');
+        var members = document.querySelectorAll('input[data-bundle-member="' + id + '"]');
+        master.addEventListener('change', function () {
+          members.forEach(function (m) { m.checked = master.checked; });
+        });
+        members.forEach(function (m) {
+          m.addEventListener('change', function () {
+            var any = false, all = true;
+            members.forEach(function (x) { if (x.checked) any = true; else all = false; });
+            master.checked = any;
+            master.indeterminate = any && !all;
+          });
+        });
+      });
     })();
   `
     .trim()
@@ -291,7 +409,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       <input type="hidden" name="client_id" value="${safeClientId}">
       <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
 
-      ${sectionsHtml}
+      ${contentHtml}
 
       <div class="actions">
         <button type="submit" name="accept" value="false" class="btn">Deny</button>
