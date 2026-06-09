@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { expandBundlesToScopes } from "@withmarfa/shared";
 import { buildAllowedScopes } from "./oauth-provider.js";
-import { DEFAULT_PERMISSION_BUNDLES, loadPermissionBundles } from "../config.js";
+import {
+  DEFAULT_PERMISSION_BUNDLES,
+  loadPermissionBundles,
+} from "../config.js";
 
 describe("buildAllowedScopes", () => {
   it("includes the global type wildcards (Customise full-access path)", () => {
@@ -44,7 +47,9 @@ describe("loadPermissionBundles", () => {
   });
 
   it("falls back to defaults on a non-array payload", () => {
-    expect(loadPermissionBundles('{"id":"x"}')).toBe(DEFAULT_PERMISSION_BUNDLES);
+    expect(loadPermissionBundles('{"id":"x"}')).toBe(
+      DEFAULT_PERMISSION_BUNDLES,
+    );
   });
 
   it("falls back to defaults when an entry is malformed", () => {

@@ -299,7 +299,10 @@ describe("OIDC scope literals", () => {
 
 describe("global type wildcard scope", () => {
   it("parses *:read and *:write", () => {
-    expect(parseScope("*:read")).toEqual({ typePattern: "*", operation: "read" });
+    expect(parseScope("*:read")).toEqual({
+      typePattern: "*",
+      operation: "read",
+    });
     expect(parseScope("*:write")).toEqual({
       typePattern: "*",
       operation: "write",
