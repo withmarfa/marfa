@@ -25,8 +25,14 @@
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { createAuthMiddleware } from "better-auth/api";
 import { createHmac } from "node:crypto";
-import { TYPE_REGISTRY, EDGE_TYPE_REGISTRY } from "@withmarfa/shared";
+import {
+  TYPE_REGISTRY,
+  EDGE_TYPE_REGISTRY,
+  expandBundlesToScopes,
+} from "@withmarfa/shared";
+import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
+import { getPermissionBundles } from "../config.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -51,22 +57,27 @@ interface HookCtxLite {
  * list grows as new metadata-layer mutations land. Mirrors what
  * `parseScope` in `@withmarfa/shared` recognises.
  */
-const METADATA_SUBRESOURCES = ["types"] as const;
+const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 
 /**
  * Build the complete list of scope literals the plugin will accept.
  * Includes OIDC literals + every concrete `<type>:<verb>` from the type
  * registry + every `edge.<edgeType>:<verb>` from the edge registry +
- * the metadata sub-resource grammar.
+ * the metadata sub-resource grammar + the global type wildcards
+ * (`*:read` / `*:write`, used by the consent screen's "Customise"
+ * full-access path) + every scope referenced by a configured permission
+ * bundle (namespace wildcards like `core.*:read` / `user.*:write` that
+ * cover runtime types the static registry never enumerates).
  *
  * Custom types registered at runtime via `POST /types` are NOT picked up
- * automatically — a server restart re-enumerates from the (now-larger)
- * registry. This is an explicit tradeoff: the plugin's scope-allowlist
- * is static, and supporting per-tenant dynamic allowlists would require
- * forking the validation path. Restart cost is acceptable; document in
- * the operator runbook if it becomes friction.
+ * as concrete scopes — a server restart re-enumerates from the
+ * (now-larger) registry. The namespace-wildcard bundle scopes are how an
+ * app reaches its own `user.*` types without that restart: the wildcard is
+ * granted, and matches whatever `user.*` types exist at check time.
  */
-export function buildAllowedScopes(): string[] {
+export function buildAllowedScopes(
+  permissionBundles: PermissionBundle[] = getPermissionBundles(),
+): string[] {
   const out = new Set<string>([
     // OIDC literals
     "openid",
@@ -76,6 +87,9 @@ export function buildAllowedScopes(): string[] {
     // Metadata top-level
     "metadata:read",
     "metadata:write",
+    // Global type wildcards — full access, offered only via "Customise".
+    "*:read",
+    "*:write",
   ]);
 
   // Item type scopes: `<typeId>:read|write` for every registered type.
@@ -97,6 +111,11 @@ export function buildAllowedScopes(): string[] {
   for (const sub of METADATA_SUBRESOURCES) {
     out.add(`metadata.${sub}:read`);
     out.add(`metadata.${sub}:write`);
+  }
+
+  // Every scope referenced by a configured bundle (namespace wildcards).
+  for (const scope of expandBundlesToScopes(permissionBundles)) {
+    out.add(scope);
   }
 
   return Array.from(out).sort();
