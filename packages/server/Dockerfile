@@ -18,7 +18,7 @@
 # be a production dependency (it is) — a bare --prod install would otherwise
 # drop it and the container would crash at boot.
 
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 
 FROM node:${NODE_VERSION}-slim AS base
 ENV PNPM_HOME=/pnpm
