@@ -33,7 +33,9 @@
 # Optional env:
 #   - SKIP_MIGRATE             (set to 1 to skip the pre-deploy migrate step;
 #                               only when the DB is known to be already migrated)
-#   - SERVER_IMAGE_TAG         (image tag in the managed registry; default "staging"/"prod")
+#   - SERVER_IMAGE_TAG         (image tag in the managed registry; default is an
+#                               IMMUTABLE per-build tag "<env>-<short-git-sha>",
+#                               e.g. "staging-1a2b3c4")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
 #   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
 #   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
@@ -42,11 +44,26 @@
 #   - STAGING_WORKERS_SUBDOMAIN (account workers.dev subdomain, for the staging auth base URL)
 #
 # The image must already be built (linux/amd64) and pushed to the managed
-# registry via:
+# registry under the SAME tag this script resolves. The default tag is the
+# IMMUTABLE per-build "<env>-<short-git-sha>" — a fresh tag per commit, so a
+# new image never reuses an existing reference string. This matters because
+# `wrangler deploy` diffs the rendered config: if the image reference is byte-
+# identical to what's deployed (e.g. new bits pushed to a mutable ":staging"
+# tag), wrangler reports "no changes to be made" and does NOT roll the new
+# image — the container serves stale bits while the deploy looks successful.
+# A SHA-suffixed tag changes the reference on every build, forcing the roll.
+#
+# Build → push → deploy, all on the same commit's SHA tag:
+#   TAG="<env>-$(git rev-parse --short HEAD)"   # e.g. staging-1a2b3c4
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile \
-#     -t marfa-server:<tag> --load .
-#   wrangler containers push marfa-server:<tag>
-# (CI does this on the self-hosted runner — see .github/workflows/deploy-server-container.yml.)
+#     -t "marfa-server:$TAG" --load .
+#   wrangler containers push "marfa-server:$TAG"
+#   ./infra/cloudflare/scripts/deploy-server-container.sh <staging|prod>
+# The deploy step recomputes the same default tag from the current HEAD, so as
+# long as the working tree is on the commit you built, the tags line up with no
+# extra wiring. (CI passes the tag explicitly via SERVER_IMAGE_TAG — see
+# .github/workflows/deploy-server-container.yml.) To deploy an arbitrary
+# pre-pushed tag, export SERVER_IMAGE_TAG (or the full SERVER_IMAGE) instead.
 # Secrets are set separately via init-server-container-secrets.sh.
 
 set -euo pipefail
@@ -70,6 +87,18 @@ if (( ${#MISSING[@]} > 0 )); then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Immutable per-build image tag: "<env>-<short-git-sha>". Defaulting to a tag
+# that changes every commit is the whole point — a mutable ":staging" tag lets
+# `wrangler deploy` see an unchanged image reference and skip the roll ("no
+# changes to be made"), leaving the container on stale bits. An explicit
+# SERVER_IMAGE_TAG / SERVER_IMAGE override still wins (set per-env below).
+GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+if [[ -z "$GIT_SHA" && -z "${SERVER_IMAGE_TAG:-}" && -z "${SERVER_IMAGE:-}" ]]; then
+  echo "error: could not resolve a git SHA for the default image tag." >&2
+  echo "  run from inside the repo, or set SERVER_IMAGE_TAG / SERVER_IMAGE explicitly." >&2
+  exit 1
+fi
 
 # Migrate-then-deploy: apply pending schema migrations against the direct Neon
 # URL BEFORE rolling the container. set -e aborts the whole deploy if this
@@ -111,7 +140,7 @@ if [[ "$ENV_NAME" == "staging" ]]; then
     export V_AUTH_BASE_URL="${STAGING_API_BASE_URL:-https://marfa-server-staging.workers.dev}"
   fi
   export V_CORS_ORIGINS="${STAGING_CORS_ORIGINS:-$V_AUTH_BASE_URL}"
-  export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-staging}"
+  export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-staging-${GIT_SHA}}"
 else
   export SERVER_WORKER_NAME="marfa-server"
   export SERVER_WORKERS_DEV="false"
@@ -120,16 +149,22 @@ else
   export V_S3_BUCKET="${PROD_R2_BUCKET:-marfa-blobs-prod}"
   export V_AUTH_BASE_URL="https://api.marfa.so"
   export V_CORS_ORIGINS="${PROD_CORS_ORIGINS:-https://api.marfa.so}"
-  export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod}"
+  export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod-${GIT_SHA}}"
 fi
 
 export SERVER_IMAGE="${SERVER_IMAGE:-registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/marfa-server:${SERVER_IMAGE_TAG}}"
 
+echo "→ Image tag: $SERVER_IMAGE_TAG"
+echo "→ Image ref: $SERVER_IMAGE"
+echo "  (this exact tag must already be built + pushed — see the build→push→deploy"
+echo "   sequence in this script's header; the default tag tracks the current HEAD)"
+
 PKG_DIR="$(cd "$SCRIPT_DIR/../server-container" && pwd)"
 SOURCE_JSONC="$PKG_DIR/wrangler.jsonc"
 RENDERED_JSONC="$PKG_DIR/.wrangler.rendered.jsonc"
+DEPLOY_LOG=""
 
-cleanup() { rm -f "$RENDERED_JSONC"; }
+cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
 TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT}'
@@ -148,4 +183,27 @@ echo "→ Rendered config preview:"
 grep -E '"name"|"image"|"instance_type"|"max_instances"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL' "$RENDERED_JSONC" | sed 's/^/  /'
 
 echo "→ wrangler deploy --config <rendered> ($ENV_NAME)"
-wrangler deploy --config "$RENDERED_JSONC" "$@"
+# Capture the output so we can detect the silent-no-roll case below, while still
+# streaming it live. PIPESTATUS preserves wrangler's exit code through the tee.
+DEPLOY_LOG="$(mktemp)"
+wrangler deploy --config "$RENDERED_JSONC" "$@" 2>&1 | tee "$DEPLOY_LOG"
+DEPLOY_RC="${PIPESTATUS[0]}"
+if (( DEPLOY_RC != 0 )); then
+  exit "$DEPLOY_RC"
+fi
+
+# Silent-no-roll guard. When the rendered image reference is byte-identical to
+# what's already deployed, wrangler prints "no changes to be made" and skips the
+# container roll — so a freshly pushed image under a reused tag never goes live.
+# The default SHA-suffixed tag prevents this; warn loudly if it happens anyway
+# (e.g. a redeploy of an already-deployed SHA, or an explicit mutable override).
+# Not fatal: a genuine no-op redeploy is legitimate.
+if grep -qiF "no changes to be made" "$DEPLOY_LOG"; then
+  echo "" >&2
+  echo "⚠⚠⚠ WARNING: wrangler reported \"no changes to be made\". ⚠⚠⚠" >&2
+  echo "  The container app was NOT rolled. If you pushed new image bits under" >&2
+  echo "  the SAME tag ($SERVER_IMAGE_TAG), they are NOT live — the server is" >&2
+  echo "  still serving the previously deployed image for this reference." >&2
+  echo "  Fix: rebuild + push under a fresh tag (the default <env>-<sha> changes" >&2
+  echo "  per commit) and redeploy, or bump SERVER_IMAGE_TAG to force a new ref." >&2
+fi
