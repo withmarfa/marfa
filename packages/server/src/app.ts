@@ -3,6 +3,7 @@ import { finalizeOpenAPISpec } from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
+import { getPermissionBundles } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
@@ -453,6 +454,11 @@ export function createApp(
       // `${authBaseUrl}/auth/device` (initiation; the polled token
       // exchange happens at `/auth/device/token`).
       payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
+      // Marfa extension: advertise the named permission bundles so clients
+      // can render / request the four-checkbox consent without hard-coding
+      // the scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.
+      payload.marfa_permission_bundles =
+        config.permissionBundles ?? getPermissionBundles();
       const headers = new Headers(upstream.headers);
       headers.set("content-type", "application/json");
       return new Response(JSON.stringify(payload), {

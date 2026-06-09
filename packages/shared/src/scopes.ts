@@ -7,6 +7,7 @@ import type { MetadataPermission, TypePermission } from "./types.js";
 /**
  * Parsed representation of a scope string. Five shapes today:
  *   - item-type scope:  "core.note:read"     → kind undefined, typePattern="core.note"
+ *                       ("*:read" / "*:write" are the global type wildcard)
  *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
@@ -40,7 +41,13 @@ export interface ParsedScope {
   oidcScope?: OidcScope;
 }
 
-const SCOPE_RE = /^([a-z][a-z0-9_./*-]+):(read|write)$/;
+// The bare `*` alternative admits the global wildcard scope (`*:read` /
+// `*:write`) — a single grant covering every item type, including runtime
+// `user.*` types that are never enumerated in the static scope allowlist.
+// It projects to a `{ "*": <verb> }` type-permission, which `resolveTypePermission`
+// matches against any type. `parent.*` subtree wildcards already match the
+// second alternative (they start with a letter).
+const SCOPE_RE = /^(\*|[a-z][a-z0-9_./*-]+):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
 const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
@@ -324,4 +331,45 @@ export function edgePermissionCovers(
     return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Permission bundles
+// ---------------------------------------------------------------------------
+
+/**
+ * A named, human-facing grouping of scopes rendered on the consent screen as a
+ * single checkbox ("Read your stuff", "Write your stuff", …). Bundles are
+ * defined in server config and advertised on the discovery document so clients
+ * can request them without hard-coding the scope grammar. They are a
+ * presentation + request convenience: the issued token still carries the
+ * concrete scopes a bundle expands to, enforced through the usual permission
+ * maps. The generous default bundle expands to the `*` wildcard so an app
+ * works against a tenant's runtime `user.*` types without those types ever
+ * appearing in the static scope allowlist.
+ */
+export interface PermissionBundle {
+  /** Stable identifier, e.g. "read", "write", "profile", "connected". */
+  id: string;
+  /** Plain-language label for the consent checkbox, e.g. "Read your stuff". */
+  label: string;
+  /** One-line description of what granting the bundle allows. */
+  description: string;
+  /** The concrete scope strings the bundle expands to. */
+  scopes: string[];
+  /** Whether the bundle is pre-ticked (granted) by default on consent. */
+  default_on: boolean;
+}
+
+/**
+ * Expands a set of permission bundles into a de-duplicated, sorted scope list.
+ * Clients use it to turn a bundle selection into an authorize-request scope
+ * string; the server uses it to resolve a consent submission back to scopes.
+ */
+export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
+  const out = new Set<string>();
+  for (const bundle of bundles) {
+    for (const scope of bundle.scopes) out.add(scope);
+  }
+  return Array.from(out).sort();
 }

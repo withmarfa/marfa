@@ -1,3 +1,4 @@
+import type { PermissionBundle } from "@withmarfa/shared";
 import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 
@@ -35,6 +36,11 @@ export interface AppConfig {
   s3SecretAccessKey: string;
   apiKeySalt: string;
   corsOrigins: string[];
+  /** Named consent-screen permission bundles (see `DEFAULT_PERMISSION_BUNDLES`).
+   *  Overridable via `MARFA_PERMISSION_BUNDLES`. Optional on the type so test
+   *  contexts that construct AppConfig literals compile; `loadConfig` always
+   *  populates it, and readers fall back to `getPermissionBundles()`. */
+  permissionBundles?: PermissionBundle[];
   cdnBaseUrl: string;
   authMode: "hosted" | "keys";
   versionSnapshotIntervalMs: number;
@@ -336,6 +342,124 @@ export function parseOtelHeaders(
   return out;
 }
 
+/**
+ * The default four consent-screen permission bundles. Each renders as one
+ * plain-language checkbox (all pre-ticked); the issued token carries the
+ * concrete scopes the bundle expands to, enforced through the usual
+ * permission maps.
+ *
+ * `read` / `write` use per-namespace wildcards covering the user's content
+ * (`core.*`, `user.*`, `app.*`, and the integration namespaces) plus edges
+ * and tags. They deliberately EXCLUDE `system.*` so an app signed into
+ * "your stuff" can't read your security internals (credentials, devices,
+ * webhooks); `user.*` is what makes an app work against its own runtime
+ * types without those types appearing in the static scope allowlist. The
+ * separate `connected` bundle grants read on `system.connection` /
+ * `system.integration` only. Full `*:read` / `*:write` stays available via
+ * the consent screen's "Customise" path, never by default.
+ */
+export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
+  {
+    id: "read",
+    label: "Read your stuff",
+    description: "See your items, tags, files, and how they connect.",
+    scopes: [
+      "core.*:read",
+      "user.*:read",
+      "app.*:read",
+      "google.*:read",
+      "raindrop.*:read",
+      "readwise.*:read",
+      "todoist.*:read",
+      "withmarfa.*:read",
+      "edge.*:read",
+      "metadata:read",
+    ],
+    default_on: true,
+  },
+  {
+    id: "write",
+    label: "Write your stuff",
+    description:
+      "Create, change, and organize your data — and let the app set up the data types it needs.",
+    scopes: [
+      "core.*:write",
+      "user.*:write",
+      "app.*:write",
+      "google.*:write",
+      "raindrop.*:write",
+      "readwise.*:write",
+      "todoist.*:write",
+      "withmarfa.*:write",
+      "edge.*:write",
+      "metadata:write",
+      "metadata.types:write",
+      "metadata.edge_types:write",
+    ],
+    default_on: true,
+  },
+  {
+    id: "profile",
+    label: "Your profile",
+    description: "See and update your name and account details.",
+    scopes: ["openid", "profile", "email"],
+    default_on: true,
+  },
+  {
+    id: "connected",
+    label: "Connected services",
+    description:
+      "See the outside services connected to your space, like Google.",
+    scopes: ["system.connection:read", "system.integration:read"],
+    default_on: true,
+  },
+];
+
+/**
+ * Parse the operator override `MARFA_PERMISSION_BUNDLES` (a JSON array of
+ * `PermissionBundle`). Falls back to {@link DEFAULT_PERMISSION_BUNDLES} on
+ * absent, non-array, or malformed input — a bad override must never strand
+ * the consent screen with zero bundles.
+ */
+export function loadPermissionBundles(
+  raw: string | undefined,
+): PermissionBundle[] {
+  if (!raw) return DEFAULT_PERMISSION_BUNDLES;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.warn(
+        "MARFA_PERMISSION_BUNDLES is not a JSON array; using defaults.",
+      );
+      return DEFAULT_PERMISSION_BUNDLES;
+    }
+    const valid = parsed.every(
+      (b): b is PermissionBundle =>
+        typeof b === "object" &&
+        b !== null &&
+        typeof (b as PermissionBundle).id === "string" &&
+        Array.isArray((b as PermissionBundle).scopes),
+    );
+    if (!valid) {
+      console.warn(
+        "MARFA_PERMISSION_BUNDLES has malformed entries; using defaults.",
+      );
+      return DEFAULT_PERMISSION_BUNDLES;
+    }
+    return parsed;
+  } catch (err) {
+    console.warn(
+      `Failed to parse MARFA_PERMISSION_BUNDLES (${String(err)}); using defaults.`,
+    );
+    return DEFAULT_PERMISSION_BUNDLES;
+  }
+}
+
+/** Resolve the active permission bundles from the environment. */
+export function getPermissionBundles(): PermissionBundle[] {
+  return loadPermissionBundles(process.env.MARFA_PERMISSION_BUNDLES);
+}
+
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
@@ -371,6 +495,7 @@ export function loadConfig(): AppConfig {
     s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
     apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
+    permissionBundles: getPermissionBundles(),
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
     versionSnapshotIntervalMs: envNumber(

@@ -331,3 +331,82 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The four-bundle keystone: an OAuth token reaches a tenant's RUNTIME `user.*`
+// types — which never appear in the static scope allowlist — through the
+// wildcard the generous default bundle grants. No role bypass involved (the
+// token is a member-tier synthetic key).
+// ---------------------------------------------------------------------------
+
+describe("wildcard scope reaches runtime user.* types (keystone)", () => {
+  // The in-memory custom-type registry is a module singleton, so each test
+  // registers a distinct `user.*` id to avoid a cross-test 409.
+  async function registerUserType(typeId: string): Promise<void> {
+    const reg = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: typeId,
+        version: 1,
+        fields: [{ name: "title", type: "string" }],
+      },
+    });
+    expect(reg.status).toBe(201);
+  }
+
+  it("global *:write lets an OAuth token write a runtime user.* item", async () => {
+    await registerUserType("user.ks_write");
+    const { rawToken } = await mintOAuthToken({ scopes: ["*:write"] });
+    const created = await request(ctx.app, "POST", "/items", {
+      key: rawToken,
+      body: { type: "user.ks_write", properties: { title: "via wildcard" } },
+    });
+    expect(created.status).toBe(201);
+  });
+
+  it("namespace wildcard user.*:read reads user.* items; writing still needs :write", async () => {
+    await registerUserType("user.ks_read");
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "user.ks_read", properties: { title: "seed" } },
+    });
+
+    const { rawToken } = await mintOAuthToken({ scopes: ["user.*:read"] });
+    const list = await request(ctx.app, "GET", "/items?type=user.ks_read", {
+      key: rawToken,
+    });
+    expect(list.status).toBe(200);
+    expect(((await list.json()) as { data: unknown[] }).data.length).toBe(1);
+
+    const write = await request(ctx.app, "POST", "/items", {
+      key: rawToken,
+      body: { type: "user.ks_read", properties: { title: "denied" } },
+    });
+    expect(write.status).toBe(403);
+  });
+});
+
+describe("edge-type registration is scope-gated (metadata.edge_types:write)", () => {
+  const edgeBody = { id: "user.blocks", cardinality: "many-to-many" as const };
+
+  it("rejects POST /edge-types without metadata.edge_types:write", async () => {
+    // A broad data grant is not enough — edge-type setup is its own scope.
+    const { rawToken } = await mintOAuthToken({ scopes: ["*:write"] });
+    const res = await request(ctx.app, "POST", "/edge-types", {
+      key: rawToken,
+      body: edgeBody,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("accepts POST /edge-types with metadata.edge_types:write", async () => {
+    const { rawToken } = await mintOAuthToken({
+      scopes: ["metadata.edge_types:write"],
+    });
+    const res = await request(ctx.app, "POST", "/edge-types", {
+      key: rawToken,
+      body: edgeBody,
+    });
+    expect(res.status).toBe(201);
+  });
+});

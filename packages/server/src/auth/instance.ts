@@ -474,6 +474,17 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                 tenant_id: tenant.id,
                 handle,
                 auth_user_id: user.id,
+                // Every sign-up provisions a fresh tenant the user solely
+                // owns (line above), so the user IS that space's admin —
+                // stamp tenant_admin rather than the `member` default. This
+                // lets the owner administer their own space (register types /
+                // edge types, manage keys + connections). Data access for
+                // apps they sign into is still gated by the granted OAuth
+                // scopes (OAuth tokens are `scope_enforced`), so the role is
+                // the ceiling, not a full-access pass. If a shared-tenant
+                // membership model lands later, gate this on "first/owning
+                // user of the tenant".
+                role: "tenant_admin",
               });
             } catch (err) {
               // Surface the failure loudly — a signed-up user with no

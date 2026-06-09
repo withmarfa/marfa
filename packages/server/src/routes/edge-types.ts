@@ -14,7 +14,10 @@ import type {
   FieldDefinition,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import {
+  requireTenantAdmin,
+  requireMetadataPermission,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -193,7 +196,13 @@ export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createEdgeTypeRoute, async (c) => {
-    requireTenantAdmin(c);
+    // Registering a custom edge type is gated by the metadata.edge_types
+    // scope (admin / tenant_admin API keys bypass via role; OAuth apps must
+    // carry the granted scope — it's folded into the "Write your stuff"
+    // bundle). Mirrors `POST /types` (metadata.types:write). The create
+    // below stamps tenant_id from the caller, so a scope-bearing member can
+    // only register within its own tenant.
+    requireMetadataPermission(c, "edge_types", "write");
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
     // expectation that "can't redefine a core type" is a 409, not

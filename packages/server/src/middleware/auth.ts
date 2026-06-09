@@ -356,6 +356,11 @@ export function authMiddleware(storage: Storage, salt: string) {
         role: projectedRole,
         default_tier: "library",
         is_platform: false,
+        // OAuth tokens are limited to their granted scopes on the data
+        // plane — the role bypass does not apply. The user's role is the
+        // ceiling on what they could grant, not a full-access pass for the
+        // app. See `roleBypassesPermissionMaps`.
+        scope_enforced: true,
         type_permissions: typePermissions,
         extension_permissions: {},
         edge_permissions: edgePermissions,
@@ -474,6 +479,22 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
   return key;
 }
 
+/**
+ * Whether a credential skips the per-resource permission maps (type / edge /
+ * metadata) by virtue of its role. `admin` and `tenant_admin` keys are
+ * admin-shaped within their scope and bypass the maps — EXCEPT
+ * `scope_enforced` credentials (OAuth-derived synthetic keys), which are
+ * held to exactly the scopes the user granted the app. A user's role is the
+ * ceiling on what an app can be granted, not an automatic full-access pass
+ * for every app they sign into. Role gates (`requireTenantAdmin` /
+ * `requireAdmin`) still consult the projected role regardless of this flag —
+ * only the data-plane permission-map checks honour it.
+ */
+function roleBypassesPermissionMaps(key: ApiKey): boolean {
+  if (key.scope_enforced) return false;
+  return key.role === "admin" || key.role === "tenant_admin";
+}
+
 export function checkTypeAccess(
   apiKey: ApiKey | undefined,
   type: string,
@@ -515,9 +536,10 @@ export function checkTypeAccess(
     }
   }
 
-  // tenant_admin bypasses type_permissions — it is admin-shaped within its tenant,
-  // with RLS + app-layer scoping providing the isolation boundary.
-  if (key.role === "admin" || key.role === "tenant_admin") return;
+  // admin / tenant_admin bypass type_permissions — admin-shaped within the
+  // tenant, with RLS + app-layer scoping as the isolation boundary. OAuth
+  // (`scope_enforced`) keys do NOT bypass: they're held to granted scopes.
+  if (roleBypassesPermissionMaps(key)) return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
@@ -538,10 +560,11 @@ export function computeTypeFilter(
   apiKey: ApiKey | undefined,
 ): string[] | undefined {
   // admin / tenant_admin see the full type surface; tenant isolation is
-  // enforced separately at the storage layer.
-  if (!apiKey || apiKey.role === "admin" || apiKey.role === "tenant_admin") {
-    return undefined;
-  }
+  // enforced separately at the storage layer. OAuth (`scope_enforced`) keys
+  // fall through to their projected type_permissions (which carry the
+  // granted wildcards) rather than seeing everything.
+  if (!apiKey) return undefined;
+  if (roleBypassesPermissionMaps(apiKey)) return undefined;
 
   const patterns: string[] = [];
   for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {
@@ -600,7 +623,7 @@ export function requireEdgePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
+  if (roleBypassesPermissionMaps(apiKey)) return;
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
   throw new MarfaError(
     ErrorCode.EDGE_PERMISSION_DENIED,
@@ -624,12 +647,13 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  // Same admin-tier shape as `requireEdgePermission`: tenant_admin
-  // is admin-shaped within its tenant for metadata mutations too. The
-  // platform-credential gate on `metadata.types:write` registration of
-  // reserved-namespace types still applies via the route-level
-  // `is_platform` check, not here.
-  if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
+  // Same admin-tier shape as `requireEdgePermission`: tenant_admin is
+  // admin-shaped within its tenant for metadata mutations too — except
+  // OAuth (`scope_enforced`) keys, which must carry the granted scope
+  // (`metadata.types:write` / `metadata.edge_types:write`). The
+  // platform-credential gate on reserved-namespace type registration still
+  // applies via the route-level `is_platform` check, not here.
+  if (roleBypassesPermissionMaps(apiKey)) return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
   throw new MarfaError(

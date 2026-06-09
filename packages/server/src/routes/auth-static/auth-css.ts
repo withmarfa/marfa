@@ -556,6 +556,75 @@ details.section[open] > summary .section__chevron {
   text-decoration: line-through;
 }
 
+/* Four-bucket consent view: one master toggle per bundle, with the
+   granular scopes revealed under "Customise". */
+.bundles {
+  display: flex;
+  flex-direction: column;
+}
+.bundle {
+  border-bottom: 1px solid var(--hairline);
+}
+.bundle:last-child,
+.bundle--residual {
+  border-bottom: none;
+}
+.bundle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: 14px 0;
+  cursor: pointer;
+}
+.bundle-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.bundle-row__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.bundle-row__desc {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.bundle-scopes {
+  padding: 2px 0 12px;
+}
+.bundle-scopes .scope-row {
+  padding: 6px 0;
+}
+.bundle-scopes .scope-row__text {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.bundle-scopes__head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  margin: 4px 0 2px;
+}
+.customise-toggle {
+  background: none;
+  border: none;
+  padding: 12px 0 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.customise-toggle:hover {
+  color: var(--ink);
+}
+
 /* iOS-style toggle switch. The native checkbox is visually hidden but
    keyboard-focusable; the track + thumb are pure CSS. Compact
    28×16 sizing — discreet, not chunky. */

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderConsentScreen } from "./consent.js";
+import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
@@ -304,5 +305,78 @@ describe("renderConsentScreen — polish-pass shape", () => {
     // No longer using the chunky --lg / --ghost variants.
     expect(html).not.toContain("btn--lg");
     expect(html).not.toContain("btn--ghost");
+  });
+});
+
+describe("renderConsentScreen — four-bucket bundle view", () => {
+  // A representative requested set: each maps to one default bundle, plus
+  // offline_access which belongs to none (residual).
+  const BUNDLE_SCOPES: ParsedScope[] = [
+    { typePattern: "core.*", operation: "read" },
+    { typePattern: "core.*", operation: "write" },
+    {
+      typePattern: "openid",
+      operation: "none",
+      kind: "oidc",
+      oidcScope: "openid",
+    },
+    { typePattern: "system.connection", operation: "read" },
+    {
+      typePattern: "offline_access",
+      operation: "none",
+      kind: "oidc",
+      oidcScope: "offline_access",
+    },
+  ];
+  const BUNDLE_PARAMS = {
+    ...PARAMS,
+    scopes: BUNDLE_SCOPES,
+    bundles: DEFAULT_PERMISSION_BUNDLES,
+  };
+
+  it("renders the four bundle labels each with a master toggle", () => {
+    const html = renderConsentScreen(BUNDLE_PARAMS);
+    for (const label of [
+      "Read your stuff",
+      "Write your stuff",
+      "Your profile",
+      "Connected services",
+    ]) {
+      expect(html).toContain(label);
+    }
+    for (const id of ["read", "write", "profile", "connected"]) {
+      expect(html).toContain(`data-bundle-toggle="${id}"`);
+    }
+  });
+
+  it("preserves the form contract — granular scope checkboxes as bundle members", () => {
+    const html = renderConsentScreen(BUNDLE_PARAMS);
+    expect(html).toContain('value="core.*:read"');
+    expect(html).toContain('value="core.*:write"');
+    expect(html).toContain('data-bundle-member="read"');
+    expect(html).toContain('data-bundle-member="write"');
+    // Granular tucked away; a Customise control reveals it.
+    expect(html).toContain("data-bundle-scopes");
+    expect(html).toContain("Customise permissions");
+  });
+
+  it("puts a scope belonging to no bundle under a residual group (still granted)", () => {
+    const html = renderConsentScreen(BUNDLE_PARAMS);
+    expect(html).toContain("bundle--residual");
+    expect(html).toContain('value="offline_access"');
+  });
+
+  it("does not render the flat section markup in bundle view", () => {
+    const html = renderConsentScreen(BUNDLE_PARAMS);
+    expect(html).toContain('class="bundle-row"');
+    // Flat section headers are not rendered (the script may still reference
+    // the data attributes; assert on rendered markup only).
+    expect(html).not.toContain('class="section__label"');
+  });
+
+  it("falls back to the flat section view when no bundles are passed", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).not.toContain('class="bundle-row"');
+    expect(html).toContain('class="section__label"');
   });
 });
