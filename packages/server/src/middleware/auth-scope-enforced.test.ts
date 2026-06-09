@@ -30,15 +30,21 @@ function fakeKey(over: Partial<ApiKey>): ApiKey {
 describe("role bypass vs scope_enforced", () => {
   it("a tenant_admin API key bypasses type_permissions (read + write)", () => {
     const key = fakeKey({ role: "tenant_admin", type_permissions: {} });
-    expect(() => checkTypeAccess(key, "user.ticket", "write")).not.toThrow();
-    expect(() => checkTypeAccess(key, "user.ticket", "read")).not.toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "write");
+    }).not.toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "read");
+    }).not.toThrow();
     // computeTypeFilter returns undefined = "no filter, all types visible".
     expect(computeTypeFilter(key)).toBeUndefined();
   });
 
   it("an admin API key bypasses too", () => {
     const key = fakeKey({ role: "admin", type_permissions: {} });
-    expect(() => checkTypeAccess(key, "user.ticket", "write")).not.toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "write");
+    }).not.toThrow();
     expect(computeTypeFilter(key)).toBeUndefined();
   });
 
@@ -48,8 +54,12 @@ describe("role bypass vs scope_enforced", () => {
       scope_enforced: true,
       type_permissions: {},
     });
-    expect(() => checkTypeAccess(key, "user.ticket", "write")).toThrow();
-    expect(() => checkTypeAccess(key, "user.ticket", "read")).toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "write");
+    }).toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "read");
+    }).toThrow();
     // Empty scopes → empty allowed_types → storage denies (no rows).
     expect(computeTypeFilter(key)).toEqual([]);
   });
@@ -61,9 +71,9 @@ describe("role bypass vs scope_enforced", () => {
       type_permissions: { "*": "write" },
     });
     // The keystone: a runtime user.* type the static registry never lists.
-    expect(() =>
-      checkTypeAccess(writeKey, "user.ticket.task", "write"),
-    ).not.toThrow();
+    expect(() => {
+      checkTypeAccess(writeKey, "user.ticket.task", "write");
+    }).not.toThrow();
 
     const readKey = fakeKey({
       role: "member",
@@ -72,8 +82,12 @@ describe("role bypass vs scope_enforced", () => {
     });
     expect(computeTypeFilter(readKey)).toEqual(["*"]);
     // read granted, write denied
-    expect(() => checkTypeAccess(readKey, "user.ticket", "read")).not.toThrow();
-    expect(() => checkTypeAccess(readKey, "user.ticket", "write")).toThrow();
+    expect(() => {
+      checkTypeAccess(readKey, "user.ticket", "read");
+    }).not.toThrow();
+    expect(() => {
+      checkTypeAccess(readKey, "user.ticket", "write");
+    }).toThrow();
   });
 
   it("a scope_enforced token with a namespace wildcard reaches that namespace only", () => {
@@ -82,9 +96,13 @@ describe("role bypass vs scope_enforced", () => {
       scope_enforced: true,
       type_permissions: { "user.*": "write" },
     });
-    expect(() => checkTypeAccess(key, "user.ticket", "write")).not.toThrow();
+    expect(() => {
+      checkTypeAccess(key, "user.ticket", "write");
+    }).not.toThrow();
     // A different namespace is not covered.
-    expect(() => checkTypeAccess(key, "core.note", "write")).toThrow();
+    expect(() => {
+      checkTypeAccess(key, "core.note", "write");
+    }).toThrow();
     expect(computeTypeFilter(key)).toEqual(["user.*"]);
   });
 });
