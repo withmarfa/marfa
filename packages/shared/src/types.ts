@@ -226,6 +226,19 @@ export interface ApiKey {
    */
   is_platform: boolean;
   /**
+   * Scope-enforcement gate. When `true`, this credential is limited to
+   * exactly the scopes it was granted on the data plane — the
+   * `admin` / `tenant_admin` role bypass in `checkTypeAccess`,
+   * `computeTypeFilter`, `requireEdgePermission`, and
+   * `requireMetadataPermission` does NOT apply. Set on OAuth-derived
+   * synthetic keys: a user's role is the ceiling on what an app can be
+   * granted, not an automatic full-access pass for every app the user
+   * signs into. Ordinary API keys leave this unset and keep the role
+   * bypass. Role gates (`requireTenantAdmin` / `requireAdmin`) still read
+   * the projected role regardless of this flag.
+   */
+  scope_enforced?: boolean;
+  /**
    * Connections runtime credential gate. When `true`, the credential was
    * minted by the control-plane lease broker for a specific Connection's
    * runtime. The extension write gate narrows such credentials to writing
