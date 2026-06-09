@@ -381,7 +381,7 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
     id: "write",
     label: "Write your stuff",
     description:
-      "Create, change, and organise your data — and let the app set up the data types it needs.",
+      "Create, change, and organize your data — and let the app set up the data types it needs.",
     scopes: [
       "core.*:write",
       "user.*:write",
