@@ -38,6 +38,9 @@
 #                               e.g. "staging-1a2b3c4")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
 #   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
+#   - SKIP_S3_CRED_CHECK       (set to 1 to bypass the s3 credential guard that
+#                               otherwise blocks a BLOB_BACKEND=s3 deploy when the
+#                               Worker lacks the S3 secrets)
 #   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
 #                               host — override for a jurisdiction-restricted bucket, e.g. EU)
 #   - SERVER_SLEEP_AFTER       (container idle scale-to-zero timer; default "20m")
@@ -122,7 +125,10 @@ export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"
 # NoSuchBucket — set S3_ENDPOINT to override the derived default.
 export V_S3_ENDPOINT="${S3_ENDPOINT:-https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com}"
 # Default to fs until R2 S3-API credentials are minted (see operator notes);
-# flip to s3 by exporting V_BLOB_BACKEND=s3 once the secrets are set.
+# flip to s3 by exporting V_BLOB_BACKEND=s3 once the secrets are set. When s3 is
+# requested, the credential guard below refuses to deploy unless the Worker
+# already carries the S3 secrets — so an s3 cutover can't silently ship broken
+# blob writes.
 export V_BLOB_BACKEND="${V_BLOB_BACKEND:-fs}"
 
 if [[ "$ENV_NAME" == "staging" ]]; then
@@ -150,6 +156,32 @@ else
   export V_AUTH_BASE_URL="https://api.marfa.so"
   export V_CORS_ORIGINS="${PROD_CORS_ORIGINS:-https://api.marfa.so}"
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod-${GIT_SHA}}"
+fi
+
+# Durability guard: a BLOB_BACKEND=s3 deploy must not roll unless the Worker
+# already carries the S3 credential secrets. Without them the server boots fine
+# but every blob upload fails at the S3 layer (the durability win silently
+# regresses to broken). The secrets are set out-of-band by
+# init-server-container-secrets.sh, so we check the live secret list rather than
+# the local shell. Skip with SKIP_S3_CRED_CHECK=1 only when you know the Worker
+# already has them (e.g. an unrelated redeploy where a list call would just add
+# latency).
+if [[ "$V_BLOB_BACKEND" == "s3" && "${SKIP_S3_CRED_CHECK:-}" != "1" ]]; then
+  echo "→ BLOB_BACKEND=s3 — verifying S3 credential secrets on $SERVER_WORKER_NAME"
+  SECRET_LIST="$(wrangler secret list --name "$SERVER_WORKER_NAME" 2>/dev/null || true)"
+  MISSING_SECRETS=()
+  for s in S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY; do
+    grep -q "\"$s\"" <<<"$SECRET_LIST" || MISSING_SECRETS+=("$s")
+  done
+  if (( ${#MISSING_SECRETS[@]} > 0 )); then
+    echo "error: BLOB_BACKEND=s3 but the Worker is missing S3 credential secret(s):" >&2
+    printf '  - %s\n' "${MISSING_SECRETS[@]}" >&2
+    echo "  Set R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY in your shell, then run:" >&2
+    echo "    ./infra/cloudflare/scripts/init-server-container-secrets.sh $ENV_NAME" >&2
+    echo "  (or export SKIP_S3_CRED_CHECK=1 if you are certain they are already set)." >&2
+    exit 1
+  fi
+  echo "  ✓ S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY present"
 fi
 
 export SERVER_IMAGE="${SERVER_IMAGE:-registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/marfa-server:${SERVER_IMAGE_TAG}}"
