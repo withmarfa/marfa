@@ -95,7 +95,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: pnpm exec wrangler containers push "marfa-server:${IMAGE_TAG}"
+        run: |
+          # wrangler is a dependency of the server-container workspace package,
+          # not a root dep, so a root-level `pnpm exec wrangler` can't resolve
+          # it. Put that package's node_modules/.bin on PATH (same approach as
+          # the deploy job's bare `wrangler deploy`).
+          export PATH="$PWD/infra/cloudflare/server-container/node_modules/.bin:$PWD/node_modules/.bin:$PATH"
+          wrangler containers push "marfa-server:${IMAGE_TAG}"
 
   # Apply pending DB migrations BEFORE the container rolls. Gates `deploy`:
   # a failed migration here blocks the rollout, so the container never starts
