@@ -8,8 +8,10 @@
 #
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile .
 #
-# Cloudflare Containers run linux/amd64; the self-hosted CI runner is arm64,
-# so the CI build cross-compiles via buildx + QEMU (see the deploy workflow).
+# Cloudflare Containers run linux/amd64. CI builds this natively on a hosted
+# amd64 runner (no QEMU). On an arm64 host (e.g. a local Apple-Silicon machine)
+# the same buildx command cross-compiles via emulation — slower, but produces
+# an identical image.
 #
 # Strategy (validated): full workspace install + build, then `pnpm deploy
 # --legacy --prod` prunes to a self-contained dir carrying only the runtime

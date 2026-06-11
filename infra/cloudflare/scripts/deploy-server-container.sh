@@ -7,6 +7,15 @@
 # rather than via wrangler `--env` blocks (the flat config avoids wrangler's
 # per-env non-inheritable-key friction for durable_objects/containers).
 #
+# PRIMARY deploy path is the `Deploy server container` GitHub workflow
+# (.github/workflows/deploy-server-container.yml), which builds the image
+# natively on a hosted amd64 runner, runs migrate-then-deploy, and calls this
+# script for the deploy step:
+#     gh workflow run deploy-server-container.yml -f environment=staging
+# This script is the LOCAL FALLBACK: run it by hand only when CI is unavailable.
+# It needs a working local Docker daemon to build the image first (slow on
+# Apple Silicon — the linux/amd64 image cross-compiles via emulation).
+#
 # Usage:
 #   ./infra/cloudflare/scripts/deploy-server-container.sh <staging|prod> [extra wrangler args]
 #
