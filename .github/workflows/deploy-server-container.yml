@@ -1,9 +1,19 @@
-# Build + deploy the Marfa server to Cloudflare Containers (T-277).
+# Build + deploy the Marfa server to Cloudflare Containers.
 #
-# Split design: the slow, arch-sensitive image build runs on the self-hosted
-# Apple-Silicon runner (free; cross-compiles to linux/amd64 via buildx), pushes
-# to Cloudflare's managed registry; the fast bind+deploy runs on a GitHub-hosted
-# Linux runner referencing the pushed image by tag.
+# Three jobs, all on GitHub-hosted ubuntu-latest:
+#   build-push  builds the linux/amd64 image NATIVELY (Cloudflare Containers
+#               run linux/amd64, the runner is amd64 — no QEMU emulation), then
+#               pushes it to Cloudflare's managed registry under the immutable
+#               per-build tag <env>-<short-sha>.
+#   migrate     applies pending DB migrations against the env's DIRECT Neon URL.
+#   deploy      renders wrangler.jsonc and rolls the Worker + container,
+#               referencing the SAME <env>-<short-sha> tag so wrangler actually
+#               rolls the new image (a reused mutable tag would no-roll silently).
+#
+# Building natively on a hosted amd64 runner replaces the previous fragile path
+# (local Docker / a self-hosted arm64 runner cross-compiling via QEMU). Hosted
+# is also required because a public-repo self-hosted runner is an
+# arbitrary-code-execution risk.
 #
 # Manual trigger only — this is the riskiest deploy. The Worker's runtime
 # secrets (the pooled DATABASE_URL, MARFA_AUTH_SECRET, ...) are set out-of-band
@@ -24,9 +34,14 @@
 #   secrets.CLOUDFLARE_ACCOUNT_ID     marfa account id
 #   secrets.NEON_DATABASE_URL_STAGING direct (unpooled) Neon URL, staging branch
 #   secrets.NEON_DATABASE_URL_PROD    direct (unpooled) Neon URL, production branch
-#   vars.STAGING_WORKERS_SUBDOMAIN    account workers.dev subdomain (staging auth base URL)
-#
-# The self-hosted runner must be enabled (gh-runner enable) for the build job.
+#   vars.STAGING_API_BASE_URL         branded public host (e.g. https://staging.marfa.so);
+#                                     drives the auth base URL / OAuth issuer
+#   vars.STAGING_CORS_ORIGINS         comma-separated browser origins that call the API
+#   vars.STAGING_WORKERS_SUBDOMAIN    optional — account workers.dev subdomain. Leave
+#                                     UNSET so the auth base URL derives from
+#                                     STAGING_API_BASE_URL (the branded host); setting it
+#                                     points the OAuth issuer at *.workers.dev and breaks
+#                                     a sign-in that starts on the branded host.
 
 name: Deploy server container
 
@@ -44,8 +59,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Build the linux/amd64 image NATIVELY on a GitHub-hosted amd64 runner — no
+  # QEMU emulation, no local-Docker dependency. Push it to Cloudflare's managed
+  # registry under the immutable per-build tag <env>-<short-sha> so the deploy
+  # job references the exact bits built here.
   build-push:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -54,6 +73,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: echo "tag=${ENVIRONMENT}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
@@ -62,17 +82,20 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - name: Build linux/amd64 image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           docker buildx build --platform linux/amd64 \
             -f packages/server/Dockerfile \
             --build-arg VERSION_SHA="${GITHUB_SHA::7}" \
-            -t "marfa-server:${{ steps.meta.outputs.tag }}" \
+            -t "marfa-server:${IMAGE_TAG}" \
             --load .
       - name: Push to Cloudflare managed registry
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm exec wrangler containers push "marfa-server:${{ steps.meta.outputs.tag }}"
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: pnpm exec wrangler containers push "marfa-server:${IMAGE_TAG}"
 
   # Apply pending DB migrations BEFORE the container rolls. Gates `deploy`:
   # a failed migration here blocks the rollout, so the container never starts

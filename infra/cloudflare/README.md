@@ -78,6 +78,45 @@ pnpm --filter @withmarfa/integration-<name> deploy --env staging
 
 Production deploys are gated on the orchestrator. Do not push to prod from a feature branch.
 
+## Server container deploy
+
+The hosted Marfa server runs as a Cloudflare Containers Worker (Worker front + Container Durable Object), backed by Neon Postgres. Deploying it is **migrate-then-deploy**: pending DB migrations are applied against the env's direct (unpooled) Neon URL first, then the Worker + container roll referencing an immutable per-build image tag (`<env>-<short-sha>`).
+
+### CI dispatch (primary)
+
+The canonical path is the `Deploy server container` workflow (`.github/workflows/deploy-server-container.yml`), triggered manually:
+
+```sh
+gh workflow run deploy-server-container.yml -f environment=staging   # default
+gh workflow run deploy-server-container.yml -f environment=prod
+```
+
+Three jobs run on GitHub-hosted `ubuntu-latest`:
+
+1. `build-push` — builds the `linux/amd64` image **natively** (no QEMU emulation), pushes it to Cloudflare's managed registry under tag `<env>-<short-sha>`.
+2. `migrate` — applies pending migrations against the env's direct Neon URL. Gates `deploy`; a failed migration blocks the rollout, so the container never starts against an unmigrated schema.
+3. `deploy` — renders `server-container/wrangler.jsonc` and rolls the Worker + container, referencing the same `<env>-<short-sha>` tag the build pushed.
+
+Building natively on a hosted amd64 runner is what makes this reliable: it has no dependency on a local Docker daemon and no slow cross-arch emulation. Required GitHub config (secrets + vars) is listed in the workflow header.
+
+After a roll, the container cycles asynchronously — the public host may serve the old warm instance for ~15–20s. Poll a cache-busted `/.well-known/openid-configuration` until it reflects the new build before declaring the deploy done.
+
+### Local build (fallback)
+
+When CI is unavailable, deploy by hand with the scripts under `scripts/`. This requires a working local Docker daemon and is slower on Apple Silicon (the `linux/amd64` image cross-compiles via emulation):
+
+```sh
+SHA=$(git rev-parse --short HEAD)
+docker buildx build --platform linux/amd64 -f packages/server/Dockerfile \
+  -t "marfa-server:staging-$SHA" --load .
+wrangler containers push "marfa-server:staging-$SHA"
+./infra/cloudflare/scripts/deploy-server-container.sh staging   # migrates, then deploys
+```
+
+The deploy script recomputes the same default `<env>-<short-sha>` tag from the current HEAD, so as long as the working tree is on the commit you built, the tags line up. `migrate-server-db.sh <env>` runs the migrate step standalone; `init-server-container-secrets.sh <env>` sets the Worker's runtime secrets (pooled `DATABASE_URL`, auth secret, ...) — re-run a deploy afterwards so the container restarts and picks them up.
+
+The deploy is env-driven; operator-specific values (account id, Neon URLs, CORS origins, branded host) come from the calling shell's environment. See each script's header for the full variable list.
+
 ## DLQ peek operator surface
 
 The runtime-control Worker exposes `/dlq/peek` and `/dlq/replay` for operator inspection of DLQ messages (consumed via `my connections logs --dlq <id>` and `my connections replay-dlq <id>`). Two requirements beyond the routine deploy:
