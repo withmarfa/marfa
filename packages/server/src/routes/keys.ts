@@ -304,6 +304,19 @@ export function keyRoutes(storage: Storage, salt: string) {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
       requireTenantAdmin(c);
+      // OAuth principals carry the user's projected role but are scope-limited
+      // grants, not the user acting directly. Minting an API key produces a
+      // durable credential that bypasses the permission maps the OAuth token is
+      // held to — so an app granted a narrow scope could escalate it into full
+      // tenant access. Block key creation for OAuth callers; they keep
+      // read/manage reach via the role projection but cannot forge a
+      // non-scope-enforced key. (`authType` is set by the bearer middleware.)
+      if (c.get("authType") === "oauth") {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "OAuth access tokens cannot create API keys; authenticate with an API key to mint one.",
+        );
+      }
     }
 
     // Under bootstrap, atomically claim the sentinel BEFORE minting. Two
