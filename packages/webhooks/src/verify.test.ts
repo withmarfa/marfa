@@ -177,13 +177,30 @@ describe("verifySlack", () => {
     expect(r.verified).toBe(true);
   });
 
-  it("rejects a stale timestamp (outside 5-minute replay window)", async () => {
+  it("rejects a stale timestamp (older than the 5-minute replay window)", async () => {
     const body = asBuffer("x");
     const ts = String(Math.floor(Date.now() / 1000) - 60 * 30);
     const sig = await expected(ts, body);
     const r = await verifySlack(body, hdrs(ts, sig), SECRET);
     expect(r.verified).toBe(false);
     expect(r.reason).toBe("timestamp_outside_replay_window");
+  });
+
+  it("rejects a timestamp far in the future (beyond the clock-skew tolerance)", async () => {
+    const body = asBuffer("x");
+    const ts = String(Math.floor(Date.now() / 1000) + 60 * 30);
+    const sig = await expected(ts, body);
+    const r = await verifySlack(body, hdrs(ts, sig), SECRET);
+    expect(r.verified).toBe(false);
+    expect(r.reason).toBe("timestamp_outside_replay_window");
+  });
+
+  it("verifies a timestamp slightly in the future (within the clock-skew tolerance)", async () => {
+    const body = asBuffer("token=abc&team_id=T123");
+    const ts = String(Math.floor(Date.now() / 1000) + 30);
+    const sig = await expected(ts, body);
+    const r = await verifySlack(body, hdrs(ts, sig), SECRET);
+    expect(r.verified).toBe(true);
   });
 
   it("rejects a tampered body", async () => {
@@ -239,13 +256,30 @@ describe("verifyStripe", () => {
     );
   });
 
-  it("rejects when the timestamp is outside the replay window", async () => {
+  it("rejects when the timestamp is older than the replay window", async () => {
     const body = asBuffer("payload");
     const ts = String(Math.floor(Date.now() / 1000) - 60 * 30);
     const headers = new Headers({ "stripe-signature": await header(ts, body) });
     const r = await verifyStripe(body, headers, SECRET);
     expect(r.verified).toBe(false);
     expect(r.reason).toBe("timestamp_outside_replay_window");
+  });
+
+  it("rejects a timestamp far in the future (beyond the clock-skew tolerance)", async () => {
+    const body = asBuffer("payload");
+    const ts = String(Math.floor(Date.now() / 1000) + 60 * 30);
+    const headers = new Headers({ "stripe-signature": await header(ts, body) });
+    const r = await verifyStripe(body, headers, SECRET);
+    expect(r.verified).toBe(false);
+    expect(r.reason).toBe("timestamp_outside_replay_window");
+  });
+
+  it("verifies a timestamp slightly in the future (within the clock-skew tolerance)", async () => {
+    const body = asBuffer('{"id":"evt_123","type":"charge.succeeded"}');
+    const ts = String(Math.floor(Date.now() / 1000) + 30);
+    const headers = new Headers({ "stripe-signature": await header(ts, body) });
+    const r = await verifyStripe(body, headers, SECRET);
+    expect(r.verified).toBe(true);
   });
 
   it("rejects a malformed Stripe-Signature header", async () => {
