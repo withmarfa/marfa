@@ -121,7 +121,9 @@ export async function assertEdgesCanBeCreated(
   }
 
   // Step 4 + 5: pre-fetch existence + cardinality counts in grouped queries.
-  const existsSet = await edgeStore.existsExactBatch(proposals);
+  // Fence every store read to the caller's tenant so duplicate/cardinality
+  // checks never fold in another tenant's edges.
+  const existsSet = await edgeStore.existsExactBatch(proposals, opts.tenant_id);
 
   const needSourceCount = new Map<
     string,
@@ -158,8 +160,14 @@ export async function assertEdgesCanBeCreated(
     }
   }
   const [sourceCounts, targetCounts] = await Promise.all([
-    edgeStore.countsBySourceBatch(Array.from(needSourceCount.values())),
-    edgeStore.countsByTargetBatch(Array.from(needTargetCount.values())),
+    edgeStore.countsBySourceBatch(
+      Array.from(needSourceCount.values()),
+      opts.tenant_id,
+    ),
+    edgeStore.countsByTargetBatch(
+      Array.from(needTargetCount.values()),
+      opts.tenant_id,
+    ),
   ]);
 
   // In-batch accumulators — each proposal that passes validation counts
@@ -257,6 +265,7 @@ export async function assertEdgesCanBeCreated(
           p.target_id,
           outboundCache,
           pending,
+          opts.tenant_id,
         )
       ) {
         throw new MarfaError(
@@ -340,6 +349,7 @@ async function wouldCreateCycle(
   proposedTarget: string,
   outboundCache: Map<string, Edge[]>,
   pendingEdges: { source_id: string; target_id: string }[],
+  tenantId?: string,
 ): Promise<boolean> {
   const visited = new Set<string>();
   const frontier: string[] = [proposedTarget];
@@ -354,7 +364,7 @@ async function wouldCreateCycle(
     if (next === proposedSource) return true;
     let outbound = outboundCache.get(next);
     if (!outbound) {
-      outbound = await edgeStore.listOutboundOfType(next, edgeType);
+      outbound = await edgeStore.listOutboundOfType(next, edgeType, tenantId);
       outboundCache.set(next, outbound);
     }
     for (const e of outbound) {

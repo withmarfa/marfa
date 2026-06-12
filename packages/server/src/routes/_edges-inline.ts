@@ -24,7 +24,7 @@ export async function applyInlineEdges(
   tenantId: string | undefined,
 ): Promise<void> {
   for (const [edgeType, targets] of Object.entries(edges)) {
-    await storage.edges.deleteBySource(itemId, edgeType);
+    await storage.edges.deleteBySource(itemId, edgeType, tenantId);
     for (const target of targets) {
       if (!isValidId(target)) {
         throw new MarfaError(

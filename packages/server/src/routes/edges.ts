@@ -342,8 +342,13 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
+    const tenantId = c.get("apiKey")?.tenant_id;
     const existing = await storage.edges.get(id);
-    if (!existing) {
+    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
+    // tenant: a tenant-scoped caller must never learn another tenant's edge
+    // exists, let alone mutate it. Platform-admin / single-tenant keys carry
+    // no tenant_id and skip the check.
+    if (!existing || (tenantId && existing.tenant_id !== tenantId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -353,7 +358,7 @@ export function edgeRoutes(storage: Storage) {
     // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
-      c.get("apiKey")?.tenant_id,
+      tenantId,
     );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
@@ -369,7 +374,12 @@ export function edgeRoutes(storage: Storage) {
         );
       }
     }
-    const updated = await storage.edges.updateProperties(id, body.properties);
+    // Fence the write to the caller's tenant — belt to the 404-cloak above.
+    const updated = await storage.edges.updateProperties(
+      id,
+      body.properties,
+      tenantId,
+    );
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -385,8 +395,13 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
+    const tenantId = c.get("apiKey")?.tenant_id;
     const existing = await storage.edges.get(id);
-    if (!existing) {
+    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
+    // tenant: a tenant-scoped caller must never learn another tenant's edge
+    // exists, let alone delete it. Platform-admin / single-tenant keys carry
+    // no tenant_id and skip the check.
+    if (!existing || (tenantId && existing.tenant_id !== tenantId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -396,15 +411,16 @@ export function edgeRoutes(storage: Storage) {
     // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
-      c.get("apiKey")?.tenant_id,
+      tenantId,
     );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
-    await storage.edges.delete(id);
+    // Fence the delete to the caller's tenant — belt to the 404-cloak above.
+    await storage.edges.delete(id, tenantId);
     await publishEdge({
       type: "edge_deleted",
       edge: existing,
-      tenantId: c.get("apiKey")?.tenant_id,
+      tenantId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

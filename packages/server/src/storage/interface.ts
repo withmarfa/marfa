@@ -1430,9 +1430,25 @@ export interface EdgeStore {
     properties: Record<string, unknown>,
     tenantId?: string,
   ): Promise<Edge>;
-  delete(id: string): Promise<void>;
-  deleteBySource(sourceId: string, edgeType?: string): Promise<void>;
-  deleteByTarget(targetId: string, edgeType?: string): Promise<void>;
+  /**
+   * Delete an edge by id. When `tenantId` is supplied the DELETE is fenced
+   * to that tenant so a tenant-scoped caller cannot delete another tenant's
+   * edge by id — a cross-tenant id matches zero rows and is a silent no-op
+   * (the route layer's prior 404-cloak is the user-visible signal). Omitting
+   * `tenantId` leaves the delete unscoped (platform-admin / single-tenant
+   * self-host).
+   */
+  delete(id: string, tenantId?: string): Promise<void>;
+  deleteBySource(
+    sourceId: string,
+    edgeType?: string,
+    tenantId?: string,
+  ): Promise<void>;
+  deleteByTarget(
+    targetId: string,
+    edgeType?: string,
+    tenantId?: string,
+  ): Promise<void>;
   /**
    * Batched `deleteBySource` — drop every edge whose `source_id` is in
    * `sourceIds`, optionally filtered by `edge_type`. Single SQL DELETE per
@@ -1444,18 +1460,34 @@ export interface EdgeStore {
   deleteBySourceBatch(sourceIds: string[], edgeType?: string): Promise<number>;
   /** Mirror of `deleteBySourceBatch` for inbound edges. */
   deleteByTargetBatch(targetIds: string[], edgeType?: string): Promise<number>;
-  /** Count edges where the given item is source. Used for cardinality checks. */
-  countBySource(sourceId: string, edgeType: string): Promise<number>;
-  /** Count edges where the given item is target. Used for cardinality checks. */
-  countByTarget(targetId: string, edgeType: string): Promise<number>;
+  /**
+   * Count edges where the given item is source. Used for cardinality checks.
+   * When `tenantId` is supplied the count is fenced to that tenant so a
+   * tenant-scoped cardinality check never folds in another tenant's edges.
+   */
+  countBySource(
+    sourceId: string,
+    edgeType: string,
+    tenantId?: string,
+  ): Promise<number>;
+  /**
+   * Count edges where the given item is target. Used for cardinality checks.
+   * Same `tenantId` fence semantics as `countBySource`.
+   */
+  countByTarget(
+    targetId: string,
+    edgeType: string,
+    tenantId?: string,
+  ): Promise<number>;
   /**
    * Batched `countBySource` — for each distinct `(source_id, edge_type)` pair
    * returns the row count. Key format: `${source_id}|${edge_type}`. Pairs
    * absent from the result map have count zero. One SQL query per distinct
-   * `edge_type` in `pairs`.
+   * `edge_type` in `pairs`. `tenantId` fences each query to that tenant.
    */
   countsBySourceBatch(
     pairs: { source_id: string; edge_type: string }[],
+    tenantId?: string,
   ): Promise<Map<string, number>>;
   /**
    * Batched `countByTarget` — mirror of `countsBySourceBatch`, keyed as
@@ -1463,18 +1495,23 @@ export interface EdgeStore {
    */
   countsByTargetBatch(
     pairs: { target_id: string; edge_type: string }[],
+    tenantId?: string,
   ): Promise<Map<string, number>>;
-  /** Exact-duplicate check (source_id, target_id, edge_type). */
+  /**
+   * Exact-duplicate check (source_id, target_id, edge_type). `tenantId`
+   * fences the lookup so a cross-tenant edge with the same triple is invisible.
+   */
   existsExact(
     sourceId: string,
     targetId: string,
     edgeType: string,
+    tenantId?: string,
   ): Promise<boolean>;
   /**
    * Batched `existsExact` — returns the subset of triples that already exist.
    * Key format: `${source_id}|${target_id}|${edge_type}`. Callers check
    * membership to decide whether to reject a proposed edge as a duplicate.
-   * One SQL query per distinct `edge_type`.
+   * One SQL query per distinct `edge_type`. `tenantId` fences each query.
    */
   existsExactBatch(
     pairs: {
@@ -1482,6 +1519,7 @@ export interface EdgeStore {
       target_id: string;
       edge_type: string;
     }[],
+    tenantId?: string,
   ): Promise<Set<string>>;
   /**
    * Batched triple-to-Edge lookup. For each `(source_id, target_id, edge_type)`
@@ -1507,14 +1545,24 @@ export interface EdgeStore {
   /**
    * All outbound edges of a given type from sourceId. Used for cycle checks,
    * cascade-on-delete, and edge hydration when the caller wants every entry.
+   * `tenantId` fences the walk so cycle detection never traverses another
+   * tenant's edges.
    */
-  listOutboundOfType(sourceId: string, edgeType: string): Promise<Edge[]>;
+  listOutboundOfType(
+    sourceId: string,
+    edgeType: string,
+    tenantId?: string,
+  ): Promise<Edge[]>;
   /**
    * All edges touching the given item — outbound (item is source) and inbound
    * (item is target). Used by cascade-on-delete to gather the full edge set
-   * around an item being deleted.
+   * around an item being deleted. `tenantId` fences the gather so cascade
+   * planning never reads across tenants.
    */
-  listAllByItem(itemId: string): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
+  listAllByItem(
+    itemId: string,
+    tenantId?: string,
+  ): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
   /** Batched outbound-by-types fetch for hydration on item reads. */
   listFromSourcesBatched(
     sourceIds: string[],
