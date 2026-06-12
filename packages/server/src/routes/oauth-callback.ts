@@ -312,12 +312,23 @@ export interface OAuthCallbackOptions {
  * pass on `POST /connections/:id/oauth/start`. When non-empty, the
  * request's `redirect_uri` must match one entry exactly (string equality
  * after both sides are URL-canonicalised — protocol, host, port, path).
- * Empty list = unenforced (dev / self-hosted convenience). Hosted
- * deployments MUST set this via `MARFA_OAUTH_REDIRECT_ALLOWLIST` to prevent
- * open-redirect attacks via the OAuth start flow.
+ *
+ * `authMode` — the deployment's auth mode. Decides how an EMPTY allowlist
+ * is treated:
+ *   - `hosted` → fail closed. An empty allowlist rejects every
+ *     `redirect_uri`, because an admin-level caller on a multi-tenant
+ *     deployment could otherwise point a connector's authorization code at
+ *     an attacker-controlled redirect (authorization-code interception). The
+ *     operator MUST set `MARFA_OAUTH_REDIRECT_ALLOWLIST`.
+ *   - `keys` → unenforced passthrough. Single-tenant self-hosts run with no
+ *     allowlist by default; the caller is the operator, so there's no
+ *     attacker to intercept the code, and forcing the allowlist would break
+ *     the out-of-the-box flow.
+ * A non-empty allowlist enforces exact/canonical match in both modes.
  */
 export interface OAuthStartOptions {
   redirectUriAllowlist?: readonly string[];
+  authMode?: "hosted" | "keys";
 }
 
 function canonicaliseRedirect(uri: string): string {
@@ -338,8 +349,15 @@ function canonicaliseRedirect(uri: string): string {
 function isRedirectAllowed(
   candidate: string,
   allowlist: readonly string[] | undefined,
+  authMode: "hosted" | "keys",
 ): boolean {
-  if (!allowlist || allowlist.length === 0) return true; // unenforced
+  if (!allowlist || allowlist.length === 0) {
+    // Empty allowlist: fail closed on hosted (an unset allowlist on a
+    // multi-tenant deployment is an open-redirect / authorization-code
+    // interception hole), passthrough on keys-mode self-host (single
+    // operator, no attacker, allowlist optional for convenience).
+    return authMode !== "hosted";
+  }
   const c = canonicaliseRedirect(candidate);
   return allowlist.some((entry) => canonicaliseRedirect(entry) === c);
 }
@@ -363,6 +381,7 @@ export function oauthStartRoutes(
   storage: Storage,
   options: OAuthStartOptions = {},
 ) {
+  const authMode = options.authMode ?? "keys";
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     requireAuth(c);
@@ -395,10 +414,21 @@ export function oauthStartRoutes(
         "redirect_uri is required",
       );
     }
-    if (!isRedirectAllowed(body.redirect_uri, options.redirectUriAllowlist)) {
+    if (
+      !isRedirectAllowed(
+        body.redirect_uri,
+        options.redirectUriAllowlist,
+        authMode,
+      )
+    ) {
+      const allowlistEmpty =
+        !options.redirectUriAllowlist ||
+        options.redirectUriAllowlist.length === 0;
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `redirect_uri "${body.redirect_uri}" is not in MARFA_OAUTH_REDIRECT_ALLOWLIST`,
+        allowlistEmpty
+          ? `redirect_uri "${body.redirect_uri}" rejected: MARFA_OAUTH_REDIRECT_ALLOWLIST is empty and hosted mode fails closed. Set MARFA_OAUTH_REDIRECT_ALLOWLIST to the allowed redirect URIs.`
+          : `redirect_uri "${body.redirect_uri}" is not in MARFA_OAUTH_REDIRECT_ALLOWLIST`,
       );
     }
     const config = await readAuthorizeConfig(storage, connection);
