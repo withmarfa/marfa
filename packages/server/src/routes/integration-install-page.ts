@@ -12,6 +12,13 @@
  *     target types, triggers) rather than scope strings.
  *   - There's no PKCE round-trip — the install doesn't redirect back to
  *     a third-party app; the next page is server-rendered too.
+ *
+ * The surface is self-contained (its own inline <style>) but tracks the
+ * shared "Luma" auth stylesheet (auth-static/auth-css.ts) for tokens and
+ * the `.disclosure` / `.codefield` patterns. The app tile is deliberately
+ * neutral: the manifest carries no icon or brand-colour field, so a grey
+ * tile with a dark glyph is the honest representation. Light + dark via the
+ * same token flip the shared sheet uses.
  */
 
 interface ConsentParams {
@@ -67,34 +74,105 @@ function describeDirection(direction: "read" | "write" | "both"): string {
   }
 }
 
+/**
+ * Short read/write summary for the human lead-row description. The longer
+ * `describeDirection` copy stays available (and is what the disclosure-free
+ * paths surface); this is the one-line "what it will do" the user sees first.
+ */
+function summariseDirection(direction: "read" | "write" | "both"): string {
+  switch (direction) {
+    case "read":
+      return "Read into your space.";
+    case "write":
+      return "Written out from your space.";
+    case "both":
+      return "Read and written both ways.";
+  }
+}
+
+/**
+ * The verb pair the connector exercises against each target type, expressed
+ * in the scope grammar (`<type>:read` / `<type>:write`). `both` grants both.
+ */
+function directionVerbs(direction: "read" | "write" | "both"): string[] {
+  switch (direction) {
+    case "read":
+      return ["read"];
+    case "write":
+      return ["write"];
+    case "both":
+      return ["read", "write"];
+  }
+}
+
+function getTargetTypes(manifest: Record<string, unknown>): string[] {
+  const targets = manifest.target_types;
+  if (!Array.isArray(targets)) return [];
+  return (targets as unknown[]).filter(
+    (t): t is string => typeof t === "string",
+  );
+}
+
+/**
+ * Turn a dotted type identifier into a human data-type name for the lead row.
+ * `google.calendar.event` → "Calendar events"; `core.event` → "Events". The
+ * qualifier segment (e.g. `calendar`) carries the specificity the bare concrete
+ * type can't, so it's folded in — but a leading provider/namespace root
+ * (`core`, `google`, the type's first segment) is dropped, since the user
+ * doesn't need "Google calendar events", just "Calendar events". This is the
+ * human name the prototype shows — distinct from the raw `target_types`
+ * identifiers, which live verbatim in the Technical-details block.
+ */
+function humaniseType(typeId: string): string {
+  const segments = typeId.split(".").filter((s) => s.length > 0);
+  // Drop the leading namespace root (provider or `core`); keep the rest.
+  const meaningful = segments.length > 1 ? segments.slice(1) : segments;
+  const words = meaningful.join(" ").replace(/_/g, " ").trim();
+  if (words.length === 0) return typeId;
+  const titled = words.charAt(0).toUpperCase() + words.slice(1);
+  return titled.endsWith("s") ? titled : `${titled}s`;
+}
+
+/**
+ * The single human label for the lead row. Multiple target types collapse to
+ * a comma-joined list of their humanised names ("Events, Calendar events");
+ * a manifest with no target types falls back to a generic phrase so the row
+ * never renders empty.
+ */
+function leadLabel(types: string[]): string {
+  if (types.length === 0) return "Your data";
+  const names = Array.from(new Set(types.map(humaniseType)));
+  return names.join(", ");
+}
+
 interface TriggerEntry {
   type: string;
   config?: { cron?: string };
 }
 
-function renderTriggers(manifest: Record<string, unknown>): string {
+/**
+ * Triggers, rendered as a Technical-details sub-block. Kept so the disclosure
+ * doesn't drop manifest information the flat layout used to show.
+ */
+function renderTriggerDetail(manifest: Record<string, unknown>): string {
   const triggers = manifest.triggers;
   if (!Array.isArray(triggers) || triggers.length === 0) return "";
-  const items = (triggers as TriggerEntry[]).map((t) => {
+  const lines = (triggers as TriggerEntry[]).map((t) => {
     const detail =
       t.type === "schedule" && t.config?.cron
-        ? ` <code>${escapeHtml(t.config.cron)}</code>`
+        ? ` ${escapeHtml(t.config.cron)}`
         : "";
-    return `<li>${escapeHtml(t.type)}${detail}</li>`;
+    return escapeHtml(t.type) + detail;
   });
-  return `<div class="section"><h2>Triggers</h2><ul>${items.join("")}</ul></div>`;
+  return `<p class="micro">Triggers</p><div class="codefield">${lines.join("<br>")}</div>`;
 }
 
-function renderTargetTypes(manifest: Record<string, unknown>): string {
-  const targets = manifest.target_types;
-  if (!Array.isArray(targets) || targets.length === 0) return "";
-  const items = (targets as string[]).map(
-    (t) => `<li><code>${escapeHtml(t)}</code></li>`,
-  );
-  return `<div class="section"><h2>Item types it touches</h2><ul>${items.join("")}</ul></div>`;
-}
-
-function renderPermissions(manifest: Record<string, unknown>): string {
+/**
+ * Additional extension / edge-type permissions, rendered as a Technical-details
+ * sub-block. Preserves the information the flat "Additional permissions"
+ * section used to carry.
+ */
+function renderPermissionDetail(manifest: Record<string, unknown>): string {
   const permissions = manifest.permissions as
     | {
         extension?: Record<string, "read" | "write">;
@@ -102,26 +180,43 @@ function renderPermissions(manifest: Record<string, unknown>): string {
       }
     | undefined;
   if (!permissions) return "";
-  const blocks: string[] = [];
-  if (permissions.extension && Object.keys(permissions.extension).length > 0) {
-    const items = Object.entries(permissions.extension).map(
-      ([ns, level]) =>
-        `<li><code>${escapeHtml(ns)}</code> — ${escapeHtml(level)}</li>`,
-    );
-    blocks.push(`<h3>Extension namespaces</h3><ul>${items.join("")}</ul>`);
+  const lines: string[] = [];
+  if (permissions.extension) {
+    for (const [ns, level] of Object.entries(permissions.extension)) {
+      lines.push(`${escapeHtml(ns)} — ${escapeHtml(level)}`);
+    }
   }
-  if (permissions.edge && Object.keys(permissions.edge).length > 0) {
-    const items = Object.entries(permissions.edge).map(
-      ([t, level]) =>
-        `<li><code>${escapeHtml(t)}</code> — ${escapeHtml(level)}</li>`,
-    );
-    blocks.push(`<h3>Edge types</h3><ul>${items.join("")}</ul>`);
+  if (permissions.edge) {
+    for (const [t, level] of Object.entries(permissions.edge)) {
+      lines.push(`edge.${escapeHtml(t)} — ${escapeHtml(level)}`);
+    }
   }
-  if (blocks.length === 0) return "";
-  return `<div class="section"><h2>Additional permissions</h2>${blocks.join("")}</div>`;
+  if (lines.length === 0) return "";
+  return `<p class="micro">Additional permissions</p><div class="codefield">${lines.join("<br>")}</div>`;
 }
 
 export function renderInstallConsentScreen(params: ConsentParams): string {
+  const targetTypes = getTargetTypes(params.manifest);
+  const glyph = (params.manifestName.trim().charAt(0) || "?").toUpperCase();
+  const verbs = directionVerbs(params.direction);
+
+  // Type identifier(s): the raw, dotted identifiers from the manifest.
+  const typeIdField =
+    targetTypes.length > 0
+      ? targetTypes.map((t) => escapeHtml(t)).join("<br>")
+      : "—";
+
+  // Scopes: each target type crossed with the direction verbs, in the
+  // `<type>:<verb>` scope grammar. Falls back to the bare verbs when the
+  // manifest declares no target types.
+  const scopeTokens =
+    targetTypes.length > 0
+      ? targetTypes.flatMap((t) => verbs.map((v) => `${t}:${v}`))
+      : verbs;
+  const scopesField = scopeTokens
+    .map((s) => escapeHtml(s))
+    .join("&nbsp;&nbsp;");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -129,57 +224,280 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Install ${escapeHtml(params.manifestName)}</title>
   <style>
-    /* Standalone consent surface — mirrors the monochrome "Luma" look of
-       /auth/static/auth.css without importing it (this page renders its
-       own document rather than via renderAuthLayout). Light-only. */
+    /* Standalone consent surface — tracks the monochrome "Luma" look of
+       auth-static/auth-css.ts (tokens, .disclosure, .codefield) without
+       importing it, since this page renders its own document rather than
+       via renderAuthLayout. Dark mode follows the device. */
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f5;
+      --card: #ffffff;
+      --fg: #0a0a0a;
+      --fg-muted: #737373;
+      --fg-faint: #a3a3a3;
+      --border: #e5e5e5;
+      --border-strong: #d4d4d4;
+      --hairline: #ededed;
+      --surface-2: #f5f5f5;
+      --field: #f5f5f5;
+      --field-hover: #ececec;
+      --primary: #171717;
+      --primary-hover: #2a2a2a;
+      --primary-fg: #fafafa;
+      --ring: rgba(10, 10, 10, 0.13);
+      --r-pill: 999px;
+      --r-card: 26px;
+      --r-md: 14px;
+      --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
+      --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a;
+        --card: #161616;
+        --fg: #fafafa;
+        --fg-muted: #a3a3a3;
+        --fg-faint: #6e6e6e;
+        --border: #2a2a2a;
+        --border-strong: #3a3a3a;
+        --hairline: #242424;
+        --surface-2: #1f1f1f;
+        --field: #232323;
+        --field-hover: #2b2b2b;
+        --primary: #fafafa;
+        --primary-hover: #e5e5e5;
+        --primary-fg: #171717;
+        --ring: rgba(250, 250, 250, 0.2);
+        --shadow: none;
+      }
+    }
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #f4f4f5; color: #0f0f0f; margin: 0; padding: 32px 20px; -webkit-font-smoothing: antialiased; }
-    .card { max-width: 480px; margin: 0 auto; background: #ffffff; border: 1px solid #ececea; border-radius: 16px; padding: 28px; box-shadow: 0 1px 2px rgba(15, 15, 15, 0.03), 0 12px 36px rgba(15, 15, 15, 0.05); }
-    h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3; margin: 0 0 6px; }
-    h2 { font-size: 12px; margin: 0 0 8px; color: #9b9b96; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-    h3 { font-size: 13px; margin: 10px 0 4px; color: #5a5a55; font-weight: 600; }
-    .publisher { color: #5a5a55; font-size: 14px; margin: 0 0 16px; }
-    .summary { margin: 0 0 8px; line-height: 1.55; font-size: 14px; }
-    .direction { margin: 0 0 4px; color: #5a5a55; font-size: 13px; }
-    .section { margin: 16px 0; padding-top: 14px; border-top: 1px solid #f1f1ee; }
-    .section ul { margin: 0; padding-left: 18px; }
-    .section li { margin: 3px 0; font-size: 14px; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #6a6a64; background: #f1f1ee; padding: 1px 6px; border-radius: 4px; }
-    .label-input { display: block; width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid transparent; border-radius: 10px; background: #f3f3f4; font-size: 16px; color: #0f0f0f; }
-    .label-input:focus { outline: none; border-color: #0f0f0f; box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.08); }
-    .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }
-    button { width: 100%; min-height: 40px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid #d9d9d4; font-family: inherit; }
-    .approve { background: #0f0f0f; color: #ffffff; border-color: #0f0f0f; }
-    .deny { background: transparent; color: #5a5a55; border-color: transparent; }
-    .deny:hover { background: #f1f1ee; color: #0f0f0f; }
-    .credential-hint { margin: 16px 0; padding: 12px 14px; background: #f4f4f5; border: 1px solid #ececea; border-radius: 10px; font-size: 13px; color: #5a5a55; }
-    .credential-hint code { background: #ececea; color: #0f0f0f; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 40px 20px;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-card);
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+    @media (max-width: 460px) {
+      body { padding: 16px; }
+      .card { padding: 22px; border-radius: 20px; }
+    }
+
+    /* App header — neutral tile (NO brand colour), name + "Marfa integration". */
+    .app { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+    .app__logo {
+      width: 46px; height: 46px;
+      border-radius: var(--r-md);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      display: grid; place-items: center;
+      color: var(--fg);
+      font-size: 20px; font-weight: 600;
+      letter-spacing: -0.01em;
+      flex-shrink: 0;
+    }
+    .app__name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+    .app__by { font-size: 13px; color: var(--fg-muted); }
+    .subtitle { margin: 0 0 6px; font-size: 14px; line-height: 1.55; color: var(--fg-muted); }
+
+    .eyebrow {
+      margin: 18px 0 8px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--fg-faint);
+    }
+
+    /* Lead row — neutral icon tile + bold human name + muted description. */
+    .lead { display: flex; align-items: flex-start; gap: 13px; }
+    .lead__ic {
+      display: grid; place-items: center;
+      width: 40px; height: 40px;
+      border-radius: 11px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--fg-muted);
+      flex-shrink: 0;
+    }
+    .lead__name { font-size: 15px; font-weight: 600; display: block; color: var(--fg); }
+    .lead__desc { font-size: 13px; color: var(--fg-muted); }
+
+    /* Disclosure — copied from the shared sheet's .disclosure pattern, with
+       NO top divider line (the prototype's flush "Technical details"). */
+    details.disclosure { margin-top: 16px; }
+    details.disclosure > summary {
+      list-style: none;
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 0;
+      cursor: pointer;
+      color: var(--fg-muted);
+      font-size: 13px; font-weight: 500;
+    }
+    details.disclosure > summary::-webkit-details-marker { display: none; }
+    .disclosure__chevron {
+      width: 8px; height: 8px;
+      border-right: 1.6px solid currentColor;
+      border-bottom: 1.6px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 0.18s var(--ease);
+    }
+    details.disclosure[open] > summary { color: var(--fg); }
+    details.disclosure[open] > summary .disclosure__chevron { transform: rotate(45deg); }
+    .disclosure__body { padding: 4px 0 8px; }
+    .micro {
+      margin: 12px 0 6px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--fg-faint);
+    }
+    .micro:first-child { margin-top: 4px; }
+
+    .codefield {
+      width: 100%;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px; line-height: 1.5;
+      padding: 11px 14px;
+      color: var(--fg-muted);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      word-break: break-all;
+    }
+
+    /* Connection label input — pill field per the shared sheet. */
+    .field { display: flex; flex-direction: column; gap: 7px; }
+    .field__label { font-size: 13px; font-weight: 500; color: var(--fg); }
+    .label-input {
+      width: 100%;
+      font-family: inherit;
+      /* 16px so iOS Safari doesn't auto-zoom on focus. */
+      font-size: 16px; line-height: 1.4;
+      padding: 11px 16px;
+      color: var(--fg);
+      background: var(--field);
+      border: 1px solid transparent;
+      border-radius: var(--r-pill);
+      transition: background 0.12s var(--ease), border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+    }
+    .label-input:hover { background: var(--field-hover); }
+    .label-input:focus {
+      outline: none;
+      background: var(--card);
+      border-color: var(--fg);
+      box-shadow: 0 0 0 3px var(--ring);
+    }
+
+    .credential-hint {
+      margin: 16px 0;
+      padding: 12px 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      font-size: 13px; color: var(--fg-muted);
+    }
+    .credential-hint code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--fg);
+      background: var(--field-hover);
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+
+    /* Stacked actions — pill buttons. */
+    .stack { display: flex; flex-direction: column; gap: 12px; margin-top: 22px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 100%;
+      min-height: 44px;
+      padding: 11px 20px;
+      font-family: inherit;
+      font-size: 14px; font-weight: 600; line-height: 1;
+      border: 1px solid transparent;
+      border-radius: var(--r-pill);
+      cursor: pointer;
+      transition: background 0.12s var(--ease), border-color 0.12s var(--ease), transform 0.06s var(--ease);
+    }
+    .btn:active { transform: translateY(0.5px); }
+    .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+    .btn--primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+    .btn--primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    .btn--outline { background: var(--card); color: var(--fg); border-color: var(--border); }
+    .btn--outline:hover { background: var(--surface-2); border-color: var(--border-strong); }
+
+    .footnote { margin: 18px 0 0; text-align: center; font-size: 12px; color: var(--fg-faint); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0.001ms !important; }
+    }
   </style>
 </head>
 <body>
   <main class="card">
-  <h1>Install ${escapeHtml(params.manifestName)} <code>${escapeHtml(params.manifestVersion)}</code></h1>
-  <div class="publisher">by ${escapeHtml(params.publisher)}</div>
-  <p class="summary">${escapeHtml(params.summary)}</p>
-  <p class="direction">${escapeHtml(describeDirection(params.direction))}</p>
-
-  ${renderTargetTypes(params.manifest)}
-  ${renderTriggers(params.manifest)}
-  ${renderPermissions(params.manifest)}
-
-  ${renderCredentialHint(params)}
-
-  <form method="POST" action="/integrations/${escapeHtml(params.integrationId)}/install">
-    ${renderCredentialRefInput(params)}
-    <div class="section">
-      <h2>Connection label</h2>
-      <input class="label-input" type="text" name="label" value="${escapeHtml(`${params.manifestName} ${params.manifestVersion}`)}">
+    <div class="app">
+      <span class="app__logo" aria-hidden="true">${escapeHtml(glyph)}</span>
+      <span>
+        <span class="app__name">${escapeHtml(params.manifestName)}</span><br>
+        <span class="app__by">Marfa integration</span>
+      </span>
     </div>
-    <div class="actions">
-      <button type="submit" name="decision" value="approve" class="approve">Install</button>
-      <button type="submit" name="decision" value="deny" class="deny">Cancel</button>
+    <p class="subtitle">${escapeHtml(params.summary)}</p>
+
+    <p class="eyebrow">Adds to your space</p>
+    <div class="lead">
+      <span class="lead__ic" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      </span>
+      <span>
+        <b class="lead__name">${escapeHtml(leadLabel(targetTypes))}</b>
+        <span class="lead__desc">${escapeHtml(summariseDirection(params.direction))}</span>
+      </span>
     </div>
-  </form>
+
+    <details class="disclosure">
+      <summary><span class="disclosure__chevron"></span> Technical details</summary>
+      <div class="disclosure__body">
+        <p class="micro">Type identifier</p>
+        <div class="codefield">${typeIdField}</div>
+        <p class="micro">Scopes</p>
+        <div class="codefield">${scopesField}</div>
+        <p class="micro">Direction</p>
+        <div class="codefield">${escapeHtml(describeDirection(params.direction))}</div>
+        ${renderTriggerDetail(params.manifest)}
+        ${renderPermissionDetail(params.manifest)}
+      </div>
+    </details>
+
+    ${renderCredentialHint(params)}
+
+    <form method="POST" action="/integrations/${escapeHtml(params.integrationId)}/install">
+      ${renderCredentialRefInput(params)}
+      <div class="field" style="margin-top:16px">
+        <label class="field__label" for="label">Connection label</label>
+        <input class="label-input" id="label" type="text" name="label" value="${escapeHtml(`${params.manifestName} ${params.manifestVersion}`)}">
+      </div>
+      <div class="stack">
+        <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
+        <button type="submit" name="decision" value="deny" class="btn btn--outline">Cancel</button>
+      </div>
+    </form>
+    <p class="footnote">Remove anytime in Settings → Connections.</p>
   </main>
 </body>
 </html>`;

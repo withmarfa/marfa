@@ -33,7 +33,7 @@ describe("GET /auth/static/auth.css", () => {
     // A few sentinel pieces of the stylesheet — validates the bytes
     // are flowing end-to-end without asserting the entire blob.
     expect(body).toContain(":root");
-    expect(body).toContain("--ink:");
+    expect(body).toContain("--fg:");
     expect(body).toContain(".btn--primary");
   });
 

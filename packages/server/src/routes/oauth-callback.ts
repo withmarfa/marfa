@@ -257,22 +257,36 @@ function escapeHtml(input: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/* Standalone monochrome "Luma" card — these callback pages render outside
+   the /auth/* layout (no session), so they carry their own minimal styles
+   matching auth.css. Light-only. */
+const CALLBACK_CSS = `
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 20px;background:#f5f5f5;color:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .card{width:100%;max-width:440px;background:#fff;border:1px solid #e5e5e5;border-radius:18px;padding:28px;box-shadow:0 1px 2px rgba(10,10,10,.04),0 8px 28px rgba(10,10,10,.06)}
+  h1{margin:0 0 8px;font-size:20px;font-weight:600;letter-spacing:-.02em}
+  p{margin:0 0 10px;color:#737373}
+  p:last-child{margin-bottom:0}
+  p strong{color:#0a0a0a;font-weight:600}
+  .ref{margin-top:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#a3a3a3;word-break:break-all}
+  pre{margin:10px 0 0;padding:12px 14px;background:#f5f5f5;border:1px solid #e5e5e5;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:#0a0a0a;white-space:pre-wrap;word-break:break-word}
+`;
+
 function renderSuccessPage(provider: string, connectionId: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Connection authorised</title>
-    <style>
-      body { font-family: system-ui, -apple-system, sans-serif; max-width: 640px; margin: 4rem auto; color: #1c1c1e; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; }
-      code { background: #f2f2f7; padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }
-      .ok { color: #34c759; font-weight: 600; }
-    </style>
+    <style>${CALLBACK_CSS}</style>
   </head>
   <body>
-    <h1><span class="ok">&#10003;</span> Authorisation complete</h1>
-    <p>Connection <code>${escapeHtml(connectionId)}</code> is now authorised against <code>${escapeHtml(provider)}</code>. You can close this tab.</p>
+    <main class="card">
+      <h1>Connection authorised</h1>
+      <p>This connection is now connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
+      <p class="ref">${escapeHtml(connectionId)}</p>
+    </main>
   </body>
 </html>`;
 }
@@ -282,19 +296,17 @@ function renderErrorPage(reason: string, status: number): string {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>OAuth callback failed</title>
-    <style>
-      body { font-family: system-ui, -apple-system, sans-serif; max-width: 640px; margin: 4rem auto; color: #1c1c1e; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; }
-      .err { color: #ff3b30; font-weight: 600; }
-      pre { background: #f2f2f7; padding: 1rem; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Couldn't complete sign-in</title>
+    <style>${CALLBACK_CSS}</style>
   </head>
   <body>
-    <h1><span class="err">&#10005;</span> OAuth callback failed</h1>
-    <p>The provider redirected back with an error or the state was invalid:</p>
-    <pre>${escapeHtml(reason)}</pre>
-    <p>Status: <code>${String(status)}</code></p>
+    <main class="card">
+      <h1>Couldn't complete sign-in</h1>
+      <p>The provider redirected back with an error, or the request had expired. Try connecting again.</p>
+      <pre>${escapeHtml(reason)}</pre>
+      <p class="ref">Status ${String(status)}</p>
+    </main>
   </body>
 </html>`;
 }

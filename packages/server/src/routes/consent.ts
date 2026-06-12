@@ -83,11 +83,12 @@ interface ConsentParams {
   priorScopes?: readonly string[];
   /**
    * The configured permission bundles. When present (and not a re-consent
-   * diff), the screen renders the four-checkbox bundle view: one toggle per
-   * bundle (all on), with the granular scopes tucked behind a "Customise"
-   * disclosure. When absent, the screen falls back to the flat
-   * Identity / Read / Read-&-write grouping. The form contract is identical
-   * either way — the submitted `scopes` checkboxes carry literal values.
+   * diff), the screen renders the per-bundle expand view: each bundle is its
+   * own collapsible row carrying a master toggle, and expanding the row
+   * reveals that bundle's granular scopes. When absent, the screen falls
+   * back to the flat Identity / Read / Read-&-write grouping. The form
+   * contract is identical either way — the submitted `scopes` checkboxes
+   * carry literal values.
    */
   bundles?: PermissionBundle[];
   /**
@@ -129,26 +130,35 @@ export function renderConsentScreen(params: ConsentParams): string {
   const descriptionFor = (typePattern: string): string | undefined =>
     params.descriptions?.[typePattern];
 
-  /** A single grant-this-permission row — toggle on the right. When
-   *  `bundleId` is set the checkbox is tagged so the bundle master toggle
-   *  can drive it (and member edits can reflect back onto the master). */
-  const scopeRow = (
-    scope: ParsedScope,
-    opts?: { checked?: boolean; bundleId?: string },
-  ) => {
+  /** A single grant-this-permission row for the flat / re-consent-diff view
+   *  — plain-English label on the left, toggle switch on the right. Checked
+   *  by default (the requested scope is granted unless the user unticks it). */
+  const scopeRow = (scope: ParsedScope): string => {
     const literal = scopeLiteralFor(scope);
     const description = descriptionFor(scope.typePattern);
     const human = description ?? literal; // literal fallback is rare; every core/OIDC scope has a description
-    const checked = opts?.checked === false ? "" : "checked";
-    const memberAttr = opts?.bundleId
-      ? ` data-bundle-member="${escapeHtml(opts.bundleId)}"`
-      : "";
     return `<label class="scope-row">
       <span class="scope-row__text">${escapeHtml(human)}</span>
       <span class="toggle">
-        <input type="checkbox" name="scopes" value="${escapeHtml(literal)}"${memberAttr} ${checked}>
+        <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" checked>
         <span class="toggle__track" aria-hidden="true"></span>
       </span>
+    </label>`;
+  };
+
+  /** A granular scope sub-item inside an expanded bundle: a quiet label on
+   *  the left and a small squared check on the right. The checkbox is the
+   *  real `name="scopes"` submitter (checked by default), so the no-JS
+   *  fallback still grants every scope; `data-bundle-member` lets the
+   *  bundle's master toggle drive it, and member edits reflect back onto
+   *  the master. */
+  const bundleSubRow = (scope: ParsedScope, bundleId: string): string => {
+    const literal = scopeLiteralFor(scope);
+    const description = descriptionFor(scope.typePattern);
+    const human = description ?? literal; // literal fallback is rare; every core/OIDC scope has a description
+    return `<label class="bundle-sub">
+      <span class="bundle-sub__label">${escapeHtml(human)}</span>
+      <input class="chk" type="checkbox" name="scopes" value="${escapeHtml(literal)}" data-bundle-member="${escapeHtml(bundleId)}" checked>
     </label>`;
   };
 
@@ -209,12 +219,14 @@ export function renderConsentScreen(params: ConsentParams): string {
   const showBundles =
     !showDiff && Array.isArray(params.bundles) && params.bundles.length > 0;
 
-  /** Four-bucket view: one master toggle per bundle (all on by default),
-   *  with each bundle's granular scopes tucked behind a "Customise"
-   *  disclosure. The submitted `scopes` checkboxes live inside each bundle
-   *  (checked + hidden), so the no-JS fallback grants the full default set;
-   *  JS links each master toggle to its members and Customise reveals them.
-   *  The decision handler's contract is unchanged — it reads `scopes`. */
+  /** Per-bundle expand view: each bundle is its own collapsible `<details>`
+   *  row. The summary carries the bundle label, a chevron, and the bundle's
+   *  master toggle (on by default); expanding the row reveals that bundle's
+   *  granular scope sub-items. The granular `name="scopes"` checkboxes are
+   *  the real submitters (checked), so the no-JS fallback grants the full
+   *  default set — native `<details>` expands without JS, and JS only adds
+   *  the master-toggle ↔ member linkage. The decision handler's contract is
+   *  unchanged — it reads `scopes`. */
   const renderBundles = (): string => {
     const assigned = new Set<string>();
     const groups = (params.bundles ?? [])
@@ -235,41 +247,50 @@ export function renderConsentScreen(params: ConsentParams): string {
     );
 
     const bundleBlocks = groups
-      .map(({ bundle, members }) => {
+      .map(({ bundle, members }, i) => {
         const granular = members
-          .map((s) => scopeRow(s, { bundleId: bundle.id }))
+          .map((s) => bundleSubRow(s, bundle.id))
           .join("");
-        return `<div class="bundle">
-          <label class="bundle-row">
+        // First bundle is expanded by default so the surface reads as
+        // explorable at a glance; the rest start collapsed.
+        const openAttr = i === 0 ? " open" : "";
+        // The master toggle has NO `name` — it never submits. It's a
+        // JS-only driver for the member checkboxes (which do submit).
+        // `event.preventDefault()` on the toggle label stops a click on
+        // the switch from also toggling the parent <details>; the input's
+        // own state is then flipped by the enhancement script. Without JS
+        // the switch is inert, but every member checkbox is real + checked,
+        // so the default grant still submits in full.
+        return `<details class="bundle-expand"${openAttr}>
+          <summary>
             <span class="bundle-row__text">
-              <span class="bundle-row__label">${escapeHtml(bundle.label)}</span>
+              <span class="bundle-row__label">${escapeHtml(bundle.label)} <span class="bundle-expand__chevron" aria-hidden="true"></span></span>
               <span class="bundle-row__desc">${escapeHtml(bundle.description)}</span>
             </span>
-            <span class="toggle">
-              <input type="checkbox" class="bundle-toggle" data-bundle-toggle="${escapeHtml(bundle.id)}" checked aria-label="${escapeHtml(bundle.label)}">
+            <label class="toggle" data-bundle-master="${escapeHtml(bundle.id)}" onclick="event.preventDefault()">
+              <input type="checkbox" data-bundle-toggle="${escapeHtml(bundle.id)}" checked aria-label="${escapeHtml(bundle.label)}">
               <span class="toggle__track" aria-hidden="true"></span>
-            </span>
-          </label>
-          <div class="bundle-scopes" data-bundle-scopes hidden>${granular}</div>
-        </div>`;
+            </label>
+          </summary>
+          <div class="bundle-expand__sub">${granular}</div>
+        </details>`;
       })
       .join("");
 
-    // Requested scopes that belong to no bundle (e.g. offline_access).
-    // Granted by default, surfaced only under Customise so the four-box
-    // view stays clean.
+    // Requested scopes that belong to no bundle (e.g. offline_access, or an
+    // edge scope outside the default bundle set). Granted by default and kept
+    // out of the expand rows, but rendered as a visible "Other" group of
+    // scope rows so the user still sees each one's plain-English description
+    // and can untick it. The checkboxes are real + checked, so they submit.
     const residualBlock =
       residual.length > 0
-        ? `<div class="bundle bundle--residual">
-            <div class="bundle-scopes" data-bundle-scopes hidden>
-              <p class="bundle-scopes__head">Other</p>
-              ${residual.map((s) => scopeRow(s)).join("")}
-            </div>
+        ? `<div class="bundle--residual">
+            <p class="bundle-residual__head">Other</p>
+            ${residual.map((s) => scopeRow(s)).join("")}
           </div>`
         : "";
 
-    return `<div class="bundles">${bundleBlocks}${residualBlock}</div>
-      <button type="button" class="customise-toggle" data-customise aria-expanded="false">Customise permissions</button>`;
+    return `<div class="bundles">${bundleBlocks}${residualBlock}</div>`;
   };
 
   let contentHtml: string;
@@ -369,12 +390,17 @@ export function renderConsentScreen(params: ConsentParams): string {
     : "";
 
   // Progressive-enhancement script. Two jobs: (1) flat/diff view — keep the
-  // "X enabled" count accurate as toggles flip; (2) bundle view — a Customise
-  // button reveals the granular scopes, each bundle master toggle drives its
-  // member checkboxes (the ones that actually submit), and member edits
-  // reflect back onto the master. NOTE: the template is minified with
-  // `replace(/\\s+/g, " ")`, which collapses newlines — so it MUST NOT contain
-  // `//` line comments (they would swallow the rest of the script).
+  // "X enabled" count accurate as toggles flip; (2) bundle view — each bundle
+  // master toggle drives its member checkboxes (the ones that actually
+  // submit), and member edits reflect back onto the master. The master toggle
+  // lives inside a <summary> and its label cancels the native click
+  // (event.preventDefault()) so a switch click never spuriously toggles the
+  // <details>; the script therefore flips the master input's state itself on
+  // click. With no JS the <details> still expands
+  // natively and every member checkbox is real + checked, so the form is
+  // fully usable and submits the full default set. NOTE: the template is
+  // minified with `replace(/\\s+/g, " ")`, which collapses newlines — so it
+  // MUST NOT contain `//` line comments (they would swallow the rest).
   const enhancementScript = `
     (function () {
       var sections = document.querySelectorAll('[data-section]');
@@ -397,30 +423,24 @@ export function renderConsentScreen(params: ConsentParams): string {
         });
       });
 
-      var customise = document.querySelector('[data-customise]');
-      if (customise) {
-        customise.addEventListener('click', function () {
-          var open = customise.getAttribute('aria-expanded') === 'true';
-          document.querySelectorAll('[data-bundle-scopes]').forEach(function (el) {
-            if (open) el.setAttribute('hidden', ''); else el.removeAttribute('hidden');
-          });
-          customise.setAttribute('aria-expanded', open ? 'false' : 'true');
-          customise.textContent = open ? 'Customise permissions' : 'Hide details';
-        });
-      }
-      document.querySelectorAll('[data-bundle-toggle]').forEach(function (master) {
-        var id = master.getAttribute('data-bundle-toggle');
+      document.querySelectorAll('[data-bundle-master]').forEach(function (masterLabel) {
+        var id = masterLabel.getAttribute('data-bundle-master');
+        var master = masterLabel.querySelector('input[data-bundle-toggle="' + id + '"]');
         var members = document.querySelectorAll('input[data-bundle-member="' + id + '"]');
-        master.addEventListener('change', function () {
+        if (!master) return;
+        function syncMaster() {
+          var any = false, all = true;
+          members.forEach(function (x) { if (x.checked) any = true; else all = false; });
+          master.checked = any;
+          master.indeterminate = any && !all;
+        }
+        masterLabel.addEventListener('click', function () {
+          master.checked = !master.checked;
+          master.indeterminate = false;
           members.forEach(function (m) { m.checked = master.checked; });
         });
         members.forEach(function (m) {
-          m.addEventListener('change', function () {
-            var any = false, all = true;
-            members.forEach(function (x) { if (x.checked) any = true; else all = false; });
-            master.checked = any;
-            master.indeterminate = any && !all;
-          });
+          m.addEventListener('change', syncMaster);
         });
       });
     })();

@@ -357,7 +357,7 @@ describe("renderConsentScreen — unverified-app indicator", () => {
   });
 });
 
-describe("renderConsentScreen — four-bucket bundle view", () => {
+describe("renderConsentScreen — per-bundle expand view", () => {
   // A representative requested set: each maps to one default bundle, plus
   // offline_access which belongs to none (residual).
   const BUNDLE_SCOPES: ParsedScope[] = [
@@ -383,7 +383,7 @@ describe("renderConsentScreen — four-bucket bundle view", () => {
     bundles: DEFAULT_PERMISSION_BUNDLES,
   };
 
-  it("renders the four bundle labels each with a master toggle", () => {
+  it("renders each bundle as its own collapsible <details> with a master toggle", () => {
     const html = renderConsentScreen(BUNDLE_PARAMS);
     for (const label of [
       "Read your stuff",
@@ -395,7 +395,13 @@ describe("renderConsentScreen — four-bucket bundle view", () => {
     }
     for (const id of ["read", "write", "profile", "connected"]) {
       expect(html).toContain(`data-bundle-toggle="${id}"`);
+      expect(html).toContain(`data-bundle-master="${id}"`);
     }
+    // Each bundle is a per-row <details>, with a per-row chevron.
+    expect(html).toContain('<details class="bundle-expand"');
+    expect(html).toContain('class="bundle-expand__chevron"');
+    // First bundle is expanded by default; the rest collapsed.
+    expect(html).toMatch(/<details class="bundle-expand" open>/);
   });
 
   it("preserves the form contract — granular scope checkboxes as bundle members", () => {
@@ -404,20 +410,40 @@ describe("renderConsentScreen — four-bucket bundle view", () => {
     expect(html).toContain('value="core.*:write"');
     expect(html).toContain('data-bundle-member="read"');
     expect(html).toContain('data-bundle-member="write"');
-    // Granular tucked away; a Customise control reveals it.
-    expect(html).toContain("data-bundle-scopes");
-    expect(html).toContain("Customise permissions");
+    // Granular scopes are real, checked submitters tucked inside each
+    // bundle's expandable sub-section, rendered as quiet squared-check rows.
+    expect(html).toContain('class="bundle-expand__sub"');
+    expect(html).toContain('class="bundle-sub"');
+    expect(html).toMatch(
+      /<input class="chk" type="checkbox" name="scopes" value="core\.\*:read" data-bundle-member="read" checked>/,
+    );
   });
 
-  it("puts a scope belonging to no bundle under a residual group (still granted)", () => {
+  it("the master toggle carries no name so it never submits (JS-only driver)", () => {
+    const html = renderConsentScreen(BUNDLE_PARAMS);
+    // The master toggle input must not be a `scopes` submitter — only the
+    // granular member checkboxes are.
+    expect(html).not.toMatch(/<input[^>]*data-bundle-toggle="[^"]*"[^>]*name=/);
+    // Label cancels the native click so a switch tap doesn't toggle <details>.
+    expect(html).toContain('onclick="event.preventDefault()"');
+  });
+
+  it("puts a scope belonging to no bundle under a visible residual group (still granted, still submittable)", () => {
     const html = renderConsentScreen(BUNDLE_PARAMS);
     expect(html).toContain("bundle--residual");
+    // Residual scope is a real, checked `scopes` checkbox so it still submits.
     expect(html).toContain('value="offline_access"');
+    expect(html).toMatch(
+      /<input type="checkbox" name="scopes" value="offline_access" checked>/,
+    );
+    // Residual scopes stay visible (with their description) so the user can
+    // read and untick them — not hidden behind a disclosure.
+    expect(html).not.toMatch(/value="offline_access"[^>]*hidden/);
   });
 
   it("does not render the flat section markup in bundle view", () => {
     const html = renderConsentScreen(BUNDLE_PARAMS);
-    expect(html).toContain('class="bundle-row"');
+    expect(html).toContain('class="bundle-expand"');
     // Flat section headers are not rendered (the script may still reference
     // the data attributes; assert on rendered markup only).
     expect(html).not.toContain('class="section__label"');
@@ -425,7 +451,7 @@ describe("renderConsentScreen — four-bucket bundle view", () => {
 
   it("falls back to the flat section view when no bundles are passed", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).not.toContain('class="bundle-row"');
+    expect(html).not.toContain('class="bundle-expand"');
     expect(html).toContain('class="section__label"');
   });
 });

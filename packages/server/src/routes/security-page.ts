@@ -10,11 +10,12 @@
  *      counterpart to the existing API DELETE).
  *
  *   2. Active sessions — better-auth's list-sessions output, with
- *      created-at, last-active, IP + user-agent hints, and a Revoke
- *      button per row plus a "Sign out everywhere" button at the
- *      bottom (revokes every session for this user, including
- *      current — current redirects to /auth/sign-in on the next
- *      request).
+ *      created-at, last-active, IP + user-agent hints, and a "Sign
+ *      out" button on every session except the current one (which
+ *      carries a "(This device)" marker and no button). A "Sign out
+ *      everywhere" danger-zone button at the bottom revokes every
+ *      session for this user, including current — current redirects
+ *      to /auth/sign-in on the next request.
  *
  * Uses the shared auth-page layout, wide variant.
  */
@@ -39,8 +40,8 @@ export interface SecurityPageSession {
    *  refreshed on every authenticated request. */
   last_active_at: string;
   /** True for the session whose cookie this request was made under.
-   *  Render the per-session row with a "(current device)" tag and
-   *  disable its Revoke button (use Sign out everywhere instead). */
+   *  Render the per-session row with a muted "(This device)" marker on
+   *  the title and no action button — "Sign out everywhere" ends it. */
   is_current: boolean;
   ip_address: string | null;
   user_agent: string | null;
@@ -64,18 +65,39 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Pretty short ISO date (YYYY-MM-DD HH:MM UTC). Trades absolute
- *  precision for human-scannability. */
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** Friendly calendar date, e.g. "11 May 2026" — human-scannable, no
+ *  clock time or timezone noise. */
 function formatDate(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${String(yyyy)}-${mm}-${dd} ${hh}:${min} UTC`;
+  const month = MONTHS[d.getUTCMonth()] ?? "";
+  return `${String(d.getUTCDate())} ${month} ${String(d.getUTCFullYear())}`;
+}
+
+/** Plain-English summary of what a grant's scopes let an app do, so the
+ *  user never sees raw scope literals like `core.*:read`. */
+function scopeSummary(scopes: readonly string[]): string {
+  const hasWrite = scopes.some((s) => s.includes(":write"));
+  const hasRead = scopes.some((s) => s.includes(":read"));
+  if (hasWrite) return "Can read and write your data";
+  if (hasRead) return "Can read your data";
+  return "Limited access";
 }
 
 /** Trim a UA string to a hint. Real device parsing is a yak-shave;
@@ -113,22 +135,17 @@ export function renderSecurityPage(params: SecurityPageParams): string {
             .map((g) => {
               const safeName = escapeHtml(g.client_name);
               const safeId = escapeHtml(g.id);
-              const safeScopes = g.scopes
-                .map(
-                  (s) => `<code class="scope-literal">${escapeHtml(s)}</code>`,
-                )
-                .join(" ");
-              const lastUsed = g.last_used_at
+              const activity = g.last_used_at
                 ? `Last used ${escapeHtml(formatDate(g.last_used_at))}`
-                : `Never used`;
+                : `Connected ${escapeHtml(formatDate(g.granted_at))}`;
               return `<div class="row">
                 <div class="row__main">
                   <div class="row__title">${safeName}</div>
-                  <div class="row__meta">${safeScopes}</div>
-                  <div class="row__meta">Granted ${escapeHtml(formatDate(g.granted_at))} · ${lastUsed}</div>
+                  <div class="row__meta">${escapeHtml(scopeSummary(g.scopes))}</div>
+                  <div class="row__meta row__meta--faint">${activity}</div>
                 </div>
                 <form method="POST" action="/auth/grants/${safeId}/revoke" class="row__action">
-                  <button type="submit" class="btn btn--danger">Revoke</button>
+                  <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
                 </form>
               </div>`;
             })
@@ -142,28 +159,39 @@ export function renderSecurityPage(params: SecurityPageParams): string {
         const safeId = escapeHtml(s.id);
         const safeIp = s.ip_address ? escapeHtml(s.ip_address) : "Unknown IP";
         const safeUa = escapeHtml(uaHint(s.user_agent));
-        const currentTag = s.is_current
-          ? ` <span class="tag tag--current">current device</span>`
+        // The current session is marked by a muted "(This device)" suffix on
+        // the title — no action button, since "Sign out everywhere" ends it.
+        const deviceMarker = s.is_current
+          ? ` <span class="this-device">(This device)</span>`
           : "";
-        const revokeButton = s.is_current
-          ? `<button type="button" class="btn btn--danger" disabled title="Use Sign out everywhere to revoke the current session">Revoke</button>`
+        const action = s.is_current
+          ? ""
           : `<form method="POST" action="/auth/sessions/${safeId}/revoke" class="row__action">
-              <button type="submit" class="btn btn--danger">Revoke</button>
+              <button type="submit" class="btn btn--outline btn--sm">Sign out</button>
             </form>`;
+        const activity = s.is_current
+          ? "Active now"
+          : `Last active ${escapeHtml(formatDate(s.last_active_at))}`;
         return `<div class="row">
           <div class="row__main">
-            <div class="row__title">${safeUa}${currentTag}</div>
+            <div class="row__title">${safeUa}${deviceMarker}</div>
             <div class="row__meta">${safeIp}</div>
-            <div class="row__meta">Signed in ${escapeHtml(formatDate(s.created_at))} · Last active ${escapeHtml(formatDate(s.last_active_at))}</div>
+            <div class="row__meta row__meta--faint">${activity}</div>
           </div>
-          ${revokeButton}
+          ${action}
         </div>`;
       })
       .join("\n")}
   </div>
-  <form method="POST" action="/auth/sessions/sign-out-all" class="actions">
-    <button type="submit" class="btn btn--danger">Sign out everywhere</button>
-  </form>`;
+  <div class="danger-zone">
+    <div class="danger-zone__text">
+      <div class="danger-zone__title">Sign out everywhere</div>
+      <div class="danger-zone__desc">Ends every other session.</div>
+    </div>
+    <form method="POST" action="/auth/sessions/sign-out-all">
+      <button type="submit" class="btn btn--danger-quiet btn--sm">Sign out everywhere</button>
+    </form>
+  </div>`;
 
   const bodyHtml = `
     <h1>Security</h1>

@@ -82,6 +82,82 @@ function esc(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/* Standalone monochrome "Luma" card — these connector-config pages render
+   outside the /auth/* layout, so they carry their own minimal styles
+   matching auth.css. The neutral palette, radii, pill inputs/buttons, and
+   the squared `.chk` check are kept in sync with auth-css.ts so the
+   surface reads as one design; dark mode follows the device by flipping
+   the same tokens. */
+const CONFIGURE_CSS = `
+  :root{
+    --bg:#f5f5f5;--card:#ffffff;--fg:#0a0a0a;--fg-muted:#737373;--fg-faint:#a3a3a3;
+    --border:#e5e5e5;--border-strong:#d4d4d4;--hairline:#ededed;--field:#f5f5f5;--field-hover:#ececec;--surface-2:#f5f5f5;
+    --primary:#171717;--primary-hover:#2a2a2a;--primary-fg:#fafafa;
+    --ring:rgba(10,10,10,.13);
+    --r-pill:999px;--r-card:26px;--r-md:14px;--r-sm:10px;
+    --shadow:0 1px 2px rgba(10,10,10,.04),0 8px 28px rgba(10,10,10,.06);
+    --ease:cubic-bezier(.2,.7,.2,1);
+    color-scheme:light dark;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0a0a0a;--card:#161616;--fg:#fafafa;--fg-muted:#a3a3a3;--fg-faint:#6e6e6e;
+      --border:#2a2a2a;--border-strong:#3a3a3a;--hairline:#242424;--field:#232323;--field-hover:#2b2b2b;--surface-2:#1f1f1f;
+      --primary:#fafafa;--primary-hover:#e5e5e5;--primary-fg:#171717;
+      --ring:rgba(250,250,250,.2);
+      --shadow:none;
+    }
+    .card{box-shadow:none}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 20px;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  .card{width:100%;max-width:460px;background:var(--card);border:1px solid var(--border);border-radius:var(--r-card);padding:28px;box-shadow:var(--shadow)}
+  @media (max-width:460px){body{padding:16px}.card{padding:22px;border-radius:20px}}
+  .title{margin:0 0 6px;font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.3}
+  .subtitle{margin:0 0 22px;font-size:14px;line-height:1.55;color:var(--fg-muted)}
+  .subtitle code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--fg);background:var(--surface-2);padding:2px 6px;border-radius:6px}
+
+  /* Selectable calendar cards — clicking a card toggles its checkbox. */
+  .grid{display:flex;flex-direction:column;gap:10px}
+  .ccard{display:flex;align-items:center;gap:13px;padding:14px;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer;transition:border-color .12s var(--ease),background .12s var(--ease)}
+  .ccard:has(.chk:checked){border-color:var(--fg);background:var(--surface-2)}
+  .ccard__dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+  .ccard__tt{flex:1;min-width:0}
+  .ccard__tt b{font-size:14px;font-weight:600;display:block;color:var(--fg)}
+  .ccard__tt span{font-size:12.5px;color:var(--fg-muted)}
+  .ccard__badge{margin-left:6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--fg-muted);background:var(--surface-2);padding:2px 7px;border-radius:var(--r-pill);vertical-align:1px}
+  .empty{padding:14px;border:1px dashed var(--border-strong);border-radius:var(--r-md);font-size:13px;color:var(--fg-muted)}
+
+  /* "Save new events to" / "Write events as" rows — no divider rule above. */
+  .defrow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:24px}
+  .defrow + .defrow{margin-top:14px}
+  .label{font-size:13px;font-weight:500;color:var(--fg)}
+  .label__hint{margin:6px 0 0;font-size:12px;color:var(--fg-faint)}
+  select{font-family:inherit;font-size:15px;line-height:1.4;padding:10px 14px;color:var(--fg);background:var(--field);border:1px solid transparent;border-radius:var(--r-pill);cursor:pointer;max-width:60%;min-width:150px;transition:background .12s var(--ease),border-color .12s var(--ease),box-shadow .12s var(--ease)}
+  select:hover{background:var(--field-hover)}
+  select:focus{outline:none;background:var(--card);border-color:var(--fg);box-shadow:0 0 0 3px var(--ring)}
+
+  /* Stacked actions. */
+  .stack{display:flex;flex-direction:column;gap:10px;margin-top:24px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;padding:11px 20px;font-family:inherit;font-size:14px;font-weight:600;line-height:1;border:1px solid transparent;border-radius:var(--r-pill);background:var(--card);color:var(--fg);cursor:pointer;white-space:nowrap;transition:background .12s var(--ease),border-color .12s var(--ease),transform .06s var(--ease)}
+  .btn:active{transform:translateY(.5px)}
+  .btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ring)}
+  .btn--primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+  .btn--primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+  .btn--outline{background:var(--card);color:var(--fg);border-color:var(--border)}
+  .btn--outline:hover{background:var(--surface-2);border-color:var(--border-strong)}
+
+  /* Squared check (rounded square, dark fill + white tick when on) — kept
+     in sync with auth-css.ts. */
+  .chk{appearance:none;-webkit-appearance:none;margin:0;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border-strong);background:var(--card);cursor:pointer;display:inline-grid;place-items:center;flex-shrink:0;transition:background .12s var(--ease),border-color .12s var(--ease)}
+  .chk::after{content:"";width:6px;height:10px;border:solid var(--card);border-width:0 2px 2px 0;border-radius:1px;transform:rotate(45deg) translateY(-1px);opacity:0}
+  .chk:checked{background:var(--primary);border-color:var(--primary)}
+  .chk:checked::after{opacity:1}
+  .chk:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ring)}
+
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.001ms!important}}
+`;
+
 export function renderGoogleCalendarPicker(
   params: GoogleCalendarPickerParams,
 ): string {
@@ -93,30 +169,45 @@ export function renderGoogleCalendarPicker(
     "";
   const priorTargetType = params.prior?.targetType ?? params.defaultTargetType;
 
-  const calendarRows = params.calendars
-    .map((cal) => {
-      const checked =
-        priorSelected.has(cal.id) ||
-        (priorSelected.size === 0 && cal.primary === true)
-          ? "checked"
-          : "";
-      const defaultWriteChecked = priorDefaultWrite === cal.id ? "checked" : "";
-      const swatch = cal.backgroundColor
-        ? `<span class="cal-swatch" style="background:${esc(cal.backgroundColor)}"></span>`
-        : "";
-      const accessRoleNote = cal.accessRole
-        ? `<span class="cal-role">${esc(cal.accessRole)}</span>`
-        : "";
-      const primaryBadge = cal.primary
-        ? `<span class="cal-primary">primary</span>`
-        : "";
-      return `
-        <tr>
-          <td><input type="checkbox" name="selected_calendar_ids" value="${esc(cal.id)}" ${checked}></td>
-          <td><input type="radio" name="default_write_calendar_id" value="${esc(cal.id)}" ${defaultWriteChecked}></td>
-          <td>${swatch}<span class="cal-name">${esc(cal.summary)}</span> ${primaryBadge} ${accessRoleNote}</td>
-        </tr>`;
-    })
+  // Each calendar renders as a selectable card: a `<label>` wraps the
+  // include checkbox plus the dot + name, so clicking anywhere on the row
+  // toggles `selected_calendar_ids`. The "Save new events to" control is a
+  // single `<select name="default_write_calendar_id">` listing every
+  // calendar — kept out of the cards so it stays independently operable
+  // (a checkbox nested in the same label can't host a second control).
+  const calendarCards =
+    params.calendars.length === 0
+      ? `<p class="empty">No calendars were returned for this account. Reconnect the integration if you expected to see some here.</p>`
+      : params.calendars
+          .map((cal) => {
+            const checked =
+              priorSelected.has(cal.id) ||
+              (priorSelected.size === 0 && cal.primary === true)
+                ? "checked"
+                : "";
+            const dot = cal.backgroundColor
+              ? `<span class="ccard__dot" style="background:${esc(cal.backgroundColor)}"></span>`
+              : `<span class="ccard__dot" style="background:var(--border-strong)"></span>`;
+            const primaryBadge = cal.primary
+              ? `<span class="ccard__badge">primary</span>`
+              : "";
+            const subline = cal.accessRole
+              ? `<span>${esc(cal.accessRole)}</span>`
+              : "";
+            return `
+        <label class="ccard">
+          <input class="chk" type="checkbox" name="selected_calendar_ids" value="${esc(cal.id)}" ${checked}>
+          ${dot}
+          <span class="ccard__tt"><b>${esc(cal.summary)}${primaryBadge}</b>${subline}</span>
+        </label>`;
+          })
+          .join("");
+
+  const defaultWriteOptions = params.calendars
+    .map(
+      (cal) =>
+        `<option value="${esc(cal.id)}" ${cal.id === priorDefaultWrite ? "selected" : ""}>${esc(cal.summary)}</option>`,
+    )
     .join("");
 
   const targetTypeOptions = params.targetTypeChoices
@@ -130,51 +221,39 @@ export function renderGoogleCalendarPicker(
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Configure Google Calendar</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 2.5rem auto; color: #1f2328; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-      p.lede { color: #57606a; margin-top: 0; }
-      table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
-      th, td { padding: 0.5rem 0.4rem; border-bottom: 1px solid #d0d7de; text-align: left; }
-      th { font-weight: 600; font-size: 0.85rem; color: #57606a; }
-      .cal-swatch { display: inline-block; width: 0.85rem; height: 0.85rem; border-radius: 3px; margin-right: 0.5rem; vertical-align: -2px; }
-      .cal-name { font-weight: 500; }
-      .cal-primary { font-size: 0.75rem; background: #ddf4ff; color: #0969da; padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.4rem; }
-      .cal-role { font-size: 0.75rem; color: #57606a; margin-left: 0.4rem; }
-      label.target-type { display: block; margin: 1.5rem 0 0.5rem; font-weight: 600; }
-      select { font: inherit; padding: 0.4rem 0.6rem; }
-      button { font: inherit; padding: 0.6rem 1.2rem; background: #1f883d; color: white; border: 0; border-radius: 6px; cursor: pointer; margin-top: 1rem; }
-      button:hover { background: #1a7f37; }
-      .hint { color: #57606a; font-size: 0.85rem; }
-    </style>
+    <style>${CONFIGURE_CSS}</style>
   </head>
   <body>
-    <h1>Configure Google Calendar</h1>
-    <p class="lede">Pick which calendars Marfa should sync, and where new events should land when you create them in Marfa.</p>
-    <form method="post" action="">
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 1.5rem;">Sync</th>
-            <th style="width: 1.5rem;">Write here by default</th>
-            <th>Calendar</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${calendarRows}
-        </tbody>
-      </table>
-      <p class="hint">Tick the calendars you want Marfa to read. Pick one (a radio) as the destination for events you create in Marfa.</p>
+    <main class="card">
+      <h1 class="title">Choose calendars to sync</h1>
+      <p class="subtitle">Tap a calendar to include it. You can change this later.</p>
+      <form method="post" action="">
+        <div class="grid">
+          ${calendarCards}
+        </div>
 
-      <label class="target-type" for="target_type">Write events into Marfa as</label>
-      <select name="target_type" id="target_type">
-        ${targetTypeOptions}
-      </select>
-      <p class="hint">Default keeps full Google fidelity (recurrence, timezone, etag). Switch to <code>core.event</code> if you want cross-app interop with non-Google consumers and don't mind the lossier shape.</p>
+        <div class="defrow">
+          <label class="label" for="default_write_calendar_id">Save new events to</label>
+          <select name="default_write_calendar_id" id="default_write_calendar_id">
+            ${defaultWriteOptions}
+          </select>
+        </div>
 
-      <button type="submit">Save configuration</button>
-    </form>
+        <div class="defrow">
+          <label class="label" for="target_type">Write events as</label>
+          <select name="target_type" id="target_type">
+            ${targetTypeOptions}
+          </select>
+        </div>
+        <p class="label__hint"><code>google.calendar.event</code> keeps full Google fidelity (recurrence, timezone, etag). Switch to <code>core.event</code> for cross-app interop with non-Google consumers, at a lossier shape.</p>
+
+        <div class="stack">
+          <button class="btn btn--primary" type="submit">Save calendars</button>
+        </div>
+      </form>
+    </main>
   </body>
 </html>`;
 }
@@ -184,17 +263,16 @@ export function renderConfigureSuccess(connectionId: string): string {
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Configuration saved</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 2.5rem auto; color: #1f2328; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; }
-      a { color: #0969da; }
-    </style>
+    <style>${CONFIGURE_CSS}</style>
   </head>
   <body>
-    <h1>Configuration saved</h1>
-    <p>The connection's calendar selection has been recorded. The next scheduled run will pick up events from the calendars you chose.</p>
-    <p><code>${esc(connectionId)}</code></p>
+    <main class="card">
+      <h1 class="title">Configuration saved</h1>
+      <p class="subtitle">Your calendar selection is recorded. The next scheduled run will pick up events from the calendars you chose.</p>
+      <p class="subtitle"><code>${esc(connectionId)}</code></p>
+    </main>
   </body>
 </html>`;
 }
@@ -204,15 +282,15 @@ export function renderConfigureError(message: string): string {
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Could not configure</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 2.5rem auto; color: #1f2328; padding: 0 1rem; }
-      h1 { font-size: 1.5rem; color: #cf222e; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Couldn't configure</title>
+    <style>${CONFIGURE_CSS}</style>
   </head>
   <body>
-    <h1>Could not configure</h1>
-    <p>${esc(message)}</p>
+    <main class="card">
+      <h1 class="title">Couldn't configure</h1>
+      <p class="subtitle">${esc(message)}</p>
+    </main>
   </body>
 </html>`;
 }
