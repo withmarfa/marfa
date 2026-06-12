@@ -94,6 +94,19 @@ export interface AppConfig {
    *  No retention-window knob — Better Auth itself owns the TTL.
    *  Optional on the type; `index.ts` applies the 1h fallback. */
   authSessionCleanupIntervalMs?: number;
+  /** Days a grantless DCR (`auth_oauth_client`) row survives before the
+   *  reaper hard-deletes it. A row is reaped only when it's older than this
+   *  AND carries zero grants (no access token, no refresh token, no
+   *  projected `system.connection` app item). Unauthenticated DCR lets
+   *  clients accumulate forever; this bounds the abandoned ones. `0`
+   *  disables the job. Default 30. Env override
+   *  `MARFA_DCR_CLIENT_RETENTION_DAYS`. Optional on the type; `index.ts`
+   *  applies the 30-day fallback. */
+  dcrClientRetentionDays?: number;
+  /** Cadence (ms) for the grantless-DCR-client reaper sweep. Default
+   *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
+   *  Optional on the type; `index.ts` applies the 24h fallback. */
+  dcrClientCleanupIntervalMs?: number;
   /** Grace window (days) between `auth.account.delete_confirmed` and
    *  the hard-delete cascade. `0` disables the purger entirely. Env
    *  override `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
@@ -568,6 +581,14 @@ export function loadConfig(): AppConfig {
     authSessionCleanupIntervalMs: envNumber(
       process.env.AUTH_SESSION_CLEANUP_INTERVAL_MS,
       3_600_000,
+    ),
+    dcrClientRetentionDays: envNumber(
+      process.env.MARFA_DCR_CLIENT_RETENTION_DAYS,
+      30,
+    ),
+    dcrClientCleanupIntervalMs: envNumber(
+      process.env.MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS,
+      86_400_000,
     ),
     accountDeletionGraceDays: envNumber(
       process.env.MARFA_ACCOUNT_DELETION_GRACE_DAYS,

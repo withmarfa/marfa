@@ -308,6 +308,56 @@ describe("renderConsentScreen — polish-pass shape", () => {
   });
 });
 
+describe("renderConsentScreen — unverified-app indicator", () => {
+  it("renders the unverified badge + warning notice for a public/DCR client", () => {
+    const html = renderConsentScreen({ ...PARAMS, unverified: true });
+    expect(html).toContain('class="unverified-badge"');
+    expect(html).toContain("Unverified app");
+    // Caution block above the form, escalated as a warn alert.
+    expect(html).toContain('class="alert alert--warn"');
+    expect(html).toContain("This app is unverified");
+  });
+
+  it("places the badge inline next to the self-asserted client name", () => {
+    const html = renderConsentScreen({ ...PARAMS, unverified: true });
+    expect(html).toMatch(
+      /<span class="client-name">Test CLI<\/span>\s*<span class="unverified-badge"/,
+    );
+  });
+
+  it("omits the badge + notice when unverified is false or absent", () => {
+    const off = renderConsentScreen({ ...PARAMS, unverified: false });
+    expect(off).not.toContain("unverified-badge");
+    expect(off).not.toContain("alert--warn");
+    expect(off).not.toContain("This app is unverified");
+
+    const absent = renderConsentScreen(PARAMS);
+    expect(absent).not.toContain("unverified-badge");
+    expect(absent).not.toContain("alert--warn");
+  });
+
+  it("still escapes a hostile client name when the badge is shown", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      clientName: "<script>alert(1)</script>",
+      unverified: true,
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain('class="unverified-badge"');
+  });
+
+  it("shows the badge in the re-consent diff variant too", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      unverified: true,
+      priorScopes: ["core.note:read"],
+    });
+    expect(html).toContain('class="unverified-badge"');
+    expect(html).toContain("Update access");
+  });
+});
+
 describe("renderConsentScreen — four-bucket bundle view", () => {
   // A representative requested set: each maps to one default bundle, plus
   // offline_access which belongs to none (residual).

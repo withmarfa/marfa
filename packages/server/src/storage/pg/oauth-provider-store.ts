@@ -24,6 +24,7 @@ import {
   items,
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
+import { isPublicClient } from "../oauth-client-trust.js";
 
 export class PgOauthProviderStore implements OauthProviderStore {
   constructor(private db: PgDb) {}
@@ -81,6 +82,8 @@ export class PgOauthProviderStore implements OauthProviderStore {
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
         referenceId: auth_oauth_client.referenceId,
+        public: auth_oauth_client.public,
+        tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -96,6 +99,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       name: row.name,
       redirectUris,
       referenceId: row.referenceId,
+      isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
     };
   }
 
@@ -290,6 +294,29 @@ export class PgOauthProviderStore implements OauthProviderStore {
       )
       .limit(1);
     return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Reap grantless DCR clients older than `cutoffIso`. A client is reaped
+   * only when it has NO access token, NO refresh token, and NO projected
+   * `system.connection { kind: "app" }` item referencing its `client_id`.
+   * Conservative by construction — any one grant signal spares the row.
+   */
+  async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
+    const cutoff = new Date(cutoffIso);
+    const deleted = await this.db
+      .delete(auth_oauth_client)
+      .where(
+        and(
+          sql`${auth_oauth_client.createdAt} IS NOT NULL`,
+          sql`${auth_oauth_client.createdAt} < ${cutoff}`,
+          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.properties}::jsonb->>'kind' = 'app' AND ${items.properties}::jsonb->>'client_id' = ${auth_oauth_client.clientId})`,
+        ),
+      )
+      .returning({ id: auth_oauth_client.id });
+    return deleted.length;
   }
 
   // `updateGrantScopes` was dropped. The re-consent path now routes through

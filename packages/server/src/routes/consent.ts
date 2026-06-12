@@ -43,6 +43,17 @@ import { computeConsentDiff } from "./consent-diff.js";
 
 interface ConsentParams {
   clientName: string;
+  /**
+   * When `true`, the client has no verified identity — a public client
+   * (PKCE, `token_endpoint_auth_method: none`), which is exactly what every
+   * unauthenticated Dynamic Client Registration (DCR) client is. The screen
+   * renders an "Unverified app" indicator next to the self-asserted client
+   * name so a user can tell it apart from a confidential, vetted client. A
+   * scammer can register a DCR client named "Google Drive"; the name alone
+   * is not trustworthy, and this badge says so. Defaults to `false` (no
+   * badge) when omitted.
+   */
+  unverified?: boolean;
   scopes: ParsedScope[];
   clientId: string;
   /**
@@ -332,10 +343,26 @@ export function renderConsentScreen(params: ConsentParams): string {
     contentHtml = sections.map(renderSection).join("");
   }
 
+  // Unverified-app indicator. A public / DCR client self-asserts its name
+  // with no vetted identity behind it, so render a clear badge next to the
+  // name plus an explicit caution line. The badge sits inline with the
+  // client-name span; the caution line is its own block above the form so
+  // it can't be missed.
+  const unverifiedBadge = params.unverified
+    ? ` <span class="unverified-badge" title="This app self-reported its name. Marfa has not verified who it is.">Unverified app</span>`
+    : "";
+  const unverifiedNotice = params.unverified
+    ? `<div class="alert alert--warn" role="alert">
+        <strong>This app is unverified.</strong> The name above was set by the app itself — Marfa has not confirmed who built it. Only continue if you trust this app, and check the permissions below carefully.
+      </div>`
+    : "";
+
+  const clientNameHtml = `<span class="client-name">${safeClient}</span>${unverifiedBadge}`;
+
   const titleText = showDiff ? "Update access" : "Allow access";
   const ledeText = showDiff
-    ? `<span class="client-name">${safeClient}</span> needs different permissions than before.`
-    : `<span class="client-name">${safeClient}</span> is asking to access your Marfa space. Untick anything you'd rather not share.`;
+    ? `${clientNameHtml} needs different permissions than before.`
+    : `${clientNameHtml} is asking to access your Marfa space. Untick anything you'd rather not share.`;
 
   const errorBanner = params.errorMessage
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
@@ -406,6 +433,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       <h1 class="consent-title">${escapeHtml(titleText)}</h1>
       <p class="consent-lede">${ledeText}</p>
     </header>
+    ${unverifiedNotice}
     ${errorBanner}
     <form method="POST" action="/auth/authorize/decision" class="consent-form" novalidate>
       <input type="hidden" name="client_id" value="${safeClientId}">

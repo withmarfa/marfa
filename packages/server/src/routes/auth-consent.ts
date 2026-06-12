@@ -192,6 +192,12 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const html = renderConsentScreen({
       clientName,
+      // Public clients (DCR / `token_endpoint_auth_method: none`) self-assert
+      // their name with no vetted identity behind it. Flag them so the user
+      // can tell a self-asserted name from a confidential, verified one — a
+      // scammer registering a client named "Google Drive" must be visibly
+      // distinguishable.
+      unverified: client.isPublic,
       scopes: parsed,
       clientId,
       oauthQuery,
@@ -553,11 +559,11 @@ async function projectGrantOnConsent(
 async function resolveClient(
   storage: Storage,
   clientId: string,
-): Promise<{ name: string | null } | null> {
+): Promise<{ name: string | null; isPublic: boolean } | null> {
   try {
     if (typeof storage.oauthProvider?.getClient === "function") {
       const row = await storage.oauthProvider.getClient(clientId);
-      return row ? { name: row.name } : null;
+      return row ? { name: row.name, isPublic: row.isPublic } : null;
     }
     return null;
   } catch (err) {

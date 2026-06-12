@@ -54,6 +54,11 @@ export const AUTH_CSS = `/*
   --success-bg: #ecf6e9;
   --success-border: #b8d8af;
   --success-ink: #2a5a1f;
+  /* Warning — amber. Used by the unverified-app indicator on the consent
+     screen (DCR / public clients with a self-asserted name). */
+  --warn-bg: #fdf4e3;
+  --warn-border: #ecc97f;
+  --warn-ink: #7a5210;
 
   /* Section background — used by auth surfaces that group scopes in a
      tinted block (device-consent today). */
@@ -110,6 +115,9 @@ export const AUTH_CSS = `/*
     --success-bg: #14241a;
     --success-border: #2c5238;
     --success-ink: #b7e0c1;
+    --warn-bg: #2a2113;
+    --warn-border: #5a4624;
+    --warn-ink: #e8c889;
 
     --section-bg: #161618;
     --pill-bg: #27272a;
@@ -218,6 +226,12 @@ h1 {
   background: var(--success-bg);
   border-color: var(--success-border);
   color: var(--success-ink);
+}
+.banner--warn,
+.alert--warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-ink);
 }
 
 /* Generic form layout. */
@@ -761,6 +775,24 @@ details.section[open] > summary .section__chevron {
 .client-name {
   font-weight: 600;
   color: var(--ink);
+}
+
+/* Unverified-app indicator — sits inline next to a self-asserted client
+   name (public / DCR clients). Amber pill so it reads as a caution without
+   shouting; pairs with the .alert--warn notice block above the form. */
+.unverified-badge {
+  display: inline-block;
+  vertical-align: baseline;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 /* Security page row layout. Used inside .section blocks for

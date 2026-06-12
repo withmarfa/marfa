@@ -15,6 +15,7 @@ import {
   AuthSessionCleaner,
   PendingDeletePurger,
   RateLimitWindowCleaner,
+  DcrClientCleaner,
   runTenantCleanup,
 } from "./storage/retention.js";
 import type { TenantFanout } from "./storage/retention.js";
@@ -228,6 +229,23 @@ async function main() {
   );
   rateLimitCleaner.start();
 
+  // Reap grantless DCR clients so unauthenticated registration doesn't grow
+  // `auth_oauth_client` unbounded. Gated on a positive retention window
+  // (`0` disables) and on the oauth-provider store being wired (test
+  // contexts that skip better-auth omit it).
+  const dcrRetentionDays = config.dcrClientRetentionDays ?? 30;
+  const dcrClientCleaner =
+    dcrRetentionDays > 0 && storage.oauthProvider
+      ? new DcrClientCleaner(
+          storage,
+          dcrRetentionDays,
+          config.dcrClientCleanupIntervalMs ?? 86_400_000,
+          undefined,
+          storage.coordination,
+        )
+      : undefined;
+  dcrClientCleaner?.start();
+
   const bulkActionWorker = new BulkActionWorker({ storage });
   await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(
@@ -345,6 +363,7 @@ async function main() {
     authSessionCleaner?.stop();
     pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
+    dcrClientCleaner?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
     if (reactiveRunBridge) {
