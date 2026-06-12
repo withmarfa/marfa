@@ -5,8 +5,9 @@
  * Header format:
  *   Stripe-Signature: t=<unix-seconds>,v1=<hex>[,v0=<hex>]
  *
- * Signed string: `<timestamp>.<rawBody-as-utf8>`. Replay window is
- * 5 minutes — Stripe's default tolerance.
+ * Signed string: `<timestamp>.<rawBody-as-utf8>`. Freshness is
+ * backward-looking against a 5-minute replay window — Stripe's default
+ * tolerance — with a small clock-skew tolerance for future timestamps.
  *
  * Stripe re-uses the same signature when re-delivering an event, so
  * the (timestamp, signature-prefix) pair is unique per delivery and
@@ -16,6 +17,12 @@ import type { Verifier } from "./types.js";
 import { constantTimeEqualsHex, hmacSha256Hex } from "./crypto.js";
 
 const REPLAY_WINDOW_SECONDS = 60 * 5;
+// Freshness is backward-looking: a timestamp older than the replay window
+// is rejected, but a future timestamp is only tolerated up to a small
+// clock-skew allowance. A symmetric `Math.abs` check would accept
+// timestamps a full window into the future, doubling the effective replay
+// window an attacker can operate in.
+const MAX_CLOCK_SKEW_SECONDS = 60;
 
 interface ParsedSignature {
   t: string;
@@ -51,8 +58,11 @@ export const verifyStripe: Verifier = async (rawBody, headers, secret) => {
   if (!Number.isFinite(tsNum)) {
     return { verified: false, reason: "timestamp_not_numeric" };
   }
-  const ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - tsNum);
-  if (ageSeconds > REPLAY_WINDOW_SECONDS) {
+  const ageSeconds = Math.floor(Date.now() / 1000) - tsNum;
+  if (
+    ageSeconds > REPLAY_WINDOW_SECONDS ||
+    ageSeconds < -MAX_CLOCK_SKEW_SECONDS
+  ) {
     return { verified: false, reason: "timestamp_outside_replay_window" };
   }
 
