@@ -7,7 +7,7 @@
  * after-hooks.
  */
 
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, lt, isNotNull, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -26,6 +26,7 @@ import {
   items,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { isPublicClient } from "../oauth-client-trust.js";
 
 export class SqliteOauthProviderStore implements OauthProviderStore {
   constructor(private db: DrizzleDb) {}
@@ -88,6 +89,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
         referenceId: auth_oauth_client.referenceId,
+        public: auth_oauth_client.public,
+        tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -108,6 +111,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       name: row.name,
       redirectUris,
       referenceId: row.referenceId,
+      isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
     };
   }
 
@@ -297,6 +301,33 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       )
       .limit(1);
     return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Reap grantless DCR clients older than `cutoffIso`. A client is reaped
+   * only when it has NO access token, NO refresh token, and NO projected
+   * `system.connection { kind: "app" }` item referencing its `client_id`.
+   * Conservative by construction — any one grant signal spares the row.
+   *
+   * `createdAt` is stored as Unix seconds (`integer mode:timestamp`); the
+   * Drizzle `lt(column, Date)` operator handles the Date → epoch-seconds
+   * coercion so the cutoff comparison stays dialect-correct.
+   */
+  async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
+    const cutoff = new Date(cutoffIso);
+    const deleted = await this.db
+      .delete(auth_oauth_client)
+      .where(
+        and(
+          isNotNull(auth_oauth_client.createdAt),
+          lt(auth_oauth_client.createdAt, cutoff),
+          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
+        ),
+      )
+      .returning({ id: auth_oauth_client.id });
+    return deleted.length;
   }
 
   // `updateGrantScopes` was dropped. The re-consent path routes through

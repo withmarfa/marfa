@@ -372,6 +372,92 @@ export class RateLimitWindowCleaner {
   }
 }
 
+/**
+ * Reaps grantless OAuth Dynamic Client Registration (DCR) clients.
+ *
+ * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
+ * lets anyone register an `auth_oauth_client` row; without a reaper those
+ * rows accumulate forever (DB growth) — most are abandoned registrations a
+ * user never consented to. Each tick deletes every client that is BOTH:
+ *
+ *   - older than the retention window (`created_at < now - retentionDays`),
+ *     AND
+ *   - grantless — no access token, no refresh token, and no projected
+ *     `system.connection { kind: "app" }` item for its `client_id`.
+ *
+ * Conservative: any single grant signal spares the row, so a client a user
+ * actually authorized (or one with any live token) is never reaped. The
+ * grant check is tenant-agnostic — a client with zero grants is dead
+ * regardless of which tenant registered it — so this is an instance-wide
+ * sweep (like `AuthSessionCleaner` / `RateLimitWindowCleaner`), not a
+ * per-tenant fan-out. Cluster-wide coordination lock keyed
+ * `"dcr-client-cleanup"`.
+ *
+ * `retentionDays <= 0` disables the job — the operator can leave the
+ * deployment running with no DCR reaper by setting the env var to 0.
+ */
+export class DcrClientCleaner {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private storage: Storage,
+    private retentionDays: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.startupTimeout = setTimeout(() => void this.poll(), 25_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point — deletes grantless clients older than the window.
+   *  No-op when the job is disabled or the oauth-provider store is absent
+   *  (test contexts that skip better-auth). */
+  async runOnce(): Promise<number> {
+    if (this.retentionDays <= 0) return 0;
+    const provider = this.storage.oauthProvider;
+    if (!provider) return 0;
+    const cutoff = new Date(
+      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
+    ).toISOString();
+    return provider.deleteGrantlessClientsOlderThan(cutoff);
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("dcr-client-cleanup", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "DCR client cleanup", {
+          deleted,
+          retentionDays: this.retentionDays,
+        });
+      }
+    } catch (err) {
+      log("error", "DCR client cleanup error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-tenant fan-out helper
 // ---------------------------------------------------------------------------

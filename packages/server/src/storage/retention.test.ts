@@ -4,9 +4,12 @@ import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
   AuthSessionCleaner,
+  DcrClientCleaner,
   runTenantCleanup,
 } from "./retention.js";
 import type { TenantFanout } from "./retention.js";
+import { TEST_API_KEY_SALT } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -561,5 +564,184 @@ describe("AuthSessionCleaner.runOnce — drops expired auth_session rows", () =>
 
     expect(await cleaner.runOnce()).toBe(1);
     expect(await cleaner.runOnce()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DcrClientCleaner — reap grantless DCR clients past the retention window.
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed an `auth_oauth_client` row via the typed store, then force its
+ * `created_at` to a contrived value via the SQL escape hatch (the store
+ * always stamps `now`). Public client by default — that's the DCR shape.
+ */
+async function seedOauthClient(opts: {
+  clientId: string;
+  createdAt: Date;
+}): Promise<void> {
+  const provider = ctx.storage.oauthProvider;
+  if (!provider) throw new Error("storage.oauthProvider not wired");
+  await provider.createClient({
+    clientId: opts.clientId,
+    name: `DCR ${opts.clientId}`,
+    isPublic: true,
+    grantTypes: ["authorization_code"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "none",
+    scopes: ["core.note:read"],
+    redirectUris: ["http://localhost:5173/callback"],
+    referenceId: null,
+  });
+
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(
+      `UPDATE auth_oauth_client SET created_at = $1 WHERE client_id = $2`,
+      [opts.createdAt.toISOString(), opts.clientId],
+    );
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await s.__sqliteRun(
+      `UPDATE auth_oauth_client SET created_at = ? WHERE client_id = ?`,
+      [Math.floor(opts.createdAt.getTime() / 1000), opts.clientId],
+    );
+  }
+}
+
+/** Insert an auth_user so token FKs resolve (mirrors seedAuthSession). */
+async function seedAuthUser(userId: string): Promise<void> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  const nowIso = new Date().toISOString();
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(
+      `INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+       VALUES ($1, $2, $3, true, $4, $4) ON CONFLICT (id) DO NOTHING`,
+      [userId, "test", `${userId}@example.com`, nowIso],
+    );
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    const nowSec = Math.floor(Date.now() / 1000);
+    await s.__sqliteRun(
+      `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?)`,
+      [userId, "test", `${userId}@example.com`, nowSec, nowSec],
+    );
+  }
+}
+
+async function oauthClientExists(clientId: string): Promise<boolean> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    const rows = await s.__pgClient(
+      "SELECT 1 FROM auth_oauth_client WHERE client_id = $1",
+      [clientId],
+    );
+    return rows.length > 0;
+  }
+  const s = ctx.storage as unknown as {
+    __sqliteAll: (q: string) => Promise<unknown[]>;
+  };
+  const rows = await s.__sqliteAll(
+    `SELECT 1 FROM auth_oauth_client WHERE client_id = '${clientId.replace(/'/g, "''")}'`,
+  );
+  return rows.length > 0;
+}
+
+describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
+  it("removes only the old grantless client; spares recent ones and ones with any grant", async () => {
+    const oldGrantless = "client_old_grantless";
+    const recentGrantless = "client_recent_grantless";
+    const oldWithToken = "client_old_with_token";
+    const oldWithAppGrant = "client_old_with_app_grant";
+
+    // (1) Old + grantless → the only reap target.
+    await seedOauthClient({
+      clientId: oldGrantless,
+      createdAt: new Date(FIXED_NOW.getTime() - 45 * MS_PER_DAY),
+    });
+    // (2) Recent + grantless → inside the window, survives.
+    await seedOauthClient({
+      clientId: recentGrantless,
+      createdAt: new Date(FIXED_NOW.getTime() - 5 * MS_PER_DAY),
+    });
+    // (3) Old but carries a live token pair → survives (grant signal).
+    await seedOauthClient({
+      clientId: oldWithToken,
+      createdAt: new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY),
+    });
+    const tokenUser = "auth_user_token_holder";
+    await seedAuthUser(tokenUser);
+    await ctx.storage.oauthProvider?.mintTokenPair({
+      accessTokenHash: hashApiKey("dcr-reaper-access", TEST_API_KEY_SALT),
+      refreshTokenHash: hashApiKey("dcr-reaper-refresh", TEST_API_KEY_SALT),
+      clientId: oldWithToken,
+      authUserId: tokenUser,
+      referenceId: null,
+      scopes: ["core.note:read"],
+      accessTtlMs: 3_600_000,
+    });
+    // (4) Old but carries a projected system.connection app grant → survives.
+    await seedOauthClient({
+      clientId: oldWithAppGrant,
+      createdAt: new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY),
+    });
+    await ctx.storage.items.create({
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: oldWithAppGrant,
+        user_id: "some-user",
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/dcr-reaper",
+    });
+
+    const cleaner = new DcrClientCleaner(
+      ctx.storage,
+      30,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    const deleted = await cleaner.runOnce();
+    expect(deleted).toBe(1);
+
+    expect(await oauthClientExists(oldGrantless)).toBe(false);
+    expect(await oauthClientExists(recentGrantless)).toBe(true);
+    expect(await oauthClientExists(oldWithToken)).toBe(true);
+    expect(await oauthClientExists(oldWithAppGrant)).toBe(true);
+  });
+
+  it("is a no-op when retentionDays <= 0", async () => {
+    await seedOauthClient({
+      clientId: "client_disabled_job",
+      createdAt: new Date(FIXED_NOW.getTime() - 365 * MS_PER_DAY),
+    });
+    const disabled = new DcrClientCleaner(
+      ctx.storage,
+      0,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    expect(await disabled.runOnce()).toBe(0);
+    expect(await oauthClientExists("client_disabled_job")).toBe(true);
   });
 });

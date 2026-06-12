@@ -1023,6 +1023,17 @@ export interface OauthClientRow {
   redirectUris: string[];
   /** Tenant binding from `clientReference` (Marfa: tenant_id). */
   referenceId: string | null;
+  /**
+   * `true` when the client is a public client (PKCE, no secret) —
+   * `token_endpoint_auth_method: none` and/or `public: true`. Public
+   * clients are the shape every unauthenticated Dynamic Client
+   * Registration (DCR) client takes: they self-assert their `client_name`
+   * with no verified identity behind it. The consent screen reads this to
+   * flag the app as unverified so a user can tell a self-asserted name
+   * from one backed by a confidential, vetted client. `false` for a
+   * confidential client (one that authenticates with a secret).
+   */
+  isPublic: boolean;
 }
 
 /**
@@ -1203,6 +1214,28 @@ export interface OauthProviderStore {
     clientId: string;
     authUserId: string;
   }): Promise<string | null>;
+  /**
+   * Reaper for grantless DCR clients. Hard-deletes every `auth_oauth_client`
+   * row that is BOTH:
+   *
+   *   - older than `cutoffIso` (`created_at < cutoffIso`), AND
+   *   - grantless — no `auth_oauth_access_token` row, no
+   *     `auth_oauth_refresh_token` row, and no projected
+   *     `system.connection { kind: "app" }` item — for its `client_id`.
+   *
+   * Unauthenticated DCR (`allowUnauthenticatedClientRegistration: true`)
+   * means clients accumulate forever with no natural reaper; an abandoned
+   * registration that was never consented to is pure dead weight. The
+   * conservative shape (delete only when ALL three grant signals are
+   * absent) guarantees a client a user actually authorized — or one with
+   * any live token — is never reaped. Returns the number of rows deleted.
+   *
+   * Instance-wide: clients carry a `reference_id` (tenant binding) but the
+   * grantless predicate is tenant-agnostic — a row with zero grants is dead
+   * regardless of which tenant registered it. The single-statement delete
+   * keeps this off the per-tenant fan-out path.
+   */
+  deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
 }
 
 // `OauthProviderStore.updateGrantScopes` was dropped. The re-consent path

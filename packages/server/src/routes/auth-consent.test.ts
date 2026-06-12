@@ -44,7 +44,13 @@ const ORIGIN = "http://localhost:0";
  */
 async function seedClient(
   c: TestContext,
-  opts: { name?: string | null } = {},
+  opts: {
+    name?: string | null;
+    /** When set, marks the client confidential (a verified client that
+     *  authenticates with a secret). Omitted → the DCR/public default
+     *  shape (`public: true`, `token_endpoint_auth_method: none`). */
+    confidential?: boolean;
+  } = {},
 ): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -79,6 +85,8 @@ async function seedClient(
     disabled: false,
     createdAt: now,
     updatedAt: now,
+    public: opts.confidential ? false : true,
+    tokenEndpointAuthMethod: opts.confidential ? "client_secret_basic" : "none",
   });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return clientId;
@@ -214,6 +222,45 @@ describe("GET /auth/authorize (consent page)", () => {
     const html = await res.text();
     // The page renders with clientId as the displayed name when name is null.
     expect(html).toContain(clientId);
+  });
+
+  it("flags a public/DCR client as unverified on the consent screen", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    // Default seedClient shape is public (token_endpoint_auth_method: none).
+    const clientId = await seedClient(ctx, { name: "Google Drive" });
+    const cookie = await signInUser(ctx, "unverified-app@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("unverified-badge");
+    expect(html).toContain("Unverified app");
+    expect(html).toContain("This app is unverified");
+  });
+
+  it("does NOT flag a confidential client as unverified", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, {
+      name: "Vetted App",
+      confidential: true,
+    });
+    const cookie = await signInUser(ctx, "verified-app@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain("unverified-badge");
+    expect(html).not.toContain("This app is unverified");
   });
 
   it("404s when client genuinely does not exist", async () => {
