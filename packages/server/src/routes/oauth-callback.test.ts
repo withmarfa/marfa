@@ -323,3 +323,140 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
     expect(body.authorize_url).not.toContain("array_value=");
   });
 });
+
+describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed", () => {
+  // Each case spins up its own context with a specific authMode +
+  // oauthRedirectAllowlist, since these are app-construction-time config and
+  // can't be varied per-request. Seeds one valid connection per context.
+  async function seedConnection(c: TestContext): Promise<string> {
+    if (!c.storage.tenants) throw new Error("tenants store required");
+    const tenant = await c.storage.tenants.create(
+      `redirect-allowlist-${Math.random().toString(36).slice(2, 10)}`,
+    );
+    const cred = await c.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "google",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://accounts.test/oauth/authorize",
+            oauth_token_url: "https://accounts.test/oauth/token",
+            oauth_client_id: "CLIENT",
+            oauth_default_scope: "openid",
+          },
+          secret_encrypted: encryptSecret(
+            "secret",
+            SECRET_INFO.connectionOauthToken,
+          ),
+        },
+      },
+      tenant.id,
+    );
+    const conn = await c.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "acme.demo",
+          credential_ref: cred.id,
+        },
+      },
+      tenant.id,
+    );
+    return conn.id;
+  }
+
+  it("rejects every redirect_uri when the allowlist is empty in hosted mode (fail closed)", async () => {
+    const hostedCtx = await createTestContext({
+      authMode: "hosted",
+      oauthRedirectAllowlist: [],
+    });
+    try {
+      if (!hostedCtx.storage.tenants) return; // hosted requires the tenant store
+      const connId = await seedConnection(hostedCtx);
+      const res = await request(
+        hostedCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: hostedCtx.adminKey,
+          body: { redirect_uri: "https://attacker.example/callback" },
+        },
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("validation_error");
+    } finally {
+      await hostedCtx.cleanup();
+    }
+  });
+
+  it("allows any redirect_uri when the allowlist is empty in keys mode (passthrough preserved)", async () => {
+    const keysCtx = await createTestContext({
+      authMode: "keys",
+      oauthRedirectAllowlist: [],
+    });
+    try {
+      if (!keysCtx.storage.tenants) return;
+      const connId = await seedConnection(keysCtx);
+      const res = await request(
+        keysCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: keysCtx.adminKey,
+          body: { redirect_uri: "https://anything.example/callback" },
+        },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { authorize_url: string };
+      expect(body.authorize_url).toContain(
+        "redirect_uri=https%3A%2F%2Fanything.example%2Fcallback",
+      );
+    } finally {
+      await keysCtx.cleanup();
+    }
+  });
+
+  it("with a non-empty allowlist, only listed redirect URIs are allowed (both modes)", async () => {
+    const hostedCtx = await createTestContext({
+      authMode: "hosted",
+      oauthRedirectAllowlist: ["https://app.example/callback"],
+    });
+    try {
+      if (!hostedCtx.storage.tenants) return;
+      const connId = await seedConnection(hostedCtx);
+
+      // Listed URI passes.
+      const allowed = await request(
+        hostedCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: hostedCtx.adminKey,
+          body: { redirect_uri: "https://app.example/callback" },
+        },
+      );
+      expect(allowed.status).toBe(200);
+
+      // Unlisted URI rejected.
+      const rejected = await request(
+        hostedCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: hostedCtx.adminKey,
+          body: { redirect_uri: "https://other.example/callback" },
+        },
+      );
+      expect(rejected.status).toBe(400);
+      const body = (await rejected.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("validation_error");
+    } finally {
+      await hostedCtx.cleanup();
+    }
+  });
+});

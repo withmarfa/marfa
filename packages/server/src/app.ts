@@ -635,6 +635,7 @@ export function createApp(
     "/connections",
     oauthStartRoutes(storage, {
       redirectUriAllowlist: config.oauthRedirectAllowlist,
+      authMode: config.authMode,
     }),
   );
   app.route("/oauth/callback", oauthCallbackRoutes(storage));
