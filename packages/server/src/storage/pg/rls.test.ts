@@ -54,6 +54,10 @@ describe.skipIf(!isPg)("Postgres RLS scaffold", () => {
     "connection_oauth_tokens",
     "connection_leased_tokens",
     "bulk_action_jobs",
+    "users",
+    "tenant_quotas",
+    "outbound_webhook_deliveries",
+    "inbound_webhook_events",
   ];
 
   it.each(TENANT_SCOPED_TABLES)(

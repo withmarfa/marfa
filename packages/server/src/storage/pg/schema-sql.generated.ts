@@ -1417,6 +1417,13 @@ ALTER TABLE public.event_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS event_log_tenant_isolation ON public.event_log;
 CREATE POLICY event_log_tenant_isolation ON public.event_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
+ALTER TABLE public.inbound_webhook_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS inbound_webhook_events_tenant_isolation ON public.inbound_webhook_events;
+CREATE POLICY inbound_webhook_events_tenant_isolation ON public.inbound_webhook_events TO marfa_app USING ((EXISTS ( SELECT 1
+   FROM public.inbound_webhooks w
+  WHERE ((w.id = inbound_webhook_events.inbound_webhook_id) AND ((w.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (w.tenant_id IS NULL))))));
+
 ALTER TABLE public.inbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS inbound_webhooks_tenant_isolation ON public.inbound_webhooks;
@@ -1434,10 +1441,27 @@ CREATE POLICY metadata_tenant_isolation ON public.metadata TO marfa_app USING ((
    FROM public.items
   WHERE ((items.id = metadata.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
+ALTER TABLE public.outbound_webhook_deliveries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS outbound_webhook_deliveries_tenant_isolation ON public.outbound_webhook_deliveries;
+CREATE POLICY outbound_webhook_deliveries_tenant_isolation ON public.outbound_webhook_deliveries TO marfa_app USING ((EXISTS ( SELECT 1
+   FROM public.outbound_webhooks w
+  WHERE ((w.id = outbound_webhook_deliveries.webhook_id) AND ((w.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (w.tenant_id IS NULL))))));
+
 ALTER TABLE public.outbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS outbound_webhooks_tenant_isolation ON public.outbound_webhooks;
 CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+
+ALTER TABLE public.tenant_quotas ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_quotas_tenant_isolation ON public.tenant_quotas;
+CREATE POLICY tenant_quotas_tenant_isolation ON public.tenant_quotas TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS users_tenant_isolation ON public.users;
+CREATE POLICY users_tenant_isolation ON public.users TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.versions ENABLE ROW LEVEL SECURITY;
 
