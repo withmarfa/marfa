@@ -49,11 +49,19 @@ const TAG_LENGTH_BYTES = 16;
 function getMasterSecret(): Buffer {
   const raw = process.env.MARFA_AUTH_SECRET;
   if (raw && raw.length >= 16) return Buffer.from(raw, "utf8");
-  // Dev-only fallback: derive a stable per-process secret. Never write
-  // to disk under this fallback in production — the loadConfig() path
-  // already enforces presence of MARFA_AUTH_SECRET when NODE_ENV is
-  // production, but encryption operations remain deterministic across
-  // a single process so tests don't need to set the env var explicitly.
+  // In production the secret MUST be present and long enough. loadConfig()
+  // enforces this at boot; this is the fail-closed backstop so a code path
+  // that reaches here without a valid secret throws rather than silently
+  // deriving a per-process random key — that key would not survive a
+  // restart, leaving every at-rest ciphertext (OAuth tokens, webhook
+  // secrets, OAuth callback state, system.credential rows) undecryptable.
+  if (process.env.NODE_ENV === "production") {
+    throw new SecretCryptoError(
+      "MARFA_AUTH_SECRET must be set to at least 32 characters in production",
+    );
+  }
+  // Dev/test only: derive a stable per-process secret so encryption stays
+  // deterministic within a single process without requiring the env var.
   devFallbackSecret ??= randomBytes(32);
   return devFallbackSecret;
 }
