@@ -52,6 +52,7 @@ beforeAll(async () => {
     blobPath: "",
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
+    maxRequestBytes: 1_048_576,
     s3Bucket: "",
     s3Region: "us-east-1",
     s3Endpoint: "",

@@ -441,12 +441,27 @@ const noNullByte = (schema: z.ZodString): z.ZodType =>
     message: "Must not contain a null byte (U+0000)",
   });
 
+// Defence-in-depth caps applied per-field, independent of the server's
+// global request-body size limit. They bound a single field even when the
+// overall body is under the request cap (e.g. one enormous string in an
+// otherwise small payload). Generous on purpose — they trip on abuse, not
+// on legitimate long-form content; the per-field `maxLength` / `maxItems`
+// overrides raise (or lower) them where a type genuinely needs it.
+const DEFAULT_MAX_STRING_LENGTH = 100_000;
+const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
+
+// Build a length-bounded, NUL-rejecting string schema. The `.max()` cap
+// applies before the NUL refine so an over-long string fails fast with a
+// clear bound error.
+const boundedString = (field: FieldDefinition): z.ZodType =>
+  noNullByte(z.string().max(field.maxLength ?? DEFAULT_MAX_STRING_LENGTH));
+
 function fieldToZod(field: FieldDefinition): z.ZodType {
   let schema: z.ZodType;
 
   switch (field.type) {
     case "string":
-      schema = noNullByte(z.string());
+      schema = boundedString(field);
       break;
     case "number":
       schema = z.number();
@@ -464,20 +479,22 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       schema = z.email();
       break;
     case "datetime":
-      schema = noNullByte(z.string());
+      schema = boundedString(field);
       break;
     case "date":
-      schema = noNullByte(z.string());
+      schema = boundedString(field);
       break;
     case "enum":
       if (field.enum_values && field.enum_values.length > 0) {
         schema = z.enum(field.enum_values as [string, ...string[]]);
       } else {
-        schema = noNullByte(z.string());
+        schema = boundedString(field);
       }
       break;
     case "array":
-      schema = z.array(z.unknown());
+      schema = z
+        .array(z.unknown())
+        .max(field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS);
       break;
     case "object":
       schema = z.record(z.string(), z.unknown());
