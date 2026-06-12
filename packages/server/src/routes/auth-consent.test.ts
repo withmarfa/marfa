@@ -677,3 +677,140 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(projectedScopes).not.toContain("core.note:write");
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /auth/authorize/decision — Origin/Referer CSRF guard
+//
+// Defence-in-depth: an independent check beneath SameSite=Lax + the
+// downstream better-auth Origin check. A *present, non-allowlisted* origin
+// is rejected with 403 BEFORE any projection runs; an allowlisted origin
+// (authBaseUrl or a CORS_ORIGINS entry) or an absent origin proceeds.
+// ---------------------------------------------------------------------------
+
+describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
+  it("rejects a cross-origin POST (non-allowlisted Origin) with 403, before any projection", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "csrf-origin@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: "https://evil.example.com" },
+    });
+    expect(res.status).toBe(403);
+
+    // The guard runs before the projection — no grant row written.
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(0);
+  });
+
+  it("rejects a cross-origin POST inferred from Referer (no Origin header) with 403", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "csrf-referer@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, referer: "https://evil.example.com/attack" },
+    });
+    expect(res.status).toBe(403);
+
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(0);
+  });
+
+  it("allows a same-origin POST (Origin = authBaseUrl) through to the proxy", async () => {
+    // Default test config: authBaseUrl = http://localhost:0, corsOrigins = [].
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "csrf-same@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    // Passes the guard, reaches the proxy, which 4xxs on the bogus sig —
+    // but the projection (which runs before the proxy) lands, proving the
+    // request was NOT rejected by the Origin guard.
+    expect(res.status).not.toBe(403);
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+  });
+
+  it("allows a same-origin POST whose Origin is a CORS_ORIGINS entry", async () => {
+    const allowedOrigin = "https://app.example.com";
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      corsOrigins: [allowedOrigin],
+    });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "csrf-cors@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: allowedOrigin },
+    });
+    expect(res.status).not.toBe(403);
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+  });
+
+  it("allows a POST with no Origin or Referer (same-origin form POST may omit both)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "csrf-absent@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+    });
+    expect(res.status).not.toBe(403);
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+  });
+});

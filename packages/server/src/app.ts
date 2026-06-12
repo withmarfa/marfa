@@ -582,7 +582,15 @@ export function createApp(
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
   // /auth/oauth2/*.
-  app.route("/auth", authConsentRoutes({ storage, auth }));
+  app.route(
+    "/auth",
+    authConsentRoutes({
+      storage,
+      auth,
+      corsOrigins: config.corsOrigins,
+      authBaseUrl: config.authBaseUrl,
+    }),
+  );
   // Marfa-owned DCR endpoint. Sits in front of the plugin's
   // `/auth/oauth2/register` because: (1) the plugin's body schema rejects
   // the device-code URN at validation time, and (2) the plugin's write path
