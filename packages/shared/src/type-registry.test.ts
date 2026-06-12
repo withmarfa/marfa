@@ -761,6 +761,46 @@ describe("validateTypeSchema — circular inheritance", () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// Hot-path inheritance walks must also survive a cycle that somehow reached the
+// in-memory registry. `getResolvedFields` (per-write) and `isSubtypeOf`
+// (per-edge-check) walk the `parent` chain unguarded historically — a cyclic
+// chain would loop forever. They now carry a `seen`/depth guard and must THROW
+// a clear error rather than hang. These tests would hang the suite (rather than
+// fail) if the guard regressed.
+// -----------------------------------------------------------------------------
+describe("hot-path inheritance walks — circular parent chain", () => {
+  beforeEach(() => {
+    registerTypeSchema({
+      id: "cycle.a",
+      parent: "cycle.b",
+      version: 1,
+      fields: { afield: { type: "string", description: "A field" } },
+    });
+    registerTypeSchema({
+      id: "cycle.b",
+      parent: "cycle.a",
+      version: 1,
+      fields: { bfield: { type: "string", description: "B field" } },
+    });
+  });
+
+  afterEach(() => {
+    unregisterTypeSchema("cycle.a");
+    unregisterTypeSchema("cycle.b");
+  });
+
+  it("getResolvedFields throws on a cyclic parent chain instead of looping", () => {
+    expect(() => getResolvedFields("cycle.a")).toThrow(/cycle/i);
+  });
+
+  it("isSubtypeOf throws on a cyclic parent chain instead of looping", () => {
+    // The target parentId is never reached (the chain only contains the two
+    // cycle nodes), so without the guard the walk would spin forever.
+    expect(() => isSubtypeOf("cycle.a", "core.note")).toThrow(/cycle/i);
+  });
+});
+
 describe("validateTypeSchema — display_hints", () => {
   const baseThing = {
     id: "acme.hint_test",

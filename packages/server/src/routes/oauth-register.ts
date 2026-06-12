@@ -8,18 +8,17 @@
  * never runs.
  *
  * **Why we override.** Two upstream constraints in
- * `@better-auth/oauth-provider@1.6.9` make the plugin's DCR unfit for
+ * `@better-auth/oauth-provider@1.6.13` make the plugin's DCR unfit for
  * Marfa's device-flow surface:
  *
  *   1. The plugin's DCR body schema hardcodes a Zod enum that accepts
- *      only `authorization_code`, `client_credentials`, `refresh_token`
- *      (verified in `node_modules/.../dist/index.mjs:3462-3466`). The
- *      device-code URN — `urn:ietf:params:oauth:grant-type:device_code`
+ *      only `authorization_code`, `client_credentials`, `refresh_token`.
+ *      The device-code URN — `urn:ietf:params:oauth:grant-type:device_code`
  *      per RFC 8628 §3.4 — is rejected at request validation with a
  *      400. There is no config knob to widen the enum.
  *   2. The plugin's write path goes through Better Auth's Drizzle
- *      adapter, which (at `@better-auth/drizzle-adapter@1.6.9`
- *      `dist/index.mjs:434`) sets `supportsArrays: true` when the
+ *      adapter, which (at `@better-auth/drizzle-adapter@1.6.13`) sets
+ *      `supportsArrays: true` when the
  *      provider is `"pg"`. The adapter then passes JS arrays
  *      (`scopes`, `redirect_uris`, `grant_types`, `response_types`,
  *      `contacts`) straight into the `text` columns Marfa's PG schema
@@ -126,7 +125,7 @@ function dcrError(error: string, description: string): DcrError {
 
 /**
  * Validates `redirect_uris` per the plugin's `SafeUrlSchema` semantics
- * (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:200-225`), with one
+ * (`@better-auth/oauth-provider@1.6.13`), with one
  * deliberate Marfa widening for self-hosting:
  *
  *   - rejects `javascript:`, `data:`, `vbscript:`
