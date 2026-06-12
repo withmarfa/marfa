@@ -463,6 +463,7 @@ export function getPermissionBundles(): PermissionBundle[] {
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
+  const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
 
   if (process.env.NODE_ENV === "production") {
     if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
@@ -474,6 +475,18 @@ export function loadConfig(): AppConfig {
     if (apiKeySalt.length < 32) {
       throw new Error(
         "API_KEY_SALT must be at least 32 characters. " +
+          "Generate one with: openssl rand -hex 32",
+      );
+    }
+    // MARFA_AUTH_SECRET derives the at-rest encryption key for every
+    // stored ciphertext (OAuth tokens, webhook secrets, OAuth callback
+    // state, system.credential rows). If it is unset, the crypto layer
+    // would fall back to a per-process random key, so a restart on the
+    // scale-to-zero hosted container leaves all prior ciphertexts
+    // undecryptable. Enforce presence at boot so that never happens.
+    if (!authSecret || authSecret.length < 32) {
+      throw new Error(
+        "MARFA_AUTH_SECRET must be set to at least 32 characters in production. " +
           "Generate one with: openssl rand -hex 32",
       );
     }
@@ -577,7 +590,7 @@ export function loadConfig(): AppConfig {
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
-    authSecret: process.env.MARFA_AUTH_SECRET ?? "",
+    authSecret,
     oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),

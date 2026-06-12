@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { envNumber, parseOtelSampleRatio, parseOtelHeaders } from "./config.js";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  envNumber,
+  parseOtelSampleRatio,
+  parseOtelHeaders,
+  loadConfig,
+} from "./config.js";
 
 /**
  * §3.16 — `Number(env) || default` swallows zero. The canonical pattern
@@ -80,5 +85,58 @@ describe("parseOtelHeaders", () => {
 
   it("skips malformed entries", () => {
     expect(parseOtelHeaders("=novalue,good=ok,nokey")).toEqual({ good: "ok" });
+  });
+});
+
+describe("loadConfig MARFA_AUTH_SECRET production guard", () => {
+  // A valid API_KEY_SALT so the earlier production guard never fires —
+  // isolates the MARFA_AUTH_SECRET assertion under test.
+  const VALID_SALT = "a".repeat(32);
+  const VALID_SECRET = "b".repeat(32);
+
+  // Snapshot the three env vars this block mutates so cases can't leak
+  // production mode or stale secrets into the rest of the suite.
+  const savedNodeEnv = process.env.NODE_ENV;
+  const savedSalt = process.env.API_KEY_SALT;
+  const savedSecret = process.env.MARFA_AUTH_SECRET;
+
+  function restore(value: string | undefined, key: string): void {
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = value;
+  }
+
+  afterEach(() => {
+    restore(savedNodeEnv, "NODE_ENV");
+    restore(savedSalt, "API_KEY_SALT");
+    restore(savedSecret, "MARFA_AUTH_SECRET");
+  });
+
+  it("throws when MARFA_AUTH_SECRET is unset in production", () => {
+    process.env.NODE_ENV = "production";
+    process.env.API_KEY_SALT = VALID_SALT;
+    delete process.env.MARFA_AUTH_SECRET;
+    expect(() => loadConfig()).toThrow(/MARFA_AUTH_SECRET/);
+  });
+
+  it("throws when MARFA_AUTH_SECRET is shorter than 32 chars in production", () => {
+    process.env.NODE_ENV = "production";
+    process.env.API_KEY_SALT = VALID_SALT;
+    process.env.MARFA_AUTH_SECRET = "c".repeat(31);
+    expect(() => loadConfig()).toThrow(/MARFA_AUTH_SECRET/);
+  });
+
+  it("succeeds with a valid >=32-char MARFA_AUTH_SECRET in production", () => {
+    process.env.NODE_ENV = "production";
+    process.env.API_KEY_SALT = VALID_SALT;
+    process.env.MARFA_AUTH_SECRET = VALID_SECRET;
+    const config = loadConfig();
+    expect(config.authSecret).toBe(VALID_SECRET);
+  });
+
+  it("does not throw outside production even when the secret is absent", () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.API_KEY_SALT;
+    delete process.env.MARFA_AUTH_SECRET;
+    expect(() => loadConfig()).not.toThrow();
   });
 });

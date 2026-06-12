@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import {
   encryptSecret,
   decryptSecret,
@@ -61,5 +61,55 @@ describe("secret-encryption", () => {
     expect(ciphertext).toMatch(/^[0-9a-f]+$/);
     // 12-byte IV + 16-byte tag + at-least-1-byte ciphertext = ≥29 bytes = ≥58 hex chars.
     expect(ciphertext.length).toBeGreaterThanOrEqual(58);
+  });
+});
+
+describe("secret-encryption production fail-closed", () => {
+  // Snapshot the two env vars these cases mutate so production mode and
+  // any injected secret never leak into the rest of the suite (every
+  // other test relies on the deterministic dev fallback).
+  const savedNodeEnv = process.env.NODE_ENV;
+  const savedSecret = process.env.MARFA_AUTH_SECRET;
+
+  function restore(value: string | undefined, key: string): void {
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
+    else process.env[key] = value;
+  }
+
+  afterEach(() => {
+    restore(savedNodeEnv, "NODE_ENV");
+    restore(savedSecret, "MARFA_AUTH_SECRET");
+  });
+
+  it("throws when encrypting in production with no secret set", () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.MARFA_AUTH_SECRET;
+    expect(() =>
+      encryptSecret("topsecret", SECRET_INFO.inboundWebhookSecret),
+    ).toThrow(/MARFA_AUTH_SECRET/);
+  });
+
+  it("encrypts with the configured secret in production", () => {
+    process.env.NODE_ENV = "production";
+    process.env.MARFA_AUTH_SECRET = "p".repeat(32);
+    const ciphertext = encryptSecret(
+      "topsecret",
+      SECRET_INFO.inboundWebhookSecret,
+    );
+    expect(decryptSecret(ciphertext, SECRET_INFO.inboundWebhookSecret)).toBe(
+      "topsecret",
+    );
+  });
+
+  it("round-trips deterministically in dev with no secret set", () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.MARFA_AUTH_SECRET;
+    const ciphertext = encryptSecret(
+      "dev-secret",
+      SECRET_INFO.connectionOauthToken,
+    );
+    expect(decryptSecret(ciphertext, SECRET_INFO.connectionOauthToken)).toBe(
+      "dev-secret",
+    );
   });
 });
