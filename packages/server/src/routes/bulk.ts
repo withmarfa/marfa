@@ -442,6 +442,18 @@ async function processBulkItem(
     tenantId: string | undefined;
     stampedSource: string | undefined;
     /**
+     * Whether the caller has already opened the batch transaction (atomic
+     * mode) or runs each item bare (best-effort mode). `applyInlineEdges`
+     * deletes then validates then recreates and relies on a transaction to
+     * roll the deletes back when validation rejects the set. In atomic mode
+     * the outer `runInTransaction` covers that; in best-effort mode this
+     * function opens a per-item transaction around the edge reconciliation so
+     * a rejected set doesn't strand the deletes. The transaction wrapper is
+     * NOT reentrant on SQLite, so it must only ever be opened on the
+     * best-effort path — never nested inside the atomic outer transaction.
+     */
+    atomic: boolean;
+    /**
      * Per-item write authorization. Mirrors the single-item `POST /items`
      * gate (`requireTypeAccess(c, type, "write")`): admin / tenant_admin
      * bypass; a member must hold write on the item's type. Throws
@@ -462,7 +474,26 @@ async function processBulkItem(
     };
   }
 
-  const { mode, tenantId, stampedSource, checkWrite } = options;
+  const { mode, tenantId, stampedSource, atomic, checkWrite } = options;
+
+  // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
+  // recreates and needs a transaction so a validation failure rolls the
+  // deletes back. Atomic mode already runs inside the outer batch
+  // transaction; best-effort mode runs each item bare, so wrap the edge step
+  // here. The SQLite transaction wrapper is not reentrant — only open one on
+  // the best-effort path.
+  const reconcileEdges = async (
+    id: string,
+    edgeSet: Record<string, string[]>,
+  ): Promise<void> => {
+    if (atomic) {
+      await applyInlineEdges(storage, id, edgeSet, tenantId);
+    } else {
+      await storage.runInTransaction(() =>
+        applyInlineEdges(storage, id, edgeSet, tenantId),
+      );
+    }
+  };
 
   try {
     checkWrite(raw.type);
@@ -539,7 +570,24 @@ async function processBulkItem(
       await storage.metadata.set(existing.id, raw.tags);
     }
     if (raw.edges) {
-      await applyInlineEdges(storage, existing.id, raw.edges, tenantId);
+      // Inline-edge reconciliation can reject the proposed set (cardinality,
+      // type constraint, cycle). Surface it as a per-item `errored` outcome
+      // so best-effort mode reports it per item and atomic mode rolls the
+      // whole batch back via `bulk_atomic_rollback` — matching the create
+      // branch below.
+      try {
+        await reconcileEdges(existing.id, raw.edges);
+      } catch (err) {
+        if (err instanceof MarfaError) {
+          return {
+            index,
+            outcome: "errored",
+            id: existing.id,
+            error: { code: err.code, message: err.message },
+          };
+        }
+        throw err;
+      }
     }
 
     return { index, outcome: "updated", id: updated.id };
@@ -562,7 +610,7 @@ async function processBulkItem(
     };
     const created = await storage.items.create(createInput, tenantId);
     if (raw.edges) {
-      await applyInlineEdges(storage, created.id, raw.edges, tenantId);
+      await reconcileEdges(created.id, raw.edges);
     }
     return { index, outcome: "created", id: created.id };
   } catch (err) {
@@ -676,6 +724,7 @@ export function bulkRoutes(storage: Storage) {
           mode,
           tenantId,
           stampedSource,
+          atomic,
           checkWrite,
         });
         if (atomic && result.outcome === "errored") {

@@ -376,6 +376,155 @@ describe("POST /items/bulk", () => {
     expect(edgesBody.data[0]!.target_id).toBe(targetId);
   });
 
+  it("rejects an inline-edge bulk create that violates cardinality", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const mk = async (label: string): Promise<string> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.adminKey,
+        body: { type: "core.note", properties: { body: label } },
+      });
+      const b = (await res.json()) as { item: { id: string } };
+      return b.item.id;
+    };
+    const targetA = await mk(`bulk-card-a-${suffix}`);
+    const targetB = await mk(`bulk-card-b-${suffix}`);
+
+    // `supersedes` is one-to-one: two outbound edges from one source breach
+    // the cap. atomic (default) → the whole batch rolls back with 400.
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "bulk inline cardinality" },
+            source_id: `bulk-card-src-${suffix}`,
+            edges: { supersedes: [targetA, targetB] },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+  });
+
+  it("rejects an inline-edge bulk upsert that introduces a parent-of cycle", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+
+    // Seed A and B, then make A parent-of B.
+    const seed = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "bulk cycle A" },
+            source_id: `bulk-cyc-a-${suffix}`,
+          },
+          {
+            type: "core.note",
+            properties: { body: "bulk cycle B" },
+            source_id: `bulk-cyc-b-${suffix}`,
+          },
+        ],
+      },
+    });
+    const seedBody = (await seed.json()) as { results: { id: string }[] };
+    const aId = seedBody.results[0]!.id;
+    const bId = seedBody.results[1]!.id;
+
+    const aParent = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "bulk cycle A parent" },
+            source_id: `bulk-cyc-a-${suffix}`,
+            edges: { "parent-of": [bId] },
+          },
+        ],
+      },
+    });
+    expect(aParent.status).toBe(200);
+
+    // Upsert B with parent-of A — closes the cycle. atomic → 400 rollback.
+    const bParent = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "bulk cycle B parent" },
+            source_id: `bulk-cyc-b-${suffix}`,
+            edges: { "parent-of": [aId] },
+          },
+        ],
+      },
+    });
+    expect(bParent.status).toBe(400);
+    const errBody = (await bParent.json()) as { error: { code: string } };
+    expect(errBody.error.code).toBe("bulk_atomic_rollback");
+
+    // B's parent-of edges remain empty — the delete rolled back.
+    const edgesRes = await request(
+      ctx.app,
+      "GET",
+      `/items/${bId}/edges?edge_type=parent-of`,
+      { key: ctx.adminKey },
+    );
+    const edgesBody = (await edgesRes.json()) as { data: unknown[] };
+    expect(edgesBody.data).toHaveLength(0);
+  });
+
+  it("surfaces an inline-edge violation per-item in best-effort (atomic=false) mode", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const mk = async (label: string): Promise<string> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.adminKey,
+        body: { type: "core.note", properties: { body: label } },
+      });
+      const b = (await res.json()) as { item: { id: string } };
+      return b.item.id;
+    };
+    const targetA = await mk(`be-card-a-${suffix}`);
+    const targetB = await mk(`be-card-b-${suffix}`);
+
+    // best-effort (atomic=false): the violating item errors, the valid item
+    // still lands. The violating item's delete must not leak — validation
+    // failure rolls back applyInlineEdges' own transaction.
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: false,
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "be valid" },
+            source_id: `be-valid-${suffix}`,
+            edges: { about: [targetA] },
+          },
+          {
+            type: "core.note",
+            properties: { body: "be violating" },
+            source_id: `be-violating-${suffix}`,
+            edges: { supersedes: [targetA, targetB] },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { created: number; errored: number };
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(body.counts.created).toBe(1);
+    expect(body.counts.errored).toBe(1);
+    const errored = body.results.find((r) => r.outcome === "errored");
+    expect(errored?.error?.code).toBe("edge_constraint_violation");
+  });
+
   it("caps at MAX_BULK_ITEMS (5000)", async () => {
     const items = Array.from({ length: 5001 }, (_, i) => ({
       type: "core.note",
