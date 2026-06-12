@@ -64,8 +64,10 @@ describe("renderSecurityPage", () => {
     expect(html).toContain("Connected apps");
     expect(html).toContain("Active sessions");
     expect(html).toContain("Test CLI");
-    expect(html).toContain("core.note:read");
-    expect(html).toContain("core.task:write");
+    // Raw scope literals are summarised in plain English, never shown verbatim.
+    expect(html).toContain("Can read and write your data");
+    expect(html).not.toContain("core.note:read");
+    expect(html).not.toContain("core.task:write");
   });
 
   it("renders the empty-state copy when no grants exist", () => {
@@ -88,18 +90,47 @@ describe("renderSecurityPage", () => {
     expect(html).toContain('action="/auth/sessions/sign-out-all"');
   });
 
-  it("disables the per-session Revoke for the current session and tags it", () => {
+  it("marks the current session with '(This device)' and renders no action button", () => {
     const html = renderSecurityPage({
       email: "alice@example.com",
       grants: [],
       sessions: [{ ...SAMPLE_SESSION, is_current: true }],
     });
-    expect(html).toContain("current device");
-    expect(html).toContain('class="tag tag--current"');
-    // No per-session revoke form for the current session.
+    // The current session is identified by a muted "(This device)" marker,
+    // not a pill or a disabled button.
+    expect(html).toContain('<span class="this-device">(This device)</span>');
+    expect(html).toContain("Active now");
+    expect(html).not.toContain("tag--current");
+    // No per-session revoke form for the current session, and no button at all
+    // in its action slot.
     expect(html).not.toContain('action="/auth/sessions/session-1/revoke"');
-    // The disabled button still renders so the user sees it exists.
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>Revoke<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled/);
+  });
+
+  it("renders an outline Sign out button for non-current sessions", () => {
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [],
+      sessions: [SAMPLE_SESSION],
+    });
+    expect(html).toContain('action="/auth/sessions/session-1/revoke"');
+    expect(html).toMatch(
+      /<button[^>]*class="btn btn--outline btn--sm"[^>]*>Sign out<\/button>/,
+    );
+  });
+
+  it("renders Sign out everywhere as a quiet danger button in a danger zone", () => {
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [],
+      sessions: [{ ...SAMPLE_SESSION, is_current: true }],
+    });
+    expect(html).toContain('class="danger-zone"');
+    expect(html).toContain("Ends every other session.");
+    expect(html).toContain('action="/auth/sessions/sign-out-all"');
+    expect(html).toMatch(
+      /<button[^>]*class="btn btn--danger-quiet btn--sm"[^>]*>Sign out everywhere<\/button>/,
+    );
   });
 
   it("surfaces a notice banner when supplied", () => {

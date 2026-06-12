@@ -47,17 +47,28 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Short ISO date (YYYY-MM-DD HH:MM UTC) — human-scannable, not precise. */
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** Friendly calendar date, e.g. "11 May 2026". */
 function formatDate(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const yyyy = String(d.getUTCFullYear());
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
+  const month = MONTHS[d.getUTCMonth()] ?? "";
+  return `${String(d.getUTCDate())} ${month} ${String(d.getUTCFullYear())}`;
 }
 
 export function renderKeysPage(params: KeysPageParams): string {
@@ -80,7 +91,7 @@ export function renderKeysPage(params: KeysPageParams): string {
 
   const createForm = `<div class="section">
     <h2>Create a key</h2>
-    <form method="POST" action="/auth/keys">
+    <form method="POST" action="/auth/keys" class="form">
       <label class="field">
         <span class="field__label">Label</span>
         <input type="text" name="label" required maxlength="200"
@@ -102,13 +113,14 @@ export function renderKeysPage(params: KeysPageParams): string {
             .map((k) => {
               const safeId = escapeHtml(k.id);
               const safeLabel = escapeHtml(k.label);
-              const lastUsed = k.last_used_at
+              const activity = k.last_used_at
                 ? `Last used ${escapeHtml(formatDate(k.last_used_at))}`
-                : "Never used";
+                : "Not used yet";
               return `<div class="row">
                 <div class="row__main">
                   <div class="row__title">${safeLabel}</div>
-                  <div class="row__meta">Created ${escapeHtml(formatDate(k.created_at))} · ${lastUsed}</div>
+                  <div class="row__meta">Added ${escapeHtml(formatDate(k.created_at))}</div>
+                  <div class="row__meta row__meta--faint">${activity}</div>
                 </div>
                 <form method="POST" action="/auth/keys/${safeId}/revoke" class="row__action">
                   <button type="submit" class="btn btn--danger">Revoke</button>

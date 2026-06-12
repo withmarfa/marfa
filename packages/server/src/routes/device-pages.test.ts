@@ -92,10 +92,30 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).toContain('value="deny"');
   });
 
-  it("renders the description for each scope when provided", () => {
+  it("renders the plain-English description for each scope (no code literals)", () => {
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toContain("Text you created.");
-    expect(html).toContain("<code>core.note:read</code>");
+    expect(html).not.toContain("core.note:read");
+  });
+
+  it("renders each capability as a .cap row with a trailing granted check", () => {
+    const html = renderDeviceConsentScreen(PARAMS);
+    expect(html).toContain('class="caps"');
+    expect(html).toContain('class="cap"');
+    expect(html).toContain('class="cap__title">Text you created.');
+    // The granted indicator is a checked + disabled squared check —
+    // informational, not toggleable.
+    expect(html).toContain('class="chk" checked disabled');
+  });
+
+  it("renders the user_code in the new codebox, split around a dash", () => {
+    const html = renderDeviceConsentScreen({ ...PARAMS, userCode: "WDJBMJHT" });
+    expect(html).toContain('class="codebox"');
+    expect(html).toContain('class="codebox__seg">WDJB');
+    expect(html).toContain('class="codebox__seg">MJHT');
+    expect(html).toContain('class="codebox__dash"');
+    // The display is not a real form input — no entry <input> for the code.
+    expect(html).not.toContain('class="field__input--code"');
   });
 
   it("escapes a malicious client name", () => {
@@ -107,7 +127,7 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("renders OIDC scopes as the bare literal, not <literal>:none", () => {
+  it("maps OIDC scopes to friendly labels, never the raw literal", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,
       scopes: [
@@ -117,11 +137,35 @@ describe("renderDeviceConsentScreen", () => {
           kind: "oidc",
           oidcScope: "openid",
         },
+        {
+          typePattern: "email",
+          operation: "none",
+          kind: "oidc",
+          oidcScope: "email",
+        },
         { typePattern: "core.note", operation: "read" },
       ],
     });
-    expect(html).toContain("<code>openid</code>");
+    expect(html).toContain("Confirm who you are");
+    expect(html).toContain("See your email address");
+    // The raw OIDC literal must not surface as a capability row.
+    expect(html).not.toContain(">openid<");
     expect(html).not.toContain("openid:none");
+  });
+
+  it("dedupes human labels across multiple scopes (no repeated lines)", () => {
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      // core.note read + write both resolve to the same human label; the
+      // device flow used to render it twice.
+      scopes: [
+        { typePattern: "core.note", operation: "read" },
+        { typePattern: "core.note", operation: "write" },
+      ],
+      descriptions: { "core.note": "Text you created." },
+    });
+    const occurrences = html.split("Text you created.").length - 1;
+    expect(occurrences).toBe(1);
   });
 });
 
