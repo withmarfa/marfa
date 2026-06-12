@@ -291,6 +291,173 @@ describe("POST /items", () => {
   });
 });
 
+describe("natural-key upsert: inline edges are validated", () => {
+  // The upsert short-circuit reconciles edges via applyInlineEdges. That path
+  // must run the same edge validation as the create path — a re-sync that
+  // introduces a cardinality / type-constraint violation or a graph cycle is
+  // rejected, matching POST /items create.
+
+  async function createNote(body: string): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body } },
+    });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as { item: { id: string } };
+    return data.item.id;
+  }
+
+  it("rejects an inline-edge upsert that violates one-to-one cardinality", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const targetA = await createNote(`one-to-one target A ${suffix}`);
+    const targetB = await createNote(`one-to-one target B ${suffix}`);
+
+    // Establish the row via natural key first.
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "card-source" },
+        source_id: `card-${suffix}`,
+      },
+    });
+    expect(first.status).toBe(201);
+
+    // `supersedes` is one-to-one: two outbound edges of it from one source
+    // breach the source-side cap. The create path rejects this; the upsert
+    // path must too.
+    const second = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "card-source updated" },
+        source_id: `card-${suffix}`,
+        edges: { supersedes: [targetA, targetB] },
+      },
+    });
+    expect(second.status).toBe(400);
+    const errBody = (await second.json()) as { error: { code: string } };
+    expect(errBody.error.code).toBe("edge_constraint_violation");
+
+    // The rejected upsert left no edges behind — the delete rolled back.
+    const firstData = (await first.json()) as { item: { id: string } };
+    const edgesRes = await request(
+      ctx.app,
+      "GET",
+      `/items/${firstData.item.id}/edges?edge_type=supersedes`,
+      { key: ctx.adminKey },
+    );
+    const edgesBody = (await edgesRes.json()) as { data: unknown[] };
+    expect(edgesBody.data).toHaveLength(0);
+  });
+
+  it("rejects an inline-edge upsert that introduces a parent-of cycle", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+
+    // Two natural-key rows, A and B.
+    const aRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "cycle A" },
+        source_id: `cycle-a-${suffix}`,
+      },
+    });
+    expect(aRes.status).toBe(201);
+    const a = (await aRes.json()) as { item: { id: string } };
+
+    const bRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "cycle B" },
+        source_id: `cycle-b-${suffix}`,
+      },
+    });
+    expect(bRes.status).toBe(201);
+    const b = (await bRes.json()) as { item: { id: string } };
+
+    // Upsert A with parent-of B (A is parent of B).
+    const aParentB = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "cycle A is parent" },
+        source_id: `cycle-a-${suffix}`,
+        edges: { "parent-of": [b.item.id] },
+      },
+    });
+    expect(aParentB.status).toBe(200);
+
+    // Now upsert B with parent-of A — closes the cycle A -> B -> A.
+    const bParentA = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "cycle B is parent" },
+        source_id: `cycle-b-${suffix}`,
+        edges: { "parent-of": [a.item.id] },
+      },
+    });
+    expect(bParentA.status).toBe(400);
+    const errBody = (await bParentA.json()) as { error: { code: string } };
+    expect(errBody.error.code).toBe("edge_cycle");
+
+    // B's parent-of edges are untouched — the delete rolled back.
+    const edgesRes = await request(
+      ctx.app,
+      "GET",
+      `/items/${b.item.id}/edges?edge_type=parent-of`,
+      { key: ctx.adminKey },
+    );
+    const edgesBody = (await edgesRes.json()) as { data: unknown[] };
+    expect(edgesBody.data).toHaveLength(0);
+  });
+
+  it("accepts a valid inline-edge upsert", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const targetA = await createNote(`valid target A ${suffix}`);
+    const targetB = await createNote(`valid target B ${suffix}`);
+
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "valid-source" },
+        source_id: `valid-${suffix}`,
+        edges: { about: [targetA] },
+      },
+    });
+    expect(first.status).toBe(201);
+    const firstData = (await first.json()) as { item: { id: string } };
+
+    // Re-sync with a different valid target set — replace-by-edge-type.
+    const second = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "valid-source updated" },
+        source_id: `valid-${suffix}`,
+        edges: { about: [targetA, targetB] },
+      },
+    });
+    expect(second.status).toBe(200);
+
+    const edgesRes = await request(
+      ctx.app,
+      "GET",
+      `/items/${firstData.item.id}/edges?edge_type=about`,
+      { key: ctx.adminKey },
+    );
+    const edgesBody = (await edgesRes.json()) as {
+      data: { target_id: string }[];
+    };
+    expect(edgesBody.data).toHaveLength(2);
+    const targets = edgesBody.data.map((e) => e.target_id).sort();
+    expect(targets).toEqual([targetA, targetB].sort());
+  });
+});
+
 describe("null on an optional property is treated as unset", () => {
   // Serializers routinely emit `null` for an absent value rather than omitting
   // the key. An optional property sent as `null` must be ignored (the field
