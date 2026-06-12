@@ -27,7 +27,18 @@ export interface RateLimitConfig {
    * tenant_quotas row take precedence.
    */
   tenantDefaultRatePerMinute?: number | null;
+  /**
+   * Multiplier for the aggregate per-identifier window (see below).
+   * The aggregate cap is `defaultLimit * aggregateMultiplier`. Default
+   * `4`. Must be `>= 1` — a value below 1 would make the aggregate cap
+   * tighter than a single path group's cap and reject normal traffic.
+   * Set to `0` to disable the aggregate window entirely (the legacy
+   * per-path-only behaviour).
+   */
+  aggregateMultiplier?: number;
 }
+
+const DEFAULT_AGGREGATE_MULTIPLIER = 4;
 
 /**
  * Sliding-window rate limiter backed by `storage.rateLimits`.
@@ -60,6 +71,20 @@ export function rateLimitMiddleware(
   config: RateLimitConfig,
 ): MiddlewareHandler<AppEnv> {
   const tenantLimits = new Map<string, TenantLimitCacheEntry>();
+
+  // Aggregate per-identifier cap = defaultLimit * multiplier. The
+  // per-path window below is keyed on `(identifier, pathPrefix)`, so an
+  // identifier's effective budget multiplies across every path group it
+  // touches — and tenant-less keys (IP/anon callers, platform-admin
+  // keys) have no per-tenant aggregate cap to fall back on. The
+  // aggregate window keys on the identifier ALONE (no path split) to
+  // bound that total. The multiplier keeps the per-path window the
+  // primary cap most callers hit, with the aggregate as a backstop. `0`
+  // disables it (legacy per-path-only behaviour).
+  const aggregateMultiplier =
+    config.aggregateMultiplier ?? DEFAULT_AGGREGATE_MULTIPLIER;
+  const aggregateLimit =
+    aggregateMultiplier > 0 ? config.defaultLimit * aggregateMultiplier : 0;
 
   // Periodic cleanup of the in-process tenant-limit cache. The shared
   // `rate_limit_windows` rows have their own retention sweep
@@ -156,6 +181,31 @@ export function rateLimitMiddleware(
         ErrorCode.RATE_LIMITED,
         `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
       );
+    }
+
+    // Aggregate per-identifier window — keyed on the identifier with NO
+    // path split — so a caller can't multiply its budget by spreading
+    // traffic across path groups, and tenant-less identifiers (IP/anon,
+    // platform admin) still hit a ceiling. Reuses the same store method
+    // and window; only the key (and cap) differ.
+    if (aggregateLimit > 0) {
+      const aggregateWindowKey = `all:${identifier}`;
+      const aggregateResult = await config.storage.rateLimits.incrementWindow(
+        RATE_FAMILY,
+        aggregateWindowKey,
+        config.windowMs,
+        nowIso,
+      );
+      if (aggregateResult.count > aggregateLimit) {
+        const retryAfter = Math.ceil(
+          (new Date(aggregateResult.expires_at).getTime() - now) / 1000,
+        );
+        c.header("Retry-After", String(retryAfter));
+        throw new MarfaError(
+          ErrorCode.RATE_LIMITED,
+          `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
+        );
+      }
     }
 
     // Per-tenant ceiling on top of the per-credential window. A noisy

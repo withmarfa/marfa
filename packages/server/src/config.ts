@@ -20,6 +20,12 @@ export function envNumber(raw: string | undefined, fallback: number): number {
 }
 
 export interface AppConfig {
+  /** True when `NODE_ENV === "production"`. Gates production-only
+   *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
+   *  Optional on the type so test contexts constructing `AppConfig`
+   *  literals don't have to supply it; readers treat `undefined` as
+   *  non-production. `loadConfig` always populates it. */
+  isProduction?: boolean;
   port: number;
   storageDialect: "sqlite" | "pg";
   sqlitePath: string;
@@ -177,6 +183,14 @@ export interface AppConfig {
   /** Rate-limit window size in ms. Read from `RATE_LIMIT_WINDOW_MS`
    *  (default 60_000) — configurable, not hard-coded. */
   rateLimitWindowMs: number;
+  /** Multiplier for the aggregate per-identifier rate-limit window. The
+   *  aggregate cap is `rateLimitDefaultLimit * this`, keyed on the
+   *  identifier alone (no path split) so a caller's budget can't
+   *  multiply across path groups. Read from
+   *  `RATE_LIMIT_AGGREGATE_MULTIPLIER` (default 4). `0` disables the
+   *  aggregate window. Optional on the type so test contexts
+   *  constructing `AppConfig` literals don't have to supply it. */
+  rateLimitAggregateMultiplier?: number;
   /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
    *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
    *  when no version file is present (local development). The committed
@@ -519,6 +533,7 @@ export function loadConfig(): AppConfig {
 
   const port = envNumber(process.env.PORT, 8600);
   return {
+    isProduction: process.env.NODE_ENV === "production",
     port,
     storageDialect: process.env.DB_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
@@ -632,6 +647,10 @@ export function loadConfig(): AppConfig {
     oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
+    rateLimitAggregateMultiplier: envNumber(
+      process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
+      4,
+    ),
     defaultQuotaItems: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_ITEMS),
     defaultQuotaWebhooks: parseQuotaEnv(
       process.env.MARFA_DEFAULT_QUOTA_WEBHOOKS,

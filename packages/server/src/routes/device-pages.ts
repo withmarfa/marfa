@@ -40,6 +40,8 @@ const ERROR_MESSAGES: Record<string, string> = {
     "That code has already been used. Restart the sign-in on your other device.",
   expired_code:
     "That code has expired. Restart the sign-in on your other device.",
+  too_many_attempts:
+    "Too many attempts for that code. Restart the sign-in on your other device.",
 };
 
 function escapeHtml(str: string): string {
