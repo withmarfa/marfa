@@ -26,10 +26,11 @@ export function renderAccountDeleteConfirmEmail(
     subject: "Confirm your Marfa account deletion",
     heading: "Confirm account deletion",
     intro: [
-      `${greeting},`,
-      "We received a request to delete your Marfa account. Click the button below to confirm.",
-      `This link expires in ${String(expires)} minutes.`,
+      `${greeting} — we received a request to delete your Marfa account. Confirm with the button below to start the process.`,
     ],
+    callout:
+      "Confirming starts a permanent deletion of your account and everything in it.",
+    note: `This link expires in ${String(expires)} minutes.`,
     button: { label: "Confirm deletion", url: input.url },
     outro: [
       "If you didn't request deletion, ignore this email — your account stays active.",

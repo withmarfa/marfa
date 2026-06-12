@@ -82,15 +82,37 @@ describe("renderEmail", () => {
     expect(text).toContain("This is irreversible.");
   });
 
-  it("omits the raw-url block when showRawUrl is false", () => {
+  it("never prints the full URL in the HTML body, only as the fallback href", () => {
+    const longUrl =
+      "https://staging.marfa.so/auth/verify-email?token=averylongopaquetokenvalue123456&callbackURL=%2F";
+    const { html, text } = renderEmail({
+      subject: "Sub",
+      heading: "Heading",
+      intro: ["Body."],
+      button: { label: "Go", url: longUrl },
+    });
+    // The fallback is a short anchor, not the raw URL printed as text.
+    expect(html).toContain("Button not working?");
+    expect(html).toContain("Open the link directly");
+    // The URL lives in the anchor's href (ampersands HTML-escaped there).
+    expect(html).toContain("token=averylongopaquetokenvalue123456");
+    expect(html).toContain("&amp;callbackURL");
+    // The visible body never spells the long URL out as text.
+    expect(html).not.toContain("Or paste this URL");
+    expect(html).not.toContain(`>${longUrl}<`);
+    // The plain-text part still carries the full pasteable URL verbatim.
+    expect(text).toContain(longUrl);
+  });
+
+  it("omits the fallback link when showFallbackLink is false", () => {
     const { html } = renderEmail({
       subject: "Sub",
       heading: "Heading",
       intro: ["Body."],
       button: { label: "Go", url: "https://example.com/secret" },
-      showRawUrl: false,
+      showFallbackLink: false,
     });
-    expect(html).not.toContain("Or paste this URL");
+    expect(html).not.toContain("Button not working?");
   });
 });
 

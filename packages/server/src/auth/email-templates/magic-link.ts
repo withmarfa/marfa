@@ -22,9 +22,11 @@ export function renderMagicLinkEmail(
     subject: "Sign in to Marfa",
     heading: "Sign in to Marfa",
     intro: [
-      `Click the button below to sign in. This link expires in ${String(expires)} minutes.`,
+      `Use the button below to sign in to Marfa. The link works once and expires in ${String(expires)} minutes.`,
     ],
     button: { label: "Sign in", url: input.url },
-    outro: ["If you didn't request this email, you can safely ignore it."],
+    outro: [
+      "If you didn't try to sign in, you can ignore this email — your account is safe.",
+    ],
   });
 }

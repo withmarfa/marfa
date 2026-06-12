@@ -29,13 +29,12 @@ export function renderVerifyEmailEmail(
     subject: "Verify your email for Marfa",
     heading: "Verify your email",
     intro: [
-      `${greeting},`,
-      "Welcome to Marfa. Please confirm your email address by clicking the button below.",
-      `This link expires in ${String(expires)} minutes.`,
+      `${greeting} — welcome to Marfa. Confirm your email address to finish setting up your account.`,
     ],
+    note: `This link expires in ${String(expires)} minutes.`,
     button: { label: "Verify email", url: input.url },
     outro: [
-      "If you didn't sign up for Marfa, you can safely ignore this email.",
+      "If you didn't create a Marfa account, you can safely ignore this email.",
     ],
   });
 }

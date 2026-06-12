@@ -32,9 +32,8 @@ export function renderAccountDeleteCancelEmail(
     subject: "Sign-in attempt on your Marfa account scheduled for deletion",
     heading: "Sign-in attempt on your Marfa account",
     intro: [
-      `${greeting},`,
-      `Someone tried to sign in to your Marfa account just now. Your account is currently scheduled for deletion${deadline ? ` on ${deadline}` : ""}, so the sign-in did not go through.`,
-      "If you'd like to keep your account, restore it below. The deletion will be cancelled and you'll be able to sign in normally on the next attempt.",
+      `${greeting} — someone just tried to sign in to your Marfa account. It's currently scheduled for deletion${deadline ? ` on ${deadline}` : ""}, so the sign-in didn't go through.`,
+      "If you'd like to keep your account, restore it with the button below. The deletion will be cancelled and you'll be able to sign in normally.",
     ],
     button: { label: "Restore account", url: input.url },
     outro: [

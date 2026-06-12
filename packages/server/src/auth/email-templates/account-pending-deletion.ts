@@ -29,13 +29,14 @@ export function renderAccountPendingDeletionEmail(
     subject: "Your Marfa account is scheduled for deletion",
     heading: "Account scheduled for deletion",
     intro: [
-      `${greeting},`,
-      "We've received and confirmed your account-deletion request.",
-      "What will be deleted: every item, edge, tag, and version in your space; every API key and OAuth grant on the account; every uploaded blob; and your user record (sessions, passkeys, accounts).",
-      "What's preserved: audit-log rows, with all personal identifiers redacted.",
-      "Changed your mind? Cancel deletion below — valid until the deletion date.",
+      `${greeting} — you asked us to delete your Marfa account, and we've confirmed the request.`,
+      "When the grace period ends, everything in your space is permanently removed — your items, edges, tags, version history, uploaded files, and every API key and OAuth connection — along with the account itself. This can't be undone.",
+      "The one thing we keep is a redacted security audit record, with all personal details stripped out.",
     ],
-    callout: `Your account will be permanently deleted in ${String(input.graceDays)} days, on ${input.deletionDate}.`,
+    callout: `Your account and everything in it will be permanently deleted in ${String(input.graceDays)} days, on ${input.deletionDate}.`,
     button: { label: "Cancel deletion", url: input.url },
+    outro: [
+      "Changed your mind? Cancelling restores everything, and you can pick up right where you left off — no need to sign in.",
+    ],
   });
 }
