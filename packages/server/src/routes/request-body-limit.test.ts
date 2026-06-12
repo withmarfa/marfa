@@ -104,4 +104,26 @@ describe("global request-body size cap", () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("blob_too_large");
   });
+
+  it("exempts /items/bulk from the small global cap (bulk carries many items)", async () => {
+    // A bulk body well over the tiny global request cap but trivially under
+    // the bulk cap (16 MB default). The global cap must NOT apply to
+    // /items/bulk, or legitimate large batches would 413.
+    const items = Array.from({ length: 40 }, (_, i) => ({
+      type: "core.note",
+      properties: { body: "x".repeat(200), title: `n${String(i)}` },
+    }));
+    const body = JSON.stringify({ items });
+    expect(body.length).toBeGreaterThan(REQUEST_CAP);
+    const res = await ctx.app.request("/items/bulk", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+    // The body-size cap must not fire on bulk; the request reaches the handler.
+    expect(res.status).not.toBe(413);
+  });
 });

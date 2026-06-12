@@ -35,6 +35,12 @@ export interface AppConfig {
    *  exempt — they enforce their own (much larger) `maxBlobSize` cap.
    *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
   maxRequestBytes: number;
+  /** Maximum request body size in bytes for the bulk write endpoints
+   *  (`/items/bulk*`, `/edges/bulk`), which carry up to 5000 items/edges in a
+   *  single body and so need a larger cap than the per-request default. Read
+   *  from `MARFA_MAX_BULK_REQUEST_BYTES`; default 16MB. Optional — falls back
+   *  to the 16MB default when unset. */
+  maxBulkRequestBytes?: number;
   s3Bucket: string;
   s3Region: string;
   s3Endpoint: string;
@@ -508,6 +514,10 @@ export function loadConfig(): AppConfig {
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),
     maxRequestBytes: envNumber(process.env.MARFA_MAX_REQUEST_BYTES, 1_048_576),
+    maxBulkRequestBytes: envNumber(
+      process.env.MARFA_MAX_BULK_REQUEST_BYTES,
+      16 * 1024 * 1024,
+    ),
     s3Bucket: process.env.S3_BUCKET ?? "",
     s3Region: process.env.S3_REGION ?? "us-east-1",
     s3Endpoint: process.env.S3_ENDPOINT ?? "",

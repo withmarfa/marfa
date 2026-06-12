@@ -173,14 +173,21 @@ export function createApp(
   // enforce their own cap inside the handler, returning `blob_too_large`.
   // Applying the small global cap to them would reject valid uploads, so
   // the middleware is a no-op for those path prefixes.
+  const tooLarge = () => {
+    throw new MarfaError(ErrorCode.REQUEST_TOO_LARGE, "Request body too large");
+  };
   const requestBodyLimit = bodyLimit({
     maxSize: config.maxRequestBytes,
-    onError: () => {
-      throw new MarfaError(
-        ErrorCode.REQUEST_TOO_LARGE,
-        "Request body too large",
-      );
-    },
+    onError: tooLarge,
+  });
+  // Bulk write endpoints (`/items/bulk*`, `/edges/bulk`) carry up to 5000
+  // items/edges in a single body, so the tight per-request cap would reject
+  // legitimate batches. They get a higher dedicated cap
+  // (`MARFA_MAX_BULK_REQUEST_BYTES`, default 16 MB); the bulk routes still
+  // bound the item count (5000) and the per-field caps still apply.
+  const bulkBodyLimit = bodyLimit({
+    maxSize: config.maxBulkRequestBytes ?? 16 * 1024 * 1024,
+    onError: tooLarge,
   });
   app.use(
     "*",
@@ -188,6 +195,9 @@ export function createApp(
       const path = c.req.path;
       if (path.startsWith("/blobs") || path.startsWith("/profile")) {
         return next();
+      }
+      if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {
+        return bulkBodyLimit(c, next);
       }
       return requestBodyLimit(c, next);
     }),
