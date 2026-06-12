@@ -2,10 +2,12 @@
  * Bearer middleware role projection for OAuth principals.
  *
  * The middleware reads the underlying `users.role` for the auth_user the
- * token was issued to, so admin-gated routes work for OAuth-authenticated
- * admins. The `is_platform` ceiling stays hardcoded false on OAuth
- * principals — platform-admin is an operator-tier flag exclusive to API
- * keys with explicit `is_platform: true`; OAuth tokens never claim it.
+ * token was issued to, so admin-gated READ/manage routes (e.g. GET /keys)
+ * work for OAuth-authenticated admins. Minting a credential is the one
+ * exception: POST /keys is blocked for OAuth callers so an app cannot launder
+ * a scoped grant into an unconstrained API key. The `is_platform` flag stays
+ * hardcoded false on OAuth principals regardless — platform-admin is an
+ * operator-tier flag exclusive to API keys with explicit `is_platform: true`.
  *
  * Tests run hosted-mode (`storage.users` present) so the role-projection
  * lookup has a `users` row to consult.
@@ -79,28 +81,29 @@ describe("bearer middleware role projection (OAuth)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("preserves the is_platform: false ceiling — admin OAuth principal cannot mint platform credentials", async () => {
+  it("blocks an admin OAuth principal from minting an API key (no grant laundering)", async () => {
     const tenant = await tenants().create("platform-ceiling-tenant");
     const { token } = await seedOauthBearer(ctx.storage, [], {
       tenantId: tenant.id,
       userRole: "admin",
     });
 
-    // POST /keys with is_platform: true — the route accepts the role gate
-    // (admin passes requireTenantAdmin), but `is_platform` is coerced
-    // to `false` because the caller is OAuth-authenticated, not an API
-    // key with `is_platform: true`. (See routes/keys.ts:337-343.)
+    // The role projection lets an admin OAuth token READ keys (above), but
+    // MINTING is blocked for OAuth callers: an API key bypasses the
+    // permission maps the OAuth grant is held to, so allowing it would let an
+    // app escalate a narrow grant into a durable, unconstrained credential.
+    // The `is_platform: true` in the body never matters — the request is
+    // rejected before the mint. (See routes/keys.ts — the authType === "oauth"
+    // block in the non-bootstrap branch.)
     const res = await request(ctx.app, "POST", "/keys", {
       key: token,
       body: {
-        label: "should-not-be-platform",
+        label: "should-be-blocked",
         source: "test-role-projection",
         role: "member",
         is_platform: true,
       },
     });
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { is_platform: boolean };
-    expect(body.is_platform).toBe(false);
+    expect(res.status).toBe(403);
   });
 });

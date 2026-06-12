@@ -9,10 +9,13 @@ import {
   createPgTestStorage,
   createTestContext,
   request,
+  seedOauthBearer,
   waitForAudit,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -490,4 +493,84 @@ describe("bootstrap sentinel", () => {
       }
     },
   );
+});
+
+describe("POST /keys — OAuth caller block (T-344)", () => {
+  // An OAuth app granted only `openid` but whose user is a tenant_admin
+  // must NOT be able to mint a full, non-scope-enforced API key — that
+  // would escalate a narrow grant past the consent/scope model. Read and
+  // management reach via the role projection stays intact.
+  let hostedCtx: TestContext;
+  let tenantId: string;
+
+  beforeAll(async () => {
+    hostedCtx = await createTestContext({ authMode: "hosted" });
+    const tenant = await hostedCtx.storage.tenants!.create("oauth-keys-space");
+    tenantId = tenant.id;
+  });
+
+  afterAll(async () => {
+    await hostedCtx.cleanup();
+  });
+
+  it("rejects an OAuth token (tenant_admin user) from minting a key", async () => {
+    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
+      userRole: "tenant_admin",
+      tenantId,
+    });
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "exfil",
+        source: "exfil",
+        role: "tenant_admin",
+        type_permissions: { "*": "write" },
+      },
+    });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("forbidden");
+  });
+
+  it("rejects an OAuth token (admin user) from minting a key", async () => {
+    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
+      userRole: "admin",
+      tenantId,
+    });
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "x", source: "x", role: "tenant_admin" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("still lets an OAuth tenant_admin token READ keys (intended reach preserved)", async () => {
+    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
+      userRole: "tenant_admin",
+      tenantId,
+    });
+    const res = await request(hostedCtx.app, "GET", "/keys", { key: token });
+    expect(res.status).toBe(200);
+  });
+
+  it("still lets an API-key tenant_admin mint a key (block keys on authType, not role)", async () => {
+    const raw = "marfa_k1_ta_" + Math.random().toString(36).slice(2);
+    await hostedCtx.storage.keys.create(
+      {
+        label: "ta-key",
+        source: "ta-key",
+        role: "tenant_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      tenantId,
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: raw,
+      body: { label: "minted", source: "minted", role: "member" },
+    });
+    expect(res.status).toBe(201);
+  });
 });
