@@ -27,6 +27,15 @@ describe("constantTimeEqual", () => {
     expect(constantTimeEqual("café", "cafe")).toBe(false);
     expect(constantTimeEqual("café", "café")).toBe(true);
   });
+
+  it("distinguishes equal-length secret-shaped values", () => {
+    // The digest path must not collapse same-length-but-different inputs to
+    // equal. Exercises the realistic caller shape (prefixed sha256 hex hashes).
+    const a = `sha256:${"a".repeat(64)}`;
+    const b = `sha256:${"b".repeat(64)}`;
+    expect(constantTimeEqual(a, a)).toBe(true);
+    expect(constantTimeEqual(a, b)).toBe(false);
+  });
 });
 
 describe("sha256Hex", () => {

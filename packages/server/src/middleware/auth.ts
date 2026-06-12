@@ -300,7 +300,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
       // The plugin's `storeTokens.hash` strips the `prefix.opaqueAccessToken`
       // before calling our hasher (verified in
-      // @better-auth/oauth-provider@1.6.9 `index.mjs:858` and `:2266` —
+      // @better-auth/oauth-provider@1.6.13 —
       // `tokenValue.replace(opts.prefix.opaqueAccessToken, "")` runs before
       // `getStoredToken` invokes our hash function). To stay symmetric with
       // the plugin's stored hash, we ALSO strip the prefix before hashing

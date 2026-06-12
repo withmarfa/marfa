@@ -1035,11 +1035,11 @@ export interface OauthClientRow {
  * 1. The plugin's DCR (`POST /auth/oauth2/register`) hardcodes a Zod enum
  *    of three grant types and rejects the device-code URN at validation
  *    time — there's no config knob to widen it (verified in
- *    `@better-auth/oauth-provider@1.6.9` `dist/index.mjs:3462-3466`).
+ *    `@better-auth/oauth-provider@1.6.13`).
  * 2. The plugin's DCR write path goes through Better Auth's Drizzle
  *    adapter, which sets `supportsArrays: true` for the `pg` provider
- *    (verified in `@better-auth/drizzle-adapter@1.6.9`
- *    `dist/index.mjs:434`). The adapter then passes JS arrays directly
+ *    (verified in `@better-auth/drizzle-adapter@1.6.13`). The adapter then
+ *    passes JS arrays directly
  *    into the `text` columns (`scopes`, `redirect_uris`, `grant_types`,
  *    `response_types`, etc.). Postgres coerces those to comma-joined
  *    strings on write; on read, the plugin's `schemaToOAuth` calls

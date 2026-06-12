@@ -12,7 +12,7 @@
  *   &exp=<ts>&sig=<hmac>`
  *
  * (No pre-minted code — the plugin signs the params and forwards.
- * Verified in @better-auth/oauth-provider@1.6.9 `index.mjs:3909-3925`
+ * Verified in @better-auth/oauth-provider@1.6.13 —
  * `redirectWithPromptCode` + `signParams`.)
  *
  * This route:
@@ -215,7 +215,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   // the plugin handles the rest of the flow.
   //
   // The plugin's /oauth2/consent body shape (verified in source
-  // @better-auth/oauth-provider@1.6.9 `index.mjs:2958-2982`):
+  // @better-auth/oauth-provider@1.6.13):
   //   { accept: boolean, scope?: string, oauth_query: string }
   // where `oauth_query` is the full signed query string the plugin
   // redirected us here with. Plugin's before-hook verifies the sig

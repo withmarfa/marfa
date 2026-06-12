@@ -325,6 +325,16 @@ export function unregisterTypeSchema(
   zodSchemaStrictCache.delete(zodCacheKey(id, tenantId));
 }
 
+// Hard bound on inheritance-chain depth for the hot-path walks below
+// (`getResolvedFields`, `isSubtypeOf`). The registration path
+// (`validateTypeSchema`, `routes/types.ts`) rejects cycles before a schema
+// enters the in-memory registry, so a chain exceeding this bound means a cycle
+// or pathological depth slipped past those guards. Throw a clear error rather
+// than loop forever — these walks run per-write and per-edge-check, so an
+// unbounded loop here would hang the request. The bound is generous: real type
+// hierarchies are a handful of levels deep.
+const MAX_INHERITANCE_DEPTH = 100;
+
 /**
  * Returns the fully resolved fields for a type, including inherited parent
  * fields and universal fields (attachments, links).
@@ -342,10 +352,18 @@ export function getResolvedFields(
 
   // Collect the inheritance chain (parent first, then child). A custom type's
   // parent may itself be a custom type, so resolve each ancestor through the
-  // same tenant scope.
+  // same tenant scope. The `seen` set guards against a cycle that somehow
+  // reached the registry — without it a cyclic `parent` chain loops forever.
   const chain: TypeSchema[] = [];
+  const seen = new Set<string>();
   let current: TypeSchema | undefined = schema;
   while (current) {
+    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Inheritance cycle or excessive depth detected resolving fields for type "${typeId}" (at "${current.id}")`,
+      );
+    }
+    seen.add(current.id);
     chain.unshift(current);
     current = current.parent
       ? resolveSchema(current.parent, tenantId)
@@ -417,8 +435,18 @@ export function isSubtypeOf(
   tenantId?: string | null,
 ): boolean {
   if (typeId === parentId) return true;
+  // The `seen` set guards against a cycle that somehow reached the registry —
+  // without it a cyclic `parent` chain loops forever on this per-edge-check
+  // hot path. See MAX_INHERITANCE_DEPTH.
+  const seen = new Set<string>();
   let current = resolveSchema(typeId, tenantId);
   while (current?.parent) {
+    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Inheritance cycle or excessive depth detected classifying type "${typeId}" (at "${current.id}")`,
+      );
+    }
+    seen.add(current.id);
     if (current.parent === parentId) return true;
     current = resolveSchema(current.parent, tenantId);
   }

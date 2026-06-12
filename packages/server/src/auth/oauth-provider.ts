@@ -202,9 +202,9 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
       return resolveTenantIdForAuthUser(opts.storage, user.id);
     },
 
-    // F5 — `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
-    // time (verified in @better-auth/oauth-provider@1.6.9 `index.mjs:43,
-    // :3829`). The return value is written to
+    // `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
+    // time (verified in @better-auth/oauth-provider@1.6.13). The return
+    // value is written to
     // `auth_oauth_access_token.reference_id` for every minted token.
     //
     // The bearer middleware reads that column as the per-token
