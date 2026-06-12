@@ -151,6 +151,15 @@ export enum ErrorCode {
   /** Validation found a row whose `revoked_at` is set. */
   LEASE_TOKEN_REVOKED = "lease_token_revoked",
   BLOB_TOO_LARGE = "blob_too_large",
+  /**
+   * The request body exceeded the global JSON-write size cap
+   * (`MARFA_MAX_REQUEST_BYTES`, default 1 MB). Distinct from
+   * `BLOB_TOO_LARGE`, the much larger blob-upload-specific cap
+   * (`MAX_BLOB_SIZE`, default 50 MB) enforced inside the blob / avatar
+   * handlers — those routes are deliberately exempt from this global cap.
+   * Both surface as HTTP 413; the code distinguishes which limit fired.
+   */
+  REQUEST_TOO_LARGE = "request_too_large",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
   /**
@@ -311,6 +320,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,
+  [ErrorCode.REQUEST_TOO_LARGE]: 413,
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,
   [ErrorCode.INHERITANCE_VIOLATION]: 400,

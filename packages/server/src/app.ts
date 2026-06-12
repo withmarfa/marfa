@@ -2,6 +2,9 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { finalizeOpenAPISpec } from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
+import { bodyLimit } from "hono/body-limit";
+import { createMiddleware } from "hono/factory";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { AppConfig } from "./config.js";
 import { getPermissionBundles } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
@@ -155,6 +158,38 @@ export function createApp(
       xFrameOptions: "DENY",
       xXssProtection: "1",
       referrerPolicy: "strict-origin-when-cross-origin",
+    }),
+  );
+
+  // Global request-body size cap for the JSON write surface — a
+  // memory-exhaustion DoS guard. `bodyLimit` rejects (via Content-Length
+  // and a streaming counter) anything over `maxRequestBytes` with the
+  // typed 413 `request_too_large` (thrown so the global error handler
+  // emits the correct code + status). Mounted after `secureHeaders` and
+  // before auth so an oversized unauthenticated body is rejected cheaply.
+  //
+  // The blob (`/blobs`) and avatar (`/profile`) upload routes are exempt:
+  // they legitimately accept up to `maxBlobSize` (50 MB default) and
+  // enforce their own cap inside the handler, returning `blob_too_large`.
+  // Applying the small global cap to them would reject valid uploads, so
+  // the middleware is a no-op for those path prefixes.
+  const requestBodyLimit = bodyLimit({
+    maxSize: config.maxRequestBytes,
+    onError: () => {
+      throw new MarfaError(
+        ErrorCode.REQUEST_TOO_LARGE,
+        "Request body too large",
+      );
+    },
+  });
+  app.use(
+    "*",
+    createMiddleware<AppEnv>(async (c, next) => {
+      const path = c.req.path;
+      if (path.startsWith("/blobs") || path.startsWith("/profile")) {
+        return next();
+      }
+      return requestBodyLimit(c, next);
     }),
   );
 

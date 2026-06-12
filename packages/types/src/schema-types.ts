@@ -37,6 +37,22 @@ export interface FieldDefinition {
    * opaque ids, or noisy content that shouldn't surface in search results.
    */
   searchable?: boolean;
+  /**
+   * Per-field override for the default maximum string length enforced at
+   * validation. Only meaningful for `string`-typed fields (incl. `enum`
+   * fallbacks); ignored elsewhere. Defence-in-depth alongside the global
+   * request-body cap. When omitted, a generous default (100_000 chars)
+   * applies; set this higher for a field that legitimately carries very
+   * long text, or lower to tighten a field.
+   */
+  maxLength?: number;
+  /**
+   * Per-field override for the default maximum element count on
+   * `array`-typed fields. Ignored on non-array fields. When omitted, a
+   * generous default (10_000 elements) applies. Defence-in-depth
+   * alongside the global request-body cap.
+   */
+  maxItems?: number;
 }
 
 export interface VersionPolicy {
