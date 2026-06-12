@@ -303,13 +303,16 @@ export class PgOauthProviderStore implements OauthProviderStore {
    * Conservative by construction — any one grant signal spares the row.
    */
   async deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number> {
-    const cutoff = new Date(cutoffIso);
+    // `auth_oauth_client.created_at` is a TEXT ISO-8601 column on PG (Better
+    // Auth's adapter stores it as text), so compare against the ISO string
+    // directly — ISO-8601 UTC sorts lexicographically in chronological order.
+    // Binding a Date here makes postgres-js throw on the text column.
     const deleted = await this.db
       .delete(auth_oauth_client)
       .where(
         and(
           sql`${auth_oauth_client.createdAt} IS NOT NULL`,
-          sql`${auth_oauth_client.createdAt} < ${cutoff}`,
+          sql`${auth_oauth_client.createdAt} < ${cutoffIso}`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.properties}::jsonb->>'kind' = 'app' AND ${items.properties}::jsonb->>'client_id' = ${auth_oauth_client.clientId})`,
