@@ -230,6 +230,25 @@ export function authRoutes(
     windowMs: 60 * 60 * 1000,
   });
 
+  // Per-`user_code` failed-attempt throttle on the device-flow
+  // verification form (`POST /auth/device` user-code submission). The
+  // per-IP cap in `middleware/rate-limit.ts` bounds a single client
+  // guessing codes, but a distributed guesser spreading attempts across
+  // many IPs would slip under it. This counter is keyed on the submitted
+  // `user_code` itself (independent of IP) and denies once a code has
+  // accumulated too many failed lookups — so a brute-force sweep against
+  // the short user-code space is capped per code, cluster-wide. Only
+  // failed submissions increment; a valid code that advances to consent
+  // never touches the counter, so the legitimate flow is unaffected.
+  // `PerEmailThrottle` is a generic keyed-counter over
+  // `storage.rateLimits`; reused here with a device-code key space.
+  const deviceUserCodeThrottle = new PerEmailThrottle(storage, {
+    family: "device-user-code",
+    keyPrefix: "device-user-code:",
+    limit: DEVICE_USER_CODE_MAX_ATTEMPTS,
+    windowMs: 60 * 60 * 1000,
+  });
+
   /**
    * Gate `/auth/authorize` on a Better Auth cookie session. End users
    * (not just admins) must be signed in before the consent screen
@@ -1798,21 +1817,38 @@ export function authRoutes(
       return c.redirect(`/auth/device?error=missing_code`, 302);
     }
     const normalised = normaliseUserCode(submitted);
+
+    // Per-`user_code` failed-attempt throttle (independent of IP).
+    // Register every failed submission against the submitted code and
+    // refuse once the code crosses the cap, so a distributed guesser
+    // can't sweep the user-code space by rotating IPs under the per-IP
+    // limit. A failure that crosses the cap — and any later attempt on
+    // an already-poisoned code — surfaces `too_many_attempts`. A valid
+    // code advances to consent below WITHOUT incrementing, so the
+    // legitimate one-shot flow never trips the throttle.
+    const failAttempt = async (errorCode: string): Promise<Response> => {
+      const throttle = await deviceUserCodeThrottle.attempt(normalised);
+      if (!throttle.allowed) {
+        return c.redirect(
+          `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
+          302,
+        );
+      }
+      return c.redirect(
+        `/auth/device?error=${errorCode}&user_code=${encodeURIComponent(submitted)}`,
+        302,
+      );
+    };
+
     const row = await storage.oauth.findDeviceCodeByUserCode(normalised);
     if (!row) {
-      return c.redirect(
-        `/auth/device?error=invalid_code&user_code=${encodeURIComponent(submitted)}`,
-        302,
-      );
+      return failAttempt("invalid_code");
     }
     if (row.status !== "pending") {
-      return c.redirect(
-        `/auth/device?error=already_resolved&user_code=${encodeURIComponent(submitted)}`,
-        302,
-      );
+      return failAttempt("already_resolved");
     }
     if (new Date(row.expires_at).getTime() < Date.now()) {
-      return c.redirect(`/auth/device?error=expired_code`, 302);
+      return failAttempt("expired_code");
     }
     return c.redirect(
       `/auth/device/consent?user_code=${encodeURIComponent(normalised)}`,
@@ -2164,6 +2200,11 @@ export function authRoutes(
 const DEVICE_CODE_PREFIX = "marfa_dc_";
 const DEVICE_CODE_TTL_MS = 600_000; // 10 minutes
 const DEVICE_CODE_DEFAULT_INTERVAL_SECONDS = 5;
+/** Failed `user_code` submissions allowed per code before the device
+ *  verification form refuses further attempts. Defends the short
+ *  user-code space against a distributed brute force that would slip
+ *  under the per-IP rate limit. */
+const DEVICE_USER_CODE_MAX_ATTEMPTS = 5;
 
 /** Alphabet for user_code — restricted to avoid I/O/0/1/U/V ambiguity.
  *  24 chars × 8 positions = ~110 billion. Plenty for 10-min TTL. */

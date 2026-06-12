@@ -116,7 +116,15 @@ export function createApp(
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
 
-  // CORS — explicit origins from config, plus any localhost/127.0.0.1 origin automatically
+  // CORS — explicit origins from config. In non-production, any
+  // localhost/127.0.0.1 origin (any port) is also reflected so the
+  // local dev loop (Vite on a shifting port, curl, etc.) works without
+  // enumerating every port in CORS_ORIGINS. In production that
+  // auto-reflect is OFF: an operator must list real dev origins in
+  // CORS_ORIGINS explicitly, so a hosted deployment can't be coerced
+  // into echoing an attacker-controlled `http://localhost:<port>`
+  // Origin back as allowed.
+  const reflectLocalhost = !config.isProduction;
   if (config.corsOrigins.length > 0) {
     app.use(
       "*",
@@ -124,13 +132,18 @@ export function createApp(
         origin: (origin) => {
           if (!origin) return config.corsOrigins[0];
           if (config.corsOrigins.includes(origin)) return origin;
-          try {
-            const url = new URL(origin);
-            if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-              return origin;
+          if (reflectLocalhost) {
+            try {
+              const url = new URL(origin);
+              if (
+                url.hostname === "localhost" ||
+                url.hostname === "127.0.0.1"
+              ) {
+                return origin;
+              }
+            } catch {
+              // invalid origin, ignore
             }
-          } catch {
-            // invalid origin, ignore
           }
           return config.corsOrigins[0];
         },
@@ -383,6 +396,11 @@ export function createApp(
         // via a 60s in-process cache. No-op for tenant-less keys.
         storage,
         tenantDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
+        // Aggregate per-identifier cap (defaultLimit × multiplier),
+        // keyed on the identifier with no path split, so a key's budget
+        // can't multiply across path groups and tenant-less identifiers
+        // still hit a ceiling. `0` disables it.
+        aggregateMultiplier: config.rateLimitAggregateMultiplier,
       }),
     );
   }

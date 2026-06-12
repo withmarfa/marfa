@@ -68,6 +68,12 @@ async function buildCtx(): Promise<Ctx> {
     oidcProviders: [],
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
+    // Disable the aggregate per-identifier window for the per-path /
+    // per-credential isolation tests below — several reuse one shared
+    // (unauthenticated) IP identifier across many paths in a single
+    // window, which the aggregate cap would otherwise trip. The
+    // aggregate window has its own dedicated test context.
+    rateLimitAggregateMultiplier: 0,
     oauthRedirectAllowlist: [],
   });
 
@@ -221,5 +227,131 @@ describe("rate-limit per-path caps for /auth/oauth2/*", () => {
       if (res.status === 429) observed429 = true;
     }
     expect(observed429).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Aggregate per-identifier window — caps a single identifier across path
+// groups so its budget can't multiply group-by-group.
+// ---------------------------------------------------------------------------
+
+// Build a dedicated context with the aggregate window ENABLED at a tight
+// multiplier, so a handful of requests across two path groups crosses the
+// aggregate cap without exhausting either per-path window.
+async function buildAggCtx(): Promise<Ctx> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-agg-"));
+  const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+  const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  const app = createApp(storage, blobBackend, {
+    port: 0,
+    storageDialect: "sqlite",
+    sqlitePath: "",
+    databaseUrl: "",
+    blobPath: join(tmpDir, "blobs"),
+    blobBackend: "fs",
+    maxBlobSize: 50 * 1024 * 1024,
+    maxRequestBytes: 1_048_576,
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+    apiKeySalt: SALT,
+    corsOrigins: [],
+    cdnBaseUrl: "",
+    authMode: "keys",
+    versionSnapshotIntervalMs: 600_000,
+    rateLimitEnabled: true,
+    enableHsts: false,
+    auditRetentionDays: 90,
+    auditCleanupIntervalMs: 86_400_000,
+    eventLogRetentionHours: 168,
+    versionThinningIntervalMs: 3_600_000,
+    versionRecentDays: 30,
+    versionDailySnapshotDays: 90,
+    versionWeeklySnapshotDays: 365,
+    versionMaxVersions: 500,
+    trashRetentionDays: 60,
+    trashPurgeIntervalMs: 3_600_000,
+    errorWebhookUrl: "",
+    trustedProxyCidrs: [],
+    authBaseUrl: "http://localhost:0",
+    authAllowSignup: true,
+    authSecret: "test-auth-secret",
+    oidcProviders: [],
+    // defaultLimit 2 → GET path window resolves to 4. Aggregate
+    // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
+    // identifier alone.
+    rateLimitDefaultLimit: 2,
+    rateLimitWindowMs: 60_000,
+    rateLimitAggregateMultiplier: 2,
+    oauthRedirectAllowlist: [],
+  });
+
+  const suffix = Math.random().toString(36).slice(2, 14);
+  const rawKey = `marfa_k1_rl_agg_${suffix}`;
+  await storage.keys.create(
+    {
+      label: "rl-agg-admin",
+      source: `rl-agg-admin-${suffix}`,
+      role: "admin",
+      type_permissions: { "*": "write" },
+      default_tier: "feed",
+    },
+    hashApiKey(rawKey, SALT),
+  );
+  await storage.settings.set("bootstrapped", "true");
+
+  return {
+    app,
+    storage,
+    adminKey: rawKey,
+    cleanup: async () => {
+      try {
+        await storage.close();
+      } catch {
+        // Best-effort.
+      }
+    },
+  };
+}
+
+describe("rate-limit aggregate per-identifier window", () => {
+  let aggCtx: Ctx;
+
+  beforeAll(async () => {
+    aggCtx = await buildAggCtx();
+  });
+
+  afterAll(async () => {
+    await aggCtx.cleanup();
+  });
+
+  it("caps a single identifier across path groups before any one group's cap", async () => {
+    // Per-path GET window is 4 for each group; aggregate cap is 4 across
+    // all groups. Two GETs on /items (per-path /items → 2) then two GETs
+    // on /types (per-path /types → 2) leaves BOTH per-path windows at 2
+    // (well under 4) but the aggregate identifier window at 4. The fifth
+    // request — on either group — crosses the aggregate cap and 429s,
+    // proving the budget didn't multiply group-by-group.
+    const hitItems = () =>
+      aggCtx.app.request("/items", {
+        headers: { Authorization: `Bearer ${aggCtx.adminKey}` },
+      });
+    const hitTypes = () =>
+      aggCtx.app.request("/types", {
+        headers: { Authorization: `Bearer ${aggCtx.adminKey}` },
+      });
+
+    expect((await hitItems()).status).toBe(200);
+    expect((await hitItems()).status).toBe(200);
+    expect((await hitTypes()).status).toBe(200);
+    expect((await hitTypes()).status).toBe(200);
+
+    // Neither per-path window has reached its own cap of 4, but the
+    // aggregate identifier window is now at its cap — the next request
+    // on any path group is rejected.
+    const overflow = await hitTypes();
+    expect(overflow.status).toBe(429);
   });
 });
