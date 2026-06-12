@@ -441,9 +441,9 @@ export function renderConsentScreen(params: ConsentParams): string {
 
       ${contentHtml}
 
-      <div class="actions">
-        <button type="submit" name="accept" value="false" class="btn">Deny</button>
+      <div class="actions actions--stacked">
         <button type="submit" name="accept" value="true" class="btn btn--primary">Allow access</button>
+        <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
       </div>
 
       <p class="consent-footnote">You can revoke this anytime from Security settings.</p>

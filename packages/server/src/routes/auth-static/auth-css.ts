@@ -34,8 +34,11 @@ export const AUTH_CSS = `/*
   color-scheme: light dark;
 
   /* Surface tokens. */
-  --bg: #fafaf7;
+  --bg: #f4f4f5;
   --card: #ffffff;
+  /* Soft grey fill for form inputs — a calm "filled" field on the white
+     card, rather than a bordered box. */
+  --input-bg: #f3f3f4;
   --ink: #0f0f0f;
   --ink-soft: #5a5a55;
   --ink-faint: #9b9b96;
@@ -97,8 +100,9 @@ export const AUTH_CSS = `/*
  */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0c0c0d;
+    --bg: #09090b;
     --card: #161618;
+    --input-bg: #1f1f22;
     --ink: #f5f5f4;
     --ink-soft: #a1a1aa;
     --ink-faint: #71717a;
@@ -192,18 +196,18 @@ body {
 }
 
 h1 {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   margin: 0 0 8px;
   letter-spacing: -0.015em;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 /* \`.lede\` is the subtitle paragraph below the H1 — short, soft-ink. */
 .lede {
   color: var(--ink-soft);
   margin: 0 0 var(--gap-xl);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -260,8 +264,8 @@ input[type="email"],
 input[type="password"],
 input[type="text"] {
   /* 16px on the input itself so iOS Safari doesn't auto-zoom on focus
-     (independent of the 14px body). Compact 8/10px padding keeps the
-     field elegant — roughly 36px tall. */
+     (independent of the 14px body). Soft grey fill, no visible border —
+     a calm "filled" field that lifts to a ring on focus. ~40px tall. */
   font:
     16px/1.4 -apple-system,
     BlinkMacSystemFont,
@@ -269,10 +273,10 @@ input[type="text"] {
     Helvetica,
     Arial,
     sans-serif;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--card);
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
   color: var(--ink);
   width: 100%;
   transition:
@@ -301,13 +305,13 @@ input[type="text"]:focus {
 
 .btn {
   font: inherit;
-  /* ~32px tall — elegant, not chunky. */
-  min-height: 32px;
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
+  /* ~40px tall — comfortable, full-width primary actions. */
+  min-height: 40px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   background: var(--card);
   color: var(--ink);
@@ -417,16 +421,16 @@ input[type="text"]:focus {
   margin: 0 0 var(--gap-lg);
 }
 .consent-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   margin: 0 0 8px;
   letter-spacing: -0.015em;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 .consent-lede {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .consent-lede .client-name {
@@ -577,7 +581,7 @@ details.section[open] > summary .section__chevron {
   flex-direction: column;
 }
 .bundle {
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: none;
 }
 .bundle:last-child,
 .bundle--residual {

@@ -129,27 +129,35 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Install ${escapeHtml(params.manifestName)}</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-    h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
-    h2 { font-size: 0.875rem; margin: 0 0 8px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
-    h3 { font-size: 0.875rem; margin: 8px 0 4px; color: #374151; }
-    .publisher { color: #6b7280; font-size: 0.875rem; margin-bottom: 16px; }
-    .summary { margin-bottom: 16px; line-height: 1.5; }
-    .section { margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px; }
-    .section ul { margin: 0; padding-left: 20px; }
-    .section li { margin: 2px 0; }
-    code { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; color: #4b5563; background: #eef2ff; padding: 1px 6px; border-radius: 4px; }
-    .label-input { display: block; width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.875rem; box-sizing: border-box; }
-    .actions { display: flex; gap: 12px; margin-top: 24px; }
-    button { padding: 10px 20px; border-radius: 6px; font-size: 0.875rem; cursor: pointer; border: 1px solid #d1d5db; }
-    .approve { background: #2563eb; color: white; border-color: #2563eb; }
-    .deny { background: white; color: #374151; }
-    .direction { font-style: italic; color: #4b5563; }
-    .credential-hint { margin: 16px 0; padding: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; font-size: 0.875rem; color: #064e3b; }
-    .credential-hint code { background: #d1fae5; color: #064e3b; }
+    /* Standalone consent surface — mirrors the monochrome "Luma" look of
+       /auth/static/auth.css without importing it (this page renders its
+       own document rather than via renderAuthLayout). Light-only. */
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: #f4f4f5; color: #0f0f0f; margin: 0; padding: 32px 20px; -webkit-font-smoothing: antialiased; }
+    .card { max-width: 480px; margin: 0 auto; background: #ffffff; border: 1px solid #ececea; border-radius: 16px; padding: 28px; box-shadow: 0 1px 2px rgba(15, 15, 15, 0.03), 0 12px 36px rgba(15, 15, 15, 0.05); }
+    h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3; margin: 0 0 6px; }
+    h2 { font-size: 12px; margin: 0 0 8px; color: #9b9b96; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    h3 { font-size: 13px; margin: 10px 0 4px; color: #5a5a55; font-weight: 600; }
+    .publisher { color: #5a5a55; font-size: 14px; margin: 0 0 16px; }
+    .summary { margin: 0 0 8px; line-height: 1.55; font-size: 14px; }
+    .direction { margin: 0 0 4px; color: #5a5a55; font-size: 13px; }
+    .section { margin: 16px 0; padding-top: 14px; border-top: 1px solid #f1f1ee; }
+    .section ul { margin: 0; padding-left: 18px; }
+    .section li { margin: 3px 0; font-size: 14px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #6a6a64; background: #f1f1ee; padding: 1px 6px; border-radius: 4px; }
+    .label-input { display: block; width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid transparent; border-radius: 10px; background: #f3f3f4; font-size: 16px; color: #0f0f0f; }
+    .label-input:focus { outline: none; border-color: #0f0f0f; box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.08); }
+    .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }
+    button { width: 100%; min-height: 40px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid #d9d9d4; font-family: inherit; }
+    .approve { background: #0f0f0f; color: #ffffff; border-color: #0f0f0f; }
+    .deny { background: transparent; color: #5a5a55; border-color: transparent; }
+    .deny:hover { background: #f1f1ee; color: #0f0f0f; }
+    .credential-hint { margin: 16px 0; padding: 12px 14px; background: #f4f4f5; border: 1px solid #ececea; border-radius: 10px; font-size: 13px; color: #5a5a55; }
+    .credential-hint code { background: #ececea; color: #0f0f0f; }
   </style>
 </head>
 <body>
+  <main class="card">
   <h1>Install ${escapeHtml(params.manifestName)} <code>${escapeHtml(params.manifestVersion)}</code></h1>
   <div class="publisher">by ${escapeHtml(params.publisher)}</div>
   <p class="summary">${escapeHtml(params.summary)}</p>
@@ -172,6 +180,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
       <button type="submit" name="decision" value="deny" class="deny">Cancel</button>
     </div>
   </form>
+  </main>
 </body>
 </html>`;
 }

@@ -116,7 +116,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     <ul class="scopes">
       ${scopeItems}
     </ul>
-    <div class="actions">
+    <div class="actions actions--stacked">
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="approve">
@@ -125,7 +125,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="deny">
-        <button type="submit" class="btn btn--danger">Deny</button>
+        <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
     </div>
   `;

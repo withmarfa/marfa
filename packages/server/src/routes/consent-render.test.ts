@@ -298,13 +298,12 @@ describe("renderConsentScreen — polish-pass shape", () => {
     expect(html).toMatch(/<script>[\s\S]*data-section-count[\s\S]*<\/script>/);
   });
 
-  it("renders Allow + Deny side-by-side (not stacked)", () => {
+  it("renders Allow + Deny stacked, primary above a ghost secondary", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('class="actions"');
-    expect(html).not.toContain("actions--stacked");
-    // No longer using the chunky --lg / --ghost variants.
-    expect(html).not.toContain("btn--lg");
-    expect(html).not.toContain("btn--ghost");
+    expect(html).toContain("actions--stacked");
+    expect(html).toContain("btn--ghost");
+    // Primary "Allow access" renders before the ghost "Deny".
+    expect(html.indexOf("Allow access")).toBeLessThan(html.indexOf(">Deny<"));
   });
 });
 
