@@ -1548,7 +1548,7 @@ export function itemRoutes(storage: Storage) {
       // Replace-all per edge type: delete existing edges first so cardinality checks see post-delete state.
       if (hasEdges && body.edges) {
         for (const edgeType of Object.keys(body.edges)) {
-          await storage.edges.deleteBySource(id, edgeType);
+          await storage.edges.deleteBySource(id, edgeType, tid);
         }
         const proposals = Object.entries(body.edges).flatMap(
           ([edgeType, targets]) =>
@@ -1821,8 +1821,10 @@ export function itemRoutes(storage: Storage) {
     requireTenantAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     // Edges have no FK to items — explicit cleanup required before purge.
-    await storage.edges.deleteBySource(id);
-    await storage.edges.deleteByTarget(id);
+    // Fence the edge cleanup to the caller's tenant so a tenant-scoped purge
+    // never drops another tenant's edges.
+    await storage.edges.deleteBySource(id, undefined, tenantId);
+    await storage.edges.deleteByTarget(id, undefined, tenantId);
     await storage.items.purge(id, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

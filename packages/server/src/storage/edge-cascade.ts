@@ -41,7 +41,10 @@ export async function planCascadeDelete(
     if (visited.has(itemId)) return;
     visited.add(itemId);
 
-    const { outbound, inbound } = await edgeStore.listAllByItem(itemId);
+    const { outbound, inbound } = await edgeStore.listAllByItem(
+      itemId,
+      tenantId,
+    );
 
     // Block edges on EITHER side reject the delete outright.
     for (const edge of [...outbound, ...inbound]) {

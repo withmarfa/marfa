@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  waitForAudit,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -1230,5 +1236,168 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       key: ctx.adminKey,
     });
     expect(deleteEdge.status).toBe(200);
+  });
+});
+
+// On SQLite / RLS-off deployments the application-layer fence is the only
+// thing standing between tenant A and tenant B's edges on the single-edge
+// PATCH/DELETE path. These tests run in hosted mode with two tenants and a
+// tenant-scoped key for tenant A, then attempt to mutate/delete an edge that
+// lives entirely in tenant B by its id.
+describe("Single-edge mutate/delete — cross-tenant fence", () => {
+  let hostedCtx: TestContext;
+  let tenantA: string;
+  let tenantB: string;
+  // Tenant A's caller (tenant_admin API key) — the would-be attacker.
+  let keyA: string;
+  // An edge that lives entirely in tenant B.
+  let tenantBEdgeId: string;
+  // Source + target items in tenant A, for the same-tenant success cases.
+  let aSource: string;
+  let aTarget: string;
+
+  beforeAll(async () => {
+    hostedCtx = await createTestContext({ authMode: "hosted" });
+    const a = await hostedCtx.storage.tenants!.create("tenant-a");
+    const b = await hostedCtx.storage.tenants!.create("tenant-b");
+    tenantA = a.id;
+    tenantB = b.id;
+
+    // Mint a tenant_admin API key bound to tenant A.
+    const rawA = "marfa_k1_a_" + Math.random().toString(36).slice(2);
+    await hostedCtx.storage.keys.create(
+      {
+        label: "tenant-a-admin",
+        source: "tenant-a-admin",
+        role: "tenant_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(rawA, TEST_API_KEY_SALT),
+      tenantA,
+    );
+    keyA = rawA;
+
+    // Seed tenant B's items + an edge between them — entirely outside A.
+    const bSource = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "b-source" } },
+      tenantB,
+    );
+    const bTarget = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "b-target" } },
+      tenantB,
+    );
+    const bEdge = await hostedCtx.storage.edges.createRaw(
+      {
+        source_id: bSource.id,
+        target_id: bTarget.id,
+        edge_type: "about",
+      },
+      tenantB,
+    );
+    tenantBEdgeId = bEdge.id;
+
+    // Seed tenant A's own items for the same-tenant success cases.
+    const aSrc = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "a-source" } },
+      tenantA,
+    );
+    const aTgt = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "a-target" } },
+      tenantA,
+    );
+    aSource = aSrc.id;
+    aTarget = aTgt.id;
+  });
+
+  afterAll(async () => {
+    await hostedCtx.cleanup();
+  });
+
+  it("PATCH /edges/:id on another tenant's edge returns 404 (cloaked)", async () => {
+    const res = await request(
+      hostedCtx.app,
+      "PATCH",
+      `/edges/${tenantBEdgeId}`,
+      {
+        key: keyA,
+        body: { properties: { tampered: true } },
+      },
+    );
+    expect(res.status).toBe(404);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("edge_not_found");
+
+    // The edge must be untouched — read it back from tenant B's scope.
+    const stillThere = await hostedCtx.storage.edges.get(tenantBEdgeId);
+    expect(stillThere).not.toBeNull();
+    expect(stillThere?.properties).not.toHaveProperty("tampered");
+  });
+
+  it("DELETE /edges/:id on another tenant's edge returns 404 (cloaked) and does not delete", async () => {
+    const res = await request(
+      hostedCtx.app,
+      "DELETE",
+      `/edges/${tenantBEdgeId}`,
+      { key: keyA },
+    );
+    expect(res.status).toBe(404);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("edge_not_found");
+
+    // The edge must still exist in tenant B.
+    const stillThere = await hostedCtx.storage.edges.get(tenantBEdgeId);
+    expect(stillThere).not.toBeNull();
+  });
+
+  it("same-tenant PATCH /edges/:id still succeeds", async () => {
+    const created = await request(hostedCtx.app, "POST", "/edges", {
+      key: keyA,
+      body: { source_id: aSource, target_id: aTarget, edge_type: "about" },
+    });
+    expect(created.status).toBe(201);
+    const { edge } = (await created.json()) as { edge: { id: string } };
+
+    const res = await request(hostedCtx.app, "PATCH", `/edges/${edge.id}`, {
+      key: keyA,
+      body: { properties: { note: "mine" } },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      edge: { properties: Record<string, unknown> };
+    };
+    expect(data.edge.properties.note).toBe("mine");
+  });
+
+  it("same-tenant DELETE /edges/:id still succeeds", async () => {
+    // Fresh source/target so we don't collide with the one-to-... edge above.
+    const src = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "a-del-source" } },
+      tenantA,
+    );
+    const tgt = await hostedCtx.storage.items.create(
+      { type: "core.note", properties: { body: "a-del-target" } },
+      tenantA,
+    );
+    const created = await request(hostedCtx.app, "POST", "/edges", {
+      key: keyA,
+      body: {
+        source_id: src.id,
+        target_id: tgt.id,
+        edge_type: "references",
+      },
+    });
+    expect(created.status).toBe(201);
+    const { edge } = (await created.json()) as { edge: { id: string } };
+
+    const res = await request(hostedCtx.app, "DELETE", `/edges/${edge.id}`, {
+      key: keyA,
+    });
+    expect(res.status).toBe(200);
+
+    // Gone for real.
+    const gone = await hostedCtx.storage.edges.get(edge.id);
+    expect(gone).toBeNull();
   });
 });
