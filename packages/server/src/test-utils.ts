@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
+import type { EmailTransport } from "./email/transport.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
 import { cloneTemplate } from "./storage/pg/test-template.js";
@@ -410,6 +411,14 @@ export async function waitForAudit<T>(
 
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
+  /**
+   * Optional email transport. Wired into `createApp` as the 4th arg.
+   * Production boots a real transport via `createEmailTransport`; tests
+   * pass a spy to assert on send calls (e.g. the deletion-guard cancel
+   * email). Left undefined, email-dependent flows behave as if no
+   * transport is configured — the existing default for most tests.
+   */
+  emailTransport?: EmailTransport,
 ): Promise<TestContext> {
   const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
@@ -474,7 +483,13 @@ export async function createTestContext(
     ...overrides,
   };
   const oidcSigner = await OidcSigner.init(storage);
-  const app = createApp(storage, blobBackend, config, undefined, oidcSigner);
+  const app = createApp(
+    storage,
+    blobBackend,
+    config,
+    emailTransport,
+    oidcSigner,
+  );
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_test_admin_key_${suffix}`;

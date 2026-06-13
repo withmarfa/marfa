@@ -925,6 +925,229 @@ describe("cancel route honesty when cascade wins the race", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Web-form sign-in path is guarded for pending-deletion accounts.
+// ---------------------------------------------------------------------------
+//
+// The deletion guard is mounted as Hono middleware on better-auth's JSON
+// sign-in endpoints (`/auth/sign-in/email`, `/auth/sign-in/magic-link`).
+// The HUMAN sign-in form posts to `POST /auth/sign-in`, whose wrapper
+// dispatches to `auth.handler` directly — bypassing all Hono middleware.
+// Without the shared gate threaded into the wrapper, a pending-deletion
+// account could sign in via the form and the cancel email would never
+// fire. These tests prove the wrapper now runs the same check, in BOTH
+// password and magic mode, while preserving the no-enumeration shape.
+
+/** Minimal spy transport — records every `send()` call. The
+ *  cooldown-disabling env (`MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS=0`)
+ *  keeps the cancel email firing deterministically per attempt. */
+function makeEmailSpy(): {
+  transport: import("../email/transport.js").EmailTransport;
+  sent: import("../email/transport.js").EmailMessage[];
+} {
+  const sent: import("../email/transport.js").EmailMessage[] = [];
+  const transport: import("../email/transport.js").EmailTransport = {
+    backend: "none",
+    send(message) {
+      sent.push(message);
+      return Promise.resolve({
+        ok: true,
+        messageId: `spy/${message.idempotencyKey}`,
+      });
+    },
+  };
+  return { transport, sent };
+}
+
+/** Flip an existing account into `pending_deletion` directly via SQL,
+ *  leaving the auth_user row + password otherwise intact. Avoids the
+ *  full initiate→confirm flow (which would drop sessions); the guard's
+ *  lookup only reads `deletion_state`. */
+async function flipToPendingDeletion(
+  storage: TestContext["storage"],
+  email: string,
+): Promise<string> {
+  const lifecycle = storage.accountLifecycle;
+  if (!lifecycle) throw new Error("accountLifecycle unwired");
+  const byEmail = await lifecycle.getAccountLifecycleByEmail(email);
+  const authUserId = byEmail?.auth_user_id ?? "";
+  if (!authUserId) throw new Error(`no auth_user for ${email}`);
+  const nowIso = new Date().toISOString();
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    await pg.__pgClient?.(
+      `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = $1 WHERE id = $2`,
+      [nowIso, authUserId],
+    );
+  } else {
+    const sqlite = storage as unknown as {
+      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+    };
+    await sqlite.__sqliteRun?.(
+      `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
+      [nowIso, authUserId],
+    );
+  }
+  const after = await lifecycle.getAccountLifecycle(authUserId);
+  expect(after?.deletion_state).toBe("pending_deletion");
+  return authUserId;
+}
+
+describe("web-form sign-in guard for pending-deletion accounts", () => {
+  const prevCooldown = process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS;
+  afterEach(() => {
+    if (prevCooldown === undefined) {
+      delete process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS;
+    } else {
+      process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS = prevCooldown;
+    }
+  });
+
+  it("password mode: form POST to /auth/sign-in is blocked, no session minted, cancel email + audit row fire", async () => {
+    process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS = "0";
+    const spy = makeEmailSpy();
+    ctx = await createTestContext({ authAllowSignup: true }, spy.transport);
+    await signUpAndVerify(ctx, "form-pending@example.com");
+    const authUserId = await flipToPendingDeletion(
+      ctx.storage,
+      "form-pending@example.com",
+    );
+
+    // Sanity: the correct password really is correct (an active sign-in
+    // via the JSON endpoint would 200 + set a session). We don't sign in
+    // here — the point is the FORM path must NOT.
+    const res = await request(ctx.app, "POST", "/auth/sign-in", {
+      form: {
+        mode: "password",
+        email: "form-pending@example.com",
+        password: "correct horse",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    // Blocked: 302 back to the sign-in page with the invalid_credentials
+    // error — the SAME shape as a wrong password — NOT a 302 to `/` with
+    // a session cookie.
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/auth/sign-in")).toBe(true);
+    expect(location).toContain("error=invalid_credentials");
+    // No session was minted.
+    expect(res.headers.get("set-cookie")).toBeNull();
+
+    // The cancel email fired (the user-facing signal), template tag set.
+    expect(spy.sent.length).toBeGreaterThanOrEqual(1);
+    const cancelMail = spy.sent.find(
+      (m) => m.tags?.template === "account-delete-cancel",
+    );
+    expect(cancelMail).toBeTruthy();
+    expect(cancelMail?.to).toBe("form-pending@example.com");
+
+    // The block audit row was written by the shared gate.
+    const audit = await waitForAudit(
+      () => ctx!.storage.audit.list({ resource_id: authUserId }),
+      (page) =>
+        page.data.some(
+          (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+        ),
+    );
+    expect(
+      audit.data.some(
+        (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+      ),
+    ).toBe(true);
+
+    // No `auth.sign_in.success` row for this user — they were never
+    // signed in.
+    const success = await ctx.storage.audit.list({
+      action: "auth.sign_in.success",
+      resource_id: "form-pending@example.com",
+    });
+    expect(success.data.length).toBe(0);
+  });
+
+  it("magic mode: form POST to /auth/sign-in returns the 'sent' redirect, no magic link issued, cancel email fires", async () => {
+    process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS = "0";
+    const spy = makeEmailSpy();
+    ctx = await createTestContext({ authAllowSignup: true }, spy.transport);
+    await signUpAndVerify(ctx, "form-magic@example.com");
+    const authUserId = await flipToPendingDeletion(
+      ctx.storage,
+      "form-magic@example.com",
+    );
+
+    const res = await request(ctx.app, "POST", "/auth/sign-in", {
+      form: {
+        mode: "magic",
+        email: "form-magic@example.com",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    // Indistinguishable from the magic-link success shape: 302 with
+    // `sent=1`, mode=magic — so a pending account can't be enumerated.
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/auth/sign-in")).toBe(true);
+    expect(location).toContain("mode=magic");
+    expect(location).toContain("sent=1");
+
+    // The ONLY email sent is the cancel email — better-auth's magic-link
+    // dispatch was never reached, so no magic-link email exists.
+    const cancelMail = spy.sent.find(
+      (m) => m.tags?.template === "account-delete-cancel",
+    );
+    expect(cancelMail).toBeTruthy();
+    expect(cancelMail?.to).toBe("form-magic@example.com");
+    const magicMail = spy.sent.find(
+      (m) => m.tags?.template === "magic-link" || /magic/i.test(m.subject),
+    );
+    expect(magicMail).toBeUndefined();
+
+    // The block audit row was written.
+    const audit = await waitForAudit(
+      () => ctx!.storage.audit.list({ resource_id: authUserId }),
+      (page) =>
+        page.data.some(
+          (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+        ),
+    );
+    expect(
+      audit.data.some(
+        (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+      ),
+    ).toBe(true);
+  });
+
+  it("active account still signs in via the form (guard is pending-deletion-only)", async () => {
+    process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS = "0";
+    const spy = makeEmailSpy();
+    ctx = await createTestContext({ authAllowSignup: true }, spy.transport);
+    await signUpAndVerify(ctx, "form-active@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/sign-in", {
+      form: {
+        mode: "password",
+        email: "form-active@example.com",
+        password: "correct horse",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    // Active account: 302 to `/` (returnTo) WITH a session cookie.
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
+    expect(res.headers.get("set-cookie")).toBeTruthy();
+    // No cancel email — the account isn't pending deletion.
+    expect(
+      spy.sent.some((m) => m.tags?.template === "account-delete-cancel"),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Full account-lifecycle arc
 // ---------------------------------------------------------------------------
 //
