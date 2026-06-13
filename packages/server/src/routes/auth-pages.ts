@@ -47,6 +47,7 @@ import {
 import { setNoStore } from "./no-store.js";
 import { publish } from "../pubsub.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
+import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
 
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const REFRESH_TOKEN_PREFIX = "marfa_rt_";
@@ -210,6 +211,15 @@ export function authRoutes(
   salt: string,
   auth?: MarfaAuth,
   oidcSigner?: OidcSigner,
+  /**
+   * The shared pending-deletion gate from `account-deletion-guard`. The
+   * `POST /auth/sign-in` form handler calls `auth.handler` directly,
+   * bypassing the Hono middleware the gate is also mounted as — so the
+   * wrapper must run the same check itself to block pending-deletion
+   * accounts on the web-form path. Optional so the route still works if
+   * it's not wired (the middleware still covers the JSON sign-in paths).
+   */
+  evaluatePendingDeletion?: EvaluatePendingDeletion,
 ): Hono<AppEnv> {
   // `salt` is consumed by the device-flow terminal step (hashes
   // minted tokens with the same `hashApiKey(token, salt)` as the
@@ -488,6 +498,32 @@ export function authRoutes(
 
     if (!emailStr) {
       return errorRedirect("missing_field");
+    }
+
+    // Pending-deletion gate for the web-form path. The middleware version
+    // of this gate only covers better-auth's JSON sign-in endpoints; this
+    // wrapper dispatches to `auth.handler` directly (below) and would
+    // otherwise sign a pending-deletion account straight in. Run the same
+    // shared check here so the form path is guarded too.
+    const blocked = evaluatePendingDeletion
+      ? await evaluatePendingDeletion(emailStr, c.var.clientIp ?? null)
+      : false;
+    if (blocked) {
+      // Account is pending_deletion. evaluatePendingDeletion already sent
+      // the cancel email + wrote the block audit row. Return a response
+      // shape INDISTINGUISHABLE from each mode's normal outcome so a
+      // pending account can't be enumerated: password -> the same generic
+      // invalid-credentials redirect as a wrong password; magic -> the
+      // same "we sent a link" response we return on success. Do NOT call
+      // `auth.handler`; do NOT log an extra `auth.sign_in.failed` row (the
+      // gate's block audit is the record — matching the API-endpoint
+      // guard's minimal behavior).
+      return mode === "magic"
+        ? c.redirect(
+            buildSignInRedirect({ mode: "magic", returnTo, sent: true }),
+            302,
+          )
+        : errorRedirect("invalid_credentials");
     }
 
     if (mode === "magic") {

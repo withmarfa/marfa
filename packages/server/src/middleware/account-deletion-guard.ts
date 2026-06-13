@@ -56,6 +56,17 @@ const TARGET_PATHS = new Set([
   "/auth/sign-in/magic-link",
 ]);
 
+/**
+ * The bare pending-deletion check shared between the middleware and the
+ * human-facing sign-in wrapper. Returns `true` when the account is
+ * `pending_deletion` (sign-in blocked, cancel email + audit row already
+ * handled), `false` otherwise.
+ */
+export type EvaluatePendingDeletion = (
+  email: string,
+  clientIp: string | null,
+) => Promise<boolean>;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 
@@ -80,34 +91,62 @@ function resolveCooldownMs(): number {
     : DEFAULT_CANCEL_EMAIL_COOLDOWN_MS;
 }
 
-export function accountDeletionGuardMiddleware(
+/**
+ * The shared pending-deletion gate. Closes over a single in-memory
+ * cooldown map so the cooldown state is unified across both consumers:
+ *
+ *   - `middleware` — the Hono middleware that intercepts better-auth's
+ *     JSON sign-in endpoints (`/auth/sign-in/email`,
+ *     `/auth/sign-in/magic-link`).
+ *   - `evaluatePendingDeletion` — the bare check the human-facing
+ *     `POST /auth/sign-in` wrapper calls before dispatching to
+ *     `auth.handler`. That wrapper bypasses Hono middleware entirely
+ *     (it calls `auth.handler(upstream)` directly), so without this
+ *     shared check the guard never fires for web-form sign-ins — a
+ *     pending-deletion account could sign in via the form and the
+ *     cancel email would never be sent.
+ *
+ * Both paths funnel through `evaluatePendingDeletion`, so the
+ * token-reuse logic and the per-account email cooldown are the same
+ * Map regardless of which surface the sign-in arrived on.
+ */
+export function createAccountDeletionGate(
   storage: Storage,
   emailTransport: MarfaEmailTransport | undefined,
   baseURL: string,
   graceDays: number,
-) {
+): {
+  middleware: ReturnType<typeof createMiddleware<AppEnv>>;
+  evaluatePendingDeletion: EvaluatePendingDeletion;
+} {
   // In-memory per-account cooldown on cancel-email sends. Closed-over
-  // by the middleware closure so it persists across requests inside
-  // one server process. Multi-instance deployments are not coordinated
-  // — each instance enforces independently. Acceptable for a worst-case
+  // by the gate so it persists across requests inside one server
+  // process and is SHARED between the middleware and the web-form
+  // wrapper path. Multi-instance deployments are not coordinated —
+  // each instance enforces independently. Acceptable for a worst-case
   // bound of N × one-email-per-cooldown.
   const lastSendMs = new Map<string, number>();
   const cooldownMs = resolveCooldownMs();
 
-  return createMiddleware<AppEnv>(async (c, next) => {
-    if (c.req.method !== "POST") return next();
-    const path = new URL(c.req.url).pathname;
-    if (!TARGET_PATHS.has(path)) return next();
-
+  /**
+   * Core gate. Returns `true` when the email belongs to a
+   * `pending_deletion` account (sign-in is BLOCKED) — having already
+   * minted/reused the cancel token, sent the cancel email (respecting
+   * the cooldown), and written the block audit row. Returns `false`
+   * when the account is absent, active, or the lifecycle store is
+   * unavailable — sign-in proceeds normally.
+   */
+  async function evaluatePendingDeletion(
+    email: string,
+    clientIp: string | null,
+  ): Promise<boolean> {
     const accountLifecycle = storage.accountLifecycle;
-    if (!accountLifecycle) return next();
-
-    const email = await extractEmail(c.req.raw);
-    if (!email) return next();
+    if (!accountLifecycle) return false;
+    if (!email) return false;
 
     const lifecycle = await accountLifecycle.getAccountLifecycleByEmail(email);
     if (lifecycle?.deletion_state !== "pending_deletion") {
-      return next();
+      return false;
     }
 
     // Reuse an existing valid token rather than minting a new one on every
@@ -154,8 +193,25 @@ export function accountDeletionGuardMiddleware(
       action: "auth.account.sign_in_blocked_pending_deletion",
       resource_type: "auth_account",
       resource_id: lifecycle.auth_user_id,
-      client_ip: c.var.clientIp ?? null,
+      client_ip: clientIp,
     });
+
+    return true;
+  }
+
+  const middleware = createMiddleware<AppEnv>(async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const path = new URL(c.req.url).pathname;
+    if (!TARGET_PATHS.has(path)) return next();
+
+    const email = await extractEmail(c.req.raw);
+    if (!email) return next();
+
+    const blocked = await evaluatePendingDeletion(
+      email,
+      c.var.clientIp ?? null,
+    );
+    if (!blocked) return next();
 
     // Generic 401 matching better-auth's wrong-credentials response
     // shape. Indistinguishable from the unknown-email and
@@ -187,6 +243,24 @@ export function accountDeletionGuardMiddleware(
       },
     );
   });
+
+  return { middleware, evaluatePendingDeletion };
+}
+
+/**
+ * Thin compat shim — preserves the original middleware export so any
+ * existing importer keeps working. New wiring uses
+ * `createAccountDeletionGate` directly so it can also thread
+ * `evaluatePendingDeletion` into the web-form sign-in wrapper.
+ */
+export function accountDeletionGuardMiddleware(
+  storage: Storage,
+  emailTransport: MarfaEmailTransport | undefined,
+  baseURL: string,
+  graceDays: number,
+) {
+  return createAccountDeletionGate(storage, emailTransport, baseURL, graceDays)
+    .middleware;
 }
 
 // ---------------------------------------------------------------------------

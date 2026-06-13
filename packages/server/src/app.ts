@@ -67,7 +67,7 @@ import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { cycleMiddleware } from "./middleware/cycle.js";
 import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
-import { accountDeletionGuardMiddleware } from "./middleware/account-deletion-guard.js";
+import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
 import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { loggerMiddleware } from "./middleware/logger.js";
@@ -306,16 +306,19 @@ export function createApp(
   // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
   // tenant suspension guard so suspended-tenant rejection still wins.
   // Only triggers on the better-auth sign-in paths — every other path
-  // is a pass-through.
-  app.use(
-    "*",
-    accountDeletionGuardMiddleware(
-      storage,
-      emailTransport,
-      config.authBaseUrl,
-      config.accountDeletionGraceDays ?? 30,
-    ),
+  // is a pass-through. The gate is created once so its in-memory cancel-
+  // email cooldown is SHARED between the middleware (better-auth JSON
+  // sign-in endpoints) and the human-facing `POST /auth/sign-in` wrapper,
+  // which dispatches to `auth.handler` directly and so bypasses Hono
+  // middleware — `deletionGate.evaluatePendingDeletion` is threaded into
+  // `authRoutes` below to guard that form path too.
+  const deletionGate = createAccountDeletionGate(
+    storage,
+    emailTransport,
+    config.authBaseUrl,
+    config.accountDeletionGraceDays ?? 30,
   );
+  app.use("*", deletionGate.middleware);
 
   // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
   // X-Marfa-Cycle-Hop headers (a connector continuing a chain) or falls
@@ -579,7 +582,16 @@ export function createApp(
     "/export",
     exportRoutes(storage, blobBackend, streamingRoutesOptions),
   );
-  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
+  app.route(
+    "/auth",
+    authRoutes(
+      storage,
+      config.apiKeySalt,
+      auth,
+      oidcSigner,
+      deletionGate.evaluatePendingDeletion,
+    ),
+  );
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage));
   }
