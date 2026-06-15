@@ -105,7 +105,7 @@ Two walls of defense:
    recent Message-IDs on the cursor's `delivery_ring`. Mirrors the
    github-webhooks pattern. Belt-and-braces.
 
-When a Message-ID is absent (rare — synthesised messages, bare
+When a Message-ID is absent (rare — synthesized messages, bare
 forwarder errors), the handler falls back to the header-level
 delivery id. `source_id` is then omitted, so the (source, source_id)
 natural-key upsert path doesn't apply and a duplicate would write a

@@ -294,7 +294,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     // **`connection_item_id` derivation.** The user-facing `system.connection`
     // projection (`{ kind: "app" }` items) is maintained by the
     // grant-projection after-hooks for the `/security` page surface,
-    // not consulted here. We synthesise a stable label/source string
+    // not consulted here. We synthesize a stable label/source string
     // from `${clientId}:${userId}` so audit rows attribute correctly
     // without an extra DB roundtrip.
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {

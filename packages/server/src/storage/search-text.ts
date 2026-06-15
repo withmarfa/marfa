@@ -5,7 +5,7 @@ import {
 
 /**
  * The four core search fields. Both dialects index these as named columns
- * (SQLite FTS5) or named contributors to the materialised tsvector (PG).
+ * (SQLite FTS5) or named contributors to the materialized tsvector (PG).
  * Any of them can be opted out via `searchable: false` on the type's field
  * definition.
  */

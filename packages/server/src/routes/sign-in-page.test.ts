@@ -499,13 +499,13 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("error=missing_field");
   });
 
-  it("OAuth-init URL round-trip: GET synthesises return_to, POST honors it (bug fix)", async () => {
+  it("OAuth-init URL round-trip: GET synthesizes return_to, POST honors it (bug fix)", async () => {
     // The bug this fix addresses: when @better-auth/oauth-provider's
     // `loginPage` redirects an unauthenticated user from
     // /auth/oauth2/authorize to /auth/sign-in, it appends OAuth params
     // directly (not wrapped in return_to). Pre-fix the form lost them
     // on submit and the success redirect landed on `/`. Post-fix the
-    // GET handler synthesises return_to=/auth/authorize?<params>, the
+    // GET handler synthesizes return_to=/auth/authorize?<params>, the
     // hidden field carries it forward, POST honors it, user lands at
     // the consent screen as RFC 6749 §3.1 prescribes.
     ctx = await createTestContext({ authAllowSignup: true });

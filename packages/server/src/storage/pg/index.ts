@@ -199,7 +199,7 @@ export async function createPgStorage(
       await auditStore.drain();
       await close();
     },
-    /** Raw query escape hatch. Originally added for parameterised
+    /** Raw query escape hatch. Originally added for parameterized
      *  mutations in retention tests; now also consumed by
      *  `routes/auth-account.ts` (auth_verification probes via the
      *  better-auth-managed table — JSON operators not naturally

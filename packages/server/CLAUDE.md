@@ -85,7 +85,7 @@ Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle �
 
 State that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers do not carry `...c.var.cycle` on every publish call.
 
-**Explicit override path.** Server-internal callers that need to synthesise a cycle (rather than propagate the request's) can pass `originatingConnectionId` and/or `hopCount` explicitly on the `publish` event argument — the resolver short-circuits to the explicit values when either field is present. No internal caller exercises this today; the `POST /connections/preview-event` route runs its own duplicate of `passesHopBudget`'s effective-hop logic against `body.cycle` for hypothetical-event reasoning (it never calls `publish`).
+**Explicit override path.** Server-internal callers that need to synthesize a cycle (rather than propagate the request's) can pass `originatingConnectionId` and/or `hopCount` explicitly on the `publish` event argument — the resolver short-circuits to the explicit values when either field is present. No internal caller exercises this today; the `POST /connections/preview-event` route runs its own duplicate of `passesHopBudget`'s effective-hop logic against `body.cycle` for hypothetical-event reasoning (it never calls `publish`).
 
 **Outside-request fallback.** When the ALS is empty AND no explicit override is supplied (e.g. the reactive-run bridge's `stop()` sentinel publish), the resolver falls through to `{ originatingConnectionId: null, hopCount: 0 }` — the human-sentinel shape that bypasses the budget.
 
@@ -217,7 +217,7 @@ The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www
 Both dialects index the same set of property fields and respect the same per-type opt-out. The dialect-agnostic helper `extractSearchableText` in `storage/search-text.ts` is the single source of truth for "what text contributes to FTS for this item."
 
 - **SQLite** uses an FTS5 virtual table (`items_fts`) populated at write time by `SqliteSearchStore.indexSync` / `removeSync`. Five columns: `title`, `body`, `description`, `name`, `extra`. The `extra` column concatenates every other string-typed field declared on the type that isn't `searchable: false`.
-- **Postgres** uses a materialised `tsvector` column (`items.search_vector`) populated at write time by `PgSearchStore.index` / `remove` via the same shared text extractor. The column is GIN-indexed (`idx_items_search_vector`); the search query reads the column directly instead of computing `to_tsvector(...)` at query time over the JSON.
+- **Postgres** uses a materialized `tsvector` column (`items.search_vector`) populated at write time by `PgSearchStore.index` / `remove` via the same shared text extractor. The column is GIN-indexed (`idx_items_search_vector`); the search query reads the column directly instead of computing `to_tsvector(...)` at query time over the JSON.
 
 `searchable: false` on a type's `FieldDefinition` opts the field out of FTS for both dialects. The flag is honored for the four core fields (title, body, description, name) via `isFieldSearchableExcluded` and for the long tail via `getSearchableStringFields`. Defaults to `true` (searchable) — a type that omits the flag indexes the field.
 
@@ -249,7 +249,7 @@ The storage interface's `listAll` / `count` are unscoped by design — admin rec
 
 Pluggable transport for transactional email. Three backends in-tree, picked by `MARFA_EMAIL_BACKEND`:
 
-- **`cloudflare`** — Cloudflare Email Service REST API. POSTs `{ from, to, subject, html, text, reply_to }` to `https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send` with `Authorization: Bearer <token>`. Returns `{ ok: true, messageId }` on 2xx (messageId synthesised from the idempotency key — CF doesn't return a native id); `{ ok: false, retryable: false }` on 4xx; `{ ok: false, retryable: true }` on 5xx / 429 / network errors.
+- **`cloudflare`** — Cloudflare Email Service REST API. POSTs `{ from, to, subject, html, text, reply_to }` to `https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send` with `Authorization: Bearer <token>`. Returns `{ ok: true, messageId }` on 2xx (messageId synthesized from the idempotency key — CF doesn't return a native id); `{ ok: false, retryable: false }` on 4xx; `{ ok: false, retryable: true }` on 5xx / 429 / network errors.
 - **`smtp`** — `nodemailer`-backed self-host fallback. Idempotency key flows through as an `X-Idempotency-Key` header for MTA-side log correlation (no API-level dedupe). 4xx SMTP codes flag retryable; 5xx don't.
 - **`none`** — explicit "unconfigured" backend. Always returns `{ ok: false, error: "email_transport_not_configured", retryable: false }`. Default if `MARFA_EMAIL_BACKEND` unset. Surfaces a clean 503 instead of silent dead-lettering.
 

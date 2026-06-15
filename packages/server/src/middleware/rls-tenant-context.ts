@@ -55,7 +55,7 @@ import type { AppEnv } from "./auth.js";
  * fence.
  *
  * **`SET LOCAL` correctness.** `set_config(name, value, true)` is
- * the parameterised form of `SET LOCAL` — safe under
+ * the parameterized form of `SET LOCAL` — safe under
  * postgres-js binding. `SET LOCAL ROLE marfa_app` is hardcoded
  * (role name is not user-controlled), so direct DDL is safe. Both
  * are scoped to the surrounding transaction by definition; on

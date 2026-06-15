@@ -114,11 +114,11 @@ async function resolveConnectionConfig(
       typeof cfg.target_type === "string" && cfg.target_type.length > 0
         ? cfg.target_type
         : DEFAULT_TARGET_TYPE;
-    const materialise =
+    const materialize =
       typeof cfg.materialise_playlists === "boolean"
         ? cfg.materialise_playlists
         : false;
-    return { target_type: targetType, materialise_playlists: materialise };
+    return { target_type: targetType, materialise_playlists: materialize };
   } catch {
     return {
       target_type: DEFAULT_TARGET_TYPE,
@@ -773,7 +773,7 @@ async function syncUserPlaylists(
       }
 
       if (config.materialise_playlists && etagChanged) {
-        const walked = await materialisePlaylistVideos(
+        const walked = await materializePlaylistVideos(
           ctx,
           cursor,
           config,
@@ -792,18 +792,18 @@ async function syncUserPlaylists(
   return { upserted, edges, videos_materialised };
 }
 
-interface MaterialiseResult {
+interface MaterializeResult {
   upserted: number;
   edges: number;
 }
 
-async function materialisePlaylistVideos(
+async function materializePlaylistVideos(
   ctx: ConnectionContext,
   cursor: YoutubeCursor,
   config: ConnectionConfig,
   playlistId: string,
   playlistMarfaId: string,
-): Promise<MaterialiseResult> {
+): Promise<MaterializeResult> {
   let pageToken: string | undefined;
   const videoIds: string[] = [];
 
@@ -878,7 +878,7 @@ async function materialisePlaylistVideos(
       } catch (err) {
         await ctx.activity.emit({
           severity: "action_required",
-          summary: `google-youtube: failed to materialise playlist video ${v.id}`,
+          summary: `google-youtube: failed to materialize playlist video ${v.id}`,
           detail: { error: errorMessage(err) },
         });
       }

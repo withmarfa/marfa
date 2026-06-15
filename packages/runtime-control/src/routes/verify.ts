@@ -33,7 +33,7 @@ import { MarfaServerClient } from "../marfa-client.js";
  * Dispatch path:
  *   1. Look up the connection's integration_name + tenant_id via the
  *      verify-context endpoint (also validates kind + active).
- *   2. Synthesise the queue-message envelope. The shape mirrors
+ *   2. Synthesize the queue-message envelope. The shape mirrors
  *      `packages/server/src/connections/envelope.ts:buildQueueMessageBody`
  *      — kept inline here because runtime-control doesn't depend on the
  *      server package, and the wire shape is what every per-Integration

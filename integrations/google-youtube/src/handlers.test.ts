@@ -472,7 +472,7 @@ describe("google-youtube handleSchedule", () => {
           id: "PL_mat",
           etag: "etag-pl-mat",
           snippet: {
-            title: "Materialised",
+            title: "Materialized",
             channelId: "UC_owner",
           },
           contentDetails: { itemCount: 2 },

@@ -43,7 +43,7 @@ Thumbs.db
 seed/
 
 # Renamed to integrations/sync — keep the old name ignored so stale
-# build artefacts can't reappear in checkouts that pre-date the rename.
+# build artifacts can't reappear in checkouts that pre-date the rename.
 integrations/sync-agent/
 
 # Database and blob data

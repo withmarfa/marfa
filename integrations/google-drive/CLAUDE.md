@@ -117,7 +117,7 @@ Two modes, picked via `connection.properties.configuration.download_mode`:
   `google.drive.file` with `blob_ref` absent. Drive's own
   checksums (`md5_checksum`, `sha256_checksum`) and the
   `drive_file_id` are captured as independent properties. No
-  synthesised `blob_ref` — a ref the bytes can't be fetched from
+  synthesized `blob_ref` — a ref the bytes can't be fetched from
   via `GET /blobs/{ref}` would be misleading, so metadata mode
   emits none.
 - **`all-files`** — for each non-Google-native file within the
@@ -132,7 +132,7 @@ Two modes, picked via `connection.properties.configuration.download_mode`:
 `typeof item.properties.blob_ref === "string"` ⇔ bytes are
 fetchable via `GET /blobs/{blob_ref}`. The item type reinforces
 the same signal: `core.file` always has a real `blob_ref`;
-`google.drive.file` never has a synthesised one.
+`google.drive.file` never has a synthesized one.
 
 ### All-files fallback paths
 

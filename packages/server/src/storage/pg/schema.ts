@@ -91,7 +91,7 @@ export const items = pgTable(
     device: text("device"),
     capture_latitude: doublePrecision("capture_latitude"),
     capture_longitude: doublePrecision("capture_longitude"),
-    // Materialised tsvector populated by the search store at write time.
+    // Materialized tsvector populated by the search store at write time.
     // Nullable so backfilled rows can be detected mid-migration. Indexed
     // via GIN below.
     search_vector: tsvector("search_vector"),
@@ -104,7 +104,7 @@ export const items = pgTable(
     uniqueIndex("idx_items_source_dedup")
       .on(table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
-    // GIN index on the materialised tsvector. Drizzle-kit emits a
+    // GIN index on the materialized tsvector. Drizzle-kit emits a
     // standard `CREATE INDEX ... USING gin` statement for this.
     index("idx_items_search_vector").using("gin", table.search_vector),
   ],

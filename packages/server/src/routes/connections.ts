@@ -167,7 +167,7 @@ const uninstallRoute = createRoute({
   tags: ["Connections"],
   summary: "Uninstall an integration connection",
   description:
-    "Tears down a connection in one pass: revokes its credentials and leased tokens, drops upstream OAuth tokens, disables inbound webhooks, and transitions it to `revoked`. Idempotent per artefact, but rejects with 400 when the connection itself is already revoked.",
+    "Tears down a connection in one pass: revokes its credentials and leased tokens, drops upstream OAuth tokens, disables inbound webhooks, and transitions it to `revoked`. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -176,7 +176,7 @@ const uninstallRoute = createRoute({
     200: {
       content: { "application/json": { schema: UninstallResultSchema } },
       description:
-        "Connection uninstalled. Body details the artefacts cleaned up.",
+        "Connection uninstalled. Body details the artifacts cleaned up.",
     },
     400: {
       content: {

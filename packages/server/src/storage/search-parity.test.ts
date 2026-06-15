@@ -64,7 +64,7 @@ describe("FTS dialect parity", () => {
           type: "core.note",
           properties: {
             title: "Albatross",
-            body: "Wingspan greater than three metres.",
+            body: "Wingspan greater than three meters.",
           },
         },
       })

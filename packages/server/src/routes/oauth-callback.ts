@@ -323,7 +323,7 @@ export interface OAuthCallbackOptions {
  * `redirectUriAllowlist` — list of redirect_uri values that callers may
  * pass on `POST /connections/:id/oauth/start`. When non-empty, the
  * request's `redirect_uri` must match one entry exactly (string equality
- * after both sides are URL-canonicalised — protocol, host, port, path).
+ * after both sides are URL-canonicalized — protocol, host, port, path).
  *
  * `authMode` — the deployment's auth mode. Decides how an EMPTY allowlist
  * is treated:
@@ -343,7 +343,7 @@ export interface OAuthStartOptions {
   authMode?: "hosted" | "keys";
 }
 
-function canonicaliseRedirect(uri: string): string {
+function canonicalizeRedirect(uri: string): string {
   try {
     const url = new URL(uri);
     url.hash = "";
@@ -370,8 +370,8 @@ function isRedirectAllowed(
     // operator, no attacker, allowlist optional for convenience).
     return authMode !== "hosted";
   }
-  const c = canonicaliseRedirect(candidate);
-  return allowlist.some((entry) => canonicaliseRedirect(entry) === c);
+  const c = canonicalizeRedirect(candidate);
+  return allowlist.some((entry) => canonicalizeRedirect(entry) === c);
 }
 
 /**

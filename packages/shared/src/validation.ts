@@ -100,7 +100,7 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
  *     with operational URL slugs and pronouns.
  *   - Future-reserved namespaces (sync, auth, data) — names plausibly
  *     needed for future platform-shipped namespaces. Cheap to lock now,
- *     easy to release later if no concrete driver materialises.
+ *     easy to release later if no concrete driver materializes.
  *   - Major tech companies — squatting on these would create the most
  *     likely confusion vectors for end users browsing the marketplace.
  *   - Major consumer apps and platforms — same rationale.

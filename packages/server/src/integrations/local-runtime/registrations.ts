@@ -15,7 +15,7 @@
  *
  * The loader takes a list of integration package directories, resolves
  * each to its built `dist/local.js`, imports it dynamically (to read
- * the manifest), and synthesises a `LocalIntegrationRegistration`. The
+ * the manifest), and synthesizes a `LocalIntegrationRegistration`. The
  * worker thread then `await import()`s the same `dist/local.js` on
  * startup so handlers register inside the thread too.
  *

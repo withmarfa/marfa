@@ -1,7 +1,7 @@
 /**
  * Direct tests of the uninstall pipeline. The HTTP-level happy path is
  * covered by routes/connections.test.ts; these tests exercise the
- * pipeline against a real test storage so the cleanup-of-each-artefact
+ * pipeline against a real test storage so the cleanup-of-each-artifact
  * branches run end-to-end (runtime credential revocation, OAuth-token
  * deletion, leased-token revocation, inbound-webhook disable, state
  * transition, activity emission, audit log).
@@ -226,7 +226,7 @@ describe("performUninstall — error paths", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Idempotency-at-the-artefact-layer (uninstall is monotonic, no compensations)
+// Idempotency-at-the-artifact-layer (uninstall is monotonic, no compensations)
 // ---------------------------------------------------------------------------
 
 describe("performUninstall — partial-state semantics", () => {

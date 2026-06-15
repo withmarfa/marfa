@@ -17,7 +17,7 @@ Cross-runtime inbound-webhook signature verification. Web Crypto only — no `no
 
 - **Web Crypto only.** No `node:crypto`, no `Buffer`, no `crypto.createHmac`. Anything new lands through `crypto.subtle`.
 - **Constant-time compare.** Signature equality goes through `timingSafeEqual` in `crypto.ts` — never `===` on signature bytes.
-- **Raw-body in, raw signature in, boolean (with diagnostic) out.** Verifiers don't parse JSON, don't fetch secrets, don't log. The caller is responsible for materialising the secret and supplying the raw body.
+- **Raw-body in, raw signature in, boolean (with diagnostic) out.** Verifiers don't parse JSON, don't fetch secrets, don't log. The caller is responsible for materializing the secret and supplying the raw body.
 
 ## Build
 

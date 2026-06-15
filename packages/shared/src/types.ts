@@ -657,7 +657,7 @@ export interface ConnectionInstallResult {
 
 /**
  * Wire shape returned by `POST /connections/:id/uninstall`. Records the
- * artefacts the orchestrated uninstall pipeline cleaned up — the runtime
+ * artifacts the orchestrated uninstall pipeline cleaned up — the runtime
  * credentials it revoked, whether an upstream OAuth tokens row was
  * deleted, and counts for leased tokens revoked / inbound webhooks
  * disabled. The system.activity row id is included so callers can

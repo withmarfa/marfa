@@ -1,7 +1,7 @@
 /**
  * PG account hard-delete cascade.
  *
- * Tears down every artefact tied to an `auth_user.id` in a single
+ * Tears down every artifact tied to an `auth_user.id` in a single
  * transaction. Order is chosen so each step's preconditions are
  * satisfied by the previous step's writes; rollback on any failure
  * leaves the account in `pending_deletion` for the next purger tick.
@@ -23,7 +23,7 @@
  *      cleanup runs (the user never had a tenant — a single-tenant
  *      self-host shape, or a sign-up that bailed before tenant
  *      provisioning).
- *   2. Per-tenant teardown of connection-related artefacts. The full
+ *   2. Per-tenant teardown of connection-related artifacts. The full
  *      `performUninstall` pipeline isn't reachable from storage
  *      (route-layer concern), so we do the minimal subset of its
  *      effects directly: revoke `connection_oauth_tokens`, revoke
@@ -113,7 +113,7 @@ export async function pgDeleteAccountCascade(
     const tenantId = userRow?.tenant_id ?? null;
 
     if (tenantId) {
-      // ---- 2. Connection-tied artefacts. --------------------------------
+      // ---- 2. Connection-tied artifacts. --------------------------------
       // The full uninstall pipeline isn't reachable from storage; do the
       // minimal subset. system.connection items themselves drop in step 4.
       await tx

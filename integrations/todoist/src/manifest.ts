@@ -80,7 +80,7 @@ export const INTEGRATION_NAME = TODOIST_MANIFEST.name;
 export const SYNC_TOKEN_INITIAL = "*";
 
 /** Resource types we ask for on every Sync call. Items only — projects
- *  / labels / sections aren't materialised as Marfa items in this
+ *  / labels / sections aren't materialized as Marfa items in this
  *  iteration. */
 export const SYNC_RESOURCE_TYPES = ["items"] as const;
 

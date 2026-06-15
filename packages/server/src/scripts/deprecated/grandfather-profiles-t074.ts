@@ -16,7 +16,7 @@
  *
  *   2. Every existing `users` row with `handle IS NULL` (and an
  *      `auth_user_id` from the migration's backfill) gets a username
- *      synthesised the same way.
+ *      synthesized the same way.
  *
  * Idempotent — re-runs find zero rows needing work. Safe to run before
  * or after the column-drop migration: the script writes only to

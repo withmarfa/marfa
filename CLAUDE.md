@@ -232,7 +232,7 @@ gh run watch $(gh run list --workflow=ci.yml --branch=<your-branch-name> --limit
 
 If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails, regenerate locally (`pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json`, or `pnpm --filter @withmarfa/server schema-sql:generate`), commit the delta, and re-run. Only merge once the relevant jobs are green.
 
-**Why this exists.** Freshness jobs catch drift between generated artefacts and source files. They run on manual trigger rather than every PR push to keep the PR-time CI bill down (running them on every push costs ~$5/month on the `marfa` repo alone); this rule is the tripwire that keeps the safety net effective.
+**Why this exists.** Freshness jobs catch drift between generated artifacts and source files. They run on manual trigger rather than every PR push to keep the PR-time CI bill down (running them on every push costs ~$5/month on the `marfa` repo alone); this rule is the tripwire that keeps the safety net effective.
 
 ## Before pushing
 

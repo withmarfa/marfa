@@ -3,7 +3,7 @@
 # Build a Worker's workspace dependencies, then `wrangler deploy` it.
 #
 # Why this exists. `wrangler deploy` doesn't rebuild any workspace
-# `dist/` artefacts before bundling — it just packages whatever's
+# `dist/` artifacts before bundling — it just packages whatever's
 # currently in `node_modules/`. After merging a workspace change
 # (e.g. `@withmarfa/webhooks`), the next `wrangler deploy` of a
 # consumer Worker carries the OLD bundled dist until someone manually

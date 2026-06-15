@@ -99,7 +99,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
     env,
     queue,
     connection(id: string) {
-      // Materialise the storage (so callers can inspect even before
+      // Materialize the storage (so callers can inspect even before
       // any message lands).
       let s = stores.get(id);
       if (!s) {
