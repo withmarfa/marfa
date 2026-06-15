@@ -689,7 +689,7 @@ describe("validateTypeSchema — property shadow rule", () => {
 // generated from JSON and cannot cycle, but a future runtime registration path
 // could in theory plant one. validateTypeSchema's parent-chain walk has a
 // `seen` guard (type-registry.ts) that keeps it finite — these tests lock that
-// behaviour in. Assertions target the stable error code, never message text.
+// behavior in. Assertions target the stable error code, never message text.
 // -----------------------------------------------------------------------------
 describe("validateTypeSchema — circular inheritance", () => {
   beforeEach(() => {
@@ -873,7 +873,7 @@ describe("validateTypeSchema — display_hints", () => {
     // `title` and `body` are declared on core.note, not on this child.
     // Pointing display_hints at inherited fields is legitimate — the
     // validator must walk the parent chain, matching merge_policy's
-    // behaviour for the same reason.
+    // behavior for the same reason.
     const result = validateTypeSchema({
       id: "acme.note_hinted",
       version: 1,

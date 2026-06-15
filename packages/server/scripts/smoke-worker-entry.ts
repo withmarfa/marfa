@@ -12,7 +12,7 @@
  *      tsup entry in `packages/server/tsup.config.ts`.
  *
  *   2. `@withmarfa/runtime-sdk` (and `@withmarfa/shared`) duplicated across
- *      the server bundle vs the integration's externalised bundle —
+ *      the server bundle vs the integration's externalized bundle —
  *      the integration's `registerScheduleHandler` writes to one copy
  *      of the module-singleton `REGISTRY`; the worker-entry's
  *      `dispatchMessage` reads from a different copy; dispatch returns
@@ -156,7 +156,7 @@ try {
       }, 5_000);
     }),
   ]);
-  info(`worker signalled ready (handler module loaded)`);
+  info(`worker signaled ready (handler module loaded)`);
 
   // Construct a WorkerDispatchRequest by shape (no import — keeps this
   // script source-of-truth-free against runtime-sdk internals).

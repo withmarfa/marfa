@@ -101,7 +101,7 @@ function sha256(input: string): string {
  * `tenantId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-tenant mode (no `users` store) the grant
  * is stamped tenant-less. Hosted mode without a provisioned tenant for the
- * authenticated user refuses outright — the OAuth flow can't honour a
+ * authenticated user refuses outright — the OAuth flow can't honor a
  * grant without a tenant to scope it to.
  */
 async function createUserAppGrant(
@@ -581,7 +581,7 @@ export function authRoutes(
       // Forward every Set-Cookie header from Better Auth onto the redirect
       // response. `Headers.getSetCookie()` returns each cookie as a
       // separate string (Node 18.14+ / undici); fall back to a single
-      // header otherwise. Browsers honour multiple Set-Cookie via
+      // header otherwise. Browsers honor multiple Set-Cookie via
       // `headers.append`.
       const redirectHeaders = new Headers({ Location: returnTo });
       const setCookies =
@@ -1642,7 +1642,7 @@ export function authRoutes(
     if (id === currentSessionId) {
       // Refuse to revoke the current session through this path —
       // the user should use Sign out everywhere instead, which
-      // signs them out cleanly. Defence-in-depth: the form button
+      // signs them out cleanly. Defense-in-depth: the form button
       // for the current session is rendered as disabled.
       return c.redirect("/auth/security?notice=cannot_revoke_current", 302);
     }
@@ -1705,7 +1705,7 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Passkey enrol
+  // Passkey enroll
   // -----------------------------------------------------------------------
   //
   // GET /auth/passkey/enroll — auth-gated HTML page that runs the
@@ -1834,7 +1834,7 @@ export function authRoutes(
     //
     // Disambiguate by inspecting the body. A request with neither
     // field falls through to the user-code branch and gets the
-    // existing `missing_code` redirect — same behaviour as before.
+    // existing `missing_code` redirect — same behavior as before.
     const formData = await c.req.formData();
     const formClientId = formData.get("client_id");
     if (typeof formClientId === "string" && formClientId !== "") {
@@ -2171,7 +2171,7 @@ export function authRoutes(
     const refreshHash = hashApiKey(refreshBare, salt);
 
     // Resolve the grant to extract tenant_id + approved scopes.
-    // Type check is defence-in-depth: connection_item_id comes from a
+    // Type check is defense-in-depth: connection_item_id comes from a
     // server-controlled row, but a future approve-handler change could
     // stamp a wrong id and silently mint an orphan token without it.
     const deviceGrant = await storage.items.get(row.connection_item_id);
@@ -2336,7 +2336,7 @@ function parseNotice(
 /**
  * Forward selected headers (origin, cookie) from the inbound request
  * onto the upstream Better Auth dispatch. When `Origin` is absent or
- * `"null"` (browsers serialise it as `"null"` under strict referrer
+ * `"null"` (browsers serialize it as `"null"` under strict referrer
  * policies / sandboxed iframes), fall back to `fallbackOrigin` so
  * Better Auth's trustedOrigins check passes on the internal dispatch.
  */

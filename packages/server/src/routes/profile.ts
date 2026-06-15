@@ -311,7 +311,7 @@ function buildProfile(
   };
 }
 
-/** Picks a stable colour from the palette by hashing the username. */
+/** Picks a stable color from the palette by hashing the username. */
 function placeholderColor(username: string): string {
   const h = createHash("sha256").update(username).digest();
   const idx = (h[0] ?? 0) % PLACEHOLDER_PALETTE.length;
@@ -334,13 +334,13 @@ function placeholderInitials(username: string): string {
  */
 function renderPlaceholderSvg(username: string): string {
   const initials = placeholderInitials(username);
-  const colour = placeholderColor(username);
+  const color = placeholderColor(username);
   // viewBox-driven layout means the SVG scales without intrinsic size
   // mattering. Font stack ordered to match the consent screen's so the
   // initials match across browsers without needing a webfont.
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="${escapeXml(username)} placeholder avatar">` +
-    `<rect width="256" height="256" fill="${colour}"/>` +
+    `<rect width="256" height="256" fill="${color}"/>` +
     `<text x="128" y="128" text-anchor="middle" dominant-baseline="central" ` +
     `font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" ` +
     `font-size="112" font-weight="600" fill="#ffffff">${escapeXml(initials)}</text>` +

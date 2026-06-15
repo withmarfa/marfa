@@ -917,7 +917,7 @@ export function bulkRoutes(storage: Storage) {
     // (packages/server/src/bulk-actions/worker.ts) picks the row up and
     // runs it.
     //
-    // `emit_events` is stored on the row (worker honours it) but not
+    // `emit_events` is stored on the row (worker honors it) but not
     // fired here. The synchronous endpoint fired per-item events after
     // every mutation; the worker does the same once implemented in
     // `runChunk`. For now, emit_events is a no-op — runner.ts

@@ -450,7 +450,7 @@ describe("publish — cycle resolution from cycleRequestContext", () => {
   });
 
   it("ALS-resolved connector-originated event with hopCount=0 still enforces the budget floor", async () => {
-    // Wire-tampering defence (`Math.max(hopCount, 1)`) survives the ALS
+    // Wire-tampering defense (`Math.max(hopCount, 1)`) survives the ALS
     // refactor. An ALS context with origin set + hopCount=0 (the chain-
     // head shape a runtime credential request resolves to) is fine at
     // ordinary budgets but must overflow at budget=0.

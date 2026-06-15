@@ -555,7 +555,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * subscribers; per-subscriber retry, timeout, and error-isolation paths
  * apply inside each task. At very high subscriber counts (a few hundred
  * per tenant) we'd want bounded concurrency to avoid overwhelming
- * Cloudflare Queues; that's a separate optimisation.
+ * Cloudflare Queues; that's a separate optimization.
  */
 async function fanoutEvent(
   event: ItemEventWithId,

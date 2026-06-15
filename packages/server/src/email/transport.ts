@@ -48,7 +48,7 @@ export interface EmailMessage {
    * Mandatory idempotency key. Format `<event-type>/<entity-id>` (e.g.
    * `password-reset/user-123/token-jti`). Threads through to log
    * correlation — the Cloudflare backend hashes it into the synthesised
-   * `messageId` on success. The Cloudflare backend does NOT honour
+   * `messageId` on success. The Cloudflare backend does NOT honor
    * this for send-time dedup (CF Email has no documented idempotency
    * header); retries can produce duplicate sends — acceptable for the
    * three transactional flows since each ships a single-use token.

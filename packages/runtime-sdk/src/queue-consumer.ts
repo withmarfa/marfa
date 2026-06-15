@@ -69,7 +69,7 @@ export interface ConsumerEnvironment {
    * Tenant id this Worker instance is scoped to. Configured at deploy
    * time. When set, the consumer cross-checks every incoming
    * `message.tenant_id` against it and acks-and-skips any mismatched
-   * message — defence in depth against a misrouted cross-tenant message
+   * message — defense in depth against a misrouted cross-tenant message
    * that already passed the `connection_id` gate. Optional only to keep
    * self-host setups where the tenant column is null wire-compatible.
    */
@@ -211,8 +211,8 @@ export async function consumeBatch(
       outcome.acked++;
       continue;
     }
-    // Defence-in-depth tenant check. The connection_id gate is the
-    // primary line of defence; this is the secondary one. A misrouted
+    // Defense-in-depth tenant check. The connection_id gate is the
+    // primary line of defense; this is the secondary one. A misrouted
     // message that targets the wrong tenant gets acked and skipped
     // without ever invoking the handler.
     if (

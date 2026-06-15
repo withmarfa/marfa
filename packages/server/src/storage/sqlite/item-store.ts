@@ -117,7 +117,7 @@ export class SqliteItemStore implements ItemStore {
   ) {
     if (!tenantId) return eq(items.id, id);
     if (includePlatformScoped) {
-      // Catalogue widening — see `ItemGetOptions.includePlatformScoped`.
+      // Catalog widening — see `ItemGetOptions.includePlatformScoped`.
       // Only the public `get` path threads `true` here; every other
       // caller (update, delete, transition, ...) leaves the equality
       // fence in place.
@@ -347,7 +347,7 @@ export class SqliteItemStore implements ItemStore {
     const conditions = [];
 
     if (filters.tenantId) {
-      // Opt-in widening for catalogue list endpoints — see
+      // Opt-in widening for catalog list endpoints — see
       // `ItemFilters.includePlatformScoped` for why platform-scoped
       // (tenant_id IS NULL) rows surface to tenant callers in this
       // narrow case. Default keeps the strict equality fence.

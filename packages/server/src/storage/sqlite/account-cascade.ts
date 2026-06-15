@@ -8,7 +8,7 @@
  * end-to-end transactional guarantee is real.
  *
  * **Concurrency note for SQLite:** there is no `FOR UPDATE` — libsql
- * serialises all writes via the database file lock, so any concurrent
+ * serializes all writes via the database file lock, so any concurrent
  * `cancelPendingDeletion` UPDATE on `auth_user` waits behind the
  * cascade transaction (or vice versa). The in-transaction re-check
  * still gates: if the cancel commits first, the cascade reads the

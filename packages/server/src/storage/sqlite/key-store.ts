@@ -18,7 +18,7 @@ import type { DrizzleDb } from "./connection.js";
 /**
  * Window within which repeated `last_used_at` writes for the same key
  * collapse to a single DB write. Mirrors the PG store so the two backends
- * stay behaviourally identical.
+ * stay behaviorally identical.
  */
 const LAST_USED_DEBOUNCE_MS = 3_600_000;
 

@@ -12,7 +12,7 @@
  *   1. Every `auth_user` without a corresponding `users` row gets one
  *      provisioned (tenant + users + admin api key — same shape as a
  *      sign-up). Username is generated from `auth_user.email`'s local
- *      part, sanitised + collision-suffixed.
+ *      part, sanitized + collision-suffixed.
  *
  *   2. Every existing `users` row with `handle IS NULL` (and an
  *      `auth_user_id` from the migration's backfill) gets a username
@@ -55,7 +55,7 @@ interface Report {
 }
 
 /**
- * Sanitise an email local-part into a candidate handle. Lowercases,
+ * Sanitize an email local-part into a candidate handle. Lowercases,
  * replaces non-alphanumerics with hyphens, collapses runs of hyphens,
  * trims leading/trailing hyphens, truncates to 32 chars, and pads short
  * results with random hex so they meet the 3-char floor.

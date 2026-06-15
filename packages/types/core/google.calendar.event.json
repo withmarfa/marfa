@@ -82,7 +82,7 @@
     },
     "color_id": {
       "type": "string",
-      "description": "Calendar event colour id (numeric string, 1–11; see Calendar's `colors.get`)."
+      "description": "Calendar event color id (numeric string, 1–11; see Calendar's `colors.get`)."
     }
   },
   "required": ["title"],

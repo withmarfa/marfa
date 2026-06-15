@@ -135,7 +135,7 @@ export class PerConnectionState implements DurableObject {
    *
    * Webhook-only integrations (no MANIFEST_CRON or no queue binding)
    * no-op safely — the alarm shouldn't have fired in that case, but
-   * defensive behaviour costs nothing.
+   * defensive behavior costs nothing.
    */
   async alarm(): Promise<void> {
     if (!this.env.MANIFEST_CRON || !this.env.SCHEDULED_POLL_QUEUE) {

@@ -7,7 +7,7 @@
  * the perf vs per-item transactions; the SQL inside the transaction
  * can stay per-row.
  *
- * Authorisation: the worker passes the job's `tenant_id` explicitly
+ * Authorization: the worker passes the job's `tenant_id` explicitly
  * to every storage method. RLS, if enforced, is belt-and-braces —
  * matched_ids were resolved at job-create-time inside a request
  * context with full type-permission narrowing.

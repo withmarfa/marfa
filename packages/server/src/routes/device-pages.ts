@@ -35,7 +35,7 @@ interface DeviceDecisionParams {
 
 const ERROR_MESSAGES: Record<string, string> = {
   missing_code: "Enter the code shown on your other device.",
-  invalid_code: "That code wasn't recognised. Check for typos and try again.",
+  invalid_code: "That code wasn't recognized. Check for typos and try again.",
   already_resolved:
     "That code has already been used. Restart the sign-in on your other device.",
   expired_code:
@@ -126,7 +126,7 @@ export function renderDevicePage(params: DevicePageParams): string {
 
   const bodyHtml = `
     <h1>Device sign-in</h1>
-    <p class="lede">Enter the code shown on your other device to authorise it.</p>
+    <p class="lede">Enter the code shown on your other device to authorize it.</p>
     ${errorBanner}
     <form method="POST" action="/auth/device" class="form" novalidate>
       <label class="field">

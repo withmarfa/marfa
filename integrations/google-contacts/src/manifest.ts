@@ -22,7 +22,7 @@
  *   - **`personFields` mask is mandatory on every read.** There is
  *     no "return everything" shortcut. The handler pins a single
  *     comprehensive mask (`PERSON_FIELDS`) that covers names,
- *     emails, phones, addresses, organisations, biographies,
+ *     emails, phones, addresses, organizations, biographies,
  *     photos, birthdays, nicknames, and metadata.
  *   - **etag-based optimistic concurrency on writes.** Stale etag
  *     surfaces as 409; the handler refetches and reapplies.

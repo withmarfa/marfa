@@ -23,7 +23,7 @@ export default defineConfig({
     // parallel-safe (each file uses its own tmpdir DB).
     //
     // PG-side: CREATE DATABASE TEMPLATE / DROP DATABASE WITH (FORCE)
-    // serialise briefly per template, so per-file setup + teardown can
+    // serialize briefly per template, so per-file setup + teardown can
     // run a few seconds under heavy parallel contention. 20s default
     // is generous enough that a real hang still surfaces fast.
     // `hookTimeout` covers `beforeAll` / `afterAll` (the per-file

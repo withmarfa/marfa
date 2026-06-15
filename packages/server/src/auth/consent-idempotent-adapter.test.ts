@@ -182,7 +182,7 @@ describe("idempotent oauth consent adapter", () => {
 
     // Scopes were refreshed to the re-consent set. The adapter returns
     // scopes as an array on both dialects (PG native text[], SQLite
-    // JSON-deserialised by the Better Auth adapter).
+    // JSON-deserialized by the Better Auth adapter).
     const scopes = rows[0]?.scopes as string[];
     expect(scopes).toContain("core.note:read");
     expect(scopes).toContain("openid");

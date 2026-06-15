@@ -55,7 +55,7 @@ export function nextHopMetadata(
  *
  *   - Messages on the main queue never carry this — it's a DLQ marker.
  *   - The wrapper only stamps when a `dlqProducerFor` binding is wired,
- *     so integrations without DLQ-routing keep their existing behaviour.
+ *     so integrations without DLQ-routing keep their existing behavior.
  *   - DLQ landings via Cloudflare's auto-routing (`attempts > max_retries`
  *     on a `retry: true` loop) can't be enriched in flight, so peek
  *     output for those still shows `null` — see the route's fallback.
@@ -67,7 +67,7 @@ export interface FailureReason {
    *  `TypeError`); `"HandlerResult"` when the failure path was a
    *  `{ ok: false, retry: false }` return. */
   class_name: string;
-  /** `Message.attempts` at the point the failure was finalised. */
+  /** `Message.attempts` at the point the failure was finalized. */
   attempts: number;
   /** ISO timestamp the wrapper produced the enrichment. */
   failed_at: string;
@@ -93,7 +93,7 @@ export interface WebhookMessage extends QueueEnvelopeBase {
   delivery_id: string;
   headers: Record<string, string>;
   /**
-   * Raw body, base64-encoded so it survives JSON serialisation through
+   * Raw body, base64-encoded so it survives JSON serialization through
    * the Cloudflare Queue. The SDK's `buildConnectionContext` decodes to
    * `ArrayBuffer` and surfaces it as `body` on the handler input.
    * Bodies > 256KB are handed off via R2 with a presigned URL
@@ -165,6 +165,6 @@ export interface RuntimeCredential {
   expires_at: string;
   /** The connection_id this credential was minted for. The runtime
    *  refuses to use a cached credential against a different
-   *  connection_id (defence in depth against cache mix-ups). */
+   *  connection_id (defense in depth against cache mix-ups). */
   connection_id: string;
 }

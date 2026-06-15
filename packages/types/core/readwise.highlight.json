@@ -31,7 +31,7 @@
     },
     "color": {
       "type": "string",
-      "description": "Highlight colour as reported by Readwise (e.g. `yellow`, `blue`)."
+      "description": "Highlight color as reported by Readwise (e.g. `yellow`, `blue`)."
     },
     "tags": {
       "type": "array",

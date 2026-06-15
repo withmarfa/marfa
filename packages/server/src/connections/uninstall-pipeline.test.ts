@@ -233,7 +233,7 @@ describe("performUninstall — partial-state semantics", () => {
   it("revokes multiple runtime credentials when the connection accumulated more than one", async () => {
     // Operationally a runtime credential is 1:1 with a connection, but
     // the schema doesn't enforce uniqueness. The pipeline must revoke
-    // every active credential bound to the connection — defence in depth.
+    // every active credential bound to the connection — defense in depth.
     const installed = await installFresh();
 
     // Mint a second runtime credential bound to the same connection.

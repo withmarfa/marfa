@@ -5,9 +5,9 @@
  * account-deletion mails) renders through `renderEmail` so they share one
  * look: a Marfa brand lockup (a near-black rounded logo square + wordmark,
  * pure inline HTML — no external image to block or break), a white card on
- * a soft grey canvas, a 22px heading, readable body paragraphs, an optional
+ * a soft gray canvas, a 22px heading, readable body paragraphs, an optional
  * danger-tinted callout, a rounded call-to-action, a quiet fallback link,
- * and a small centred footer.
+ * and a small centered footer.
  *
  * Email HTML constraints drive the shape: table layout + inline styles only
  * (Gmail/Outlook strip <style> and class selectors), a bulletproof CTA

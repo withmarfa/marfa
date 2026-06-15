@@ -16,7 +16,7 @@
  * The surface is self-contained (its own inline <style>) but tracks the
  * shared "Luma" auth stylesheet (auth-static/auth-css.ts) for tokens and
  * the `.disclosure` / `.codefield` patterns. The app tile is deliberately
- * neutral: the manifest carries no icon or brand-colour field, so a grey
+ * neutral: the manifest carries no icon or brand-color field, so a gray
  * tile with a dark glyph is the honest representation. Light + dark via the
  * same token flip the shared sheet uses.
  */
@@ -36,7 +36,7 @@ interface ConsentParams {
    * carries it through to the install pipeline. The Marfa side
    * appends `?credential_ref=…` when an existing OAuth provider
    * credential should be reused (e.g. installing `google.tasks` onto
-   * an account that already authorised `google.calendar`). When
+   * an account that already authorized `google.calendar`). When
    * absent the form omits the field and the install pipeline behaves
    * as today (per-Connection credential, no reuse).
    *
@@ -300,7 +300,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
       .card { padding: 22px; border-radius: 20px; }
     }
 
-    /* App header — neutral tile (NO brand colour), name + "Marfa integration". */
+    /* App header — neutral tile (NO brand color), name + "Marfa integration". */
     .app { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
     .app__logo {
       width: 46px; height: 46px;
@@ -505,7 +505,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
 
 /** Surface the pre-arm note above the form so the user can see which
  *  existing credential the install will reuse. Returns "" when no
- *  pre-arm was passed (default install behaviour, no UI shift). */
+ *  pre-arm was passed (default install behavior, no UI shift). */
 function renderCredentialHint(params: ConsentParams): string {
   if (!params.credentialRefHint) return "";
   const label = params.credentialRefLabel ?? params.credentialRefHint;

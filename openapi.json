@@ -8260,7 +8260,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behaviour, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -8548,7 +8548,7 @@
           "Edge Types"
         ],
         "summary": "List edge types",
-        "description": "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behaviour, and source/target type constraints.",
+        "description": "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
         "security": [
           {
             "bearerAuth": []
@@ -8768,7 +8768,7 @@
           "Types"
         ],
         "summary": "List types",
-        "description": "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+        "description": "Returns every type registered in the tenant — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
         "security": [
           {
             "bearerAuth": []
@@ -16508,7 +16508,7 @@
           "Connection Leased Tokens"
         ],
         "summary": "Introspect a leased token",
-        "description": "Introspects a lease token so an external service can verify it before honouring a callback. Tokens that are revoked, expired, or unrecognised return `active: false` with no further metadata.",
+        "description": "Introspects a lease token so an external service can verify it before honoring a callback. Tokens that are revoked, expired, or unrecognized return `active: false` with no further metadata.",
         "requestBody": {
           "content": {
             "application/json": {

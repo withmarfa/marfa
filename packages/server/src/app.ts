@@ -478,7 +478,7 @@ export function createApp(
   // device-code URN via the plugin's `grantTypes` config causes its token
   // endpoint to 400 with `unsupported_grant_type` — the plugin has no case
   // branch for it. Augmenting the metadata here keeps the plugin's token
-  // endpoint behaviour intact.
+  // endpoint behavior intact.
   if (auth) {
     // Cast once into the shape both helpers want — they each declare a
     // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).

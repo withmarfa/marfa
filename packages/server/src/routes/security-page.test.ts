@@ -64,7 +64,7 @@ describe("renderSecurityPage", () => {
     expect(html).toContain("Connected apps");
     expect(html).toContain("Active sessions");
     expect(html).toContain("Test CLI");
-    // Raw scope literals are summarised in plain English, never shown verbatim.
+    // Raw scope literals are summarized in plain English, never shown verbatim.
     expect(html).toContain("Can read and write your data");
     expect(html).not.toContain("core.note:read");
     expect(html).not.toContain("core.task:write");

@@ -640,7 +640,7 @@ export const eventLog = pgTable(
     // underlying column is an i64 — `mode: "number"` would silently
     // truncate above 2^53. Consumers (event-log-store.ts, routes/events.ts,
     // pubsub.ts) handle the value as a `bigint` end-to-end; the SSE wire
-    // uses string serialisation (`String(id)` and `BigInt(Last-Event-ID)`)
+    // uses string serialization (`String(id)` and `BigInt(Last-Event-ID)`)
     // which both round-trip cleanly.
     id: bigint("id", { mode: "bigint" })
       .primaryKey()
@@ -675,7 +675,7 @@ export const eventLog = pgTable(
 
 // Timestamp columns use `timestamp({ mode: "date" })` — better-auth's Drizzle
 // adapter forwards JS Dates. Deviates from Marfa's TEXT-ISO convention but
-// stays localised to the auth_* island.
+// stays localized to the auth_* island.
 export const auth_user = pgTable(
   "auth_user",
   {

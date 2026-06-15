@@ -78,7 +78,7 @@ export interface WorkerDispatchRequest {
   message: QueueMessage;
   integrationName: string;
   echo: { echo_ttl_seconds: number; lag_window_seconds?: number };
-  /** Tenant id the credential is bound to (defence-in-depth filter
+  /** Tenant id the credential is bound to (defense-in-depth filter
    *  inside the consumer). */
   tenantId?: string;
   /** SDK-level cycle hop ceiling. */

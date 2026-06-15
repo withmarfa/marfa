@@ -45,7 +45,7 @@ export function buildSignatureHeader(
 /** Retry delays in milliseconds. */
 const RETRY_DELAYS = [1000, 5000, 25000];
 
-/** Maximum delay we'll honour from a Retry-After header. Prevents a
+/** Maximum delay we'll honor from a Retry-After header. Prevents a
  *  malicious or buggy receiver from pinning a worker indefinitely. */
 const RETRY_AFTER_CEILING_MS = 5 * 60 * 1000;
 
@@ -78,7 +78,7 @@ export const CLAIM_LOCK_TTL_MS = 60_000;
 /** Parse a Retry-After header value. Supports both delta-seconds (RFC
  *  9110 §10.2.3) and HTTP-date forms. Returns milliseconds, clamped to
  *  RETRY_AFTER_CEILING_MS. Returns null on parse failure or zero/negative
- *  values, signalling fall-through to the default backoff schedule.
+ *  values, signaling fall-through to the default backoff schedule.
  *  Exported for testing. */
 export function parseRetryAfter(headerValue: string | null): number | null {
   if (!headerValue) return null;

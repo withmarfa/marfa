@@ -56,7 +56,7 @@ async function createClient(c: TestContext): Promise<string> {
   };
   const now = new Date();
   // PG has native `text[]` columns for the plugin's `string[]` fields
-  // (see migration 0059); SQLite stays on `text` with JSON-serialised
+  // (see migration 0059); SQLite stays on `text` with JSON-serialized
   // arrays via the Better Auth adapter (`supportsArrays: false`).
   const redirectUris: unknown =
     c.storage.betterAuthDialect === "pg"
@@ -333,7 +333,7 @@ describe("GET /auth/device — verification form", () => {
     );
     const html = await res.text();
     expect(html).toContain('role="alert"');
-    expect(html).toContain("wasn&#39;t recognised");
+    expect(html).toContain("wasn&#39;t recognized");
   });
 });
 
@@ -549,7 +549,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
     const grantId = items.data[0]!.id;
 
     // Second device-flow approval for the SAME client (e.g. user re-
-    // authorises after a tokens flush).
+    // authorizes after a tokens flush).
     const second = await initiate(ctx, clientId);
     const res2 = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device/consent`, {
@@ -687,7 +687,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     expect(body.error).toBe("invalid_request");
   });
 
-  // Defence-in-depth. The token-issuance handler resolves
+  // Defense-in-depth. The token-issuance handler resolves
   // `connection_item_id` (set at consent-approve time) and treats the
   // resulting item as a `system.connection` grant — pulling scopes,
   // client_id, user_id, tenant_id out of its properties. A corrupted

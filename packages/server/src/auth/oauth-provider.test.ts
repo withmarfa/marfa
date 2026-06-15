@@ -7,7 +7,7 @@ import {
 } from "../config.js";
 
 describe("buildAllowedScopes", () => {
-  it("includes the global type wildcards (Customise full-access path)", () => {
+  it("includes the global type wildcards (Customize full-access path)", () => {
     const scopes = buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES);
     expect(scopes).toContain("*:read");
     expect(scopes).toContain("*:write");

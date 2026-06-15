@@ -15,7 +15,7 @@
     },
     "due_at": {
       "type": "string",
-      "description": "Due date. Tasks API stores due as an RFC 3339 timestamp but only the date portion is honoured — time-of-day is ignored upstream.",
+      "description": "Due date. Tasks API stores due as an RFC 3339 timestamp but only the date portion is honored — time-of-day is ignored upstream.",
       "format": "datetime"
     },
     "completed_at": {

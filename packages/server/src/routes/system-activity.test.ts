@@ -173,7 +173,7 @@ describe("system.activity — schema + feed-tier exception", () => {
         properties: {
           connection_id: connectionId,
           severity: "action_required",
-          summary: "Reauthorise calendar — token expired",
+          summary: "Reauthorize calendar — token expired",
         },
       },
     });

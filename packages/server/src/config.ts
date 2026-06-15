@@ -10,7 +10,7 @@ import type { CidrRange } from "./middleware/client-ip.js";
  * falsy and gets overridden by the default. This helper is the canonical
  * pattern for every numeric env read in the server: an undefined or empty
  * env var falls back to the default; any other value (including `0`,
- * negatives, or `NaN`) is honoured as written.
+ * negatives, or `NaN`) is honored as written.
  *
  * If you need range/validity checking on top, parse explicitly (see
  * `parseEventLogRetentionHours` for an example with warnings on bad input).
@@ -395,7 +395,7 @@ export function parseOtelHeaders(
  * types without those types appearing in the static scope allowlist. The
  * separate `connected` bundle grants read on `system.connection` /
  * `system.integration` only. Full `*:read` / `*:write` stays available via
- * the consent screen's "Customise" path, never by default.
+ * the consent screen's "Customize" path, never by default.
  */
 export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
   {

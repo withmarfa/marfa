@@ -9,7 +9,7 @@ import type { TestContext } from "../test-utils.js";
  * shared via the storage layer, so the test exercises the end-to-end
  * integration: throttle → store → upsert → re-read.
  *
- * Covers: cap behaviour, lowercase normalisation, window expiry,
+ * Covers: cap behavior, lowercase normalisation, window expiry,
  * per-email isolation, and cross-instance counter sharing.
  *
  * Each test uses a fresh `Storage` so the rate_limit_windows rows
@@ -133,7 +133,7 @@ describe("PerEmailThrottle", () => {
 
   it("two throttle instances over the same storage share state", async () => {
     // The cluster-shared invariant: two server instances pointed at
-    // the same DB share counters. Modelled here by two PerEmailThrottle
+    // the same DB share counters. Modeled here by two PerEmailThrottle
     // wrappers backed by the same Storage handle — identical to two
     // server processes talking to the same Postgres.
     const storage = await makeStorage();

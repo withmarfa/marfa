@@ -585,7 +585,7 @@ describe("google-drive handleSchedule — all-files mode", () => {
     );
     expect(String(summary?.properties?.summary)).toContain("files_with_blob=0");
 
-    // Severity stays at `info` — neighbour-integration convention reserves
+    // Severity stays at `info` — neighbor-integration convention reserves
     // action_required for operator-actionable failures (reauth).
     const actionRequired = emitted.filter(
       (a) => a.properties?.severity === "action_required",

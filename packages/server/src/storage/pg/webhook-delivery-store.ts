@@ -140,7 +140,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
    * delivered (`status = 'success'`), zero rows match and `null` comes
    * back. On a successful claim, `next_attempt_at` is pushed to the claim
    * expiry so the poller's next tick doesn't re-pick the same row.
-   * Postgres row-level locking serialises concurrent UPDATEs to the same
+   * Postgres row-level locking serializes concurrent UPDATEs to the same
    * id — no explicit `FOR UPDATE` transaction needed.
    */
   async claimById(

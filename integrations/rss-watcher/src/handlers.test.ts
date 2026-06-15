@@ -218,7 +218,7 @@ describe("RSS Watcher schedule handler", () => {
     expect(cursor.feed_url).toBe(DEFAULT_FEED_URL);
     expect(cursor.recent_entry_ids).toEqual(["entry-1", "entry-2"]);
     expect(cursor.last_seen_updated).toBe("2026-04-30T10:00:00Z");
-    // One info activity at the end summarising the run.
+    // One info activity at the end summarizing the run.
     const summaries = emitted.map((e) => e.properties?.summary);
     expect(summaries).toContain("RSS Watcher created 2 bookmark(s)");
   });

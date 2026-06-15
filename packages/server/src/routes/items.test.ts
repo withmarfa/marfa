@@ -1063,7 +1063,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     expect(data.item.source_id).toBe("stable-key");
     // Update path still bumps version (a source_id PATCH is a column-set
     // change like tier/timestamp). The route doesn't short-circuit on
-    // "same value" — only the conflict check is suppressed. Behaviour
+    // "same value" — only the conflict check is suppressed. Behavior
     // matches `tier`-only PATCH above.
     expect(data.item.version).toBe(created.item.version + 1);
   });

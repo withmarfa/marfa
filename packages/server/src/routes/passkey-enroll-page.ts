@@ -1,5 +1,5 @@
 /**
- * Passkey enrol page renderer for `/auth/passkey/enroll`.
+ * Passkey enroll page renderer for `/auth/passkey/enroll`.
  *
  * Server-rendered HTML, uses the shared auth-page layout. Auth-gated
  * upstream (the route handler redirects to /auth/sign-in when no session
@@ -32,7 +32,7 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Renders the passkey enrol page as a complete HTML document. */
+/** Renders the passkey enroll page as a complete HTML document. */
 export function renderPasskeyEnrollPage(
   params: PasskeyEnrollPageParams,
 ): string {

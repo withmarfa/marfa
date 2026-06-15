@@ -85,7 +85,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  *   non-undefined block (starting from the leaf) supplies the whole block.
  * - `version_policy` — merged root→leaf, per-key. Documented as
  *   "merges field-by-field" (see `docs/concepts/versions.mdx`); matches
- *   `merge_policy`'s inheritance behaviour.
+ *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
  * - `id`, `parent`, `version`, `label`, `description` — kept as-is on the leaf
  *   (these identify the leaf type, not the inherited schema).

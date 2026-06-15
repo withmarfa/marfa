@@ -173,7 +173,7 @@ describe("wrangler.control.toml — structural freshness", () => {
     }
   });
 
-  it("no duplicate bindings in either env block (defence-in-depth on the test invariant)", () => {
+  it("no duplicate bindings in either env block (defense-in-depth on the test invariant)", () => {
     const config = loadConfig();
     for (const env of ["staging", "prod"] as const) {
       const services = config.env?.[env]?.services ?? [];

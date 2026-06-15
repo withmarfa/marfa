@@ -87,7 +87,7 @@ export class HttpTransport {
    * natural-key match update (200) — `request<T>` consumes the status
    * internally so this sibling exists to thread it back out.
    *
-   * Error behaviour matches {@link request}: non-2xx responses throw the
+   * Error behavior matches {@link request}: non-2xx responses throw the
    * appropriate typed `MarfaError` subclass via `throwForError`, never
    * resolve. 204 No Content resolves with `data: undefined as T` and
    * `status: 204`.

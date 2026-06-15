@@ -1,11 +1,11 @@
 /**
  * Register every in-tree integration manifest against a Marfa server.
  *
- * The integration catalogue (`GET /integrations`) is empty on a freshly
+ * The integration catalog (`GET /integrations`) is empty on a freshly
  * bootstrapped instance — manifests are registered at runtime via
  * `POST /integrations` (platform-credential gated). This script imports
  * each in-tree manifest from `integrations/<dir>/src/manifest.ts` and
- * registers it, so a self-hoster (or staging) gets a populated catalogue
+ * registers it, so a self-hoster (or staging) gets a populated catalog
  * without hand-writing manifest bodies.
  *
  * Usage (from the monorepo root):

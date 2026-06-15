@@ -96,7 +96,7 @@ const HEADER_ALLOWLIST = new Set<string>([
 /** Synthetic host used to construct the Service-Binding `Request`.
  *  Service Bindings ignore the host portion — only path, headers,
  *  and body reach the bound Worker's fetch handler. A stable
- *  recognisable placeholder makes accidental "real" fetches in tests
+ *  recognizable placeholder makes accidental "real" fetches in tests
  *  obvious. */
 const SERVICE_BINDING_HOST = "https://runtime-control";
 

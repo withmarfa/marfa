@@ -257,7 +257,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     trustedOrigins: options.trustedOrigins,
     // Suppress the ERROR-level log Better Auth emits when a
     // `request-password-reset` hits a non-existent email. The
-    // forgot-password wrapper deliberately swallows that case to honour
+    // forgot-password wrapper deliberately swallows that case to honor
     // the no-enumeration invariant (always 302 with `?sent=1`); BA's
     // own logger fires synchronously, so the only seam to keep operator
     // logs clean is BA's logger config. Pass every other line through.
@@ -337,7 +337,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
             text,
             // Idempotency on the token (single-use, rotates on each
             // request). Threaded through to audit + log correlation;
-            // not honoured by the Cloudflare backend for send-time
+            // not honored by the Cloudflare backend for send-time
             // dedup. Token is single-use server-side, so a duplicate
             // send is harmless (first click wins).
             idempotencyKey: `reset-password/${user.id}/${token}`,
@@ -402,7 +402,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           html,
           text,
           // Idempotency key per (user, token). Threaded through to
-          // audit + log correlation; not honoured by the Cloudflare
+          // audit + log correlation; not honored by the Cloudflare
           // backend for send-time dedup. Token is single-use
           // server-side, so a duplicate send is harmless.
           idempotencyKey: `verify-email/${user.id}/${url.split("token=")[1]?.split("&")[0] ?? "no-token"}`,

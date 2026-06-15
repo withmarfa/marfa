@@ -10,13 +10,13 @@
  * Per-delivery flow:
  *   1. Read X-GitHub-Delivery from the headers — the dedup key.
  *   2. Check + record in a bounded ring on the cursor store.
- *      Already-seen → no-op (defence-in-depth alongside the
+ *      Already-seen → no-op (defense-in-depth alongside the
  *      server-side external_delivery_id UNIQUE constraint).
  *   3. Read X-GitHub-Event to discriminate the payload shape.
  *      Currently handles `issues` and `pull_request` opened
  *      actions; other events are acked silently.
  *   4. Build a `core.bookmark` and create it.
- *   5. Emit a single `system.activity` summarising the outcome.
+ *   5. Emit a single `system.activity` summarizing the outcome.
  */
 import {
   registerWebhookHandler,

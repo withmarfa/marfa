@@ -48,7 +48,7 @@ describe("GET /search happy path", () => {
 
 describe("GET /search library filter", () => {
   // Use a unique whole-word token shared by both items so the FTS query
-  // matches them directly. Tokenisation is whitespace-based, so
+  // matches them directly. Tokenization is whitespace-based, so
   // substrings inside other words won't match — keep the token standalone.
   const sharedToken = `lib3query${String(Date.now())}`;
 

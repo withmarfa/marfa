@@ -55,7 +55,7 @@ const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
 // segment (`types`, future siblings).
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
-/** Standard OIDC literals. Recognised by `parseScope` ahead of the
+/** Standard OIDC literals. Recognized by `parseScope` ahead of the
  *  `<type>:<verb>` matchers so they can't collide with future type names
  *  (which require a colon-separated verb). `offline_access` is the RFC
  *  6749 / OIDC standard literal that signals the RP wants a refresh token;
@@ -274,7 +274,7 @@ export function scopesToMetadataPermissions(
  * Filters a granted scope list down to the standard OIDC literals
  * (`openid` / `profile` / `email`). Surfaced on the synthetic OAuth
  * `ApiKey` as `oidc_scopes` and consumed only by `/oauth/userinfo` to
- * gate field visibility. Unrecognised scopes — type, edge, metadata,
+ * gate field visibility. Unrecognized scopes — type, edge, metadata,
  * malformed — are ignored.
  */
 export function scopesToOidcScopes(scopes: string[]): Set<OidcScope> {

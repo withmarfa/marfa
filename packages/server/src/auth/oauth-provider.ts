@@ -55,7 +55,7 @@ interface HookCtxLite {
  * Reserved metadata sub-resources for the `metadata.<sub>:<verb>` scope
  * grammar. Currently only `types` is enforced (gates `POST /types`); the
  * list grows as new metadata-layer mutations land. Mirrors what
- * `parseScope` in `@withmarfa/shared` recognises.
+ * `parseScope` in `@withmarfa/shared` recognizes.
  */
 const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 
@@ -64,7 +64,7 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * Includes OIDC literals + every concrete `<type>:<verb>` from the type
  * registry + every `edge.<edgeType>:<verb>` from the edge registry +
  * the metadata sub-resource grammar + the global type wildcards
- * (`*:read` / `*:write`, used by the consent screen's "Customise"
+ * (`*:read` / `*:write`, used by the consent screen's "Customize"
  * full-access path) + every scope referenced by a configured permission
  * bundle (namespace wildcards like `core.*:read` / `user.*:write` that
  * cover runtime types the static registry never enumerates).
@@ -87,7 +87,7 @@ export function buildAllowedScopes(
     // Metadata top-level
     "metadata:read",
     "metadata:write",
-    // Global type wildcards — full access, offered only via "Customise".
+    // Global type wildcards — full access, offered only via "Customize".
     "*:read",
     "*:write",
   ]);
@@ -188,7 +188,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // `POST /auth/clients` is a public, no-auth endpoint for the
     // public-client model (PKCE replaces the client secret as the
     // binding). The plugin's deprecation note on unauthenticated DCR
-    // is a future-watch item; revisit if MCP standardises it.
+    // is a future-watch item; revisit if MCP standardizes it.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
 
@@ -386,7 +386,7 @@ export function buildOauthProjectionPlugin(opts: {
         ...(refreshHasher
           ? [
               {
-                // Refresh-replay defence: the plugin detects stale
+                // Refresh-replay defense: the plugin detects stale
                 // refresh tokens (rotation: old marked `revoked: true`,
                 // new issued; replay finds old → plugin deletes refresh
                 // chain + throws invalid_grant). The plugin does NOT

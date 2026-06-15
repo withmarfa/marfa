@@ -24,7 +24,7 @@ import {
 //   3. On terminal refresh failure (`invalid_grant` or no refresh token),
 //      flips the connection's `runtime_status` to `reauth_required` and
 //      emits a `system.activity` row with severity `action_required` so
-//      the user surface knows to prompt for re-authorisation.
+//      the user surface knows to prompt for re-authorization.
 //   4. Rotates the refresh_token whenever the upstream returns a new one;
 //      the rotated-out token's SHA-256 is written to
 //      `previous_refresh_hash` for forensic logging.
@@ -104,7 +104,7 @@ async function readCredentialConfig(
   // The install pipeline already validates `credentialRef` is in the
   // caller's tenant before stamping it onto the connection, so any
   // legitimately-installed reference IS in the same tenant. This fence
-  // is defence-in-depth — a malformed reference can't reach into
+  // is defense-in-depth — a malformed reference can't reach into
   // another tenant's credentials.
   const credential = await storage.items.get(
     credentialRef,
@@ -298,7 +298,7 @@ function sha256Hex(input: string): string {
 
 /**
  * In-process mutex map keyed by connectionId. The cross-instance gate is
- * `storage.coordination.withJobLock`; this Map serialises concurrent
+ * `storage.coordination.withJobLock`; this Map serializes concurrent
  * refresh attempts within the same Node process (which the per-instance
  * lock alone won't do — `pg_try_advisory_lock` is a no-op when the same
  * session holds it). Enforces "one refresh in flight per connection".
@@ -498,7 +498,7 @@ async function withRefreshLock<T>(
   try {
     // Cross-instance gate: best-effort. If another instance has the
     // lock, withJobLock returns undefined; we fall through (the in-
-    // process map already serialised this connection here, so we just
+    // process map already serialized this connection here, so we just
     // proceed and let the upstream arbitrate via invalid_grant).
     const result = await storage.coordination.withJobLock(
       `connection-refresh:${connectionId}`,
@@ -585,7 +585,7 @@ async function markReauthRequired(
         type: "system.activity",
         properties: {
           severity: "action_required",
-          summary: `OAuth re-authorisation needed for ${integration}`,
+          summary: `OAuth re-authorization needed for ${integration}`,
           connection_id: connection.id,
           // system.activity.detail requires an object, not a bare string.
           detail: { reason, ...(remediation ? { remediation } : {}) },
@@ -781,7 +781,7 @@ export function connectionProxyRoutes(storage: Storage) {
         });
         throw new MarfaError(
           ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
-          "Connection has no stored OAuth token; complete authorisation first",
+          "Connection has no stored OAuth token; complete authorization first",
         );
       }
 
@@ -840,7 +840,7 @@ export function connectionProxyRoutes(storage: Storage) {
       } catch {
         throw new MarfaError(
           ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
-          "Stored access token is unreadable; reauthorise to recover",
+          "Stored access token is unreadable; reauthorize to recover",
         );
       }
 

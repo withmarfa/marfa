@@ -97,7 +97,7 @@ const coreHighlight: TypeSchema = {
   fields: {
     text: { type: "string", description: "The highlighted passage", required: true },
     note: { type: "string", description: "User annotation on the highlight" },
-    color: { type: "enum", description: "Highlight colour", enum_values: ["yellow", "blue", "green", "pink", "orange", "purple"] },
+    color: { type: "enum", description: "Highlight color", enum_values: ["yellow", "blue", "green", "pink", "orange", "purple"] },
     locator_type: { type: "enum", description: "How start_location / end_location are interpreted", enum_values: ["offset", "page", "time", "cfi", "order", "none"] },
     start_location: { type: "string", description: "Start locator, typed by locator_type" },
     end_location: { type: "string", description: "End locator, typed by locator_type" },
@@ -169,7 +169,7 @@ const raindropCollection: TypeSchema = {
     cover: { type: "string", description: "Cover image URL (Raindrop ships one when set)." },
     expanded: { type: "boolean", description: "Whether the collection is expanded in Raindrop's UI." },
     view: { type: "enum", description: "Display mode in Raindrop's UI.", enum_values: ["list", "simple", "grid", "masonry"] },
-    color: { type: "string", description: "Operator-assigned colour (Raindrop ships free-form CSS strings)." },
+    color: { type: "string", description: "Operator-assigned color (Raindrop ships free-form CSS strings)." },
     public: { type: "boolean", description: "Whether the collection has a public URL." },
     created: { type: "datetime", description: "Creation timestamp upstream." },
     last_update: { type: "datetime", description: "Last-update timestamp upstream." },
@@ -229,7 +229,7 @@ const readwiseHighlight: TypeSchema = {
     note: { type: "string", description: "User's personal annotation on the highlight (maps to Readwise `note`)." },
     location: { type: "integer", description: "Numerical location within the source (maps to Readwise `location` — meaning depends on `location_type`)." },
     location_type: { type: "enum", description: "What `location` means — page | location (Kindle) | offset | order | time_offset (podcast) | none.", enum_values: ["page", "location", "offset", "order", "time_offset", "none"] },
-    color: { type: "string", description: "Highlight colour as reported by Readwise (e.g. `yellow`, `blue`)." },
+    color: { type: "string", description: "Highlight color as reported by Readwise (e.g. `yellow`, `blue`)." },
     tags: { type: "array", description: "Free-form tags attached to the highlight (maps to Readwise `tags`).", items_type: "string" },
     highlighted_at: { type: "datetime", description: "When the user highlighted the source." },
     updated: { type: "datetime", description: "Readwise `updated` timestamp — when the highlight last changed upstream." },
@@ -296,7 +296,7 @@ const withmarfaCapturedEmail: TypeSchema = {
     subject: { type: "string", description: "RFC 5322 `Subject:` header. Empty string when absent." },
     text_body: { type: "string", description: "Plain-text body. Either the `text/plain` MIME part directly, or downgraded from `text/html` when only HTML is present." },
     body: { type: "string", description: "Mirror of `text_body` — kept so `core.note.body` satisfies the `compatible_with` contract for cross-app readers." },
-    html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitised on storage." },
+    html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitized on storage." },
     sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time." },
     message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
     in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
@@ -469,7 +469,7 @@ const googleCalendarEvent: TypeSchema = {
     creator_email: { type: "string", description: "Email address of the event creator (Calendar `creator.email`)." },
     recurrence: { type: "array", description: "RRULE / EXRULE / RDATE / EXDATE strings (Calendar `recurrence`). Single-instance round-trip is supported; full recurrence expansion is deliberately not implemented in v1 — the field carries the raw rule for round-trip fidelity.", items_type: "string" },
     recurring_event_id: { type: "string", description: "When set, this event is an instance of a recurring series; value is the Calendar event id of the series parent." },
-    color_id: { type: "string", description: "Calendar event colour id (numeric string, 1–11; see Calendar's `colors.get`)." },
+    color_id: { type: "string", description: "Calendar event color id (numeric string, 1–11; see Calendar's `colors.get`)." },
   },
   display_hints: { title_field: "title", body_field: "description" },
 };
@@ -477,7 +477,7 @@ const googleCalendarEvent: TypeSchema = {
 const googleContactsContact: TypeSchema = {
   id: "google.contacts.contact",
   label: "Google Contact",
-  description: "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organisations, biographies, etag — so a round-trip preserves what Google considers authoritative. For cross-app interop with non-Google consumers, the Google Contacts integration can also be configured to write to `core.entity.person` instead, but the default and the fidelity choice is this type.",
+  description: "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organizations, biographies, etag — so a round-trip preserves what Google considers authoritative. For cross-app interop with non-Google consumers, the Google Contacts integration can also be configured to write to `core.entity.person` instead, but the default and the fidelity choice is this type.",
   version: 1,
   fields: {
     title: { type: "string", description: "Display name (maps to People API `names[0].displayName`). Falls back to a join of given+family names.", required: true },
@@ -490,9 +490,9 @@ const googleContactsContact: TypeSchema = {
     emails: { type: "array", description: "Email addresses. Each entry is a JSON-encoded object: `{ value, type, formattedType }`. Round-trips the full People API `emailAddresses` array.", items_type: "string" },
     phones: { type: "array", description: "Phone numbers. Each entry is a JSON-encoded object: `{ value, type, formattedType }`. Round-trips the full People API `phoneNumbers` array.", items_type: "string" },
     addresses: { type: "array", description: "Postal addresses. Each entry is a JSON-encoded object with the full People API `addresses` shape — `{ formattedValue, type, streetAddress, city, region, postalCode, country, countryCode }`.", items_type: "string" },
-    organization: { type: "string", description: "Primary employer / organisation name (maps to `organizations[0].name`)." },
-    job_title: { type: "string", description: "Job title within the primary organisation (maps to `organizations[0].title`)." },
-    department: { type: "string", description: "Department within the primary organisation (maps to `organizations[0].department`)." },
+    organization: { type: "string", description: "Primary employer / organization name (maps to `organizations[0].name`)." },
+    job_title: { type: "string", description: "Job title within the primary organization (maps to `organizations[0].title`)." },
+    department: { type: "string", description: "Department within the primary organization (maps to `organizations[0].department`)." },
     biography: { type: "string", description: "Free-text biography / notes about the contact (maps to `biographies[0].value`)." },
     birthday: { type: "date", description: "Date of birth — ISO 8601 (YYYY-MM-DD or YYYY when year is unknown). Reconstructed from People API `birthdays[0].date.{year,month,day}`." },
     photo_url: { type: "url", description: "Reference URL to the contact's photo (maps to `photos[0].url`). Stored as a URL only — no blob ingest in v1." },
@@ -536,7 +536,7 @@ const googleTasksTask: TypeSchema = {
   fields: {
     title: { type: "string", description: "Task title (maps to Tasks `title`)", required: true },
     notes: { type: "string", description: "Free-text notes attached to the task (maps to Tasks `notes`)." },
-    due_at: { type: "datetime", description: "Due date. Tasks API stores due as an RFC 3339 timestamp but only the date portion is honoured — time-of-day is ignored upstream." },
+    due_at: { type: "datetime", description: "Due date. Tasks API stores due as an RFC 3339 timestamp but only the date portion is honored — time-of-day is ignored upstream." },
     completed_at: { type: "datetime", description: "Completion timestamp (maps to Tasks `completed`). Present only when `status` is `completed`." },
     status: { type: "enum", description: "Task status.", enum_values: ["needsAction", "completed"] },
     position: { type: "string", description: "Stable sort key within the parent task list / subtask group (maps to Tasks `position`). Opaque, lexicographically sortable." },
@@ -594,7 +594,7 @@ const googleYoutubePlaylist: TypeSchema = {
 const googleYoutubeVideo: TypeSchema = {
   id: "google.youtube.video",
   label: "YouTube Video",
-  description: "A YouTube video — liked by the connected user or surfaced via a walked user-created playlist. Mirrors the YouTube Data API v3 `videos` resource. `liked_at` is a property on the video (sourced from the liked-playlist item's `snippet.publishedAt`), not modelled as an edge.",
+  description: "A YouTube video — liked by the connected user or surfaced via a walked user-created playlist. Mirrors the YouTube Data API v3 `videos` resource. `liked_at` is a property on the video (sourced from the liked-playlist item's `snippet.publishedAt`), not modeled as an edge.",
   version: 1,
   fields: {
     video_id: { type: "string", description: "YouTube video id — the 11-character handle used in canonical watch URLs (`https://www.youtube.com/watch?v=<video_id>`). Used as the external id on the cursor mapping.", required: true },
@@ -859,7 +859,7 @@ export const ALL_TYPES: TypeSchema[] = [
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
-  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorise, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
+  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
@@ -885,7 +885,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
+  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   version: 1,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },

@@ -134,7 +134,7 @@ describe("grandfatherProfilesT074", () => {
     });
 
     // Now provision an orphan auth_user whose email local-part also
-    // sanitises to "popular". The script must derive a non-colliding
+    // sanitizes to "popular". The script must derive a non-colliding
     // handle automatically.
     const id = `auth_${randomBytes(4).toString("hex")}`;
     await insertAuthUser(ctx.storage, {
@@ -151,7 +151,7 @@ describe("grandfatherProfilesT074", () => {
   it("avoids reserved handles by suffixing", async () => {
     const id = `auth_${randomBytes(4).toString("hex")}`;
     // `admin` is in RESERVED_HANDLE_WORDS — local-part of this email
-    // sanitises straight to it.
+    // sanitizes straight to it.
     await insertAuthUser(ctx.storage, {
       id,
       email: "admin@example.com",

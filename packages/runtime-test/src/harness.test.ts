@@ -137,7 +137,7 @@ describe("createTestHarness", () => {
     });
 
     // btoa on the raw byte sequence (Latin1 view) — what the control
-    // plane does when it serialises the body for the queue envelope.
+    // plane does when it serializes the body for the queue envelope.
     let bodyString = "";
     for (const b of bytes) bodyString += String.fromCharCode(b);
     const bodyBase64 = btoa(bodyString);

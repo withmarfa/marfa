@@ -12,7 +12,7 @@
  *   - Otherwise the window is still open: count increments by 1 and
  *     `expires_at` stays put.
  *
- * Postgres serialises concurrent INSERT/UPDATE on the same row via
+ * Postgres serializes concurrent INSERT/UPDATE on the same row via
  * row-level locking, so two instances racing the same key cannot both
  * observe `count == 1` inside one window. The `RETURNING` clause sends
  * back the post-update values in the same round-trip.

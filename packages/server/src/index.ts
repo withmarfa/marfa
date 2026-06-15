@@ -135,7 +135,7 @@ async function main() {
       if (deleted > 0)
         log(
           "info",
-          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-tenant overrides honoured)`,
+          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-tenant overrides honored)`,
         );
     });
   };
@@ -155,7 +155,7 @@ async function main() {
       if (deleted > 0)
         log(
           "info",
-          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-tenant overrides honoured)`,
+          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-tenant overrides honored)`,
         );
     });
   };

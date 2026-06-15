@@ -97,7 +97,7 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
     if (resource === "storage_bytes") {
       // SUM(size) across the tenant's blob metadata rows. Aggregate
       // bytes can exceed INT_MAX, so the cast stays ::bigint;
-      // node-postgres serialises bigint as a string — reflect in
+      // node-postgres serializes bigint as a string — reflect in
       // sql<> and coerce on the way out. Mirrors pg/blob-store.ts.
       const [row] = await this.db
         .select({

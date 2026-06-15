@@ -1,7 +1,7 @@
 {
   "id": "system.activity",
   "label": "Activity",
-  "description": "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorise, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
+  "description": "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
   "version": 1,
   "fields": {
     "connection_id": {

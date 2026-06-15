@@ -56,7 +56,7 @@ export interface TenantFanout {
  * tick cluster-wide instead of once per instance.
  *
  * When `fanout` is supplied, a single `runOnce()` tick fans out across
- * every tenant + a NULL-bucket sweep, honouring per-tenant
+ * every tenant + a NULL-bucket sweep, honoring per-tenant
  * `trash_retention_days` overrides from `TenantConfig`. When `fanout` is
  * omitted the job runs a single unscoped sweep using the instance default.
  * Single-tenant self-hosts that never wire `tenants` get the simpler path.

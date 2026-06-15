@@ -21,11 +21,11 @@ describe("envNumber (§3.16 zero-safe env reader)", () => {
     expect(envNumber("", 100)).toBe(100);
   });
 
-  it("honours an explicit zero (the bug §3.16 fixes)", () => {
+  it("honors an explicit zero (the bug §3.16 fixes)", () => {
     expect(envNumber("0", 100)).toBe(0);
   });
 
-  it("honours negative numbers", () => {
+  it("honors negative numbers", () => {
     expect(envNumber("-1", 100)).toBe(-1);
   });
 

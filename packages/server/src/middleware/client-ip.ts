@@ -138,7 +138,7 @@ export type { CidrRange };
  * Resolve the client IP once per request and stash it on
  * `c.var.clientIp` for downstream consumers.
  *
- * Centralising the resolution means routes don't have to thread the
+ * Centralizing the resolution means routes don't have to thread the
  * `trustedProxyCidrs` config or call `getClientIp(c, ...)` themselves
  * every time they want to record an audit row. Run this BEFORE auth
  * so the resolved IP is available in any downstream middleware

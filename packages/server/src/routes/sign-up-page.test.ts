@@ -24,7 +24,7 @@ import type { Storage } from "../storage/interface.js";
  *   - POST 302 with auto-sign-in cookie on success
  *   - POST 302 + error=email_exists when email is taken
  *   - POST 302 + error=password_mismatch / weak_password / missing_field / email_invalid
- *   - POST 404 when allowSignup=false (defence-in-depth past the GET gate)
+ *   - POST 404 when allowSignup=false (defense-in-depth past the GET gate)
  *   - return_to round-trips through the form
  */
 
@@ -390,7 +390,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     });
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
-    // return_to was sanitised to "/" before the redirect built the
+    // return_to was sanitized to "/" before the redirect built the
     // verify-email URL; the off-origin value never threads through.
     expect(location).toContain("/auth/verify-email");
     expect(location).toContain("return_to=%2F");

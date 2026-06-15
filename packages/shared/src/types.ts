@@ -720,7 +720,7 @@ export interface PreviewEventRequest {
   /** Item-event type to simulate. */
   event_type: PreviewEventItemEventType;
   /**
-   * Optional filter to a single subscribing connection id. Default behaviour
+   * Optional filter to a single subscribing connection id. Default behavior
    * (omitted) renders all subscribers in the caller's tenant.
    */
   connection_id?: string;

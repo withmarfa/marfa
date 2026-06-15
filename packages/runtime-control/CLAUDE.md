@@ -29,4 +29,4 @@ No bundle step. `wrangler dev` / `wrangler deploy` (driven by `infra/cloudflare/
 
 ## Testing
 
-`pnpm test` runs the Vitest suite under the Node runtime — every test uses Hono's `app.request(...)` rather than booting Miniflare, which keeps the tests fast and avoids the Workers-runtime dependency. Coverage spans: per-route auth gates, signature verification round-trips (`webhook-flow.test.ts`), Queues-pull behaviour (`cf-queues-pull.test.ts`), and the one-shot config-check (`index.test.ts`).
+`pnpm test` runs the Vitest suite under the Node runtime — every test uses Hono's `app.request(...)` rather than booting Miniflare, which keeps the tests fast and avoids the Workers-runtime dependency. Coverage spans: per-route auth gates, signature verification round-trips (`webhook-flow.test.ts`), Queues-pull behavior (`cf-queues-pull.test.ts`), and the one-shot config-check (`index.test.ts`).

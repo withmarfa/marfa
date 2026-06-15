@@ -8,7 +8,7 @@
  * HMAC-SHA256 verification via the `github` adapter (server-side
  * verifier in @withmarfa/server inbound-webhooks subsystem).
  *
- * Idempotency is defence-in-depth: the server's
+ * Idempotency is defense-in-depth: the server's
  * `external_delivery_id` UNIQUE constraint catches duplicates
  * that bypass the handler-side check, AND the handler tracks
  * recently-seen `X-GitHub-Delivery` IDs in a bounded ring on the

@@ -31,7 +31,7 @@
     },
     "html_body": {
       "type": "string",
-      "description": "HTML body (`text/html` MIME part). Captured verbatim; not sanitised on storage."
+      "description": "HTML body (`text/html` MIME part). Captured verbatim; not sanitized on storage."
     },
     "sent_at": {
       "type": "datetime",

@@ -141,7 +141,7 @@ describe("GET /events — catchup_too_old", () => {
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
     expect(frame!.id).toBe(String(eventId));
-    // Payload now serialises bigint ids as strings (JSON-safe round-trip).
+    // Payload now serializes bigint ids as strings (JSON-safe round-trip).
     const payload = JSON.parse(frame!.data) as {
       type: string;
       min_retained_id: string;

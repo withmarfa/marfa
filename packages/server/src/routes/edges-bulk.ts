@@ -269,7 +269,7 @@ async function processBulkEdge(
     // upsert — replace properties in place. Matches PATCH /edges/:id
     // semantics (properties overwrite; source/target/type immutable).
     // Tenant-fenced so a triple that collided with another tenant's edge
-    // (defence-in-depth beyond the tenant-scoped duplicate lookup) cannot
+    // (defense-in-depth beyond the tenant-scoped duplicate lookup) cannot
     // be mutated here.
     const updated = await storage.edges.updateProperties(
       existing.id,

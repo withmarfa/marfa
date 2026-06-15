@@ -359,7 +359,7 @@ describe("conflict resolution", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Policy-aware conflict resolution (auto strategy honours merge_policy)
+// Policy-aware conflict resolution (auto strategy honors merge_policy)
 // ---------------------------------------------------------------------------
 
 describe("conflict resolution — policy-aware auto strategy", () => {

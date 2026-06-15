@@ -42,7 +42,7 @@
  * is a deterministic client-supplied `id` on the POST: Calendar
  * accepts a custom `id` (5–1024 chars, base32hex alphabet — hex is a
  * subset, so a SHA-256 hex digest is valid) and returns 409 on
- * conflict, which the handler recognises as "I already created this
+ * conflict, which the handler recognizes as "I already created this
  * event, fetch its current state and record the mapping". The handler
  * therefore produces at most one Calendar event per item id,
  * regardless of retry count.
@@ -95,7 +95,7 @@ interface CalendarCursor {
 /**
  * Normalised view of the connection's `properties.configuration` for
  * the handler. Single mode (no `selected_calendar_ids`) syncs a single
- * primary calendar and writes as `core.event`. Multi mode honours the
+ * primary calendar and writes as `core.event`. Multi mode honors the
  * install-time picker selections.
  */
 interface ConnectionConfig {
@@ -668,7 +668,7 @@ async function ensureChannels(
 
 /**
  * Extract the calendar id from Google's `X-Goog-Resource-URI` push
- * header. Returns null when the URI shape is unrecognised.
+ * header. Returns null when the URI shape is unrecognized.
  */
 function extractCalendarIdFromResourceUri(uri: string): string | null {
   const match = /\/calendars\/([^/]+)\/events/.exec(uri);
@@ -1275,7 +1275,7 @@ function buildEventInput(
 /**
  * Build the Calendar API request payload from a Marfa item.
  *
- * Honours optional `all_day` (writes `start.date` / `end.date` instead
+ * Honors optional `all_day` (writes `start.date` / `end.date` instead
  * of `dateTime`) and `timezone` (sets `start.timeZone` / `end.timeZone`).
  * Both are read from item properties — present on
  * `google.calendar.event` items, absent on plain `core.event` items.

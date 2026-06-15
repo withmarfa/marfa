@@ -17,8 +17,8 @@ import type { TestContext } from "../test-utils.js";
  * seen by both readers, so the cap holds cluster-wide.
  *
  * SQLite is single-process by file lock, so on a single shared file
- * two middleware instances serialise upserts via the lock — exactly
- * the behaviour we want for the assertion. The PG matrix exercises the
+ * two middleware instances serialize upserts via the lock — exactly
+ * the behavior we want for the assertion. The PG matrix exercises the
  * same scenarios via the dialect-specific upsert path.
  */
 

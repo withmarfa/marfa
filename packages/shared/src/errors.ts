@@ -95,13 +95,13 @@ export enum ErrorCode {
    * The connection's stored OAuth refresh has failed terminally (the
    * upstream returned `invalid_grant` or equivalent, or no refresh token
    * is available). The connection's `runtime_status` has been flipped to
-   * `reauth_required`; the user must re-authorise the connector before
+   * `reauth_required`; the user must re-authorize the connector before
    * any further proxy calls will succeed.
    */
   OAUTH_PROXY_REAUTH_REQUIRED = "oauth_proxy_reauth_required",
   /**
    * No OAuth token row was found for the connection — the proxy was
-   * called before initial authorisation, or after the token row was
+   * called before initial authorization, or after the token row was
    * deleted on revocation. Distinct from `reauth_required` (which means
    * we had a token but refresh failed).
    */

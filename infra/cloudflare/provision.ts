@@ -67,7 +67,7 @@ function isEnv(s: string): s is Env {
  *     today).
  *   - **Scheduled-poll**: integrations with a `schedule` trigger get
  *     `marfa-scheduled-poll-<slug>-<env>` (+ DLQ). The slug uses
- *     `scheduledPollSlugFor()` to honour per-integration naming
+ *     `scheduledPollSlugFor()` to honor per-integration naming
  *     overrides (some drop the publisher prefix, some keep it).
  *
  * Slug for reactive-run + webhook-receipt mirrors the existing

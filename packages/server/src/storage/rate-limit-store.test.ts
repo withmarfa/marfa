@@ -20,7 +20,7 @@ afterEach(async () => {
   ctx = undefined;
 });
 
-describe("RateLimitStore — single-handle behaviour", () => {
+describe("RateLimitStore — single-handle behavior", () => {
   it("first call returns count=1 and stamps expires_at = now + windowMs", async () => {
     ctx = await createTestContext();
     const now = new Date(1_000_000).toISOString();
@@ -185,8 +185,8 @@ describe("RateLimitStore — multi-instance cluster-shared invariant", () => {
     ctx = await createTestContext();
     // Fire N parallel upserts; the post-increment counts the store
     // returns must be the set {1, 2, ..., N} in some order. Postgres
-    // row-level locking on the upsert guarantees serialisation; SQLite
-    // is single-process so BEGIN IMMEDIATE serialises identically.
+    // row-level locking on the upsert guarantees serialization; SQLite
+    // is single-process so BEGIN IMMEDIATE serializes identically.
     const N = 20;
     const now = new Date(1_000_000).toISOString();
     const results = await Promise.all(

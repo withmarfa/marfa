@@ -11,7 +11,7 @@
  * by default.
  *
  * `WorkerSlot`'s constructor attaches a no-op `.catch` to `ready` to
- * prevent that termination; this test pins the behaviour so a future
+ * prevent that termination; this test pins the behavior so a future
  * refactor that removes the no-op can't silently regress the
  * resilience.
  */

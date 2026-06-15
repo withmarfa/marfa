@@ -6,7 +6,7 @@ import {
 } from "./type-registry.js";
 import type { TypeSchema } from "@withmarfa/types";
 
-// Per-field length / element caps are defence-in-depth, independent of the
+// Per-field length / element caps are defense-in-depth, independent of the
 // server's global request-body size limit. They bound a single field even
 // when the overall payload is small. Defaults: 100_000 chars for strings,
 // 10_000 elements for arrays; per-field `maxLength` / `maxItems` overrides
@@ -76,7 +76,7 @@ describe("per-field length caps (default)", () => {
 });
 
 describe("per-field length caps (overrides)", () => {
-  it("honours a higher maxLength override on a string field", () => {
+  it("honors a higher maxLength override on a string field", () => {
     register("test.caps.string_override", {
       // Raise the cap well past the 100k default.
       text: { type: "string", maxLength: 250_000 },
@@ -97,7 +97,7 @@ describe("per-field length caps (overrides)", () => {
     expect(overOverride.success).toBe(false);
   });
 
-  it("honours a higher maxItems override on an array field", () => {
+  it("honors a higher maxItems override on an array field", () => {
     register("test.caps.array_override", {
       tags: { type: "array", maxItems: 25_000 },
     });

@@ -23,7 +23,7 @@ Two scopes only, declared in `manifest.ts` as
   user's calendars at install for the picker; read events on each
   selected calendar.
 - `https://www.googleapis.com/auth/calendar.events` — create,
-  update, delete events on the calendars the user has authorised.
+  update, delete events on the calendars the user has authorized.
 
 Deliberately narrower than the broader `calendar` scope. The
 integration physically cannot create, delete, or modify calendars

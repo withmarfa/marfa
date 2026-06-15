@@ -12,7 +12,7 @@
  * dispatch to local connectors; the agent's own filesystem
  * watchers + debounced sync drive execution. Manual trigger
  * exists so the install consent screen can offer a "Run now"
- * affordance the daemon honours via a sentinel.
+ * affordance the daemon honors via a sentinel.
  *
  * webhook_verification is required by the schema but unused for
  * local connectors — declared as hmac-sha256 by convention.

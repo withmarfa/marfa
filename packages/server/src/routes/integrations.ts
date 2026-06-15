@@ -360,7 +360,7 @@ export function integrationRoutes(
   interface InstallCaller {
     /** Stable id for the audit trail. For Bearer callers: the api_keys
      *  row id. For session callers: `auth_user:<userId>` so operator
-     *  queries can recognise session-backed installs. */
+     *  queries can recognize session-backed installs. */
     apiKeyId: string;
     /** Tenant scope — `undefined` for platform-admin Bearer callers,
      *  the user's tenant for session callers, the key's tenant for

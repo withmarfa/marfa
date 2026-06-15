@@ -142,7 +142,7 @@ function dcrError(error: string, description: string): DcrError {
  * `CORS_ORIGINS`; nothing is widened by default. Hosted Marfa lists only
  * its https web-app origin there, so the http branch never fires for it.
  *
- * Otherwise mirrored to the plugin's behaviour so a third-party SDK
+ * Otherwise mirrored to the plugin's behavior so a third-party SDK
  * hitting the plugin's DCR directly sees identical 400-error shapes.
  */
 function validateRedirectUri(
@@ -200,7 +200,7 @@ export function oauthRegisterRoutes(
   const trustedOrigins = new Set(trustedRedirectOrigins);
 
   router.post("/oauth2/register", async (c) => {
-    // Content-type must be JSON — matches plugin behaviour so SDK error shapes
+    // Content-type must be JSON — matches plugin behavior so SDK error shapes
     // stay identical across both surfaces (RFC 7591 §3.2.1).
     const contentType = c.req.header("content-type") ?? "";
     if (!contentType.includes("application/json")) {
@@ -236,7 +236,7 @@ export function oauthRegisterRoutes(
 
     const body: RegisterBody = parsed.data;
 
-    // RFC 7591 §2: default to `authorization_code` when omitted — matches plugin behaviour.
+    // RFC 7591 §2: default to `authorization_code` when omitted — matches plugin behavior.
     const grantTypes = body.grant_types ?? ["authorization_code"];
 
     // `refresh_token` is only valid alongside a primary grant that
@@ -260,7 +260,7 @@ export function oauthRegisterRoutes(
     // `client_credentials` requires an authenticated registration per
     // RFC 7591 §3.2.1. Marfa's DCR is unauthenticated (single-user self-
     // hosts + public SDK clients), so we reject `client_credentials`
-    // outright — matches the plugin's behaviour at `dist/index.mjs:1197`.
+    // outright — matches the plugin's behavior at `dist/index.mjs:1197`.
     if (grantTypes.includes("client_credentials")) {
       return c.json(
         dcrError(
@@ -306,7 +306,7 @@ export function oauthRegisterRoutes(
     }
 
     // `scope` must be a subset of the server-allowed set. Omitted → full set
-    // (mirrors plugin behaviour at `dist/index.mjs:1205`).
+    // (mirrors plugin behavior at `dist/index.mjs:1205`).
     const requestedScopes = (body.scope?.trim() ?? "")
       .split(/\s+/)
       .filter((s) => s.length > 0);
