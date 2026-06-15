@@ -15,7 +15,7 @@
  * Failure is hard: a server that doesn't publish the discovery doc isn't a
  * server this SDK supports. There is no fallback to hardcoded paths.
  */
-import { normaliseIssuer } from "./issuer.js";
+import { normalizeIssuer } from "./issuer.js";
 
 /** OAuth endpoints we read from the discovery doc. RFC 8414 publishes
  *  more fields; the SDK only reads the ones it uses. */
@@ -42,7 +42,7 @@ export class DiscoveryError extends Error {
 
 const DISCOVERY_PATH = "/.well-known/oauth-authorization-server";
 
-// Module-scope cache, keyed by normalised issuer origin. We store the
+// Module-scope cache, keyed by normalized issuer origin. We store the
 // *promise*, not the resolved value, so concurrent first-calls during app
 // boot funnel through a single in-flight fetch. On rejection we evict the
 // entry so a later retry can re-attempt — a stuck rejected promise would
@@ -64,7 +64,7 @@ export async function discoverEndpoints(
   issuer: string,
   fetchImpl?: typeof globalThis.fetch,
 ): Promise<Endpoints> {
-  const key = normaliseIssuer(issuer);
+  const key = normalizeIssuer(issuer);
   const cached = cache.get(key);
   if (cached) return cached;
 

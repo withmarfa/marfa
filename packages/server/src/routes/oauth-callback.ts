@@ -348,11 +348,11 @@ function canonicaliseRedirect(uri: string): string {
     const url = new URL(uri);
     url.hash = "";
     url.search = "";
-    let normalised = url.toString();
-    if (normalised.endsWith("/") && url.pathname === "/") {
-      normalised = normalised.slice(0, -1);
+    let normalized = url.toString();
+    if (normalized.endsWith("/") && url.pathname === "/") {
+      normalized = normalized.slice(0, -1);
     }
-    return normalised;
+    return normalized;
   } catch {
     return uri;
   }

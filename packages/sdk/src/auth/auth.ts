@@ -9,7 +9,7 @@ import { StoredTokenProvider } from "./token-provider.js";
 import type { TokenProvider } from "./token-provider.js";
 import { OAuthError } from "./errors.js";
 import { discoverEndpoints } from "./discovery.js";
-import { normaliseIssuer } from "./issuer.js";
+import { normalizeIssuer } from "./issuer.js";
 
 /**
  * MarfaAuth — owns the OAuth dance for browser apps signing into Marfa.
@@ -61,7 +61,7 @@ export class MarfaAuth {
   private readonly tokensKey: string;
 
   constructor(config: MarfaAuthConfig) {
-    this.issuer = normaliseIssuer(config.issuer);
+    this.issuer = normalizeIssuer(config.issuer);
     this.clientId = config.clientId;
     this.redirectUri = config.redirectUri;
     this.scopes = config.scopes;

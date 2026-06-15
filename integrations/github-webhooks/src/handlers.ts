@@ -230,7 +230,7 @@ function getHeader(
   name: string,
 ): string | undefined {
   // GitHub uses canonical title-case (X-GitHub-Event); Hono /
-  // Cloudflare normalisations may lowercase. Accept either.
+  // Cloudflare normalizations may lowercase. Accept either.
   const lower = name.toLowerCase();
   for (const [k, v] of Object.entries(headers)) {
     if (k.toLowerCase() === lower) return v;

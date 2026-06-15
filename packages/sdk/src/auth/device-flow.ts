@@ -18,7 +18,7 @@ import type { TokenStorage } from "./storage.js";
 import { StoredTokenProvider } from "./token-provider.js";
 import type { TokenProvider } from "./token-provider.js";
 import { discoverEndpoints } from "./discovery.js";
-import { normaliseIssuer } from "./issuer.js";
+import { normalizeIssuer } from "./issuer.js";
 
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -86,7 +86,7 @@ interface PollErrorResponse {
 export async function startDeviceFlow(
   config: StartDeviceFlowConfig,
 ): Promise<DeviceFlowHandle> {
-  const issuer = normaliseIssuer(config.issuer);
+  const issuer = normalizeIssuer(config.issuer);
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
   const storage = config.storage ?? defaultTokenStorage();
   const endpoints = await discoverEndpoints(issuer, fetchImpl);

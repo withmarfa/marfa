@@ -20,7 +20,7 @@ export class SqliteEventLogStore implements EventLogStore {
       VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.tenant_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${new Date().toISOString()})
     `);
     // libsql returns lastInsertRowid as `bigint`. Match better-sqlite3's prior
-    // behavior of normalising to bigint either way so the public wire shape
+    // behavior of normalizing to bigint either way so the public wire shape
     // is identical to the PG side.
     const id = result.lastInsertRowid;
     if (id == null) {

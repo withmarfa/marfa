@@ -158,7 +158,7 @@ export function evaluateDispatch(
   if (entry.connection_id === event.originatingConnectionId) {
     return { would_dispatch: false, reason: "self_event" };
   }
-  // Normalise to null on both sides so single-tenant self-hosted (where
+  // Normalize to null on both sides so single-tenant self-hosted (where
   // both event.tenantId and entry.tenant_id are typically `undefined`)
   // doesn't fall foul of `undefined !== null` and accidentally drop every
   // subscriber. Hosted multi-tenant: both sides carry strings; the

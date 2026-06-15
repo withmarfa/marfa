@@ -376,7 +376,7 @@ describe("POST /auth/device (form) — submit user_code", () => {
     expect(res.headers.get("location")).toContain("error=invalid_code");
   });
 
-  it("normalises user_code without hyphen to canonical form", async () => {
+  it("normalizes user_code without hyphen to canonical form", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);

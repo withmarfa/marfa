@@ -367,7 +367,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const proxyResp = await deps.auth.handler(proxyReq);
     // The plugin returns either a 302 (browser-native redirect) OR a 200
     // with JSON body `{ redirect: true, url: "..." }`. The latter is the
-    // default when better-auth doesn't see Accept: text/html. Normalise
+    // default when better-auth doesn't see Accept: text/html. Normalize
     // to a 302 either way so the browser navigates correctly.
     if (proxyResp.status === 302) {
       return proxyResp;
@@ -380,7 +380,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           url?: string;
         };
         if (body.redirect && typeof body.url === "string") {
-          // Preserve plugin response headers on the 302 normalisation —
+          // Preserve plugin response headers on the 302 normalization —
           // the plugin may set `Set-Cookie` (session refresh) or other
           // security headers; a bare `c.redirect(url)` would discard them.
           const headers = new Headers(proxyResp.headers);

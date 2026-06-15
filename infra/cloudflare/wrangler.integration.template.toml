@@ -1,6 +1,6 @@
 #:schema node_modules/wrangler/config-schema.json
 # Per-Integration Worker template. Each integration under
-# `integrations/<name>/` copies this file and customises:
+# `integrations/<name>/` copies this file and customizes:
 #   - name (matches the integration name from its manifest)
 #   - main (path into the integration's own src/)
 #   - durable_objects.bindings (DO class shipped from

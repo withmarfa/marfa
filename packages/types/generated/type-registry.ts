@@ -301,7 +301,7 @@ const withmarfaCapturedEmail: TypeSchema = {
     message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
     in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
     references: { type: "array", description: "RFC 5322 `References:` header, split on whitespace. Each entry a Message-ID of an ancestor in the conversation thread.", items_type: "string" },
-    headers: { type: "object", description: "Selected subset of normalised lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded." },
+    headers: { type: "object", description: "Selected subset of normalized lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded." },
     attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.", items_type: "object" },
   },
   display_hints: { title_field: "subject", body_field: "text_body" },
@@ -940,7 +940,7 @@ const systemDevice: TypeSchema = {
 const systemIntegration: TypeSchema = {
   id: "system.integration",
   label: "Integration",
-  description: "A registered Integration release — the persisted form of an Integration manifest. One item per (publisher.name, version) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalised onto the item for cheap query/list. Installed at runtime via POST /integrations (platform credential gated). system.connection.integration references the item id via integration_ref.",
+  description: "A registered Integration release — the persisted form of an Integration manifest. One item per (publisher.name, version) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. Installed at runtime via POST /integrations (platform credential gated). system.connection.integration references the item id via integration_ref.",
   version: 1,
   fields: {
     manifest_name: { type: "string", description: "Publisher-namespaced manifest name, e.g. `acme.calendar-sync`. Together with `manifest_version` identifies a unique installable release.", required: true },

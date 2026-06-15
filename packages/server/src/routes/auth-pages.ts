@@ -1075,7 +1075,7 @@ export function authRoutes(
     // The verification email's link carries the post-verify target as
     // `callbackURL` (Better Auth's param — an absolute, same-origin URL such
     // as the OAuth authorize endpoint); our own redirects use `return_to`
-    // (relative). Accept either, normalising a same-origin callbackURL down
+    // (relative). Accept either, normalizing a same-origin callbackURL down
     // to a relative path so the success page's Continue link carries the user
     // onward (e.g. back into the OAuth flow and on to the app) rather than to
     // the API root at `/`.
@@ -1852,7 +1852,7 @@ export function authRoutes(
     if (!submitted) {
       return c.redirect(`/auth/device?error=missing_code`, 302);
     }
-    const normalised = normaliseUserCode(submitted);
+    const normalized = normalizeUserCode(submitted);
 
     // Per-`user_code` failed-attempt throttle (independent of IP).
     // Register every failed submission against the submitted code and
@@ -1863,7 +1863,7 @@ export function authRoutes(
     // code advances to consent below WITHOUT incrementing, so the
     // legitimate one-shot flow never trips the throttle.
     const failAttempt = async (errorCode: string): Promise<Response> => {
-      const throttle = await deviceUserCodeThrottle.attempt(normalised);
+      const throttle = await deviceUserCodeThrottle.attempt(normalized);
       if (!throttle.allowed) {
         return c.redirect(
           `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
@@ -1876,7 +1876,7 @@ export function authRoutes(
       );
     };
 
-    const row = await storage.oauth.findDeviceCodeByUserCode(normalised);
+    const row = await storage.oauth.findDeviceCodeByUserCode(normalized);
     if (!row) {
       return failAttempt("invalid_code");
     }
@@ -1887,7 +1887,7 @@ export function authRoutes(
       return failAttempt("expired_code");
     }
     return c.redirect(
-      `/auth/device/consent?user_code=${encodeURIComponent(normalised)}`,
+      `/auth/device/consent?user_code=${encodeURIComponent(normalized)}`,
       302,
     );
   });
@@ -1905,12 +1905,12 @@ export function authRoutes(
     // (preserving the user_code via return_to), so this is safe —
     // no auto-approval, just one fewer tap. Falls through to the form
     // if the code is empty/garbled or an error is being surfaced.
-    const normalised = normaliseUserCode(
+    const normalized = normalizeUserCode(
       rawCode.trim().toUpperCase().replace(/\s+/g, ""),
     );
-    if (!error && normalised && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(normalised)) {
+    if (!error && normalized && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(normalized)) {
       return c.redirect(
-        `/auth/device/consent?user_code=${encodeURIComponent(normalised)}`,
+        `/auth/device/consent?user_code=${encodeURIComponent(normalized)}`,
         302,
       );
     }
@@ -1923,7 +1923,7 @@ export function authRoutes(
     if (sessionResult instanceof Response) return sessionResult;
     const url = new URL(c.req.url);
     const userCodeRaw = url.searchParams.get("user_code") ?? "";
-    const userCode = normaliseUserCode(userCodeRaw.trim().toUpperCase());
+    const userCode = normalizeUserCode(userCodeRaw.trim().toUpperCase());
     if (!userCode) {
       return c.redirect("/auth/device?error=missing_code", 302);
     }
@@ -1989,7 +1989,7 @@ export function authRoutes(
     const userCodeRaw = formData.get("user_code");
     const userCode =
       typeof userCodeRaw === "string"
-        ? normaliseUserCode(userCodeRaw.trim().toUpperCase())
+        ? normalizeUserCode(userCodeRaw.trim().toUpperCase())
         : "";
     const decision = formData.get("decision");
     if (!userCode || (decision !== "approve" && decision !== "deny")) {
@@ -2256,9 +2256,9 @@ function generateUserCode(): string {
   return `${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`;
 }
 
-/** Normalise a user-submitted code to the storage shape: uppercase,
+/** Normalize a user-submitted code to the storage shape: uppercase,
  *  hyphenated XXXX-XXXX. Accepts the user typing without the hyphen. */
-function normaliseUserCode(input: string): string {
+function normalizeUserCode(input: string): string {
   const stripped = input.replace(/-/g, "").toUpperCase();
   if (stripped.length !== 8) return input.toUpperCase();
   return `${stripped.slice(0, 4)}-${stripped.slice(4)}`;

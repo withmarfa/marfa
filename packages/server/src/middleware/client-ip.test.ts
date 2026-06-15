@@ -108,12 +108,12 @@ describe("getClientIp", () => {
     expect(getClientIp(c, trusted)).toBe("10.0.0.99");
   });
 
-  it("normalises IPv4-mapped IPv6 on the peer", () => {
+  it("normalizes IPv4-mapped IPv6 on the peer", () => {
     const c = makeContext({ peer: "::ffff:203.0.113.5" });
     expect(getClientIp(c, [])).toBe("203.0.113.5");
   });
 
-  it("normalises IPv4-mapped IPv6 on a forwarded hop", () => {
+  it("normalizes IPv4-mapped IPv6 on a forwarded hop", () => {
     const trusted = parseTrustedProxyCidrs("10.0.0.0/8");
     const c = makeContext({
       peer: "10.0.0.1",

@@ -96,7 +96,7 @@ export class PgEventLogStore implements EventLogStore {
       : await query;
     const min = rows[0]?.min ?? null;
     if (min === null) return null;
-    // pg returns aggregate as string; normalise to bigint.
+    // pg returns aggregate as string; normalize to bigint.
     return typeof min === "bigint" ? min : BigInt(min);
   }
 }

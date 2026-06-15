@@ -111,7 +111,7 @@ describe("verify-on-signup flow", () => {
   it("derives the return target from a same-origin callbackURL", async () => {
     ctx = await createTestContext();
     // The verification email link carries `callbackURL` (Better Auth's
-    // param), not `return_to`. A same-origin callbackURL is normalised to a
+    // param), not `return_to`. A same-origin callbackURL is normalized to a
     // relative return target so the Continue link carries the user onward.
     const ok = await request(
       ctx.app,

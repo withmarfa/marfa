@@ -274,7 +274,7 @@ describe("withmarfa.inbox handler", () => {
     expect(created).toHaveLength(1);
   });
 
-  it("accepts headers in lowercase form (Hono normalisation)", async () => {
+  it("accepts headers in lowercase form (Hono normalization)", async () => {
     const { ctx, created } = buildContext();
     await handleInboxWebhook(
       ctx,

@@ -351,12 +351,12 @@ describe("Readwise handlers — inbound", () => {
     expect(input.properties).not.toHaveProperty("source");
   });
 
-  it("normaliseTags handles both string[] and { name }[] shapes", () => {
-    expect(__internals.normaliseTags(["a", "b"])).toEqual(["a", "b"]);
-    expect(__internals.normaliseTags([{ name: "x" }, { name: "y" }])).toEqual([
+  it("normalizeTags handles both string[] and { name }[] shapes", () => {
+    expect(__internals.normalizeTags(["a", "b"])).toEqual(["a", "b"]);
+    expect(__internals.normalizeTags([{ name: "x" }, { name: "y" }])).toEqual([
       "x",
       "y",
     ]);
-    expect(__internals.normaliseTags(undefined)).toEqual([]);
+    expect(__internals.normalizeTags(undefined)).toEqual([]);
   });
 });
