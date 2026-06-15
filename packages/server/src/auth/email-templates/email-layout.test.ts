@@ -122,22 +122,22 @@ describe("template render smoke", () => {
     {
       name: "verify-email",
       out: renderVerifyEmailEmail({ url }),
-      subject: "Verify your email for Marfa",
+      subject: "Verify your email",
     },
     {
       name: "magic-link",
       out: renderMagicLinkEmail({ url }),
-      subject: "Sign in to Marfa",
+      subject: "Your Marfa sign-in link",
     },
     {
       name: "reset-password",
       out: renderResetPasswordEmail({ url }),
-      subject: "Reset your password for Marfa",
+      subject: "Reset your Marfa password",
     },
     {
       name: "account-delete-confirm",
       out: renderAccountDeleteConfirmEmail({ url }),
-      subject: "Confirm your Marfa account deletion",
+      subject: "Confirm your account deletion",
     },
     {
       name: "account-pending-deletion",
@@ -151,7 +151,7 @@ describe("template render smoke", () => {
     {
       name: "account-delete-cancel",
       out: renderAccountDeleteCancelEmail({ url, deletionDate: "2026-07-01" }),
-      subject: "Sign-in attempt on your Marfa account scheduled for deletion",
+      subject: "A sign-in was attempted on your account",
     },
   ];
 
@@ -172,7 +172,7 @@ describe("template render smoke", () => {
       deletionDate: "2026-07-01",
       graceDays: 30,
     });
-    expect(out.html).toContain("permanently deleted in 30 days, on 2026-07-01");
+    expect(out.html).toContain("will be deleted in 30 days, on 2026-07-01");
     expect(out.html).toContain("Cancel deletion");
   });
 });
