@@ -47,10 +47,10 @@ export function parseTrustedProxyCidrs(raw: string | undefined): CidrRange[] {
     });
 }
 
-/** Normalise an address: strips IPv4-mapped IPv6 (`::ffff:1.2.3.4` →
+/** Normalize an address: strips IPv4-mapped IPv6 (`::ffff:1.2.3.4` →
  *  `1.2.3.4`) so CIDR comparisons across dual-stack peers and v4 chains
  *  work consistently. Returns null for unparseable input. */
-function normalise(raw: string): ipaddr.IPv4 | ipaddr.IPv6 | null {
+function normalize(raw: string): ipaddr.IPv4 | ipaddr.IPv6 | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
@@ -108,7 +108,7 @@ export function getClientIp(
   const peerRaw = readPeer(c);
   if (!peerRaw) return null;
 
-  const peer = normalise(peerRaw);
+  const peer = normalize(peerRaw);
   if (!peer) return null;
 
   if (trustedCidrs.length === 0) return peer.toString();
@@ -124,12 +124,12 @@ export function getClientIp(
     .map((s) => s.trim())
     .filter(Boolean);
   for (let i = hops.length - 1; i >= 0; i--) {
-    const hop = normalise(hops[i] ?? "");
+    const hop = normalize(hops[i] ?? "");
     if (!hop) continue;
     if (!isInTrusted(hop, trustedCidrs)) return hop.toString();
   }
 
-  return normalise(hops[0] ?? "")?.toString() ?? peer.toString(); // fully-trusted chain: leftmost = original client
+  return normalize(hops[0] ?? "")?.toString() ?? peer.toString(); // fully-trusted chain: leftmost = original client
 }
 
 export type { CidrRange };

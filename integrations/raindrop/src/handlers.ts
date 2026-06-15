@@ -148,7 +148,7 @@ function buildCollectionInput(c: RaindropCollectionRest): CreateItemInput {
   }
   if (typeof c.count === "number") props.count = c.count;
   // Raindrop sometimes ships `cover` as an array of strings, sometimes a
-  // single string. Normalise to the first non-empty entry.
+  // single string. Normalize to the first non-empty entry.
   if (Array.isArray(c.cover)) {
     const first = c.cover.find((u) => typeof u === "string" && u.length > 0);
     if (first !== undefined) props.cover = first;

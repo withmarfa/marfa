@@ -114,7 +114,7 @@ jobs:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
         # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initialising). Chaining a real
+        # while the database is still initializing). Chaining a real
         # `psql … SELECT 1` against the `postgres` system DB is the only
         # fully reliable readiness signal. Mirrors the local `test-pg.sh`
         # fix; symmetric across all three PG service containers in this
@@ -258,7 +258,7 @@ jobs:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
         # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initialising). Chaining a real
+        # while the database is still initializing). Chaining a real
         # `psql … SELECT 1` against the `postgres` system DB is the only
         # fully reliable readiness signal. Mirrors the local `test-pg.sh`
         # fix; symmetric across all three PG service containers in this
@@ -344,7 +344,7 @@ jobs:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
         # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initialising). Chaining a real
+        # while the database is still initializing). Chaining a real
         # `psql … SELECT 1` against the `postgres` system DB is the only
         # fully reliable readiness signal. Mirrors the local `test-pg.sh`
         # fix; symmetric across all three PG service containers in this

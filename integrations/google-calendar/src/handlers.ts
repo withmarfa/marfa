@@ -93,7 +93,7 @@ interface CalendarCursor {
 }
 
 /**
- * Normalised view of the connection's `properties.configuration` for
+ * Normalized view of the connection's `properties.configuration` for
  * the handler. Single mode (no `selected_calendar_ids`) syncs a single
  * primary calendar and writes as `core.event`. Multi mode honors the
  * install-time picker selections.

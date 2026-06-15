@@ -169,9 +169,9 @@ function buildHighlightInput(
   if (highlight.color !== undefined && highlight.color !== "") {
     props.color = highlight.color;
   }
-  const normalisedTags = normaliseTags(highlight.tags);
-  if (normalisedTags.length > 0) {
-    props.tags = normalisedTags;
+  const normalizedTags = normalizeTags(highlight.tags);
+  if (normalizedTags.length > 0) {
+    props.tags = normalizedTags;
   }
   if (
     highlight.highlighted_at !== undefined &&
@@ -191,7 +191,7 @@ function buildHighlightInput(
   };
 }
 
-function normaliseTags(
+function normalizeTags(
   tags: { name?: string }[] | string[] | undefined,
 ): string[] {
   if (!Array.isArray(tags)) return [];
@@ -400,5 +400,5 @@ export const __internals = {
   defaultCursor,
   buildBookInput,
   buildHighlightInput,
-  normaliseTags,
+  normalizeTags,
 };

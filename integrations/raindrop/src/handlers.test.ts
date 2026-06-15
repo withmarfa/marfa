@@ -277,7 +277,7 @@ describe("Raindrop handlers — inbound", () => {
     ).toHaveLength(1);
   });
 
-  it("buildCollectionInput normalises cover array → first string", () => {
+  it("buildCollectionInput normalizes cover array → first string", () => {
     const input = __internals.buildCollectionInput({
       _id: 7,
       title: "X",

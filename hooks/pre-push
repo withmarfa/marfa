@@ -19,7 +19,7 @@
 # `--no-verify`. A hook that's bypassed isn't a gate. The slim shape
 # stays useful while keeping the load-bearing coverage in CI.
 #
-# Skippable: `git push --no-verify`. Still authorised when the hook
+# Skippable: `git push --no-verify`. Still authorized when the hook
 # hits transient infrastructure flake (Docker daemon down etc.) — but
 # the slim shape should make those cases rare.
 set -euo pipefail

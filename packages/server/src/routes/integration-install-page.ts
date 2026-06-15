@@ -79,7 +79,7 @@ function describeDirection(direction: "read" | "write" | "both"): string {
  * `describeDirection` copy stays available (and is what the disclosure-free
  * paths surface); this is the one-line "what it will do" the user sees first.
  */
-function summariseDirection(direction: "read" | "write" | "both"): string {
+function summarizeDirection(direction: "read" | "write" | "both"): string {
   switch (direction) {
     case "read":
       return "Read into your space.";
@@ -466,7 +466,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
       </span>
       <span>
         <b class="lead__name">${escapeHtml(leadLabel(targetTypes))}</b>
-        <span class="lead__desc">${escapeHtml(summariseDirection(params.direction))}</span>
+        <span class="lead__desc">${escapeHtml(summarizeDirection(params.direction))}</span>
       </span>
     </div>
 

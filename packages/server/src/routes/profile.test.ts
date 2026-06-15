@@ -555,7 +555,7 @@ describe("Profile routes", () => {
     });
 
     it("rejects path-traversal-shaped usernames", async () => {
-      // Hono normalises ".." segments before the param matcher, so this
+      // Hono normalizes ".." segments before the param matcher, so this
       // is mostly belt-and-braces — but the explicit grammar guard
       // means a future router refactor doesn't open a hole.
       const res = await request(

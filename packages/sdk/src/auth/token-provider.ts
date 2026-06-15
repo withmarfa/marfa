@@ -1,7 +1,7 @@
 import type { TokenStorage } from "./storage.js";
 import { OAuthError } from "./errors.js";
 import { discoverEndpoints, type Endpoints } from "./discovery.js";
-import { normaliseIssuer } from "./issuer.js";
+import { normalizeIssuer } from "./issuer.js";
 
 interface PersistedTokens {
   access_token: string;
@@ -56,7 +56,7 @@ export class StoredTokenProvider implements TokenProvider {
   private signOutHandlers = new Set<() => void>();
 
   constructor(config: TokenProviderConfig) {
-    this.issuer = normaliseIssuer(config.issuer);
+    this.issuer = normalizeIssuer(config.issuer);
     this.clientId = config.clientId;
     this.storage = config.storage;
     this.storageKey = config.storageKey;

@@ -273,7 +273,7 @@ describe("github-webhooks handler", () => {
     );
   });
 
-  it("accepts headers in lowercase form (Hono normalisation)", async () => {
+  it("accepts headers in lowercase form (Hono normalization)", async () => {
     const { ctx, created } = buildContext();
     await handleGithubWebhook(
       ctx,

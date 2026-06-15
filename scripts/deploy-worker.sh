@@ -56,7 +56,7 @@ echo "→ Pre-building workspace deps for $PKG_NAME"
 # `--if-present` skips packages without a `build` script (e.g.
 # runtime-control bundles via wrangler and has no `build`;
 # integration Workers do have a `build` that emits `dist/local.js`
-# for the local-runtime substrate path). pnpm honours topological
+# for the local-runtime substrate path). pnpm honors topological
 # order, so `@withmarfa/shared` rebuilds before `@withmarfa/webhooks`
 # before consumer-packages — no stale upstream dist landing in the
 # worker bundle.

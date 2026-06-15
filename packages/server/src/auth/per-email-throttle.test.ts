@@ -9,7 +9,7 @@ import type { TestContext } from "../test-utils.js";
  * shared via the storage layer, so the test exercises the end-to-end
  * integration: throttle → store → upsert → re-read.
  *
- * Covers: cap behavior, lowercase normalisation, window expiry,
+ * Covers: cap behavior, lowercase normalization, window expiry,
  * per-email isolation, and cross-instance counter sharing.
  *
  * Each test uses a fresh `Storage` so the rate_limit_windows rows
@@ -57,7 +57,7 @@ describe("PerEmailThrottle", () => {
     expect(d.count).toBe(4);
   });
 
-  it("normalises email to lowercase so casing doesn't defeat the cap", async () => {
+  it("normalizes email to lowercase so casing doesn't defeat the cap", async () => {
     const storage = await makeStorage();
     const t = new PerEmailThrottle(storage, { limit: 2, windowMs: 60_000 });
     const a = await t.attempt(

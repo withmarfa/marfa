@@ -52,7 +52,7 @@
     },
     "headers": {
       "type": "object",
-      "description": "Selected subset of normalised lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded."
+      "description": "Selected subset of normalized lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded."
     },
     "attachments": {
       "type": "array",

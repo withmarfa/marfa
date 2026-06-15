@@ -442,7 +442,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     }
 
     // tenantId is omitted for single-tenant self-hosts; the dispatch evaluator
-    // normalises both sides to null so the cross-tenant gate doesn't trip spuriously.
+    // normalizes both sides to null so the cross-tenant gate doesn't trip spuriously.
     const cycle = body.cycle ?? {};
     const event: ItemEventWithId = {
       type: body.event_type,

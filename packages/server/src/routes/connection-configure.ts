@@ -306,7 +306,7 @@ interface ConfigurationPayload {
 }
 
 /**
- * Parse the form-encoded picker submission into a normalised payload.
+ * Parse the form-encoded picker submission into a normalized payload.
  * Returns either a `{ ok: true, payload }` or `{ ok: false, error }`
  * where error is a plain-text user-facing string.
  */
