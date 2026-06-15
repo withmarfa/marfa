@@ -122,13 +122,13 @@ export const PASSKEY_JS = `(function () {
     var optsUrl = '/auth/passkey/generate-register-options' + (name ? '?name=' + encodeURIComponent(name) : '');
     var optsRes = await fetch(optsUrl, { credentials: 'include' });
     if (!optsRes.ok) {
-      var msg = 'Could not start passkey enrolment.';
+      var msg = 'Could not start passkey enrollment.';
       try { var body = await optsRes.json(); if (body && body.message) msg = body.message; } catch (e) {}
       throw new Error(msg);
     }
     var optionsJson = await optsRes.json();
     var credential = await navigator.credentials.create({ publicKey: decodeCreationOptions(optionsJson) });
-    if (!credential) throw new Error('Passkey enrolment was cancelled.');
+    if (!credential) throw new Error('Passkey enrollment was cancelled.');
     var verifyRes = await fetch('/auth/passkey/verify-registration', {
       method: 'POST',
       credentials: 'include',
@@ -136,7 +136,7 @@ export const PASSKEY_JS = `(function () {
       body: JSON.stringify({ response: encodeRegistration(credential), name: name }),
     });
     if (!verifyRes.ok) {
-      var verr = 'Passkey enrolment failed.';
+      var verr = 'Passkey enrollment failed.';
       try { var ebody = await verifyRes.json(); if (ebody && ebody.message) verr = ebody.message; } catch (e) {}
       throw new Error(verr);
     }

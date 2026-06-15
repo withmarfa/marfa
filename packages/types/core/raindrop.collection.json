@@ -35,7 +35,7 @@
     },
     "color": {
       "type": "string",
-      "description": "Operator-assigned colour (Raindrop ships free-form CSS strings)."
+      "description": "Operator-assigned color (Raindrop ships free-form CSS strings)."
     },
     "public": {
       "type": "boolean",

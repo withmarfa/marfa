@@ -7,7 +7,7 @@ const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
 
 describe.skipIf(!isPg || !url)("pg CoordinationStore", () => {
-  it("withJobLock serialises concurrent callers on the same name", async () => {
+  it("withJobLock serializes concurrent callers on the same name", async () => {
     // Two separate Storage instances against the same DB simulate two
     // server processes. Each has its own connection pool, so the advisory
     // lock is the only thing keeping them apart.
@@ -25,8 +25,8 @@ describe.skipIf(!isPg || !url)("pg CoordinationStore", () => {
       };
 
       const [resA, resB] = await Promise.all([
-        a.coordination.withJobLock("test-serialise", work),
-        b.coordination.withJobLock("test-serialise", work),
+        a.coordination.withJobLock("test-serialize", work),
+        b.coordination.withJobLock("test-serialize", work),
       ]);
 
       // Exactly one caller got the lock; the other saw a contended lock and

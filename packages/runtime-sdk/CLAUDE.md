@@ -27,7 +27,7 @@ Inside `src/`:
 
 ## Authoring rules
 
-- **Module singleton — both packages externalised.** `@withmarfa/runtime-sdk` MUST be marked external in any bundle that loads integrations alongside it (the server bundle, the per-Integration Workers, the worker-entry script). The handler `REGISTRY` in `handlers.ts` is module-level state — if duplicated across the boundary the dispatch lookup silently misses. The same constraint applies to `@withmarfa/shared` (the type / edge / zod-schema caches). The smoke at `pnpm --filter @withmarfa/server run smoke:worker-entry` is the build-time tripwire.
+- **Module singleton — both packages externalized.** `@withmarfa/runtime-sdk` MUST be marked external in any bundle that loads integrations alongside it (the server bundle, the per-Integration Workers, the worker-entry script). The handler `REGISTRY` in `handlers.ts` is module-level state — if duplicated across the boundary the dispatch lookup silently misses. The same constraint applies to `@withmarfa/shared` (the type / edge / zod-schema caches). The smoke at `pnpm --filter @withmarfa/server run smoke:worker-entry` is the build-time tripwire.
 - **Substrate-agnostic by default.** New surface goes in the root entry unless it genuinely needs Workers types or runtime symbols. If it needs Cloudflare, it lives under `src/cloudflare/`.
 - **No `console.log`.** Handlers emit through `system.activity` (severity-tagged) via the `activity.ts` helpers; the substrate aggregates and persists.
 
@@ -37,4 +37,4 @@ Inside `src/`:
 
 ## Testing
 
-`pnpm test` runs the Vitest suite. Coverage spans handler registration + dispatch (`handlers.test.ts`), cursor + echo-suppression semantics, the connection client's cycle-header stamping, queue-consumer retry / DLQ behaviour, cron resolution, activity-emission shape, and the Cloudflare worker-entry composition (`cloudflare/worker-entry.test.ts`). All tests run under Node — the Workers-specific surfaces are exercised against the `in-memory-storage.ts` adapter rather than Miniflare.
+`pnpm test` runs the Vitest suite. Coverage spans handler registration + dispatch (`handlers.test.ts`), cursor + echo-suppression semantics, the connection client's cycle-header stamping, queue-consumer retry / DLQ behavior, cron resolution, activity-emission shape, and the Cloudflare worker-entry composition (`cloudflare/worker-entry.test.ts`). All tests run under Node — the Workers-specific surfaces are exercised against the `in-memory-storage.ts` adapter rather than Miniflare.

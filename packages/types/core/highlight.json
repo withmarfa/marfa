@@ -14,7 +14,7 @@
     },
     "color": {
       "type": "enum",
-      "description": "Highlight colour",
+      "description": "Highlight color",
       "enum_values": ["yellow", "blue", "green", "pink", "orange", "purple"]
     },
     "locator_type": {

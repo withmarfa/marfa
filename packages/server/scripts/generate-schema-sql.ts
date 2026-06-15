@@ -540,7 +540,7 @@ function buildConstraintGuardSql(
     return buildFkGuard(tableRef, srcCols, refTable);
   }
 
-  // CHECK / EXCLUDE / anything unrecognised — keep the name-based guard
+  // CHECK / EXCLUDE / anything unrecognized — keep the name-based guard
   // as a defensive fallback. Empty schemas today; flag in PR if a future
   // migration introduces either.
   return `SELECT 1 FROM pg_constraint WHERE conname = '${conName}' AND conrelid = '${tableRef}'::regclass`;

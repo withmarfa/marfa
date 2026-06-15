@@ -100,7 +100,7 @@ async function rowExists(itemId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-describe("TrashPurger.runOnce — behavioural", () => {
+describe("TrashPurger.runOnce — behavioral", () => {
   it("deletes trashed items older than the retention window, keeps newer trashed and any non-trashed", async () => {
     const ids = {
       youngTrash: id("aaa1"),
@@ -232,7 +232,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
 // ---------------------------------------------------------------------------
 
 describe("TrashPurger fan-out — per-tenant retention overrides", () => {
-  it("honours per-tenant trash_retention_days, falling back to instance default for tenants without override and the NULL bucket", async () => {
+  it("honors per-tenant trash_retention_days, falling back to instance default for tenants without override and the NULL bucket", async () => {
     if (!ctx.storage.tenants) {
       // Should always be wired in current shape but guarding defensively.
       throw new Error("tenants store missing — test pre-condition violated");

@@ -93,7 +93,7 @@ manifest method declares the body schema the handler decodes against
 
 ## Idempotency
 
-Two walls of defence:
+Two walls of defense:
 
 1. **Server-side `connection.runtime.idempotency`** — keyed on the
    `external_delivery_id` surfaced by the verifier (= the

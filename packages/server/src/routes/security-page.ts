@@ -101,7 +101,7 @@ function scopeSummary(scopes: readonly string[]): string {
 }
 
 /** Trim a UA string to a hint. Real device parsing is a yak-shave;
- *  the user only needs enough to recognise their devices. */
+ *  the user only needs enough to recognize their devices. */
 function uaHint(ua: string | null): string {
   if (!ua) return "Unknown device";
   // Pull a friendly shape: prefer the OS / device hint over the

@@ -125,7 +125,7 @@ async function createHostedContext(): Promise<HostedContext> {
   };
 }
 
-// ----- Keys-mode context (default): validates fallback behaviour ---------
+// ----- Keys-mode context (default): validates fallback behavior ---------
 let ctx: TestContext;
 
 beforeAll(async () => {

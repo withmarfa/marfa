@@ -44,7 +44,7 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 // Core and system types are global — shipped with @withmarfa/types and shared
 // by every tenant. This map is read-only after construction. System types are
 // tracked separately via SYSTEM_TYPE_IDS so consumers (search exclude,
-// lifecycle override) can recognise them without re-classifying namespaces.
+// lifecycle override) can recognize them without re-classifying namespaces.
 const _coreRegistry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
 );
@@ -469,7 +469,7 @@ const noNullByte = (schema: z.ZodString): z.ZodType =>
     message: "Must not contain a null byte (U+0000)",
   });
 
-// Defence-in-depth caps applied per-field, independent of the server's
+// Defense-in-depth caps applied per-field, independent of the server's
 // global request-body size limit. They bound a single field even when the
 // overall body is under the request cap (e.g. one enormous string in an
 // otherwise small payload). Generous on purpose — they trip on abuse, not

@@ -996,7 +996,7 @@ export function itemRoutes(storage: Storage) {
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
         // with the existing row's id. A 200 response carrying a different id
-        // than the body would be a confusing surprise; signalling the conflict
+        // than the body would be a confusing surprise; signaling the conflict
         // gives the caller a clear path to reconcile.
         if (body.id !== undefined && body.id !== existing.id) {
           throw new MarfaError(

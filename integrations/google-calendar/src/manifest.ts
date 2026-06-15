@@ -36,7 +36,7 @@
  *   - `https://www.googleapis.com/auth/calendar.readonly` — list user
  *     calendars at install for the picker; read events.
  *   - `https://www.googleapis.com/auth/calendar.events` — create,
- *     update, delete events on calendars the user has authorised.
+ *     update, delete events on calendars the user has authorized.
  * No broader `calendar` (full calendar management) scope is requested.
  * See `RECOMMENDED_OAUTH_SCOPES` below for the canonical list consumed
  * by the install flow.
@@ -104,7 +104,7 @@ export const CALENDAR_API_BASE = "/calendar/v3";
  *     (calendarList.list) so the picker has something to render, and
  *     read events on each selected calendar.
  *   - `calendar.events` — create, update, delete events on the
- *     calendars the user has authorised.
+ *     calendars the user has authorized.
  *
  * Consumed by:
  *   - The OAuth provider credential (`oauth_default_scope` field on

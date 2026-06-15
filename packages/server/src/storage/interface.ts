@@ -92,12 +92,12 @@ export function parseSortField(
 
 export interface ItemFilters {
   tenantId?: string;
-  /** Opt-in widening of the tenant filter for catalogue surfaces. When
+  /** Opt-in widening of the tenant filter for catalog surfaces. When
    *  `tenantId` is set AND this flag is true, the WHERE clause becomes
    *  `(tenant_id = $tenantId OR tenant_id IS NULL)` — so platform-scoped
    *  rows (written by `is_platform: true` credentials with `tenant_id` NULL)
    *  surface to in-tenant callers alongside their own rows. Used by the
-   *  Integrations catalogue list (`GET /integrations`) so registered
+   *  Integrations catalog list (`GET /integrations`) so registered
    *  manifests, which carry `tenant_id IS NULL` by design, are visible to
    *  any authenticated tenant member. Default off — generic list reads
    *  must NOT pick this up, or null-tenant rows from any source would
@@ -708,7 +708,7 @@ export interface ConnectionOAuthTokenStore {
   /**
    * Upsert the token for a connection. Existing rows for the same
    * connection_id are overwritten in place — the table is unique on
-   * connection_id so re-authorisation collapses to a single row.
+   * connection_id so re-authorization collapses to a single row.
    */
   upsert(input: {
     connection_id: string;
@@ -1139,7 +1139,7 @@ export interface OauthProviderStore {
   ): Promise<readonly string[] | undefined>;
   /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
    *  row keyed by the hashed token output of `storeTokens.hash` (which is
-   *  `hashApiKey(token, salt)`), or null if the token isn't recognised or
+   *  `hashApiKey(token, salt)`), or null if the token isn't recognized or
    *  has expired. Opaque tokens carry no embedded claims, so the row is
    *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
@@ -1304,7 +1304,7 @@ export interface AuditStore {
   /**
    * Hard-delete rows whose `timestamp` is older than the retention window.
    * The optional `tenantId` filter lets the cleanup job fan out per-tenant,
-   * honouring per-tenant retention overrides:
+   * honoring per-tenant retention overrides:
    *
    * - `undefined` — every row older than the cutoff (unscoped sweep).
    * - `string` — only rows where `tenant_id` matches.
@@ -1338,7 +1338,7 @@ export interface AuditStore {
 export interface PersistedEvent {
   /** i64 event-log id. Carried as `bigint` (not `number`) so values above
    *  Number.MAX_SAFE_INTEGER round-trip without truncation. The SSE wire
-   *  serialises via `String(id)` and parses via `BigInt(Last-Event-ID)`. */
+   *  serializes via `String(id)` and parses via `BigInt(Last-Event-ID)`. */
   id: bigint;
   event_type: string;
   /** Populated on item events; null on edge events — the column is
@@ -1638,7 +1638,7 @@ export interface AuthSessionStore {
  * the auth island — it doesn't sit cleanly inside one sub-store. The
  * cascade re-checks `deletion_state === 'pending_deletion'` and
  * `pending_deletion_at < cutoffIso` inside its transaction (with `FOR
- * UPDATE` on PG to serialise against the cancel route's
+ * UPDATE` on PG to serialize against the cancel route's
  * `cancelPendingDeletion` UPDATE), and short-circuits if either predicate
  * is no longer true.
  */
@@ -1720,7 +1720,7 @@ export interface RateLimitStore {
    * post-increment count and the row's current `expires_at`.
    *
    * Callers compare `count` against their cap and reject when over.
-   * The single-row UPDATE serialises concurrent writers via Postgres
+   * The single-row UPDATE serializes concurrent writers via Postgres
    * row-level locking (and via SQLite's BEGIN IMMEDIATE on libsql), so
    * two instances racing the same key cannot both observe `count == 1`
    * inside one window.

@@ -616,7 +616,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       );
     }
 
-    // Raw ArrayBuffer — framework re-serialisation would invalidate the HMAC. Same buffer feeds JSON decoding.
+    // Raw ArrayBuffer — framework re-serialization would invalidate the HMAC. Same buffer feeds JSON decoding.
     const rawBody = await c.req.raw.arrayBuffer();
 
     let secret: string;

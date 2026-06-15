@@ -9,7 +9,7 @@
  *
  * Per dispatch:
  *   1. take coordination lock `connection-dispatch:<connection_id>` —
- *      serialises one execution per Connection at a time, matching the
+ *      serializes one execution per Connection at a time, matching the
  *      single-writer guarantee Cloudflare DOs give for free.
  *   2. mint a runtime credential via the credentials short-circuit (no
  *      HTTP round-trip; the SDK still calls `refreshCredential` per
@@ -62,7 +62,7 @@ export interface SupervisorConfig {
    *  `dispatchForTest` to drive messages without booting the queue. */
   boss?: PgBoss | null;
   /** Worker concurrency hint for pg-boss. Defaults to a small value;
-   *  per-Connection serialisation is enforced via the advisory lock
+   *  per-Connection serialization is enforced via the advisory lock
    *  regardless. */
   workerBatchSize?: number;
 }

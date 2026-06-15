@@ -488,7 +488,7 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
  * ceiling on what an app can be granted, not an automatic full-access pass
  * for every app they sign into. Role gates (`requireTenantAdmin` /
  * `requireAdmin`) still consult the projected role regardless of this flag —
- * only the data-plane permission-map checks honour it.
+ * only the data-plane permission-map checks honor it.
  */
 function roleBypassesPermissionMaps(key: ApiKey): boolean {
   if (key.scope_enforced) return false;

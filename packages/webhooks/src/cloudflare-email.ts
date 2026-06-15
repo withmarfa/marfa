@@ -21,7 +21,7 @@
  * Verification is mechanically identical to the generic `hmac-sha256`
  * adapter — same algorithm, same headers. The split exists for
  * manifest-time clarity: a subscription declaring
- * `verification_method: "cloudflare-email"` is signalling "I receive
+ * `verification_method: "cloudflare-email"` is signaling "I receive
  * the email JSON envelope shape from a CF Email Worker", which is the
  * contract integration handlers parse against. The wire format on the
  * verification path is unchanged, so the adapter delegates.

@@ -19,7 +19,7 @@ import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
  *   XSS, absent otherwise.
  *
  * - Polish-pass shape: title + lede only (no avatar / no eyebrow),
- *   sections rendered as plain labelled groups, toggle-switch
+ *   sections rendered as plain labeled groups, toggle-switch
  *   markup wrapping a real checkbox, primary "Allow access" button.
  */
 

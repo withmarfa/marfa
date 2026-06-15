@@ -101,7 +101,7 @@ export async function loadInTreeRegistrations(options: {
     if (!validated.manifest.runtime_compatibility.includes("local")) {
       // Hosted-only integration that happens to have a local.ts —
       // refuse to register it on the local substrate so the manifest's
-      // declared compatibility is honoured.
+      // declared compatibility is honored.
       console.warn(
         `[local-runtime] ${dir} declares runtime_compatibility=${JSON.stringify(
           validated.manifest.runtime_compatibility,

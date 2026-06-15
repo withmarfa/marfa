@@ -15,7 +15,7 @@
  *   }
  *
  * Concurrency: the supervisor's PG advisory lock on `hashtext(connection_id)`
- * serialises all writes against a single Connection, so the read /
+ * serializes all writes against a single Connection, so the read /
  * mutate / write cycle below is race-free with respect to other
  * dispatches.
  */

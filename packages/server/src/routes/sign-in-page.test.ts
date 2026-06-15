@@ -499,14 +499,14 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("error=missing_field");
   });
 
-  it("OAuth-init URL round-trip: GET synthesises return_to, POST honours it (bug fix)", async () => {
+  it("OAuth-init URL round-trip: GET synthesises return_to, POST honors it (bug fix)", async () => {
     // The bug this fix addresses: when @better-auth/oauth-provider's
     // `loginPage` redirects an unauthenticated user from
     // /auth/oauth2/authorize to /auth/sign-in, it appends OAuth params
     // directly (not wrapped in return_to). Pre-fix the form lost them
     // on submit and the success redirect landed on `/`. Post-fix the
     // GET handler synthesises return_to=/auth/authorize?<params>, the
-    // hidden field carries it forward, POST honours it, user lands at
+    // hidden field carries it forward, POST honors it, user lands at
     // the consent screen as RFC 6749 §3.1 prescribes.
     ctx = await createTestContext({ authAllowSignup: true });
     await request(ctx.app, "POST", "/auth/sign-up/email", {
@@ -579,7 +579,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
-  it("rejects an off-origin return_to (open-redirect guard, defence in depth)", async () => {
+  it("rejects an off-origin return_to (open-redirect guard, defense in depth)", async () => {
     // validateReturnTo runs on the POST side too, so even if some
     // upstream slipped an absolute URL into the hidden field, the
     // wrapper falls back to "/" instead of redirecting off-origin.

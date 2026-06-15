@@ -89,7 +89,7 @@ The harness asserts:
   collection + raindrops tagged `marfa-validation`. Every created id
   is recorded in a `DESTRUCTIVE_OK` allowlist (`Set<string>`).
 - **DELETE gated** — every DELETE checks the id against the allowlist;
-  any unrecognised id throws and aborts the run.
+  any unrecognized id throws and aborts the run.
 - **Read-only on existing data** — no PUT / PATCH / DELETE against
   raindrops or collections the harness didn't create.
 

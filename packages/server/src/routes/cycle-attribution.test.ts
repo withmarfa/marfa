@@ -89,7 +89,7 @@ describe("cycle metadata attribution", () => {
     // request. `cycleMiddleware`'s api-key fallback returns null
     // (test-admin source doesn't match `oauth:`/runtime-credential
     // shape), so the resulting publish is `{ originatingConnectionId:
-    // null, hopCount: 0 }` — which `passesHopBudget` recognises as the
+    // null, hopCount: 0 }` — which `passesHopBudget` recognizes as the
     // bypass shape.
     const uniqueTitle = `cycle-human-${Math.random().toString(36).slice(2, 8)}`;
     const eventP = nextEventMatching(
@@ -109,7 +109,7 @@ describe("cycle metadata attribution", () => {
 
     const event = await eventP;
     expect(event).not.toBeNull();
-    // Human sentinel: `passesHopBudget` recognises `originatingConnectionId
+    // Human sentinel: `passesHopBudget` recognizes `originatingConnectionId
     // === null` as the chain-head bypass. The emitted event carries the
     // ALS-resolved value (null) verbatim.
     expect(event?.originatingConnectionId ?? null).toBeNull();

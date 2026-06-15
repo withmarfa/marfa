@@ -60,7 +60,7 @@ interface ConsentRouteDeps {
   /**
    * Operator-allowed origins (`CORS_ORIGINS`). Combined with the origin of
    * `authBaseUrl` to form the allowlist the consent decision handler checks
-   * the request `Origin` / `Referer` against — independent defence beneath
+   * the request `Origin` / `Referer` against — independent defense beneath
    * SameSite=Lax + the downstream better-auth Origin check.
    */
   corsOrigins: readonly string[];
@@ -245,7 +245,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text("Auth not configured on this instance", 503);
     }
 
-    // Defence-in-depth CSRF guard: reject a POST whose `Origin` (or, absent
+    // Defense-in-depth CSRF guard: reject a POST whose `Origin` (or, absent
     // that, `Referer`) is present but not in the allowlist. SameSite=Lax and
     // the downstream better-auth Origin check already cover this in normal
     // operation; this is an independent fence the consent handler owns. A
@@ -405,7 +405,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
  * `routes/auth-pages.ts` does for the device-flow path. Emits
  * `auth.grant.created` audit row in both branches (creation + re-consent).
  *
- * Re-consent behaviour: if a projection already exists for (tenant,
+ * Re-consent behavior: if a projection already exists for (tenant,
  * client, user), we update its `scopes` + `granted_at` in place rather
  * than creating a second row. The `audit.grant.created` row still emits
  * (a re-consent IS a grant event), with the existing `grant_item_id`
@@ -622,7 +622,7 @@ const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
  * one line each.
  *
  * Missing entries fall back to the type registry's `description` —
- * which is correct behaviour for custom types registered at runtime
+ * which is correct behavior for custom types registered at runtime
  * via `POST /types`, where the operator controls the copy. For core
  * + system types every entry is curated below so the registry copy
  * never reaches the screen.
@@ -637,7 +637,7 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "core.message": "Messages and conversations.",
 
   // Entities
-  "core.entity": "Organisations and other entities.",
+  "core.entity": "Organizations and other entities.",
   "core.entity.person": "People in your contacts.",
   "core.entity.place": "Places and venues.",
 

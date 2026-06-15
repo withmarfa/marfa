@@ -10,9 +10,9 @@
  * Per-delivery flow:
  *   1. Decode the JSON envelope produced by the in-tree Email
  *      Worker (`email-worker/src/index.ts`).
- *   2. Defence-in-depth idempotency — check the Message-ID against
+ *   2. Defense-in-depth idempotency — check the Message-ID against
  *      the bounded ring on the cursor store. The server's own
- *      `connection.runtime.idempotency` map is the primary defence;
+ *      `connection.runtime.idempotency` map is the primary defense;
  *      this is the second wall, mirroring github-webhooks.
  *   3. Build a `withmarfa.captured_email` item:
  *      - `source_id = Message-ID` (or the harness-supplied delivery
@@ -20,7 +20,7 @@
  *        synthesised at relay time)
  *      - `body` mirrors `text_body` so `core.note.body` is satisfied
  *        for cross-app readers.
- *   4. Emit a single `system.activity` summarising the outcome.
+ *   4. Emit a single `system.activity` summarizing the outcome.
  */
 import {
   registerWebhookHandler,

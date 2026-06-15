@@ -78,7 +78,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers a custom edge type with its cardinality, cascade behaviour, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -133,7 +133,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behaviour, and source/target type constraints.",
+    "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

@@ -11,11 +11,11 @@ export default defineConfig({
 
     // Generous default timeouts for PG tests: under parallel file
     // execution, CREATE DATABASE TEMPLATE / DROP DATABASE WITH (FORCE)
-    // serialise briefly per template inside PG and can stack to a few
+    // serialize briefly per template inside PG and can stack to a few
     // seconds when many workers spin up + tear down at once. 20s is
     // plenty for any test body + setup; a real hang still surfaces fast.
     // `hookTimeout` is larger because per-file afterAll runs DROP
-    // DATABASE which serialises against PG-cluster-wide admin traffic
+    // DATABASE which serializes against PG-cluster-wide admin traffic
     // from every other file's per-test clone-and-drop traffic.
     testTimeout: 20_000,
     hookTimeout: 60_000,

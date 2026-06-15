@@ -10,7 +10,7 @@ import type { AppEnv } from "../middleware/auth.js";
  * rendered page; OWASP recommends `no-store` on any page that surfaces
  * session-bound or post-authn content.
  *
- * `Pragma: no-cache` is included for HTTP/1.0 caches that don't honour
+ * `Pragma: no-cache` is included for HTTP/1.0 caches that don't honor
  * Cache-Control. `private` ensures intermediate caches don't share the
  * response across users.
  */

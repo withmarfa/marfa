@@ -10,7 +10,7 @@ import { isValidTypeIdentifier } from "./validation.js";
  * for documentation and external-consumer use only — it is NOT the source
  * of truth. A drift test in `integration-manifest.test.ts` regenerates the
  * JSON Schema in-memory and asserts byte-equality with the committed file
- * so the artefact never silently desynchronises from the Zod schema.
+ * so the artefact never silently desynchronizes from the Zod schema.
  *
  * `manifest_schema_version` evolution policy.
  *
@@ -21,7 +21,7 @@ import { isValidTypeIdentifier } from "./validation.js";
  *     altered. Server rejects manifests whose major doesn't match a
  *     supported range.
  *   - **minor** — additive optional field, additional enum value, or
- *     newly-recognised verification-method shape. Older servers ignore
+ *     newly-recognized verification-method shape. Older servers ignore
  *     unknown additive fields; newer ones consume them.
  *   - **patch** — clarification, doc-only change, more permissive
  *     validator on an already-defined field. Forward- and

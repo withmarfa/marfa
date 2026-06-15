@@ -255,7 +255,7 @@ describe("task-auto-archive handlers", () => {
     });
   });
 
-  it("stops early on the first non-due task (ascending-sort optimisation)", async () => {
+  it("stops early on the first non-due task (ascending-sort optimization)", async () => {
     const now = 1_700_000_000_000;
     // 200d, 100d are due; 5d is not. Handler should stop at 5d.
     const tasks = [
@@ -371,7 +371,7 @@ describe("task-auto-archive handlers", () => {
     //
     // The sweep is collect-then-act: all listItems calls finish before
     // any transitions happen. This test stubs listItems with
-    // offset-based behaviour and asserts every due row is still archived.
+    // offset-based behavior and asserts every due row is still archived.
     const now = 1_700_000_000_000;
     const tasks = [
       task("t_a", 100, now),

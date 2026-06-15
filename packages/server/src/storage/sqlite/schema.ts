@@ -417,7 +417,7 @@ export const connectionOauthTokens = sqliteTable(
     id: text("id").primaryKey(),
     // FK shape (no DB-level FK, matching project convention) to the
     // `system.connection` item id. Unique — at most one stored token per
-    // connection. Re-authorisation overwrites the row in place.
+    // connection. Re-authorization overwrites the row in place.
     connection_id: text("connection_id").notNull(),
     tenant_id: text("tenant_id"),
     // AES-256-GCM(plaintext) hex-encoded; see crypto/secret-encryption.ts.
@@ -428,7 +428,7 @@ export const connectionOauthTokens = sqliteTable(
     expires_at: text("expires_at").notNull(),
     scopes: text("scopes").notNull().default("[]"),
     // SHA-256 hex of the most recent rotated-out refresh token. Set when
-    // rotation occurs; null on initial authorisation. Forensic only —
+    // rotation occurs; null on initial authorization. Forensic only —
     // active enforcement of replay is the upstream's `invalid_grant`.
     previous_refresh_hash: text("previous_refresh_hash"),
     created_at: text("created_at").notNull(),
@@ -620,7 +620,7 @@ export const eventLog = sqliteTable(
 // Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds) so
 // the Drizzle adapter — which forwards JS Date objects — can round-trip without
 // manual ISO conversion. Deviates from marfa's TEXT-ISO convention but stays
-// localised to the auth_* island.
+// localized to the auth_* island.
 // ---------------------------------------------------------------------------
 export const auth_user = sqliteTable(
   "auth_user",
@@ -734,7 +734,7 @@ export const auth_oauth_client = sqliteTable(
     skipConsent: integer("skip_consent", { mode: "boolean" }),
     enableEndSession: integer("enable_end_session", { mode: "boolean" }),
     subjectType: text("subject_type"),
-    /** JSON-encoded string[] — Better Auth adapter serialises */
+    /** JSON-encoded string[] — Better Auth adapter serializes */
     scopes: text("scopes"),
     userId: text("user_id").references(() => auth_user.id, {
       onDelete: "cascade",

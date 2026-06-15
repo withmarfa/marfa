@@ -8,7 +8,7 @@ import { __resetDiscoveryCache } from "./discovery.js";
  * Unit tests for startDeviceFlow. Uses a mock fetch to drive the flow
  * deterministically without a running server. The server-side suite at
  * packages/server/src/routes/device-grant.test.ts covers the wire
- * behaviour against a real Hono app.
+ * behavior against a real Hono app.
  */
 
 interface FetchCall {

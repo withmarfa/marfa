@@ -830,7 +830,7 @@ function parseDriveSize(raw: string | undefined): number | null {
  *      `download_failed` and emit a per-file `info` row. The next
  *      schedule run will retry naturally — `info` rather than
  *      `action_required` because transient failures don't require
- *      operator intervention; we follow the neighbour-integration
+ *      operator intervention; we follow the neighbor-integration
  *      convention (rss-watcher, task-auto-archive,
  *      google-calendar) of reserving `action_required` for
  *      operator-actionable failures (reauth, credential rejection).

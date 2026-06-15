@@ -405,7 +405,7 @@ describe("bootstrap sentinel", () => {
   // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by
   // the production server boot path under `DB_DIALECT=pg` and by the
   // SCHEMA_SQL diff itself; running these on PG would require parallel
-  // PG-flavoured queries for marginal additional coverage.
+  // PG-flavored queries for marginal additional coverage.
   const SKIP_SQLITE_ONLY = (process.env.DB_DIALECT ?? "sqlite") !== "sqlite";
 
   it.skipIf(SKIP_SQLITE_ONLY)(

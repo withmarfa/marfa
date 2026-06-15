@@ -1,5 +1,5 @@
 /**
- * Direct tests of the install pipeline's compensating-write behaviour.
+ * Direct tests of the install pipeline's compensating-write behavior.
  *
  * The HTTP-level happy path is covered by routes/integrations.test.ts.
  * These tests exercise rollback paths that are awkward to trigger

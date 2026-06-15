@@ -33,7 +33,7 @@ export interface EdgeProposal {
  *    as part of the graph.
  *
  * Throws `MarfaError` on the first failure encountered in input order, matching
- * the sequential-validation behaviour the single-edge entry point exposed.
+ * the sequential-validation behavior the single-edge entry point exposed.
  * Returns the resolved edge-type schemas in input order.
  *
  * Runs inside the caller's transaction so a failed check rolls back the write.
@@ -172,7 +172,7 @@ export async function assertEdgesCanBeCreated(
 
   // In-batch accumulators — each proposal that passes validation counts
   // toward the next proposal's cardinality check, matching the old
-  // sequential "create, next check sees it" behaviour.
+  // sequential "create, next check sees it" behavior.
   const seen = new Set<string>();
   const inBatchSourceCount = new Map<string, number>();
   const inBatchTargetCount = new Map<string, number>();

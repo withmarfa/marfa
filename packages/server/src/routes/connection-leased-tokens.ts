@@ -53,7 +53,7 @@ function hashLease(raw: string): string {
  *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
  *     auth middleware for an OAuth `marfa_at_*` access token. The token
  *     was minted via the `/auth/authorize` consent flow and the
- *     consenting user authorised the connection.
+ *     consenting user authorized the connection.
  *   - `integration:<connectionId>` — the runtime credential the
  *     install pipeline mints for the per-Connection Worker (see
  *     `connections/install-pipeline.ts`).
@@ -100,7 +100,7 @@ async function requireConnectionAccess(
   const key = requireAuth(c);
   const isAdmin = key.role === "admin" || key.is_platform;
   const isConnector = isConnectionScopedSource(key.source, connectionId);
-  // Defence-in-depth: any non-admin / non-connector credential MUST carry
+  // Defense-in-depth: any non-admin / non-connector credential MUST carry
   // a resolved `tenant_id`. Without it, the storage call sites below
   // treat `undefined` tenantId as cross-tenant. Refuse here so a future
   // caller that forgets to stamp tenant_id can't quietly bypass scoping
@@ -342,7 +342,7 @@ const introspectLeaseRoute = createRoute({
   tags: ["Connection Leased Tokens"],
   summary: "Introspect a leased token",
   description:
-    "Introspects a lease token so an external service can verify it before honouring a callback. Tokens that are revoked, expired, or unrecognised return `active: false` with no further metadata.",
+    "Introspects a lease token so an external service can verify it before honoring a callback. Tokens that are revoked, expired, or unrecognized return `active: false` with no further metadata.",
   request: {
     body: {
       content: {

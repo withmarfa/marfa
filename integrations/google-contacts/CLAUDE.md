@@ -28,7 +28,7 @@ v1.
 
 ## People API specifics
 
-Three operationally significant points the handler has to honour:
+Three operationally significant points the handler has to honor:
 
 - **`syncToken` for incremental.** `people.connections.list?syncToken=...`
   returns mutations only. A `410` response means the token expired
@@ -36,7 +36,7 @@ Three operationally significant points the handler has to honour:
   with a full list on the next sweep.
 - **`personFields` mask is mandatory on every read.** Pinned in the
   manifest as `PERSON_FIELDS` — names, nicknames, emails, phones,
-  addresses, organisations, biographies, photos, birthdays, metadata.
+  addresses, organizations, biographies, photos, birthdays, metadata.
 - **etag-based optimistic concurrency on writes.** Every update PATCH
   carries the etag the handler last saw; stale etag returns 409, the
   handler refetches and reapplies once.

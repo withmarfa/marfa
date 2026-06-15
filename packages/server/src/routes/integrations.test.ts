@@ -516,18 +516,18 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Catalogue visibility for tenant-scoped member tokens.
+// Catalog visibility for tenant-scoped member tokens.
 //
 // Manifests register under platform credentials (is_platform: true), which
 // carry tenant_id: null. The default tenant-equality filter on items.list
 // hides them from any in-tenant caller — turning the marketplace surface
-// invisible to every real user. The catalogue list opts into
+// invisible to every real user. The catalog list opts into
 // `includePlatformScoped: true` so platform-scoped rows surface alongside
 // the caller's own; per-tenant integration rows must stay isolated, and the
 // generic /items route must stay strictly equality-fenced.
 // ---------------------------------------------------------------------------
 
-describe("GET /integrations — catalogue visibility", () => {
+describe("GET /integrations — catalog visibility", () => {
   async function mintTenantKey(
     tenantId: string,
     typePermissions: Record<string, "read" | "write" | "none"> = {},
@@ -579,10 +579,10 @@ describe("GET /integrations — catalogue visibility", () => {
     expect(match?.manifest_name).toBe("acme.member-visibility");
   });
 
-  it("preserves existing behaviour for member tokens without the read scope", async () => {
-    // The dedicated catalogue list does not gate on type_permissions
+  it("preserves existing behavior for member tokens without the read scope", async () => {
+    // The dedicated catalog list does not gate on type_permissions
     // (the route just calls requireAuth). This test pins that pre-existing
-    // behaviour: a member token with no system.integration grant still
+    // behavior: a member token with no system.integration grant still
     // resolves the endpoint at status 200 — no new rejection introduced.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
@@ -603,7 +603,7 @@ describe("GET /integrations — catalogue visibility", () => {
   });
 
   it("platform credentials still see every manifest", async () => {
-    // Existing platform-admin behaviour preserved. Sanity check that the
+    // Existing platform-admin behavior preserved. Sanity check that the
     // widening flag doesn't accidentally constrain admin reads.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
@@ -624,10 +624,10 @@ describe("GET /integrations — catalogue visibility", () => {
   });
 
   it("does not leak a tenant-scoped manifest to another tenant's member", async () => {
-    // Defence-in-depth — if a stray system.integration row carries a real
+    // Defense-in-depth — if a stray system.integration row carries a real
     // tenant_id (whether seeded by accident, by a future code path, or
     // copied during data migration), it must NOT cross the tenant
-    // boundary just because the catalogue endpoint widens to include
+    // boundary just because the catalog endpoint widens to include
     // platform-scoped rows.
     if (!ctx.storage.tenants) return;
     const tenantA = await ctx.storage.tenants.create("tenant-iso-A");
@@ -653,12 +653,12 @@ describe("GET /integrations — catalogue visibility", () => {
       tenantA.id,
     );
 
-    // A platform-scoped manifest also lives in the catalogue so we can
+    // A platform-scoped manifest also lives in the catalog so we can
     // assert the member in tenant B still sees null-tenant rows.
     const platformManifest = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
-        manifest: baseManifest({ name: "acme.platform-catalogue-iso" }),
+        manifest: baseManifest({ name: "acme.platform-catalog-iso" }),
       },
     });
     const platformBody = (await platformManifest.json()) as RegisterResponse;
@@ -678,12 +678,12 @@ describe("GET /integrations — catalogue visibility", () => {
       body.data.some((d) => d.manifest_name === "acme.tenant-a-private"),
     ).toBe(false);
 
-    // ...but the platform-scoped catalogue row IS visible
+    // ...but the platform-scoped catalog row IS visible
     expect(body.data.some((d) => d.id === platformBody.id)).toBe(true);
   });
 
   it("does not widen the generic /items route — system.connection stays tenant-isolated", async () => {
-    // Out-of-scope guard. The fix is local to the catalogue endpoint;
+    // Out-of-scope guard. The fix is local to the catalog endpoint;
     // a stray system.connection row with tenant_id IS NULL must remain
     // invisible to a member token hitting the generic /items route.
     if (!ctx.storage.tenants) return;
@@ -729,7 +729,7 @@ describe("GET /integrations — catalogue visibility", () => {
 // ---------------------------------------------------------------------------
 // Platform-scoped get-by-id + install for tenant member callers.
 //
-// The catalogue list endpoint opts into `includePlatformScoped: true` so
+// The catalog list endpoint opts into `includePlatformScoped: true` so
 // platform-scoped manifests surface to in-tenant callers. The single-id
 // `get` calls (`GET /integrations/:id`, `GET/POST /integrations/:id/install`)
 // and the admin install (`POST /connections/install`) thread the same
@@ -883,10 +883,10 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
   });
 
   it("widening does not leak a tenant-scoped system.integration into another tenant via get-by-id", async () => {
-    // Defence-in-depth — if a stray system.integration row carries a
+    // Defense-in-depth — if a stray system.integration row carries a
     // real tenant_id (seeded by accident, or via a future tenant-bound
     // register path), it must not be reachable by id from another
-    // tenant via the catalogue endpoint.
+    // tenant via the catalog endpoint.
     if (!ctx.storage.tenants) return;
     const tenantA = await ctx.storage.tenants.create("t234-iso-A");
     const tenantB = await ctx.storage.tenants.create("t234-iso-B");
@@ -923,7 +923,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 // ---------------------------------------------------------------------------
 // Browser session auth on /integrations/:id/install
 //
-// Prior behaviour: install routes only accepted Bearer tokens. A browser
+// Prior behavior: install routes only accepted Bearer tokens. A browser
 // navigation (cookie present, no Authorization header) hit `requireAuth`
 // and 401'd, even though the routes are documented as a browser consent
 // flow. Fix: try the BetterAuth session cookie first, fall back to Bearer.
@@ -1053,7 +1053,7 @@ describe("/integrations/:id/install — browser session auth", () => {
 
     // Confirm the connection landed in the session user's tenant scope —
     // the audit row's key_id should carry the synthetic `auth_user:<id>`
-    // marker so operators can recognise session-backed installs.
+    // marker so operators can recognize session-backed installs.
     const audit = await sessionCtx.storage.audit.list({
       action: "integration.install",
       limit: 50,

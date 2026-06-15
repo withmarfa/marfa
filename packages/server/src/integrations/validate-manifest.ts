@@ -18,7 +18,7 @@ export type ValidateManifestResult =
  * Pure-function validator for an Integration manifest input. Wraps
  * `IntegrationManifestSchema.safeParse` and adds a manifest-schema-version
  * range check so the server can reject manifests authored against a
- * future major (which it cannot honour) with a clear error.
+ * future major (which it cannot honor) with a clear error.
  *
  * The inbound webhook subscription handler consumes the validated
  * manifest's `webhook_verification` field to dispatch to the right

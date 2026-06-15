@@ -1,7 +1,7 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
+  "description": "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   "version": 1,
   "fields": {
     "kind": {

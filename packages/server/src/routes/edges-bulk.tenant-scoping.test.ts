@@ -10,7 +10,7 @@
  *     so a triple that matches another tenant's edge is invisible — A's
  *     "upsert" of B's triple creates a fresh edge in A rather than mutating
  *     B's edge;
- *   - `updateProperties` is tenant-fenced as defence-in-depth;
+ *   - `updateProperties` is tenant-fenced as defense-in-depth;
  *   - the create path (`assertEdgeCanBeCreated`) already fences source /
  *     target items to the tenant, so A cannot wire B's items together.
  *

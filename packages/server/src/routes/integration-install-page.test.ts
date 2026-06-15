@@ -109,12 +109,12 @@ describe("renderInstallConsentScreen — data mapping", () => {
 describe("renderInstallConsentScreen — neutral tile", () => {
   const html = renderInstallConsentScreen(BASE_PARAMS);
 
-  it("renders a neutral glyph tile with no brand colour", () => {
+  it("renders a neutral glyph tile with no brand color", () => {
     // Tile fill is the neutral surface token, glyph is the first letter.
     expect(html).toContain(`class="app__logo"`);
     expect(html).toContain("background: var(--surface-2)");
     expect(html).toMatch(/app__logo[^>]*>G</);
-    // No brand-colour hex should be baked into the tile.
+    // No brand-color hex should be baked into the tile.
     expect(html).not.toMatch(
       /app__logo\s*\{[^}]*background:\s*#(?!fff|f5f5f5)/i,
     );

@@ -223,7 +223,7 @@ export function createAccountDeletionGate(
     // Constructed via `new Response(...)` rather than `c.json(...)`
     // because Hono defers `statusText` to the runtime default
     // (`"Unauthorized"` in Node), while better-auth's
-    // `APIError.from("UNAUTHORIZED", ...)` serialises to
+    // `APIError.from("UNAUTHORIZED", ...)` serializes to
     // `statusText: "UNAUTHORIZED"`. Matching upstream verbatim.
     //
     // Known residual leak: response timing differs (the guard does a

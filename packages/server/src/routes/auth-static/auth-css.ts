@@ -7,12 +7,12 @@
  *
  * Single source of truth for every `/auth/*` page (sign-in, sign-up,
  * verify-email, forgot/reset password, OAuth consent, device flow, the
- * API-keys console, the security page, passkey enrolment). Page renderers
+ * API-keys console, the security page, passkey enrollment). Page renderers
  * reference these classes by name and never inline styles.
  *
  * The design is a calm, monochrome "Luma" shadcn surface: a white card on
- * a soft grey canvas, soft-filled pill inputs, near-black primary buttons,
- * a quiet ghost secondary. Colours are the shadcn "neutral" ramp. Tokens
+ * a soft gray canvas, soft-filled pill inputs, near-black primary buttons,
+ * a quiet ghost secondary. Colors are the shadcn "neutral" ramp. Tokens
  * are CSS custom properties so a self-host operator can re-theme without
  * forking, and dark mode follows the device by flipping the same tokens.
  */

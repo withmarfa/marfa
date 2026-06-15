@@ -20,9 +20,9 @@ export async function createConnection(
      *  Tests against a database cloned from a pre-built template
      *  (`createPgTestStorage`) already have the schema applied; running
      *  SCHEMA_SQL again is idempotent but takes hundreds of milliseconds
-     *  per storage instance and serialises across two storages on the
+     *  per storage instance and serializes across two storages on the
      *  same DB via the advisory lock — meaningful overhead at scale.
-     *  Defaults to false (production behaviour preserved). */
+     *  Defaults to false (production behavior preserved). */
     skipBootstrap?: boolean;
   },
 ): Promise<{

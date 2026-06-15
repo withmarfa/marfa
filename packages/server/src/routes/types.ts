@@ -116,7 +116,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+    "Returns every type registered in the tenant — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

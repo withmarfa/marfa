@@ -82,7 +82,7 @@ export function authAccountRoutes(
   if (!accountLifecycle) {
     // No-op router. The account-lifecycle store isn't wired on this
     // instance. Every route falls through to 404 via Hono's
-    // missing-handler behaviour. Documented; intentional.
+    // missing-handler behavior. Documented; intentional.
     return router;
   }
 
@@ -634,7 +634,7 @@ function renderCancelledPage(): string {
 
 // Rendered when the cancel UPDATE matched zero rows because the
 // account-deletion cascade had already committed. The user clicked the
-// cancel link in time — the system just couldn't honour it. Don't imply
+// cancel link in time — the system just couldn't honor it. Don't imply
 // they missed a deadline.
 function renderAlreadyDeletedPage(): string {
   return renderAuthLayout({

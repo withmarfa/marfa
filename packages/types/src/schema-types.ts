@@ -40,7 +40,7 @@ export interface FieldDefinition {
   /**
    * Per-field override for the default maximum string length enforced at
    * validation. Only meaningful for `string`-typed fields (incl. `enum`
-   * fallbacks); ignored elsewhere. Defence-in-depth alongside the global
+   * fallbacks); ignored elsewhere. Defense-in-depth alongside the global
    * request-body cap. When omitted, a generous default (100_000 chars)
    * applies; set this higher for a field that legitimately carries very
    * long text, or lower to tighten a field.
@@ -49,7 +49,7 @@ export interface FieldDefinition {
   /**
    * Per-field override for the default maximum element count on
    * `array`-typed fields. Ignored on non-array fields. When omitted, a
-   * generous default (10_000 elements) applies. Defence-in-depth
+   * generous default (10_000 elements) applies. Defense-in-depth
    * alongside the global request-body cap.
    */
   maxItems?: number;
@@ -163,7 +163,7 @@ export interface EdgeTypeSchema {
   source_type_constraints: string[];
   /** As above, for the target side. */
   target_type_constraints: string[];
-  /** Cascade behaviour when endpoints are deleted. */
+  /** Cascade behavior when endpoints are deleted. */
   cascade_on_delete: EdgeCascade;
   /**
    * JSON-schema-shaped map of allowed edge `properties`. Empty object means

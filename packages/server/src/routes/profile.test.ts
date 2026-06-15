@@ -306,7 +306,7 @@ describe("Profile routes", () => {
       });
 
       // Mint an OAuth bearer through the plugin-tables setup helper.
-      // Writes into auth_oauth_*, same end-to-end behaviour as creating
+      // Writes into auth_oauth_*, same end-to-end behavior as creating
       // a client + token via the raw three-step.
       const { token: rawToken } = await seedOauthBearer(
         hosted.storage,

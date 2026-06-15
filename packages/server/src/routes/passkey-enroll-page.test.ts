@@ -4,7 +4,7 @@ import type { TestContext } from "../test-utils.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 
 /**
- * Passkey enrol page renderer + handler smoke.
+ * Passkey enroll page renderer + handler smoke.
  * The full WebAuthn ceremony round-trip is browser-side and isn't
  * unit-testable here. This file covers:
  *   - The page renders the right shell + script tag wiring.

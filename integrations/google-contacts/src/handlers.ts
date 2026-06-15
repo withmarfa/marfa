@@ -2,7 +2,7 @@
  * Google Contacts (People API) bidirectional handlers.
  *
  * People API differs from Calendar / Tasks in three ways the handler
- * has to honour:
+ * has to honor:
  *
  *   - **syncToken with full re-list on 410.** `connections.list`
  *     returns a `nextSyncToken`; passing it back yields incremental

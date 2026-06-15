@@ -27,7 +27,7 @@ import {
 } from "../test-utils.js";
 
 // ---------------------------------------------------------------------------
-// Unit — pure helper behaviour
+// Unit — pure helper behavior
 // ---------------------------------------------------------------------------
 
 function fakeKey(
@@ -84,7 +84,7 @@ describe("checkTenantAdmin (unit)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration — through-the-app behaviour of widened routes
+// Integration — through-the-app behavior of widened routes
 // ---------------------------------------------------------------------------
 
 async function mintKey(

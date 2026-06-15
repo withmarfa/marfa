@@ -10,7 +10,7 @@
  * promoted to a real DO.
  *
  * **By-value semantics on put + get.** Real Cloudflare DO storage
- * serialises every value to bytes on `put` and deserialises on `get` —
+ * serializes every value to bytes on `put` and deserializes on `get` —
  * there is no shared reference between the caller's input and the
  * stored value, and no shared reference between two successive `get`s
  * of the same key. The in-memory adapter mirrors that contract via

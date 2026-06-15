@@ -26,7 +26,7 @@
  *   7. Emit a `system.activity` row recording the uninstall.
  *   8. Awaited audit-log write.
  *
- * Authorisation lives at the route layer — this function is callable
+ * Authorization lives at the route layer — this function is callable
  * with any storage handle and trusts the caller to have gated already.
  *
  * Internal-call bypass — the `system.connection` transition at step 6

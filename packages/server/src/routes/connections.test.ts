@@ -9,7 +9,7 @@
  * `connections/install-pipeline.test.ts` and
  * `connections/uninstall-pipeline.test.ts`; reactive-run-bridge fanout
  * tests cover the queue-producer side. This file pins the route-layer
- * behaviour: auth gating, request-shape validation, error mapping, and
+ * behavior: auth gating, request-shape validation, error mapping, and
  * the JSON response shapes the SDK consumes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";

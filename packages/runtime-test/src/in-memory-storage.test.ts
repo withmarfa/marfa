@@ -25,7 +25,7 @@ describe("createInMemoryStorage", () => {
     expect(found.get("cursor:a")).toBe(1);
   });
 
-  it("list honours limit", async () => {
+  it("list honors limit", async () => {
     const s = createInMemoryStorage();
     for (let i = 0; i < 5; i++) await s.put(`k${String(i)}`, i);
     const found = await s.list({ limit: 2 });
@@ -51,7 +51,7 @@ describe("createInMemoryStorage", () => {
   // Without these guarantees, handlers that mutate a cursor object in
   // place leak the mutation back into the stored map. That works in
   // tests (where the storage is a Map of object refs) but breaks in
-  // production (where DO storage serialises every value).
+  // production (where DO storage serializes every value).
 
   it("put captures by value — caller mutations after put don't leak into storage", async () => {
     const s = createInMemoryStorage();

@@ -15,7 +15,7 @@
  *
  *   - `POST /connections/:id/configure` — form submit. Validates the
  *     selection (at least one calendar, the default-write target is
- *     one of the selected, target_type is a recognised type), then
+ *     one of the selected, target_type is a recognized type), then
  *     `storage.items.update`s the connection's `properties.configuration`
  *     and renders a success page that links to the connection's runtime
  *     view.

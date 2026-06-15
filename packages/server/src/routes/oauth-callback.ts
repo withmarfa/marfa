@@ -86,7 +86,7 @@ async function readAuthorizeConfig(
       "Connection has no credential_ref — cannot start OAuth flow",
     );
   }
-  // Fence the credential lookup by the connection's tenant_id — defence-in-depth
+  // Fence the credential lookup by the connection's tenant_id — defense-in-depth
   // against a cross-tenant credential_ref that bypassed the install-pipeline check.
   const credential = await storage.items.get(
     credentialRef,
@@ -278,12 +278,12 @@ function renderSuccessPage(provider: string, connectionId: string): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Connection authorised</title>
+    <title>Connection authorized</title>
     <style>${CALLBACK_CSS}</style>
   </head>
   <body>
     <main class="card">
-      <h1>Connection authorised</h1>
+      <h1>Connection authorized</h1>
       <p>This connection is now connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
       <p class="ref">${escapeHtml(connectionId)}</p>
     </main>

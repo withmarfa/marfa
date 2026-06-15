@@ -47,7 +47,7 @@ export const INTEGRATION_NAME = WITHMARFA_INBOX_MANIFEST.name;
 
 /** Bounded idempotency ring stamped on the handler-side cursor; the
  *  server's own `connection.runtime.idempotency` map is the primary
- *  defence — this is the second wall.
+ *  defense — this is the second wall.
  */
 export const DELIVERY_RING_SIZE = 1024;
 

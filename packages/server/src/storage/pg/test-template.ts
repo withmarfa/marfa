@@ -158,9 +158,9 @@ export interface PgTemplateClone {
  * `drop` callback the cleanup path must invoke.
  *
  * `CREATE DATABASE ... TEMPLATE` is fast (file-copy at the FS level —
- * typically 50-200ms for ~30 tables) and serialises briefly per
+ * typically 50-200ms for ~30 tables) and serializes briefly per
  * template, so concurrent clones across worker files don't race; PG
- * handles the serialisation internally.
+ * handles the serialization internally.
  */
 export async function cloneTemplate(): Promise<PgTemplateClone> {
   const adminUrl = getAdminUrl();
@@ -168,7 +168,7 @@ export async function cloneTemplate(): Promise<PgTemplateClone> {
   const dbName = `${CLONE_PREFIX}${suffix}`;
 
   const sql = postgres(adminUrl, { max: 1 });
-  // CREATE DATABASE FROM TEMPLATE serialises briefly per template inside
+  // CREATE DATABASE FROM TEMPLATE serializes briefly per template inside
   // PG. Under parallel test execution multiple workers can race; if PG
   // raises 55006 (object_in_use — "source database is being accessed by
   // other users") we retry with a small backoff. The lock releases after

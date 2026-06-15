@@ -71,7 +71,7 @@ async function seedClient(
   };
   const now = new Date();
   // PG has native `text[]` columns for the plugin's `string[]` fields
-  // (see migration 0059); SQLite stays on `text` with JSON-serialised
+  // (see migration 0059); SQLite stays on `text` with JSON-serialized
   // arrays via the Better Auth adapter (`supportsArrays: false`).
   const redirectUris: unknown =
     c.storage.betterAuthDialect === "pg"
@@ -575,7 +575,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const now = new Date();
     const tokenId = `at_${Math.random().toString(36).slice(2)}`;
     const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
-    // PG: `scopes` is native `text[]`; SQLite: JSON-serialised text.
+    // PG: `scopes` is native `text[]`; SQLite: JSON-serialized text.
     // See migration 0059 + `auth_oauth_client.scopes` schema comment.
     const wideScopes = [
       "openid",
@@ -667,7 +667,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
-      // PG: native `text[]`; SQLite: JSON-serialised text.
+      // PG: native `text[]`; SQLite: JSON-serialized text.
       scopes:
         ctx.storage.betterAuthDialect === "pg"
           ? sameScopes
@@ -728,7 +728,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
 // ---------------------------------------------------------------------------
 // POST /auth/authorize/decision — Origin/Referer CSRF guard
 //
-// Defence-in-depth: an independent check beneath SameSite=Lax + the
+// Defense-in-depth: an independent check beneath SameSite=Lax + the
 // downstream better-auth Origin check. A *present, non-allowlisted* origin
 // is rejected with 403 BEFORE any projection runs; an allowlisted origin
 // (authBaseUrl or a CORS_ORIGINS entry) or an absent origin proceeds.

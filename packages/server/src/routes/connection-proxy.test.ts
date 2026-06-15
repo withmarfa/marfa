@@ -613,7 +613,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
-  // Defence-in-depth: the install pipeline already enforces same-tenant
+  // Defense-in-depth: the install pipeline already enforces same-tenant
   // `credential_ref` at install-time, so any legitimately-installed
   // connection points at a credential in its own tenant. If a future
   // bypass of that validation ever lands a cross-tenant `credential_ref`,

@@ -320,7 +320,7 @@ describe("HttpTransport — requestWithStatus", () => {
     expect(result.data).toEqual({ item: { id: "itm_2" } });
   });
 
-  it("returns { data: undefined, status: 204 } on No Content responses (matches request<T> behaviour)", async () => {
+  it("returns { data: undefined, status: 204 } on No Content responses (matches request<T> behavior)", async () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValue(new Response(null, { status: 204 }));

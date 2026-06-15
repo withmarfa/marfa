@@ -154,7 +154,7 @@ async function pollOnce(poller: WebhookPoller): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
-describe("WebhookPoller retry behaviour", () => {
+describe("WebhookPoller retry behavior", () => {
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
@@ -217,7 +217,7 @@ describe("WebhookPoller retry behaviour", () => {
     expect(delay).toBeLessThan(2000);
   });
 
-  it("honours Retry-After on 429", async () => {
+  it("honors Retry-After on 429", async () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(
         new Response(null, { status: 429, headers: { "retry-after": "30" } }),
@@ -262,7 +262,7 @@ describe("WebhookPoller retry behaviour", () => {
     expect(delay).toBeLessThanOrEqual(300_500);
   });
 
-  it("retries on 5xx and honours Retry-After when present", async () => {
+  it("retries on 5xx and honors Retry-After when present", async () => {
     const fetchSpy = vi.fn(() =>
       Promise.resolve(
         new Response(null, { status: 503, headers: { "retry-after": "5" } }),
@@ -345,7 +345,7 @@ describe("WebhookPoller retry behaviour", () => {
 // ---------------------------------------------------------------------------
 // deliverWebhookAttempt — shared helper used by both the poller and the
 // direct-dispatch fast path. Verifies the `direct` flag and the short
-// timeout behaviour the consumer relies on.
+// timeout behavior the consumer relies on.
 // ---------------------------------------------------------------------------
 
 describe("deliverWebhookAttempt (direct fast path)", () => {

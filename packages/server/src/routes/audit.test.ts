@@ -349,7 +349,7 @@ describe("GET /audit", () => {
   // see its admin key wiped. Keep this test LAST in the describe
   // block — fresh-context tests must not run before any test that
   // relies on the file-level fixture.
-  it("honours TRUSTED_PROXY_CIDRS when stamping the audit IP", async () => {
+  it("honors TRUSTED_PROXY_CIDRS when stamping the audit IP", async () => {
     // Stand up a fresh app whose config trusts 10.0.0.0/8 as a proxy
     // CIDR. A request whose peer is in 10.0.0.0/8 and whose
     // x-forwarded-for ends in `203.0.113.7` should produce an audit

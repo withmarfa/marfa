@@ -656,7 +656,7 @@ describe("sign-in guard cancel-token reuse + audit hygiene", () => {
     // statusText matches across the three. The guard intentionally
     // constructs `new Response(..., { statusText: "UNAUTHORIZED" })`
     // to match better-auth's `APIError.from("UNAUTHORIZED", ...)`
-    // serialisation; without that, Hono's default `c.json` would
+    // serialization; without that, Hono's default `c.json` would
     // surface `"Unauthorized"` (Node http default) and leak the
     // branch.
     expect(guardResp.statusText).toBe(wrongPwResp.statusText);
@@ -777,7 +777,7 @@ describe("cancel route honesty when cascade wins the race", () => {
 
     // Cascade wins: hard-delete the account with a future cutoff. The
     // cascade also nukes the cancel-token verification row, so we
-    // re-insert it after — modelling the narrow window where the route
+    // re-insert it after — modeling the narrow window where the route
     // loaded the token (and captured authUserId from it) just before
     // the cascade committed, but the cancel UPDATE only runs after.
     const futureCutoff = new Date(Date.now() + 31 * 86_400_000).toISOString();
@@ -1159,7 +1159,7 @@ describe("web-form sign-in guard for pending-deletion accounts", () => {
 // Deliberately re-asserts invariants covered piecewise in the suites
 // above. The value is a single readable thread an operator can point
 // at to confirm the lifecycle works end-to-end against the current
-// build. Failures localise to a clear assertion in the arc.
+// build. Failures localize to a clear assertion in the arc.
 
 describe("full account-lifecycle arc", () => {
   it("sign-up → verify → sign-in → request → confirm → cancel → re-request → confirm → purge", async () => {

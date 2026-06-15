@@ -53,8 +53,8 @@ interface PendingDispatch {
 /**
  * Wraps a single Worker with the bookkeeping the pool needs:
  *   - `ready` resolves when the worker has imported the handler module
- *   - one in-flight dispatch at a time (the pool serialises across
- *     dispatches landing on the same worker; per-Connection serialisation
+ *   - one in-flight dispatch at a time (the pool serializes across
+ *     dispatches landing on the same worker; per-Connection serialization
  *     happens upstream in the supervisor via the advisory lock)
  */
 class WorkerSlot {

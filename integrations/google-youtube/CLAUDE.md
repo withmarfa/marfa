@@ -34,7 +34,7 @@ scope for v1.
 
 ## YouTube Data API v3 specifics
 
-Three operationally significant points the handler honours:
+Three operationally significant points the handler honors:
 
 - **Liked-playlist discovery.** Likes are surfaced via the magic
   playlist returned by `channels.list?part=contentDetails&mine=true`
@@ -128,7 +128,7 @@ small compared to the ceiling.
   `config.materialise_playlists === true`.
 
 `liked_at` is a property on the video item (set from the
-liked-playlist item's `snippet.publishedAt`), NOT modelled as an
+liked-playlist item's `snippet.publishedAt`), NOT modeled as an
 edge. The liked-playlist itself is the implicit container.
 
 Edge direction follows the core convention: `parent-of` source =

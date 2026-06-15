@@ -33,7 +33,7 @@ export interface RateLimitConfig {
    * `4`. Must be `>= 1` — a value below 1 would make the aggregate cap
    * tighter than a single path group's cap and reject normal traffic.
    * Set to `0` to disable the aggregate window entirely (the legacy
-   * per-path-only behaviour).
+   * per-path-only behavior).
    */
   aggregateMultiplier?: number;
 }
@@ -51,7 +51,7 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * Hot path: one upsert round-trip per gated request. The per-tenant
  * ceiling lookup (tenant_quotas.rate_per_minute_limit) stays cached
  * in-process for 60s — that's a cap read, not a counter, and the cache
- * is purely a perf optimisation (cache miss → DB read; staleness is
+ * is purely a perf optimization (cache miss → DB read; staleness is
  * bounded by the TTL).
  *
  * Configuration is required — there is no fallback that reads
@@ -80,7 +80,7 @@ export function rateLimitMiddleware(
   // aggregate window keys on the identifier ALONE (no path split) to
   // bound that total. The multiplier keeps the per-path window the
   // primary cap most callers hit, with the aggregate as a backstop. `0`
-  // disables it (legacy per-path-only behaviour).
+  // disables it (legacy per-path-only behavior).
   const aggregateMultiplier =
     config.aggregateMultiplier ?? DEFAULT_AGGREGATE_MULTIPLIER;
   const aggregateLimit =

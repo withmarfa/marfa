@@ -7,7 +7,7 @@ import {
 } from "./device-pages.js";
 
 /**
- * Behaviour-preserving smoke for the three device-flow page renderers.
+ * Behavior-preserving smoke for the three device-flow page renderers.
  * The handler-side smoke (RFC 8628 polling round-trip) lives in
  * device-grant.test.ts; this file asserts the HTML shape directly.
  */
@@ -50,7 +50,7 @@ describe("renderDevicePage", () => {
     const html = renderDevicePage({ prefilled: "", error: "invalid_code" });
     expect(html).toContain('class="banner banner--error"');
     expect(html).toContain('role="alert"');
-    expect(html).toContain("recognised. Check for typos");
+    expect(html).toContain("recognized. Check for typos");
   });
 
   it("falls back to a generic message for unknown error codes", () => {

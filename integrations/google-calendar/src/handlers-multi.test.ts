@@ -2,7 +2,7 @@
  * Multi-calendar + configurable-target-type handler tests.
  *
  * The single-calendar tests live in `handlers.test.ts` and assert the
- * behaviour a default (no-configuration) connection produces.
+ * behavior a default (no-configuration) connection produces.
  *
  * Coverage here:
  *   - Inbound: schedule with two selected calendars iterates each with
@@ -270,7 +270,7 @@ describe("handleSchedule — multi-calendar inbound", () => {
     expect((primaryCreated?.properties as { etag?: string }).etag).toBe(
       "etag_p1",
     );
-    // Activity emitted summarising the multi-cal sweep:
+    // Activity emitted summarizing the multi-cal sweep:
     const summary = emitted.find((a) =>
       ((a.properties?.summary as string | undefined) ?? "").includes("multi"),
     );

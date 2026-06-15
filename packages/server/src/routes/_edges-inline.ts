@@ -36,7 +36,7 @@ export async function applyInlineEdges(
   tenantId: string | undefined,
 ): Promise<void> {
   // Build and shape the proposals up front so a malformed target id is
-  // rejected before any write — preserves the prior fail-fast behaviour.
+  // rejected before any write — preserves the prior fail-fast behavior.
   const proposals: EdgeProposal[] = [];
   for (const [edgeType, targets] of Object.entries(edges)) {
     for (const target of targets) {

@@ -1,6 +1,6 @@
 /**
  * Reusable Zod schemas shared across route files (items.ts, search.ts,
- * edges.ts). Centralised so the Item/Edge shape is declared once.
+ * edges.ts). Centralized so the Item/Edge shape is declared once.
  */
 import { z } from "@hono/zod-openapi";
 

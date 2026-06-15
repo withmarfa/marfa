@@ -131,7 +131,7 @@ export function satisfiesEdgeConstraint(
   if (constraints.length === 0) return true;
   if (constraints.includes("*")) return true;
   // Unknown item types can't be reasoned about — fail closed. Resolve within
-  // the tenant so a custom item type used as an edge endpoint is recognised
+  // the tenant so a custom item type used as an edge endpoint is recognized
   // (core/system types resolve regardless of tenant).
   if (!getTypeSchema(typeId, tenantId)) return false;
   for (const allowed of constraints) {

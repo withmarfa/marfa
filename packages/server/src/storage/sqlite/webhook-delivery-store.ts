@@ -129,7 +129,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   }
 
   /** See PG store for rationale. SQLite is single-process so the CAS
-   *  serialises trivially at the statement level. */
+   *  serializes trivially at the statement level. */
   async claimById(
     id: string,
     claimExpiry: string,

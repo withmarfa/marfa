@@ -24,7 +24,7 @@ const TEST_API_KEY_SALT = "test-salt";
 /**
  * Shared test fixtures for the SDK package.
  *
- * Two flavours:
+ * Two flavors:
  *
  * - `createKeysModeFixture()` — the simple bring-up. Bootstraps a
  *   platform-admin API key over `POST /keys` and returns a client

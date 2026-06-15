@@ -36,7 +36,7 @@ export function renderAccountPendingDeletionEmail(
     callout: `Your account and everything in it will be permanently deleted in ${String(input.graceDays)} days, on ${input.deletionDate}.`,
     button: { label: "Cancel deletion", url: input.url },
     outro: [
-      "Changed your mind? Cancelling restores everything, and you can pick up right where you left off — no need to sign in.",
+      "Changed your mind? Canceling restores everything, and you can pick up right where you left off — no need to sign in.",
     ],
   });
 }

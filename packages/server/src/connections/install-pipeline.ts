@@ -85,7 +85,7 @@ export interface InstallInput {
    *     Carries upstream base URL + encrypted bearer. The proxy stamps
    *     the bearer transparently; no refresh primitive.
    *
-   * Per-install behaviour:
+   * Per-install behavior:
    *   - When unset: no `credential_ref` is set on the connection.
    *     Token-backed or OAuth-backed integrations must populate it
    *     out-of-band before any proxy or callback call works.

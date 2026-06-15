@@ -83,7 +83,7 @@ export class VersionThinner {
     tenantId: string | null,
   ): Promise<number> {
     // Resolve the type within its owning tenant so a custom type's
-    // version_policy is honoured; core types resolve regardless.
+    // version_policy is honored; core types resolve regardless.
     const typeSchema = getTypeSchema(itemType, tenantId);
     const typePolicy = typeSchema?.version_policy;
     const policy = resolvePolicy(typePolicy, this.globalDefaults);

@@ -270,7 +270,7 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
  * Public counterpart to the module-private `getHopBudget` so debug
  * surfaces (e.g. preview-event) can report what the budget would be
  * for a tenant. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
- * tenant scope) and when the wiring isn't initialised (tests).
+ * tenant scope) and when the wiring isn't initialized (tests).
  */
 export async function resolveHopBudget(
   tenantId: string | undefined,
@@ -300,7 +300,7 @@ export async function resolveHopBudget(
  * malformed wire publish that stamps origin but leaves hopCount at 0
  * doesn't slip past the budget. ALS-driven propagation means in-process
  * callers can't produce this shape, but a tampered inbound header still
- * can — so the floor stays as wire-tampering defence. Human-originated
+ * can — so the floor stays as wire-tampering defense. Human-originated
  * events (no origin) pass their hopCount through unchanged.
  *
  * Shared by `passesHopBudget` and the `POST /connections/preview-event`

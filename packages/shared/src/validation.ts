@@ -203,7 +203,7 @@ export function isValidHandle(value: string): boolean {
  * still resolve collisions at the storage layer before claiming it — this
  * is a deterministic *candidate*, not a guaranteed-free claim.
  *
- * Sanitisation maps any run of non-`[a-z0-9]` characters (including
+ * Sanitization maps any run of non-`[a-z0-9]` characters (including
  * existing hyphens) to a single hyphen, trims leading/trailing hyphens,
  * and caps at 32 chars. A too-short or empty local part is padded to the
  * 3-char floor with a `user-` prefix; a result that lands on a reserved

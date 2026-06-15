@@ -28,7 +28,7 @@ interface QueueProducer {
  * a `webhook` trigger gets its own queue and its own producer binding
  * on the control plane. Cloudflare Queues allow only one consumer per
  * queue; the runtime-sdk's envelope filter on `integration_name` is a
- * defence-in-depth check that only fires AFTER a message reaches a
+ * defense-in-depth check that only fires AFTER a message reaches a
  * consumer, so a shared queue would silently filter out every
  * integration except the one that owns the consumer slot.
  *
@@ -183,7 +183,7 @@ export function registerWebhookRoutes(
       // verification_method union, so a missing entry would mean the
       // server returned a method this control plane doesn't know.
       // Treat it as a routing failure.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defence against drift between server's wider stored set and the control plane's compile-time union
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defense against drift between server's wider stored set and the control plane's compile-time union
       if (!adapter) {
         lastReason = `unknown_verification_method:${sub.verification_method}`;
         continue;
@@ -261,7 +261,7 @@ export function registerWebhookRoutes(
       headerMap[key] = value;
     });
 
-    // Base64-encode so the body survives JSON serialisation through the queue.
+    // Base64-encode so the body survives JSON serialization through the queue.
     // The SDK consumer decodes to ArrayBuffer at the seam.
     const bodyBytes = new Uint8Array(rawBody);
     let bodyString = "";
