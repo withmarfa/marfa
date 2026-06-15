@@ -15,7 +15,7 @@ rm -rf \
   .vitest-cache \
   packages/*/.vitest-cache
 
-echo "→ Wiping test-DB artefacts under packages/server/data/"
+echo "→ Wiping test-DB artifacts under packages/server/data/"
 # test-prefixed and -test-suffixed SQLite files, plus their WAL/SHM siblings
 rm -f \
   packages/server/data/test-*.db \

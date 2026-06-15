@@ -513,7 +513,7 @@ async function countCancelTokens(
   };
   if (!sqlite.__sqliteAll) return 0;
   // Plain string substitution against a UUID is safe enough for a test
-  // helper; the production code path is parameterised.
+  // helper; the production code path is parameterized.
   const rows = (await sqlite.__sqliteAll(
     `SELECT COUNT(*) AS c FROM auth_verification
       WHERE value = '${authUserId.replace(/'/g, "''")}'

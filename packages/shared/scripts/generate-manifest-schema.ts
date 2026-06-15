@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Codegen for the Integration manifest JSON Schema artefact.
+ * Codegen for the Integration manifest JSON Schema artifact.
  *
  * Reads the canonical Zod schema from
  * `packages/shared/src/integration-manifest.ts`, runs it through Zod 4's
@@ -8,7 +8,7 @@
  * `packages/types/integration-manifest-schema.json`.
  *
  * Wired into `packages/shared/package.json`'s `prebuild` so a fresh
- * `pnpm build` keeps the artefact in sync with the source. The drift test
+ * `pnpm build` keeps the artifact in sync with the source. The drift test
  * in `integration-manifest.test.ts` re-runs the conversion in-memory and
  * byte-compares against the committed file. Determinism is guaranteed by:
  *   - Pinning Zod through workspace resolution (`zod: ^4.3.6` resolves to

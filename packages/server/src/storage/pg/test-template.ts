@@ -90,7 +90,7 @@ async function dropStaleClones(adminUrl: string): Promise<void> {
     for (const row of rows) {
       // Identifier is system-generated (LIKE-matched against our own
       // prefix), so it's safe to interpolate. DROP DATABASE doesn't
-      // accept parameterised names.
+      // accept parameterized names.
       await sql.unsafe(`DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`);
     }
   } finally {

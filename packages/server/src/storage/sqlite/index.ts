@@ -174,7 +174,7 @@ export async function createSqliteStorage(
       const result = await raw.execute(query);
       return result.rows;
     },
-    /** Parameterised raw mutation escape hatch — used by retention tests
+    /** Parameterized raw mutation escape hatch — used by retention tests
      *  that need to plant non-default `updated_at` values. */
     async __sqliteRun(
       query: string,

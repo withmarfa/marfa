@@ -157,7 +157,7 @@ describe("POST /items", () => {
         source_id: "natural-key-1",
       },
     });
-    // 200 (not 201) signals the realised effect was an update via natural-key
+    // 200 (not 201) signals the realized effect was an update via natural-key
     // match, not a fresh create.
     expect(second.status).toBe(200);
     const secondData = (await second.json()) as {
@@ -184,7 +184,7 @@ describe("POST /items", () => {
     const thirdData = (await third.json()) as { item: { id: string } };
     expect(thirdData.item.id).toBe(firstData.item.id);
 
-    // Audit row records the realised effect (`item.update`) and flags the
+    // Audit row records the realized effect (`item.update`) and flags the
     // idempotent provenance so operators can spot natural-key re-syncs.
     const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
       key: ctx.adminKey,

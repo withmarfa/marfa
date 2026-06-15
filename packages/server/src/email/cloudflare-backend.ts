@@ -25,7 +25,7 @@
  *     first consumes it.
  *
  * The `message.idempotencyKey` field stays mandatory on the EmailMessage
- * contract for callers — it threads through to the synthesised
+ * contract for callers — it threads through to the synthesized
  * `messageId` for log-correlation continuity (never logged directly) —
  * but it does not influence the CF send path. Revisit if CF ships an
  * idempotency header (track via the CF Email changelog) or if a flow
@@ -58,7 +58,7 @@
  *
  * Success (2xx): `{ success: true, result: { delivered: [addr...],
  * queued: [addr...], permanent_bounces: [addr...] } }`. CF does not
- * return a native per-send message id, so we synthesise one for
+ * return a native per-send message id, so we synthesize one for
  * `EmailSendResult.messageId` by hashing the idempotency key — gives
  * log-correlation continuity even without a CF-side identifier.
  *
@@ -224,7 +224,7 @@ export class CloudflareTransport implements EmailTransport {
       };
     }
 
-    const messageId = synthesiseMessageId(message.idempotencyKey);
+    const messageId = synthesizeMessageId(message.idempotencyKey);
     log("info", "Email sent", {
       backend: "cloudflare",
       recipient_domain: domainOf(message.to),
@@ -248,12 +248,12 @@ function domainOf(address: string): string {
 }
 
 /**
- * Synthesise a stable message id from the idempotency key. CF Email
+ * Synthesize a stable message id from the idempotency key. CF Email
  * doesn't return a native id, so this gives log-correlation continuity
  * via the audit row — `messageId` lands as a hex prefix of
  * `sha256(idempotencyKey)`. Stable per (send-attempt + key) pair.
  */
-function synthesiseMessageId(idempotencyKey: string): string {
+function synthesizeMessageId(idempotencyKey: string): string {
   const hash = createHash("sha256").update(idempotencyKey).digest("hex");
   return `cf_${hash.slice(0, 24)}`;
 }

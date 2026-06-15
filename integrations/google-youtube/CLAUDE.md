@@ -74,7 +74,7 @@ Driven by `connection.properties.configuration`:
   (ticket-recommended). When `true`, the handler walks each
   user-created playlist's video membership and lands those videos
   too, with `playlist parent-of video` edges. When `false`, only
-  liked videos are materialised; playlist items metadata captures
+  liked videos are materialized; playlist items metadata captures
   membership counts only (no per-video walk).
 
 ## Cursor shape
@@ -112,7 +112,7 @@ Per hourly sweep:
   videos).
 
 Steady-state per-sweep cost is ~3–5 units. 24 sweeps/day = 72–120
-units against the default 10,000-unit daily quota. Materialising
+units against the default 10,000-unit daily quota. Materializing
 playlists on a sweep where playlist etags change adds 1 unit per
 playlist's pagination page + 1 per 50 video hydrate batch — still
 small compared to the ceiling.

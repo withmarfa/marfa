@@ -690,7 +690,7 @@ describe("google-drive handleSchedule — all-files mode", () => {
     expect(String(summary?.properties?.summary)).toContain("download_failed=1");
   });
 
-  it("metadata mode (default) emits google.drive.file with blob_ref absent and no synthesised aliases", async () => {
+  it("metadata mode (default) emits google.drive.file with blob_ref absent and no synthesized aliases", async () => {
     // No connectionRecord override — defaults to metadata mode.
     const { ctx, created, uploads } = buildContext({
       proxyResponses: [

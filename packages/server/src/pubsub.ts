@@ -23,7 +23,7 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  * and `publishEdge` consult it automatically. The optional
  * `originatingConnectionId` / `hopCount` fields on event args remain
  * supported as an explicit override for the rare server-internal publish
- * that needs to synthesise its own cycle. If either field is present,
+ * that needs to synthesize its own cycle. If either field is present,
  * the explicit values win; otherwise the ALS is consulted; outside any
  * request (background workers) the resolver falls through to the human
  * sentinel.

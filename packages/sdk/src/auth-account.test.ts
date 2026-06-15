@@ -13,7 +13,7 @@ import {
  * after `markPendingDeletion` revoked the original. The deletion
  * cascade revokes every API key in the tenant; a real user recovering
  * via SDK would have to be re-issued a key out of band. For the
- * round-trip test we synthesise that recovery here.
+ * round-trip test we synthesize that recovery here.
  */
 async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);

@@ -49,7 +49,7 @@ export type SortDirection = "asc" | "desc";
 /** A property-field name is a single JSON key — `^[a-z0-9_]+$`. This is the
  *  same shape the type-registry uses for field identifiers, and constraining
  *  it here keeps the sort field safe to interpolate into a JSON path even
- *  though the value side of every query is parameterised. */
+ *  though the value side of every query is parameterized. */
 const PROPERTY_FIELD_PATTERN = /^[a-z0-9_]+$/;
 
 function isSystemSort(sort: string): sort is SystemSortField {
@@ -1952,7 +1952,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   pgClient?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
-   * Hard-delete every artefact tied to the given `auth_user.id`. Single
+   * Hard-delete every artifact tied to the given `auth_user.id`. Single
    * transaction; rollback on any failure. Re-checks inside its own
    * transaction that the account is still `pending_deletion` and
    * `pending_deletion_at < cutoffIso` before proceeding — short-circuits

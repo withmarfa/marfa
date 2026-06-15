@@ -162,7 +162,7 @@ export async function stampPgDrizzleMigrations(client: {
 
   const stamped = readStampedMigrations("pg");
   for (const m of stamped) {
-    // No parameterised binding via postgres-js's unsafe(); embed values as
+    // No parameterized binding via postgres-js's unsafe(); embed values as
     // literals. Hashes are hex-only and created_at is a number — both safe.
     await client.unsafe(
       `INSERT INTO drizzle.__drizzle_migrations ("hash", "created_at") VALUES ('${m.hash}', ${String(m.created_at)})`,

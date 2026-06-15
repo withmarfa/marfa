@@ -11,7 +11,7 @@
  * exactly so a sort and a filter on the same field read the same value. The
  * field name is validated against `^[a-z0-9_]+$` upstream (`parseSortField` in
  * `interface.ts`) before it reaches here, and every value comparison is
- * parameterised, so the path is safe against injection.
+ * parameterized, so the path is safe against injection.
  */
 
 import { sql, type SQL } from "drizzle-orm";

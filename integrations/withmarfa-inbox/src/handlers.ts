@@ -17,7 +17,7 @@
  *   3. Build a `withmarfa.captured_email` item:
  *      - `source_id = Message-ID` (or the harness-supplied delivery
  *        id when Message-ID is absent, e.g. from a CC-only message
- *        synthesised at relay time)
+ *        synthesized at relay time)
  *      - `body` mirrors `text_body` so `core.note.body` is satisfied
  *        for cross-app readers.
  *   4. Emit a single `system.activity` summarizing the outcome.
@@ -39,7 +39,7 @@ interface DeliveryRing {
 
 /** Wire shape produced by the in-tree Email Worker (`email-worker/src/index.ts`).
  *  Kept loose with optional fields — empty / absent headers are
- *  common (no Message-ID on synthesised messages, no `text_body` on
+ *  common (no Message-ID on synthesized messages, no `text_body` on
  *  HTML-only emails, etc.). */
 interface EmailEnvelope {
   from?: { address?: string; name?: string };
@@ -82,7 +82,7 @@ export async function handleInboxWebhook(
 
   // The Message-ID is the upstream-truth idempotency key. Fall back
   // to the envelope-level delivery id when Message-ID is absent
-  // (e.g. synthesised relay messages with no `Message-ID:` header).
+  // (e.g. synthesized relay messages with no `Message-ID:` header).
   // `message.delivery_id` is always set by the substrate, so the
   // fallback is always a non-empty string.
   const idempotencyKey = envelope.message_id ?? deliveryIdHeader;

@@ -1598,7 +1598,7 @@ export class MarfaClient {
      * subscriptions, transitions the system.connection state to
      * `revoked`, and emits a `system.activity` row. Audit-logged.
      *
-     * Idempotent at the artefact level — revoking already-revoked
+     * Idempotent at the artifact level — revoking already-revoked
      * tokens is a no-op — but rejects with 400 when the connection
      * itself is already in state `revoked`. Admin-only; tenant admins
      * can uninstall connections in their own tenant scope.
@@ -1614,7 +1614,7 @@ export class MarfaClient {
      * a synthetic item-event, without dispatching anything. Operator
      * debugging surface: given an existing item id and an event type, the
      * route returns one row per subscribing connection — either
-     * `would_dispatch: true` with the synthesised envelope, or
+     * `would_dispatch: true` with the synthesized envelope, or
      * `would_dispatch: false` with a `dispatch_reason` (`self_event`,
      * `cross_tenant`, `hop_budget_exceeded`, `subscription_inactive`).
      *

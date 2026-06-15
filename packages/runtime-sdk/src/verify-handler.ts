@@ -6,7 +6,7 @@
  *
  * Integration workers expose a `POST /verify` entry point that calls
  * `verifyHandler(env, request)`. The control plane is responsible for
- * synthesising a valid envelope; this function trusts the envelope,
+ * synthesizing a valid envelope; this function trusts the envelope,
  * builds the `ConnectionContext`, and runs `dispatchMessage` once.
  *
  * Persistence is real — verify executes against the connection's actual

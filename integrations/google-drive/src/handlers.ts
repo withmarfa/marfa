@@ -971,7 +971,7 @@ function buildFileInput(
 
   // Emit `core.file` only when bytes were ingested — `blob_ref` is required
   // by that type. Every other outcome routes to `google.drive.file` with
-  // `blob_ref` absent rather than synthesising a ref that doesn't resolve.
+  // `blob_ref` absent rather than synthesizing a ref that doesn't resolve.
   if (blob.status === "ingested") {
     properties.blob_ref = blob.hash;
     if (file.webViewLink !== undefined) properties.url = file.webViewLink;

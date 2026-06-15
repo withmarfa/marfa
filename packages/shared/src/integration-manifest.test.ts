@@ -290,7 +290,7 @@ describe("parseManifestSchemaMajor", () => {
   });
 });
 
-describe("Integration manifest JSON Schema artefact", () => {
+describe("Integration manifest JSON Schema artifact", () => {
   it("the committed JSON Schema matches the in-memory output of z.toJSONSchema (drift guard)", () => {
     // When this fails after a schema edit, run:
     //   pnpm --filter @withmarfa/shared run generate:manifest-schema

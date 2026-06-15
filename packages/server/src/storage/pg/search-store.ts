@@ -57,7 +57,7 @@ export class PgSearchStore implements SearchStore {
   ) {}
 
   /**
-   * Write the materialised tsvector for an item. The text fed to
+   * Write the materialized tsvector for an item. The text fed to
    * `to_tsvector('english', ...)` comes from the shared
    * `extractSearchableText` helper, which respects per-type
    * `searchable: false` opt-outs and produces the same field set the

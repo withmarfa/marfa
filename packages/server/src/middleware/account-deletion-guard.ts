@@ -300,7 +300,7 @@ async function extractEmail(rawReq: Request): Promise<string | null> {
  * Probe `auth_verification` for an existing valid cancel token bound
  * to this `auth_user_id`. Returns the token suffix (without the
  * `account-cancel:` prefix) when found, else null. Uses Drizzle's
- * query builder on both dialects — fully parameterised.
+ * query builder on both dialects — fully parameterized.
  */
 async function findExistingValidCancelToken(
   storage: Storage,

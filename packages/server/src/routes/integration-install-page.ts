@@ -123,7 +123,7 @@ function getTargetTypes(manifest: Record<string, unknown>): string[] {
  * human name the prototype shows — distinct from the raw `target_types`
  * identifiers, which live verbatim in the Technical-details block.
  */
-function humaniseType(typeId: string): string {
+function humanizeType(typeId: string): string {
   const segments = typeId.split(".").filter((s) => s.length > 0);
   // Drop the leading namespace root (provider or `core`); keep the rest.
   const meaningful = segments.length > 1 ? segments.slice(1) : segments;
@@ -135,13 +135,13 @@ function humaniseType(typeId: string): string {
 
 /**
  * The single human label for the lead row. Multiple target types collapse to
- * a comma-joined list of their humanised names ("Events, Calendar events");
+ * a comma-joined list of their humanized names ("Events, Calendar events");
  * a manifest with no target types falls back to a generic phrase so the row
  * never renders empty.
  */
 function leadLabel(types: string[]): string {
   if (types.length === 0) return "Your data";
-  const names = Array.from(new Set(types.map(humaniseType)));
+  const names = Array.from(new Set(types.map(humanizeType)));
   return names.join(", ");
 }
 

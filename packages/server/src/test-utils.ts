@@ -542,7 +542,7 @@ export function request(
     headers?: Record<string, string>;
     key?: string;
     /**
-     * Peer remote address — synthesised onto Hono's `c.env.incoming.socket`
+     * Peer remote address — synthesized onto Hono's `c.env.incoming.socket`
      * so `clientIpMiddleware` sees a deterministic value. Without this,
      * `app.request()` produces a context with no peer and tests can't
      * exercise the audit-row IP stamping path.
@@ -573,7 +573,7 @@ export function request(
   }
 
   // `c.env.incoming.socket` is normally provided by node-server at runtime;
-  // synthesise it here so getClientIp has a peer to read.
+  // synthesize it here so getClientIp has a peer to read.
   const env = options?.peer
     ? { incoming: { socket: { remoteAddress: options.peer } } }
     : undefined;

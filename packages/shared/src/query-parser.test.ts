@@ -516,7 +516,7 @@ describe("parseFilter", () => {
       expectValidationError("backref[in-thread");
     });
 
-    it("rejects parenthesised expression (parens are not part of the grammar)", () => {
+    it("rejects parenthesized expression (parens are not part of the grammar)", () => {
       expectValidationError('(state eq "active")');
     });
 

@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { getClientIp, parseTrustedProxyCidrs } from "./client-ip.js";
 
 // ---------------------------------------------------------------------------
-// Helpers — synthesise a minimal Hono context with peer address + headers.
+// Helpers — synthesize a minimal Hono context with peer address + headers.
 // ---------------------------------------------------------------------------
 
 function makeContext(args: {

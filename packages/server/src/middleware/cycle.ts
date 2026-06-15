@@ -42,7 +42,7 @@ const MAX_PARSED_HOP_COUNT = Number.MAX_SAFE_INTEGER;
  *   1. **Runtime credentials** — `apiKey.connection_id` is a typed
  *      direct field set when the credential is minted by the runtime-
  *      credential broker. This is the canonical source.
- *   2. **OAuth tokens** — the auth middleware synthesises the api key
+ *   2. **OAuth tokens** — the auth middleware synthesizes the api key
  *      with `source: "oauth:<connection_item_id>"`. The connection_id
  *      is encoded in the source prefix; we parse it back out here.
  *

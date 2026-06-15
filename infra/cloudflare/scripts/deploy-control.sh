@@ -112,7 +112,7 @@ fi
 echo "→ Rendered config preview (key bindings only):"
 grep -E '^name|^\[env\.[a-z]+\]|routes|kv_namespaces|account_id|CLOUDFLARE_ACCOUNT_ID' "$RENDERED_TOML" | sed 's/^/  /'
 
-# Pre-build workspace deps so the bundle picks up fresh dist artefacts.
+# Pre-build workspace deps so the bundle picks up fresh dist artifacts.
 # runtime-control itself has no `build` script (bundled via wrangler),
 # so this only rebuilds upstream deps (@withmarfa/shared, @withmarfa/webhooks).
 echo "→ Pre-building workspace deps for @withmarfa/runtime-control"

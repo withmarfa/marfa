@@ -4,13 +4,13 @@ import { isValidTypeIdentifier } from "./validation.js";
 /**
  * Integration manifest — Zod schema is the canonical definition.
  *
- * The committed JSON Schema artefact at
+ * The committed JSON Schema artifact at
  * `packages/types/integration-manifest-schema.json` is generated from this
  * file by `packages/shared/scripts/generate-manifest-schema.ts` and exists
  * for documentation and external-consumer use only — it is NOT the source
  * of truth. A drift test in `integration-manifest.test.ts` regenerates the
  * JSON Schema in-memory and asserts byte-equality with the committed file
- * so the artefact never silently desynchronizes from the Zod schema.
+ * so the artifact never silently desynchronizes from the Zod schema.
  *
  * `manifest_schema_version` evolution policy.
  *

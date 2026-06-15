@@ -13,7 +13,7 @@
  * this one.
  *
  * Drift between SCHEMA_SQL and the migrations is caught by the
- * `schema-sql-freshness` CI job, which regenerates the artefact and
+ * `schema-sql-freshness` CI job, which regenerates the artifact and
  * `git diff --exit-code`s it.
  *
  * Runs against a per-file clone of the test template — the clone has the

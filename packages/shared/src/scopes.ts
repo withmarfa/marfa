@@ -246,7 +246,7 @@ export function scopesToEdgePermissions(
 
 /**
  * Projects metadata-sub-resource scopes (`metadata.<subresource>:<verb>`)
- * into the `metadata_permissions` map stored on keys / synthesised on
+ * into the `metadata_permissions` map stored on keys / synthesized on
  * OAuth-derived `ApiKey` records. The bare `metadata:<verb>` form (no
  * sub-resource) acts as a wildcard — it sets `*: <verb>`. Write trumps
  * read, never downgrade.
