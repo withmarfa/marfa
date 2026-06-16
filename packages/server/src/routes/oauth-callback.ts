@@ -594,7 +594,7 @@ export function oauthCallbackRoutes(
       setNoStore(c);
       return c.html(
         renderErrorPage(
-          "State envelope missing PKCE verifier — restart the OAuth flow",
+          "This connection request expired or was already used. Start connecting again.",
           400,
         ),
         400,
