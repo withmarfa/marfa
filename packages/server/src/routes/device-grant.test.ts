@@ -272,7 +272,7 @@ describe("GET /auth/device — verification form", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
-    expect(html).toContain("Device sign-in");
+    expect(html).toContain("Sign in on your device");
     expect(html).toContain('name="user_code"');
     expect(html).not.toContain('role="alert"');
   });
