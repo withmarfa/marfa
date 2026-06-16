@@ -34,6 +34,10 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --field: #f5f5f5;
   --field-hover: #ececec;
   --surface-2: #f5f5f5;
+  /* Soft tile fill — the only boxed surface, reserved for permission
+     groups. A hair off the canvas so a tile reads as grouped without a
+     border. */
+  --tile: #f6f6f7;
 
   /* Primary (near-black). */
   --primary: #171717;
@@ -60,11 +64,20 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --warn-border: #fde68a;
   --warn-fg: #92400e;
 
+  /* Callout — the single boxed caution (unverified app). A warmer amber
+     than the status --warn tints so it reads as advisory, not error. */
+  --callout-bg: #fdf6e3;
+  --callout-border: #f3e0a3;
+  --callout-fg: #854d0e;
+  --callout-icon: #a16207;
+
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
   --r-card: 26px;
   --r-lg: 18px;
+  --r-tile: 16px;
   --r-md: 14px;
+  --r-input: 12px;
   --r-sm: 10px;
 
   --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
@@ -84,6 +97,7 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --field: #232323;
     --field-hover: #2b2b2b;
     --surface-2: #1f1f1f;
+    --tile: #1c1c1c;
 
     --primary: #fafafa;
     --primary-hover: #e5e5e5;
@@ -105,6 +119,10 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --warn-bg: #1f1a0e;
     --warn-border: #3d3320;
     --warn-fg: #fcd34d;
+    --callout-bg: #241f10;
+    --callout-border: #4a3f1c;
+    --callout-fg: #e9c46a;
+    --callout-icon: #d4a73a;
 
     --shadow: none;
   }
@@ -146,9 +164,9 @@ body {
   padding: 24px;
   box-shadow: var(--shadow);
 }
-.card--wide {
-  max-width: 460px;
-}
+/* Two card widths only: Standard (400, forms/dialogs) and Wide (520,
+   management pages — security, keys). --wide and --lg are aliases. */
+.card--wide,
 .card--lg {
   max-width: 520px;
 }
@@ -228,13 +246,12 @@ input[type="text"] {
   font-family: inherit;
   font-size: 16px;
   line-height: 1.4;
-  padding: 11px 16px;
+  padding: 11px 14px;
   color: var(--fg);
-  background: var(--field);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
   transition:
-    background 0.12s var(--ease),
     border-color 0.12s var(--ease),
     box-shadow 0.12s var(--ease);
 }
@@ -244,7 +261,7 @@ input::placeholder {
 input[type="email"]:hover,
 input[type="password"]:hover,
 input[type="text"]:hover {
-  background: var(--field-hover);
+  border-color: var(--border-strong);
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
@@ -285,12 +302,12 @@ input[type="text"]:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 11px 20px;
+  gap: 7px;
+  min-height: 38px;
+  padding: 9px 18px;
   font-family: inherit;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   border: 1px solid transparent;
   border-radius: var(--r-pill);
@@ -359,8 +376,8 @@ input[type="text"]:focus {
   font-size: 15px;
 }
 .btn--sm {
-  min-height: 36px;
-  padding: 8px 14px;
+  min-height: 32px;
+  padding: 6px 14px;
   font-size: 13px;
 }
 
@@ -781,16 +798,14 @@ details.section[open] > summary .section__chevron {
 /* List rows (keys + security)                                      */
 /* ---------------------------------------------------------------- */
 
+/* Management list rows (keys, security) — airy, no dividers; whitespace
+   and the bold title carry the separation. */
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 0;
-  border-top: 1px solid var(--hairline);
-}
-.row:first-of-type {
-  border-top: 0;
+  padding: 13px 0;
 }
 .row__main {
   flex: 1;
@@ -1135,6 +1150,350 @@ details.bundle-expand[open] .bundle-expand__chevron {
 .row__title .this-device {
   color: var(--fg-muted);
   font-weight: 500;
+}
+
+/* ================================================================ */
+/* Locked design vocabulary                                         */
+/* Soft Tiles for permission groups only; airy everywhere else.     */
+/* ================================================================ */
+
+/* Canonical card heading + subtitle. The reassurance line ("you can
+   change this anytime in settings") lives in .sub, never a footnote. */
+.title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  color: var(--fg);
+}
+.sub {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.sub b,
+.sub strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* Inline section label inside a panel ("Connected apps", "New", …) —
+   sentence case, not a shouty uppercase eyebrow. */
+.lsec {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The single boxed caution — the unverified-app warning. One warning,
+   never a second inline badge. */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  background: var(--callout-bg);
+  border: 1px solid var(--callout-border);
+  border-radius: 13px;
+}
+.callout svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--callout-icon);
+}
+.callout span {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--callout-fg);
+}
+
+/* Permission groups — collapsible Soft Tiles, the ONLY boxed surface.
+   Collapsed by default; expand to per-type toggles. */
+.t-soft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.grp {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+}
+.grp > summary {
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  cursor: pointer;
+}
+.grp > summary::-webkit-details-marker {
+  display: none;
+}
+.gmain {
+  flex: 1;
+  min-width: 0;
+}
+.gtop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.glabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.gchev {
+  width: 13px;
+  height: 13px;
+  color: var(--fg-faint);
+  transition: transform 0.18s var(--ease);
+  flex: none;
+}
+.grp[open] .gchev {
+  transform: rotate(90deg);
+}
+.gdesc {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+.gsub {
+  display: flex;
+  flex-direction: column;
+  padding: 0 15px 12px;
+}
+.subrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 0;
+}
+.subrow > span {
+  font-size: 13.5px;
+  color: var(--fg);
+}
+
+/* "New" chip for a re-consent group (used sparingly — the section
+   headers carry most of the diff). */
+.newchip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+
+/* Switch used inside permission groups. Supports indeterminate for a
+   partially-ticked group master. */
+.sw {
+  position: relative;
+  width: 32px;
+  height: 19px;
+  flex: none;
+}
+.sw input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.sw .tk {
+  position: absolute;
+  inset: 0;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background 0.16s var(--ease);
+  pointer-events: none;
+}
+.sw .tk::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  background: var(--primary-fg);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.16s var(--ease);
+}
+.sw input:checked + .tk {
+  background: var(--primary);
+}
+.sw input:checked + .tk::before {
+  transform: translateX(13px);
+}
+.sw input:indeterminate + .tk {
+  background: var(--border-strong);
+}
+.sw input:focus-visible + .tk {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* "+" icon button (new key) and other compact icon actions. */
+.iconbtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--fg);
+  flex: none;
+}
+.iconbtn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.iconbtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Panel header: title left, an icon action right. */
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+/* App identity header (integration install). */
+.apphead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--tile);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--fg);
+  flex: none;
+}
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+/* Capability tile — a soft tile describing what an install adds. */
+.captile {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+  padding: 14px 16px;
+}
+.captile__t {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.captile__d {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+/* Capability check rows (device approve) — airy, leading check glyph. */
+.crow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+.crow svg {
+  flex: none;
+  color: var(--fg);
+}
+.crow span {
+  font-size: 14px;
+  color: var(--fg);
+}
+
+/* Code display tile (device approve) — soft tile, centered mono. */
+.codetile {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+  padding: 18px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--fg);
+}
+
+/* One-line secret reveal (a created API key). Full value on one line,
+   smaller mono, truncated, with a trailing copy button. The caution
+   sits BELOW the field. */
+.copyfield {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 0 6px 0 12px;
+  height: 42px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.copyfield__val {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.copyfield__copy {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+.copyfield__copy:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.caution {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
