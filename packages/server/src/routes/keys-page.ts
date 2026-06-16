@@ -156,7 +156,11 @@ export function renderKeysPage(params: KeysPageParams): string {
       </div>
       <script>${COPY_SCRIPT}</script>
     `;
-    return renderAuthLayout({ title: "Your key is ready", bodyHtml: reveal, wide: true });
+    return renderAuthLayout({
+      title: "Your key is ready",
+      bodyHtml: reveal,
+      wide: true,
+    });
   }
 
   const noticeHtml = params.notice

@@ -105,7 +105,10 @@ describe("renderDeviceConsentScreen", () => {
   });
 
   it("renders the user_code whole in a code tile, not an entry field", () => {
-    const html = renderDeviceConsentScreen({ ...PARAMS, userCode: "WDJB-MJHT" });
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      userCode: "WDJB-MJHT",
+    });
     expect(html).toContain('class="codetile"');
     expect(html).toContain("WDJB-MJHT");
     // The display is not a real form input — no entry <input> for the code.

@@ -242,7 +242,11 @@ export function renderSignInPage(params: SignInPageParams): string {
     <p class="aux"><a href="${toPasswordHref}">Use a password instead</a></p>
   `;
 
-  const body = params.magicLinkSent ? sentBody : isMagic ? magicBody : passwordBody;
+  const body = params.magicLinkSent
+    ? sentBody
+    : isMagic
+      ? magicBody
+      : passwordBody;
 
   return renderAuthLayout({
     title: params.magicLinkSent ? "Check your email" : "Sign in to Marfa",

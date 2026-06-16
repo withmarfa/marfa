@@ -167,7 +167,9 @@ describe("renderConsentScreen — soft-tile groups", () => {
 
   it("ships the master-toggle cascade enhancement script", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toMatch(/<script>[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/);
+    expect(html).toMatch(
+      /<script>[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
+    );
     expect(html).toContain("indeterminate");
   });
 });
@@ -203,7 +205,9 @@ describe("renderConsentScreen — re-consent diff", () => {
     });
     // Removed: core.task:write → label "Tasks", as quiet text not a checkbox.
     expect(html).toContain(">No longer needed<");
-    expect(html).toMatch(/No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks</);
+    expect(html).toMatch(
+      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks</,
+    );
   });
 
   it("omits a diff section when its set is empty", () => {

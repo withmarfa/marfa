@@ -33,8 +33,6 @@ export function renderVerifyEmailEmail(
     ],
     note: `This link expires in ${String(expires)} minutes.`,
     button: { label: "Verify email", url: input.url },
-    outro: [
-      "If you didn't create a Marfa account, you can ignore this email.",
-    ],
+    outro: ["If you didn't create a Marfa account, you can ignore this email."],
   });
 }

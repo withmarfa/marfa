@@ -102,7 +102,8 @@ describe("DEFAULT_PERMISSION_BUNDLES", () => {
     // "Connected accounts" folds system.connection:read into the read bundle;
     // it's the only system.* scope in the default grant.
     const read = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "read");
-    const readSystem = read?.scopes.filter((s) => s.startsWith("system.")) ?? [];
+    const readSystem =
+      read?.scopes.filter((s) => s.startsWith("system.")) ?? [];
     expect(readSystem).toEqual(["system.connection:read"]);
   });
 });
