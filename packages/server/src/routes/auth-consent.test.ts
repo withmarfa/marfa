@@ -238,9 +238,8 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("unverified-badge");
-    expect(html).toContain("Unverified app");
-    expect(html).toContain("This app is unverified");
+    expect(html).toContain('class="callout"');
+    expect(html).toContain("Marfa hasn't verified this app");
   });
 
   it("does NOT flag a confidential client as unverified", async () => {
@@ -259,8 +258,8 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).not.toContain("unverified-badge");
-    expect(html).not.toContain("This app is unverified");
+    expect(html).not.toContain('class="callout"');
+    expect(html).not.toContain("Marfa hasn't verified");
   });
 
   it("404s when client genuinely does not exist", async () => {
@@ -276,7 +275,7 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(res.status).toBe(404);
   });
 
-  it("F11: renders plain-English description for OIDC scopes (openid/profile/email/offline_access)", async () => {
+  it("renders OIDC scopes as profile toggles plus hidden mechanism fields", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f11-oidc@example.com");
@@ -289,21 +288,24 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    // Built-in OIDC copy from OIDC_SCOPE_DESCRIPTIONS:
-    expect(html).toContain("Confirm your identity.");
-    expect(html).toContain("See your name and profile picture.");
-    expect(html).toContain("See your email address.");
-    expect(html).toContain(
-      "Stay signed in even when you&#39;re not using the app.",
+    expect(html).toContain("Your profile");
+    expect(html).toContain("<span>Your name</span>");
+    expect(html).toContain("<span>Your email address</span>");
+    // openid + offline_access are OAuth mechanisms, not data permissions —
+    // they ride along as always-on hidden fields rather than toggles.
+    expect(html).toMatch(
+      /<input type="checkbox" name="scopes" value="openid" checked hidden>/,
+    );
+    expect(html).toMatch(
+      /<input type="checkbox" name="scopes" value="offline_access" checked hidden>/,
     );
   });
 
-  it("F11: renders plain-English description for edge scopes via EDGE_TYPE_REGISTRY", async () => {
+  it("renders an edge scope as a per-type toggle carrying the concrete literal", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f11-edge@example.com");
 
-    // edge.parent-of:read is a core edge type with a description.
     const res = await request(
       ctx.app,
       "GET",
@@ -312,11 +314,10 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    // The edge type's description should appear inline. We don't pin
-    // the exact wording (the registry's description could be edited);
-    // just verify some plain text is included beyond the bare literal.
-    expect(html).toContain("edge.parent-of:read");
-    expect(html).toMatch(/<span class="scope-row__text">[^<]+<\/span>/);
+    // The concrete scope is the submittable checkbox value, rendered as a
+    // labeled per-type toggle row (not a raw scope string).
+    expect(html).toContain('value="edge.parent-of:read"');
+    expect(html).toMatch(/<div class="subrow"><span>[^<]+<\/span>/);
   });
 });
 

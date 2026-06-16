@@ -48,7 +48,6 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
 import { setNoStore } from "./no-store.js";
 import { publish } from "../pubsub.js";
@@ -203,7 +202,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       oauthQuery,
       descriptions,
       priorScopes,
-      bundles: getPermissionBundles(),
       errorMessage,
     });
 

@@ -75,31 +75,34 @@ describe("loadPermissionBundles", () => {
 });
 
 describe("DEFAULT_PERMISSION_BUNDLES", () => {
-  it("ships the four expected bundles, all default-on", () => {
+  it("ships the three expected bundles, all default-on", () => {
     expect(DEFAULT_PERMISSION_BUNDLES.map((b) => b.id)).toEqual([
       "read",
       "write",
       "profile",
-      "connected",
     ]);
     expect(DEFAULT_PERMISSION_BUNDLES.every((b) => b.default_on)).toBe(true);
   });
 
-  it("folds item- and edge-type setup into the write bundle", () => {
+  it("requests concrete per-type content scopes, never a core.* wildcard", () => {
+    // Concrete scopes are what makes per-type narrowing enforceable — the
+    // OAuth provider only lets a grant narrow to literally-requested scopes.
+    const read = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "read");
     const write = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "write");
-    expect(write?.scopes).toContain("metadata.types:write");
-    expect(write?.scopes).toContain("metadata.edge_types:write");
+    expect(read?.scopes).toContain("core.note:read");
+    expect(write?.scopes).toContain("core.note:write");
+    for (const b of [read, write]) {
+      expect(b?.scopes.some((s) => s.includes("*"))).toBe(false);
+    }
   });
 
-  it("keeps system.* out of read/write (security internals stay private)", () => {
-    for (const id of ["read", "write"]) {
-      const bundle = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === id);
-      expect(bundle?.scopes.some((s) => s.startsWith("system."))).toBe(false);
-    }
-    // Connected services is the only default bundle touching system.*.
-    const connected = DEFAULT_PERMISSION_BUNDLES.find(
-      (b) => b.id === "connected",
-    );
-    expect(connected?.scopes).toContain("system.connection:read");
+  it("keeps system.* out of write; read touches only system.connection", () => {
+    const write = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "write");
+    expect(write?.scopes.some((s) => s.startsWith("system."))).toBe(false);
+    // "Connected accounts" folds system.connection:read into the read bundle;
+    // it's the only system.* scope in the default grant.
+    const read = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "read");
+    const readSystem = read?.scopes.filter((s) => s.startsWith("system.")) ?? [];
+    expect(readSystem).toEqual(["system.connection:read"]);
   });
 });

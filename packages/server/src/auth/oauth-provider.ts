@@ -62,18 +62,19 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 /**
  * Build the complete list of scope literals the plugin will accept.
  * Includes OIDC literals + every concrete `<type>:<verb>` from the type
- * registry + every `edge.<edgeType>:<verb>` from the edge registry +
- * the metadata sub-resource grammar + the global type wildcards
- * (`*:read` / `*:write`, used by the consent screen's "Customize"
- * full-access path) + every scope referenced by a configured permission
- * bundle (namespace wildcards like `core.*:read` / `user.*:write` that
- * cover runtime types the static registry never enumerates).
+ * registry + every `edge.<edgeType>:<verb>` from the edge registry + the
+ * metadata sub-resource grammar + the global type wildcards (`*:read` /
+ * `*:write`, the "Customize" full-access path) + the runtime / connected-
+ * service namespace wildcards (`user.*`, `app.*`, `google.*`, …) + every
+ * scope referenced by a configured permission bundle.
  *
- * Custom types registered at runtime via `POST /types` are NOT picked up
- * as concrete scopes — a server restart re-enumerates from the
- * (now-larger) registry. The namespace-wildcard bundle scopes are how an
- * app reaches its own `user.*` types without that restart: the wildcard is
- * granted, and matches whatever `user.*` types exist at check time.
+ * This is the set of scopes that CAN be requested, which is wider than the
+ * default consent bundle (the curated, per-type content set). Custom types
+ * registered at runtime via `POST /types` are NOT picked up as concrete
+ * scopes — a server restart re-enumerates from the (now-larger) registry.
+ * The namespace wildcards are how an app reaches its own `user.*` types
+ * without that restart: the wildcard is granted, and matches whatever
+ * `user.*` types exist at check time.
  */
 export function buildAllowedScopes(
   permissionBundles: PermissionBundle[] = getPermissionBundles(),
@@ -90,6 +91,26 @@ export function buildAllowedScopes(
     // Global type wildcards — full access, offered only via "Customize".
     "*:read",
     "*:write",
+    // Runtime + connected-service namespace wildcards. These cover an app's
+    // own `user.*` / `app.*` runtime types and the integration namespaces the
+    // static registry never enumerates. They stay REQUESTABLE (an app can ask
+    // for them explicitly) but are deliberately NOT in the default consent
+    // bundle — the default grant is the curated, per-type-narrowable content
+    // set, so these only appear when an app opts into them.
+    "user.*:read",
+    "user.*:write",
+    "app.*:read",
+    "app.*:write",
+    "google.*:read",
+    "google.*:write",
+    "raindrop.*:read",
+    "raindrop.*:write",
+    "readwise.*:read",
+    "readwise.*:write",
+    "todoist.*:read",
+    "todoist.*:write",
+    "withmarfa.*:read",
+    "withmarfa.*:write",
   ]);
 
   // Item type scopes: `<typeId>:read|write` for every registered type.

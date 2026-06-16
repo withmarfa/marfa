@@ -193,8 +193,9 @@ export function edgeTypeRoutes(storage: Storage) {
   router.openapi(createEdgeTypeRoute, async (c) => {
     // Registering a custom edge type is gated by the metadata.edge_types
     // scope (admin / tenant_admin API keys bypass via role; OAuth apps must
-    // carry the granted scope — it's folded into the "Write your stuff"
-    // bundle). Mirrors `POST /types` (metadata.types:write). The create
+    // carry the granted scope — `metadata.edge_types:write` is requestable
+    // but not part of the default consent bundle, so an app that registers
+    // edge types asks for it explicitly). Mirrors `POST /types`. The create
     // below stamps tenant_id from the caller, so a scope-bearing member can
     // only register within its own tenant.
     requireMetadataPermission(c, "edge_types", "write");
