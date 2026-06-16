@@ -6,6 +6,8 @@ import {
   ErrorCode,
   parseScope,
   expandWildcardScopes,
+  isValidScope,
+  scopesToTypePermissions,
   isValidHandle,
   isReservedHandle,
   TYPE_REGISTRY,
@@ -965,6 +967,34 @@ export function authRoutes(
       );
     }
 
+    // The permissions the owner ticked, in the `<type>:<verb>` scope grammar.
+    // Only valid scopes survive; the key is scoped to exactly these.
+    const scopes = formData
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string")
+      .filter((s) => isValidScope(s));
+    if (scopes.length === 0) {
+      const keys = await listTenantKeys(tenantId);
+      return c.html(
+        renderKeysPage({
+          email: gated.session.user.email,
+          keys,
+          notice: {
+            kind: "error",
+            text: "Choose at least one thing this key can do.",
+          },
+        }),
+      );
+    }
+    const typePermissions = scopesToTypePermissions(scopes);
+    const hasWrite = scopes.some((s) => s.endsWith(":write"));
+    const hasRead = scopes.some((s) => s.endsWith(":read"));
+    const accessSummary = hasWrite
+      ? "read and write your content"
+      : hasRead
+        ? "read your content"
+        : "access your content";
+
     const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
     const stored = await storage.keys.create(
       {
@@ -972,9 +1002,11 @@ export function authRoutes(
         // The label doubles as the key's `source` — the provenance stamped
         // onto items written with it, surfaced back to the owner.
         source: label,
-        role: "tenant_admin",
+        // A self-serve key carries only the permissions the owner picked: a
+        // scoped `member` key, never a blanket tenant admin.
+        role: "member",
         is_platform: false,
-        type_permissions: {},
+        type_permissions: typePermissions,
       },
       hashApiKey(rawKey, salt),
       tenantId,
@@ -995,7 +1027,8 @@ export function authRoutes(
         keys,
         // Shown once, in this response body — never via a redirect query.
         newKey: rawKey,
-        notice: { kind: "success", text: "Key created." },
+        newKeyLabel: label,
+        newKeyAccess: accessSummary,
       }),
     );
   });
