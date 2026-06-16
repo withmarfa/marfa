@@ -54,35 +54,24 @@ describe("renderResetPasswordPage", () => {
     expect(html).toContain("Passwords don&#39;t match");
   });
 
-  it("success state renders a success banner + sign-in link", () => {
+  it("success state confirms the update with a sign-in link", () => {
     const html = renderResetPasswordPage({
       state: "success",
       returnTo: "/foo",
     });
-    expect(html).toContain('class="banner banner--success"');
     expect(html).toContain("Password updated");
-    expect(html).toContain("other sessions have been signed out");
+    expect(html).toContain('role="status"');
+    expect(html).toContain("signed out");
     expect(html).toContain('href="/auth/sign-in?return_to=/foo"');
     // No reset form on success.
     expect(html).not.toContain('action="/auth/reset-password"');
   });
 
-  it("failure state with expired code renders the friendly expired message", () => {
-    const html = renderResetPasswordPage({
-      state: "failure",
-      failureCode: "expired",
-    });
-    expect(html).toContain('class="banner banner--error"');
-    expect(html).toContain("expired");
+  it("failure state renders the unified 'that link didn't work' screen", () => {
+    const html = renderResetPasswordPage({ state: "failure" });
+    expect(html).toContain("That link didn't work");
+    expect(html).toContain('role="alert"');
     expect(html).toContain('href="/auth/forgot-password"');
-  });
-
-  it("failure state with invalid code renders the invalid-link message", () => {
-    const html = renderResetPasswordPage({
-      state: "failure",
-      failureCode: "invalid",
-    });
-    expect(html).toContain("invalid");
   });
 
   it("escapes the token to prevent template injection", () => {
@@ -115,7 +104,7 @@ describe("GET /auth/reset-password", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Choose a new password");
+    expect(html).toContain("Set a new password");
     expect(html).toContain('value="anytoken"');
   });
 
@@ -196,7 +185,7 @@ describe("POST /auth/reset-password (form wrapper)", () => {
     });
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Reset failed");
-    expect(html).toContain('class="banner banner--error"');
+    expect(html).toContain("That link didn't work");
+    expect(html).toContain('href="/auth/forgot-password"');
   });
 });

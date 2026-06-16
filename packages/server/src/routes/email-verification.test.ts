@@ -143,8 +143,8 @@ describe("verify-on-signup flow", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("fresh verification email");
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain("fresh verification link");
+    expect(html).toContain('role="status"');
   });
 
   it("POST /auth/verify-email/resend redirects with sent=1", async () => {
@@ -278,7 +278,7 @@ describe("verify-on-signup flow", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Verification failed");
-    expect(html).toContain('class="banner banner--error"');
+    expect(html).toContain("That link didn't work");
+    expect(html).toContain('action="/auth/verify-email/resend"');
   });
 });

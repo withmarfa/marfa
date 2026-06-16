@@ -1159,23 +1159,14 @@ export function authRoutes(
       );
     }
 
-    // Failure path. Map better-auth's error shape to a friendly code.
-    let failureCode: "expired" | "invalid" | "unknown" = "unknown";
-    try {
-      const body = (await response.json()) as { code?: string };
-      const code = body.code?.toLowerCase() ?? "";
-      if (code.includes("expired")) failureCode = "expired";
-      else if (code.includes("invalid") || code.includes("token"))
-        failureCode = "invalid";
-    } catch {
-      // Fall through to "unknown".
-    }
+    // Failure path. One plain "that link didn't work" screen with an inline
+    // resend — the specific reason (expired / used / malformed) doesn't
+    // change what the user does next.
     return c.html(
       renderVerifyEmailPage({
         state: "failure",
         email,
         returnTo,
-        failureCode,
       }),
     );
   });
@@ -1434,18 +1425,9 @@ export function authRoutes(
       return c.html(renderResetPasswordPage({ state: "success", returnTo }));
     }
 
-    // Map better-auth's error shape to our friendly failure code.
-    let failureCode: "expired" | "invalid" | "unknown" = "unknown";
-    try {
-      const body = (await response.json()) as { code?: string };
-      const code = body.code?.toLowerCase() ?? "";
-      if (code.includes("expired")) failureCode = "expired";
-      else if (code.includes("invalid") || code.includes("token"))
-        failureCode = "invalid";
-    } catch {
-      // Fall through to "unknown".
-    }
-    return c.html(renderResetPasswordPage({ state: "failure", failureCode }));
+    // One plain "that link didn't work" screen with a way to request a
+    // fresh link — the specific reason doesn't change the next step.
+    return c.html(renderResetPasswordPage({ state: "failure" }));
   });
 
   // -----------------------------------------------------------------------

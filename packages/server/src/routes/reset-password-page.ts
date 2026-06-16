@@ -5,9 +5,10 @@
  *
  *   - `form` — token present + valid (or untested). Renders password
  *     + confirm fields and the hidden token round-trip.
- *   - `success` — password updated. Banner + sign-in link.
- *   - `failure` — token invalid / expired / already-used. Banner +
- *     a "Request a fresh link" link back to /auth/forgot-password.
+ *   - `success` — password updated. Sign-in link.
+ *   - `failure` — token invalid / expired / already-used. One plain
+ *     "that link didn't work" screen with a way back to request a fresh
+ *     link from /auth/forgot-password.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
@@ -23,8 +24,6 @@ interface ResetPasswordPageParams {
   returnTo?: string;
   /** Error code on the form re-render (e.g. user-side validation). */
   formError?: "missing_field" | "password_mismatch" | "weak_password";
-  /** Failure reason — controls the failure-state banner copy. */
-  failureCode?: "expired" | "invalid" | "unknown";
 }
 
 const FORM_ERROR_MESSAGES: Record<
@@ -34,18 +33,6 @@ const FORM_ERROR_MESSAGES: Record<
   missing_field: "Please fill in every field.",
   password_mismatch: "Passwords don't match. Try again.",
   weak_password: "Password must be at least 8 characters.",
-};
-
-const FAILURE_MESSAGES: Record<
-  NonNullable<ResetPasswordPageParams["failureCode"]>,
-  string
-> = {
-  expired:
-    "That reset link has expired. Request a fresh one from the sign-in page.",
-  invalid:
-    "That reset link is invalid. Request a fresh one from the sign-in page.",
-  unknown:
-    "We couldn't reset your password. Request a fresh link and try again.",
 };
 
 function escapeHtml(str: string): string {
@@ -93,31 +80,38 @@ export function renderResetPasswordPage(
                autocomplete="new-password"
                aria-required="true">
       </label>
-      <button type="submit" class="btn btn--primary">Update password</button>
+      <div class="actions">
+        <button type="submit" class="btn btn--primary">Update password</button>
+      </div>
     </form>
   `;
 
-  let title = "Reset your password";
+  let title: string;
   let bodyHtml: string;
 
   if (params.state === "success") {
     title = "Password updated";
     bodyHtml = `
-      <h1>Password updated</h1>
-      <div class="banner banner--success" role="status">Your password has been changed and other sessions have been signed out.</div>
-      <p class="aux"><a href="/auth/sign-in?return_to=${safeReturnTo}">Sign in</a></p>
+      <h1 class="title">Password updated</h1>
+      <p class="sub" role="status">Your password is changed and your other sessions are signed out.</p>
+      <div class="actions">
+        <a href="/auth/sign-in?return_to=${safeReturnTo}" class="btn btn--primary">Sign in</a>
+      </div>
     `;
   } else if (params.state === "failure") {
-    const code = params.failureCode ?? "unknown";
+    title = "That link didn't work";
     bodyHtml = `
-      <h1>Reset failed</h1>
-      <div class="banner banner--error" role="alert">${escapeHtml(FAILURE_MESSAGES[code])}</div>
-      <p class="aux"><a href="/auth/forgot-password">Request a fresh link</a></p>
+      <h1 class="title">That link didn't work</h1>
+      <p class="sub" role="alert">It may have expired or already been used. Request a fresh reset link.</p>
+      <div class="actions">
+        <a href="/auth/forgot-password" class="btn btn--primary">Request a fresh link</a>
+      </div>
     `;
   } else {
+    title = "Set a new password";
     bodyHtml = `
-      <h1>Choose a new password</h1>
-      <p class="lede">Enter your new password below. The reset link is single-use, so make it count.</p>
+      <h1 class="title">Set a new password</h1>
+      <p class="sub">Your reset link works once, so finish setting it here.</p>
       ${formErrorBanner}
       ${form}
     `;
