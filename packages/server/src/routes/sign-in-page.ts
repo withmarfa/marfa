@@ -84,10 +84,6 @@ export function renderSignInPage(params: SignInPageParams): string {
     ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
     : "";
 
-  const successBanner = params.magicLinkSent
-    ? `<div class="banner banner--success" role="status">Check your email for a sign-in link.</div>`
-    : "";
-
   const isMagic = params.mode === "magic";
 
   // Password view form — email + password, both required (single-purpose form,
@@ -142,7 +138,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     <form method="GET" action="/auth/sign-in">
       <input type="hidden" name="mode" value="magic">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <button type="submit" class="btn btn--oidc">Email me a one-time sign-in link</button>
+      <button type="submit" class="btn btn--oidc">Email me a one-time link</button>
     </form>
   `;
   // Back link to the password view — a plain text link is the right weight.
@@ -206,19 +202,16 @@ export function renderSignInPage(params: SignInPageParams): string {
 })();
   `.trim();
 
-  // Password view: email + password, then a single "or" alternatives stack
-  // (one-time email link, passkey when supported, OIDC providers), then the
-  // optional sign-up link and the passkey script.
+  // Password view: email + password, then a stacked set of alternatives
+  // (one-time email link, passkey when supported, OIDC providers) as quiet
+  // outline pills — no "or" divider — then the optional sign-up link and the
+  // passkey script.
   const passwordBody = `
-    <h1>Sign in to Marfa</h1>
-    <p class="lede">Your data layer, in one place.</p>
+    <h1 class="title">Sign in to Marfa</h1>
+    <p class="sub">Welcome back.</p>
     ${errorBanner}
-    ${successBanner}
     ${passwordForm}
-    <div class="separator" role="separator" aria-orientation="horizontal">
-      <span>or</span>
-    </div>
-    <div class="oidc">
+    <div class="oidc" style="margin-top:8px">
       ${toMagicForm}
       ${passkeyBlock}
       ${oidcButtons}
@@ -231,17 +224,29 @@ export function renderSignInPage(params: SignInPageParams): string {
   // One-time-email view: a focused screen with just the email field and a way
   // back to the password form.
   const magicBody = `
-    <h1>Sign in to Marfa</h1>
-    <p class="lede">Enter your email and we'll send you a one-time sign-in link — no password needed.</p>
+    <h1 class="title">Sign in to Marfa</h1>
+    <p class="sub">Enter your email and we'll send a one-time sign-in link. No password needed.</p>
     ${errorBanner}
-    ${successBanner}
     ${magicForm}
     <p class="aux"><a href="${toPasswordHref}">Back to password sign-in</a></p>
   `;
 
+  // Confirmation screen after a one-time link is sent — its own focused view,
+  // not a banner stacked on the entry form.
+  const sentBody = `
+    <h1 class="title">Check your email</h1>
+    <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
+    <div class="actions">
+      <a href="/auth/sign-in?${buildQuery({ mode: "magic", return_to: params.returnTo })}" class="btn btn--oidc">Use a different email</a>
+    </div>
+    <p class="aux"><a href="${toPasswordHref}">Use a password instead</a></p>
+  `;
+
+  const body = params.magicLinkSent ? sentBody : isMagic ? magicBody : passwordBody;
+
   return renderAuthLayout({
-    title: "Sign in to Marfa",
-    bodyHtml: isMagic ? magicBody : passwordBody,
+    title: params.magicLinkSent ? "Check your email" : "Sign in to Marfa",
+    bodyHtml: body,
   });
 }
 

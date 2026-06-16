@@ -96,11 +96,10 @@ const STEP_SCRIPT = `
         step === 1 ? 'Create your Marfa account' : 'Choose a password';
     }
     if (sub) {
-      sub.innerHTML =
-        (step === 1
+      sub.textContent =
+        step === 1
           ? 'Tell us who you are.'
-          : 'One last step to secure your account.') +
-        ' Step <strong>' + step + '</strong> of 2.';
+          : 'One last step to secure your account.';
     }
   }
 
@@ -145,8 +144,8 @@ export function renderSignUpPage(params: SignUpPageParams): string {
       <span class="steps__seg steps__seg--on" data-seg="1"></span>
       <span class="steps__seg" data-seg="2"></span>
     </div>
-    <h1 data-title>Create your Marfa account</h1>
-    <p class="lede" data-sub>Tell us who you are. Step <strong data-cur>1</strong> of 2.</p>
+    <h1 class="title" data-title>Create your Marfa account</h1>
+    <p class="sub" data-sub>Tell us who you are.</p>
     ${errorBanner}
     <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
@@ -206,9 +205,11 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  aria-required="true">
         </label>
       </div>
-      <button type="button" class="btn btn--primary" data-next>Continue</button>
-      <button type="submit" class="btn btn--primary" data-create>Create account</button>
-      <button type="button" class="btn btn--outline" data-back>Back</button>
+      <div class="actions">
+        <button type="button" class="btn btn--primary" data-next>Continue</button>
+        <button type="submit" class="btn btn--primary" data-create>Create account</button>
+        <button type="button" class="btn btn--ghost" data-back>Back</button>
+      </div>
     </form>
     <p class="aux">Already have an account? <a href="${signInHref}">Sign in</a></p>
     <script>${STEP_SCRIPT}</script>
