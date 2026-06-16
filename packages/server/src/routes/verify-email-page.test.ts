@@ -17,14 +17,14 @@ describe("renderVerifyEmailPage", () => {
     expect(html).not.toContain("<style>");
   });
 
-  it("pending state renders the resend form with the inbox-check copy", () => {
+  it("pending state with a known email offers a one-tap resend", () => {
     const html = renderVerifyEmailPage({
       state: "pending",
       email: "alice@example.com",
       returnTo: "/auth/authorize?client_id=abc",
     });
     expect(html).toContain("Verify your email");
-    expect(html).toContain("verification email");
+    expect(html).toContain("Resend email");
     expect(html).toContain('action="/auth/verify-email/resend"');
     expect(html).toContain('value="alice@example.com"');
     expect(html).toContain(
@@ -32,7 +32,7 @@ describe("renderVerifyEmailPage", () => {
     );
   });
 
-  it("pending state without email renders an empty resend form", () => {
+  it("pending state without email renders an empty resend field", () => {
     const html = renderVerifyEmailPage({ state: "pending" });
     expect(html).toContain('action="/auth/verify-email/resend"');
     expect(html).toContain('value=""');
@@ -40,60 +40,39 @@ describe("renderVerifyEmailPage", () => {
     expect(html).toContain('<input type="hidden" name="return_to" value="/">');
   });
 
-  it("success state renders a status banner and continue link", () => {
+  it("success state confirms verification and offers a continue link", () => {
     const html = renderVerifyEmailPage({
       state: "success",
       returnTo: "/auth/authorize?client_id=abc",
     });
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain("Email verified");
     expect(html).toContain('role="status"');
-    expect(html).toContain("you're signed in");
+    expect(html).toContain("signed in");
     expect(html).toContain('href="/auth/authorize?client_id=abc"');
     expect(html).toContain("Continue");
     // No resend form on success.
     expect(html).not.toContain('action="/auth/verify-email/resend"');
   });
 
-  it("failure state with expired code renders the expired-link banner", () => {
+  it("failure state renders the unified 'that link didn't work' screen with an inline resend", () => {
     const html = renderVerifyEmailPage({
       state: "failure",
-      failureCode: "expired",
       email: "alice@example.com",
     });
-    expect(html).toContain('class="banner banner--error"');
+    expect(html).toContain("That link didn't work");
     expect(html).toContain('role="alert"');
-    expect(html).toContain("expired");
-    expect(html).toContain('value="alice@example.com"');
     expect(html).toContain('action="/auth/verify-email/resend"');
+    expect(html).toContain('value="alice@example.com"');
+    expect(html).toContain("Send a new link");
   });
 
-  it("failure state with invalid code renders the invalid-link banner", () => {
-    const html = renderVerifyEmailPage({
-      state: "failure",
-      failureCode: "invalid",
-    });
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("invalid");
-  });
-
-  it("failure state with unknown code falls back to a generic message", () => {
-    const html = renderVerifyEmailPage({
-      state: "failure",
-      failureCode: "unknown",
-    });
-    expect(html).toContain('role="alert"');
-    // Apostrophes in the failure-message branch flow through
-    // `escapeHtml`, so the rendered form is `couldn&#39;t`.
-    expect(html).toContain("couldn&#39;t verify");
-  });
-
-  it("resent state renders a success banner + the resend form (so user can resend again)", () => {
+  it("resent state confirms a fresh link and offers another resend", () => {
     const html = renderVerifyEmailPage({
       state: "resent",
       email: "alice@example.com",
     });
-    expect(html).toContain('class="banner banner--success"');
-    expect(html).toContain("fresh verification email");
+    expect(html).toContain('role="status"');
+    expect(html).toContain("fresh verification link");
     expect(html).toContain('action="/auth/verify-email/resend"');
   });
 

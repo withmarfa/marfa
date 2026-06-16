@@ -34,6 +34,10 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --field: #f5f5f5;
   --field-hover: #ececec;
   --surface-2: #f5f5f5;
+  /* Soft tile fill — the only boxed surface, reserved for permission
+     groups. A hair off the canvas so a tile reads as grouped without a
+     border. */
+  --tile: #f6f6f7;
 
   /* Primary (near-black). */
   --primary: #171717;
@@ -60,11 +64,20 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --warn-border: #fde68a;
   --warn-fg: #92400e;
 
+  /* Callout — the single boxed caution (unverified app). A warmer amber
+     than the status --warn tints so it reads as advisory, not error. */
+  --callout-bg: #fdf6e3;
+  --callout-border: #f3e0a3;
+  --callout-fg: #854d0e;
+  --callout-icon: #a16207;
+
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
   --r-card: 26px;
   --r-lg: 18px;
+  --r-tile: 16px;
   --r-md: 14px;
+  --r-input: 12px;
   --r-sm: 10px;
 
   --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
@@ -84,6 +97,7 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --field: #232323;
     --field-hover: #2b2b2b;
     --surface-2: #1f1f1f;
+    --tile: #1c1c1c;
 
     --primary: #fafafa;
     --primary-hover: #e5e5e5;
@@ -105,6 +119,10 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --warn-bg: #1f1a0e;
     --warn-border: #3d3320;
     --warn-fg: #fcd34d;
+    --callout-bg: #241f10;
+    --callout-border: #4a3f1c;
+    --callout-fg: #e9c46a;
+    --callout-icon: #d4a73a;
 
     --shadow: none;
   }
@@ -146,9 +164,9 @@ body {
   padding: 24px;
   box-shadow: var(--shadow);
 }
-.card--wide {
-  max-width: 460px;
-}
+/* Two card widths only: Standard (400, forms/dialogs) and Wide (520,
+   management pages — security, keys). --wide and --lg are aliases. */
+.card--wide,
 .card--lg {
   max-width: 520px;
 }
@@ -228,13 +246,12 @@ input[type="text"] {
   font-family: inherit;
   font-size: 16px;
   line-height: 1.4;
-  padding: 11px 16px;
+  padding: 11px 14px;
   color: var(--fg);
-  background: var(--field);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
   transition:
-    background 0.12s var(--ease),
     border-color 0.12s var(--ease),
     box-shadow 0.12s var(--ease);
 }
@@ -244,7 +261,7 @@ input::placeholder {
 input[type="email"]:hover,
 input[type="password"]:hover,
 input[type="text"]:hover {
-  background: var(--field-hover);
+  border-color: var(--border-strong);
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
@@ -262,21 +279,6 @@ input[type="text"]:focus {
   letter-spacing: 0.18em;
 }
 
-/* Static device-code display on the device-consent screen. */
-.device-code {
-  margin: 4px 0 18px;
-  padding: 14px;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  color: var(--fg);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
@@ -285,12 +287,12 @@ input[type="text"]:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 11px 20px;
+  gap: 7px;
+  min-height: 38px;
+  padding: 9px 18px;
   font-family: inherit;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   border: 1px solid transparent;
   border-radius: var(--r-pill);
@@ -359,8 +361,8 @@ input[type="text"]:focus {
   font-size: 15px;
 }
 .btn--sm {
-  min-height: 36px;
-  padding: 8px 14px;
+  min-height: 32px;
+  padding: 6px 14px;
   font-size: 13px;
 }
 
@@ -398,26 +400,8 @@ input[type="text"]:focus {
 }
 
 /* ---------------------------------------------------------------- */
-/* Separator, federated stack, aux link                             */
+/* Federated provider stack, aux link                               */
 /* ---------------------------------------------------------------- */
-
-.separator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 20px 0 14px;
-  color: var(--fg-faint);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.separator::before,
-.separator::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
 
 .oidc {
   display: flex;
@@ -473,280 +457,17 @@ input[type="text"]:focus {
   color: var(--warn-fg);
 }
 
-/* The one-time API-key reveal renders a monospace block. */
-.scope-literal {
-  display: block;
-  width: 100%;
-  margin-top: 2px;
-  padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  color: var(--fg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  word-break: break-all;
-}
-.scope-human {
-  display: block;
-  font-size: 13px;
-  color: var(--fg);
-}
-
 /* ---------------------------------------------------------------- */
 /* Consent screen                                                   */
 /* ---------------------------------------------------------------- */
 
-.consent-header {
-  margin: 0 0 20px;
-}
-.consent-title {
-  margin: 0 0 6px;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-}
-.consent-lede {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--fg-muted);
-}
-.client-name,
-.consent-lede .client-name {
-  color: var(--fg);
-  font-weight: 600;
-}
 .consent-form {
   display: flex;
   flex-direction: column;
 }
-.consent-footnote {
-  margin: 18px 0 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--fg-faint);
-}
-
-/* Per-bundle expand view: each bundle is its own collapsible row (see the
-   details.bundle-expand block lower down) carrying these summary-text
-   classes; expanding a row reveals its granular scope sub-items. */
-.bundles {
-  display: flex;
-  flex-direction: column;
-}
-.bundle-row__text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
-  min-width: 0;
-}
-.bundle-row__label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.bundle-row__desc {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-/* "Other" group: requested scopes that map to no bundle. Visible (so the
-   user reads each description) but visually quiet, sitting below the bundle
-   rows. */
-.bundle--residual {
-  border-top: 1px solid var(--hairline);
-  padding-top: 8px;
-  margin-top: 2px;
-}
-.bundle-residual__head {
-  margin: 4px 0 2px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-faint);
-}
-.bundle--residual .scope-row {
-  padding: 7px 0;
-}
-.bundle--residual .scope-row__text {
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-
-/* Flat / re-consent-diff grouping (no bundles configured). */
-.section {
-  margin: 0;
-  border-top: 1px solid var(--hairline);
-  padding-top: 16px;
-}
-.section:first-of-type {
-  border-top: 0;
-  padding-top: 0;
-}
-details.section > summary {
-  list-style: none;
-}
-details.section > summary::-webkit-details-marker {
-  display: none;
-}
-.section__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 0 8px;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.section__head--static {
-  cursor: default;
-}
-.section__label {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg);
-}
-.section__count {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg-faint);
-  font-variant-numeric: tabular-nums;
-}
-.section__chevron {
-  width: 8px;
-  height: 8px;
-  border-right: 1.5px solid var(--fg-faint);
-  border-bottom: 1.5px solid var(--fg-faint);
-  transform: rotate(-45deg);
-  transition: transform 0.16s var(--ease);
-  flex-shrink: 0;
-}
-details.section[open] > summary .section__chevron {
-  transform: rotate(45deg);
-}
-.section__head--static .section__chevron {
-  display: none;
-}
-.section__hint {
-  margin: 0 0 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--fg-muted);
-}
-.section--added .section__label {
-  color: var(--success-fg);
-}
-.section--removed .section__label {
-  color: var(--fg-muted);
-}
-
-.scope-list {
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 4px;
-}
-.scope-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 0;
-  cursor: pointer;
-}
-.scope-row__text {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg);
-}
-.scope-row--removed {
-  cursor: default;
-}
-.scope-row--removed .scope-row__text {
-  color: var(--fg-faint);
-  text-decoration: line-through;
-}
-
-/* The plain scope list used by the device-consent screen. */
-.scopes {
-  margin: 0 0 4px;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.scopes li {
-  font-size: 14px;
-  color: var(--fg);
-}
 
 /* ---------------------------------------------------------------- */
-/* Toggle switch                                                    */
-/* ---------------------------------------------------------------- */
-
-.toggle {
-  position: relative;
-  display: inline-block;
-  width: 30px;
-  height: 18px;
-  flex-shrink: 0;
-}
-.toggle input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-  z-index: 1;
-}
-.toggle__track {
-  position: absolute;
-  inset: 0;
-  background: var(--border-strong);
-  border-radius: 999px;
-  transition: background 0.18s var(--ease);
-  pointer-events: none;
-}
-.toggle__track::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  background: var(--primary-fg);
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.18s var(--ease);
-}
-.toggle input:checked + .toggle__track {
-  background: var(--primary);
-}
-.toggle input:checked + .toggle__track::before {
-  transform: translateX(12px);
-}
-.toggle input:focus-visible + .toggle__track {
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.toggle input:disabled + .toggle__track {
-  opacity: 0.5;
-}
-
-/* ---------------------------------------------------------------- */
-/* Action row, unverified badge                                     */
+/* Stacked action row (Allow/Deny, Continue/Cancel, …)              */
 /* ---------------------------------------------------------------- */
 
 .actions {
@@ -763,34 +484,18 @@ details.section[open] > summary .section__chevron {
   width: 100%;
 }
 
-.unverified-badge {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 999px;
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  color: var(--warn-fg);
-  white-space: nowrap;
-  vertical-align: middle;
-}
-
 /* ---------------------------------------------------------------- */
 /* List rows (keys + security)                                      */
 /* ---------------------------------------------------------------- */
 
+/* Management list rows (keys, security) — airy, no dividers; whitespace
+   and the bold title carry the separation. */
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 0;
-  border-top: 1px solid var(--hairline);
-}
-.row:first-of-type {
-  border-top: 0;
+  padding: 13px 0;
 }
 .row__main {
   flex: 1;
@@ -814,24 +519,6 @@ details.section[open] > summary .section__chevron {
 .row__action {
   margin: 0;
   flex-shrink: 0;
-}
-
-.tag {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--fg-muted);
-  vertical-align: middle;
-}
-.tag--current {
-  background: var(--border);
-  color: var(--fg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -881,37 +568,6 @@ details.section[open] > summary .section__chevron {
 }
 
 /* ---------------------------------------------------------------- */
-/* Capability rows ("what it can do" / "this connection can")        */
-/* Label leading, squared check trailing.                            */
-/* ---------------------------------------------------------------- */
-
-.caps {
-  display: flex;
-  flex-direction: column;
-}
-.cap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 11px 0;
-}
-.cap__text {
-  min-width: 0;
-}
-.cap__title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg);
-}
-.cap__desc {
-  margin-top: 2px;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-
-/* ---------------------------------------------------------------- */
 /* Read-only monospace field (a full type identifier, scopes)        */
 /* ---------------------------------------------------------------- */
 
@@ -926,70 +582,6 @@ details.section[open] > summary .section__chevron {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   word-break: break-all;
-}
-
-/* ---------------------------------------------------------------- */
-/* Big code display + entry (device flow)                            */
-/* ---------------------------------------------------------------- */
-
-/* Confirm-the-code display: a box that hugs the code. */
-.codebox-wrap {
-  display: flex;
-  justify-content: center;
-  margin: 24px 0;
-}
-.codebox {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 24px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-.codebox__seg {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  line-height: 1;
-}
-.codebox__dash {
-  color: var(--fg-faint);
-}
-
-/* Enter-the-code: segmented OTP-style cells. */
-.otp {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 24px 0;
-}
-.otp__cell {
-  width: 42px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 24px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--card);
-}
-.otp__cell--empty {
-  background: var(--surface-2);
-  color: var(--fg-faint);
-}
-.otp__cell--active {
-  border-color: var(--fg);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.otp__dash {
-  color: var(--fg-faint);
-  font-size: 20px;
-  padding: 0 2px;
 }
 
 /* ---------------------------------------------------------------- */
@@ -1054,87 +646,356 @@ details.disclosure[open] > summary .disclosure__chevron {
 }
 
 /* ---------------------------------------------------------------- */
-/* Per-bundle expand (consent): summary row with master toggle,      */
-/* granular sub-items behind a per-row chevron, quieter squared.     */
+/* Active-session marker (security)                                  */
 /* ---------------------------------------------------------------- */
 
-details.bundle-expand {
-  border-top: 1px solid var(--hairline);
+.row__title .this-device {
+  color: var(--fg-muted);
+  font-weight: 500;
 }
-details.bundle-expand:first-of-type {
-  border-top: 0;
+
+/* ================================================================ */
+/* Locked design vocabulary                                         */
+/* Soft Tiles for permission groups only; airy everywhere else.     */
+/* ================================================================ */
+
+/* Canonical card heading + subtitle. The reassurance line ("you can
+   change this anytime in settings") lives in .sub, never a footnote. */
+.title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  color: var(--fg);
 }
-details.bundle-expand > summary {
+.sub {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.sub b,
+.sub strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* Inline section label inside a panel ("Connected apps", "New", …) —
+   sentence case, not a shouty uppercase eyebrow. */
+.lsec {
+  margin: 18px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The single boxed caution — the unverified-app warning. One warning,
+   never a second inline badge. */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  background: var(--callout-bg);
+  border: 1px solid var(--callout-border);
+  border-radius: 13px;
+}
+.callout svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--callout-icon);
+}
+.callout span {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--callout-fg);
+}
+
+/* Permission groups — collapsible Soft Tiles, the ONLY boxed surface.
+   Collapsed by default; expand to per-type toggles. */
+.t-soft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.grp {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+}
+.grp > summary {
   list-style: none;
   display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 0;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
   cursor: pointer;
 }
-details.bundle-expand > summary::-webkit-details-marker {
+.grp > summary::-webkit-details-marker {
   display: none;
 }
-.bundle-expand__chevron {
-  width: 7px;
-  height: 7px;
-  border-right: 1.6px solid var(--fg-faint);
-  border-bottom: 1.6px solid var(--fg-faint);
-  transform: rotate(-45deg);
+.gmain {
+  flex: 1;
+  min-width: 0;
+}
+.gtop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.glabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.gchev {
+  width: 13px;
+  height: 13px;
+  color: var(--fg-faint);
   transition: transform 0.18s var(--ease);
-  flex-shrink: 0;
+  flex: none;
 }
-details.bundle-expand[open] .bundle-expand__chevron {
-  transform: rotate(45deg);
+.grp[open] .gchev {
+  transform: rotate(90deg);
 }
-.bundle-expand__sub {
-  padding: 2px 0 18px 2px;
+.gdesc {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-muted);
 }
-.bundle-sub {
+.gsub {
+  display: flex;
+  flex-direction: column;
+  padding: 0 15px 12px;
+}
+.subrow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   padding: 8px 0;
 }
-.bundle-sub__label {
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-.bundle-sub .chk {
-  width: 18px;
-  height: 18px;
+.subrow > span {
+  font-size: 13.5px;
+  color: var(--fg);
 }
 
-/* ---------------------------------------------------------------- */
-/* Danger zone + active-session marker (security)                    */
-/* ---------------------------------------------------------------- */
+/* "New" chip for a re-consent group (used sparingly — the section
+   headers carry most of the diff). */
+.newchip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
 
-.danger-zone {
+/* Switch used inside permission groups. Supports indeterminate for a
+   partially-ticked group master. */
+.sw {
+  position: relative;
+  width: 32px;
+  height: 19px;
+  flex: none;
+}
+.sw input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.sw .tk {
+  position: absolute;
+  inset: 0;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background 0.16s var(--ease);
+  pointer-events: none;
+}
+.sw .tk::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  background: var(--primary-fg);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.16s var(--ease);
+}
+.sw input:checked + .tk {
+  background: var(--primary);
+}
+.sw input:checked + .tk::before {
+  transform: translateX(13px);
+}
+.sw input:indeterminate + .tk {
+  background: var(--border-strong);
+}
+.sw input:focus-visible + .tk {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* "+" icon button (new key) and other compact icon actions. */
+.iconbtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--fg);
+  flex: none;
+}
+.iconbtn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.iconbtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Panel header: title left, an icon action right. */
+.head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--hairline);
+  margin-bottom: 6px;
 }
-.danger-zone__text {
-  min-width: 0;
+
+/* App identity header (integration install). */
+.apphead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
 }
-.danger-zone__title {
-  font-size: 14px;
+.logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--tile);
+  display: grid;
+  place-items: center;
   font-weight: 600;
+  font-size: 16px;
+  color: var(--fg);
+  flex: none;
+}
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+/* Capability tile — a soft tile describing what an install adds. */
+.captile {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+  padding: 14px 16px;
+}
+.captile__t {
+  font-size: 14px;
+  font-weight: 500;
   color: var(--fg);
 }
-.danger-zone__desc {
-  margin-top: 2px;
+.captile__d {
+  margin-top: 3px;
   font-size: 12.5px;
+  line-height: 1.45;
   color: var(--fg-muted);
 }
-.row__title .this-device {
+
+/* Capability check rows (device approve) — airy, leading check glyph. */
+.crow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+.crow svg {
+  flex: none;
+  color: var(--fg);
+}
+.crow span {
+  font-size: 14px;
+  color: var(--fg);
+}
+
+/* Code display tile (device approve) — soft tile, centered mono. */
+.codetile {
+  background: var(--tile);
+  border-radius: var(--r-tile);
+  padding: 18px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--fg);
+}
+
+/* One-line secret reveal (a created API key). Full value on one line,
+   smaller mono, truncated, with a trailing copy button. The caution
+   sits BELOW the field. */
+.copyfield {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 0 6px 0 12px;
+  height: 42px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.copyfield__val {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.copyfield__copy {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
   color: var(--fg-muted);
-  font-weight: 500;
+}
+.copyfield__copy:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.caution {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {

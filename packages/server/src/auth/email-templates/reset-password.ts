@@ -23,15 +23,15 @@ export function renderResetPasswordEmail(
   const expires = input.expiresInMinutes ?? 60;
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
   return renderEmail({
-    subject: "Reset your password for Marfa",
+    subject: "Reset your Marfa password",
     heading: "Reset your password",
     intro: [
-      `${greeting} — we got a request to reset your Marfa password. Use the button below to choose a new one.`,
+      `${greeting}, we got a request to reset your Marfa password. Choose a new one with the button below.`,
     ],
-    note: `This link expires in ${String(expires)} minutes and can only be used once.`,
+    note: `This link expires in ${String(expires)} minutes and works once.`,
     button: { label: "Reset password", url: input.url },
     outro: [
-      "If you didn't request this, you can safely ignore this email — your current password will keep working.",
+      "If you didn't ask for this, you can ignore this email. Your current password still works.",
     ],
   });
 }

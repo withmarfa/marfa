@@ -26,15 +26,13 @@ export function renderVerifyEmailEmail(
   const expires = input.expiresInMinutes ?? 60;
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
   return renderEmail({
-    subject: "Verify your email for Marfa",
+    subject: "Verify your email",
     heading: "Verify your email",
     intro: [
-      `${greeting} — welcome to Marfa. Confirm your email address to finish setting up your account.`,
+      `${greeting}, confirm your email to finish setting up your Marfa account.`,
     ],
     note: `This link expires in ${String(expires)} minutes.`,
     button: { label: "Verify email", url: input.url },
-    outro: [
-      "If you didn't create a Marfa account, you can safely ignore this email.",
-    ],
+    outro: ["If you didn't create a Marfa account, you can ignore this email."],
   });
 }

@@ -35,7 +35,7 @@ describe("renderPasskeyEnrollPage", () => {
   it("renders the email + register button + fallback paragraph", () => {
     const html = renderPasskeyEnrollPage({ email: "alice@example.com" });
     expect(html).toContain("alice@example.com");
-    expect(html).toContain("Register passkey");
+    expect(html).toContain("Add a passkey");
     expect(html).toContain('id="passkey-button"');
     expect(html).toContain('id="passkey-unsupported"');
   });

@@ -38,12 +38,12 @@ describe("renderForgotPasswordPage", () => {
     expect(html).toContain('href="/auth/sign-in"');
   });
 
-  it("sent state echoes the email in a soft-fail success banner", () => {
+  it("sent state echoes the email in a soft-fail confirmation", () => {
     const html = renderForgotPasswordPage({
       state: "sent",
       email: "alice@example.com",
     });
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain('role="status"');
     expect(html).toContain("alice@example.com");
     expect(html).toContain("If an account exists");
   });
@@ -100,7 +100,7 @@ describe("GET /auth/forgot-password", () => {
       { headers: { origin: ORIGIN } },
     );
     const html = await res.text();
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain('role="status"');
     expect(html).toContain("alice@example.com");
   });
 

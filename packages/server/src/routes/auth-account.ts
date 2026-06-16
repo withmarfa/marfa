@@ -601,10 +601,10 @@ async function deleteVerificationsByValueAndPrefix(
 
 function renderBadTokenPage(): string {
   return renderAuthLayout({
-    title: "Invalid link",
+    title: "Invalid or expired link",
     bodyHtml: `
-      <h1>Invalid or expired link</h1>
-      <div class="banner banner--error" role="alert">If you still want to delete your account, sign in and request deletion again.</div>
+      <h1 class="title">Invalid or expired link</h1>
+      <p class="sub" role="alert">If you still want to delete your account, sign in and request deletion again.</p>
       <p class="aux"><a href="/auth/sign-in">Sign in</a></p>
     `,
   });
@@ -614,9 +614,9 @@ function renderConfirmedPage(): string {
   return renderAuthLayout({
     title: "Account scheduled for deletion",
     bodyHtml: `
-      <h1>Account scheduled for deletion</h1>
-      <div class="banner banner--success" role="status">Your account is scheduled for permanent deletion. We've sent you a confirmation email with a cancel link valid for the full grace window.</div>
-      <p class="aux">Changed your mind? Check your inbox for the cancellation link.</p>
+      <h1 class="title">Account scheduled for deletion</h1>
+      <p class="sub" role="status">Your account and everything in it will be deleted after the grace period. We've emailed you a cancel link.</p>
+      <p class="aux">Changed your mind? The cancel link is in your inbox.</p>
     `,
   });
 }
@@ -625,9 +625,11 @@ function renderCancelledPage(): string {
   return renderAuthLayout({
     title: "Account restored",
     bodyHtml: `
-      <h1>Account restored</h1>
-      <div class="banner banner--success" role="status">Your account is no longer scheduled for deletion.</div>
-      <p class="aux"><a href="/auth/sign-in">Sign in</a></p>
+      <h1 class="title">Account restored</h1>
+      <p class="sub" role="status">Your account is no longer scheduled for deletion. You can pick up where you left off.</p>
+      <div class="actions">
+        <a href="/auth/sign-in" class="btn btn--primary">Sign in</a>
+      </div>
     `,
   });
 }
@@ -640,9 +642,9 @@ function renderAlreadyDeletedPage(): string {
   return renderAuthLayout({
     title: "Account permanently deleted",
     bodyHtml: `
-      <h1>Account permanently deleted</h1>
-      <div class="banner banner--error" role="alert">Your account has already been permanently deleted, and we couldn't cancel the deletion.</div>
-      <p class="aux">If you'd like to use Marfa again, you can <a href="/auth/sign-up">create a new account</a>.</p>
+      <h1 class="title">Account permanently deleted</h1>
+      <p class="sub" role="alert">Your account has already been permanently deleted, so we couldn't cancel it.</p>
+      <p class="aux">Want to use Marfa again? <a href="/auth/sign-up">Create a new account</a>.</p>
     `,
   });
 }

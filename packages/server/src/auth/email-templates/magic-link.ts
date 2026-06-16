@@ -19,14 +19,14 @@ export function renderMagicLinkEmail(
 ): RenderedEmail {
   const expires = input.expiresInMinutes ?? 5;
   return renderEmail({
-    subject: "Sign in to Marfa",
+    subject: "Your Marfa sign-in link",
     heading: "Sign in to Marfa",
     intro: [
-      `Use the button below to sign in to Marfa. The link works once and expires in ${String(expires)} minutes.`,
+      `Here's your one-time sign-in link. It works once and expires in ${String(expires)} minutes.`,
     ],
     button: { label: "Sign in", url: input.url },
     outro: [
-      "If you didn't try to sign in, you can ignore this email — your account is safe.",
+      "If you didn't try to sign in, you can ignore this email. Your account is safe.",
     ],
   });
 }

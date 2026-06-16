@@ -125,35 +125,30 @@ export function renderSecurityPage(params: SecurityPageParams): string {
 
   const grantsSection =
     params.grants.length === 0
-      ? `<div class="section">
-          <h2>Connected apps</h2>
-          <p class="field__hint">No third-party apps are connected to your account.</p>
-        </div>`
-      : `<div class="section">
-          <h2>Connected apps</h2>
-          ${params.grants
-            .map((g) => {
-              const safeName = escapeHtml(g.client_name);
-              const safeId = escapeHtml(g.id);
-              const activity = g.last_used_at
-                ? `Last used ${escapeHtml(formatDate(g.last_used_at))}`
-                : `Connected ${escapeHtml(formatDate(g.granted_at))}`;
-              return `<div class="row">
-                <div class="row__main">
-                  <div class="row__title">${safeName}</div>
-                  <div class="row__meta">${escapeHtml(scopeSummary(g.scopes))}</div>
-                  <div class="row__meta row__meta--faint">${activity}</div>
-                </div>
-                <form method="POST" action="/auth/grants/${safeId}/revoke" class="row__action">
-                  <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
-                </form>
-              </div>`;
-            })
-            .join("\n")}
-        </div>`;
+      ? `<p class="lsec">Connected apps</p>
+        <p class="field__hint">No third-party apps are connected to your account.</p>`
+      : `<p class="lsec">Connected apps</p>
+        ${params.grants
+          .map((g) => {
+            const safeName = escapeHtml(g.client_name);
+            const safeId = escapeHtml(g.id);
+            const activity = g.last_used_at
+              ? `Last used ${escapeHtml(formatDate(g.last_used_at))}`
+              : `Connected ${escapeHtml(formatDate(g.granted_at))}`;
+            return `<div class="row">
+              <div class="row__main">
+                <div class="row__title">${safeName}</div>
+                <div class="row__meta">${escapeHtml(scopeSummary(g.scopes))}</div>
+                <div class="row__meta row__meta--faint">${activity}</div>
+              </div>
+              <form method="POST" action="/auth/grants/${safeId}/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>`;
+          })
+          .join("\n")}`;
 
-  const sessionsSection = `<div class="section">
-    <h2>Active sessions</h2>
+  const sessionsSection = `<p class="lsec">Active sessions</p>
     ${params.sessions
       .map((s) => {
         const safeId = escapeHtml(s.id);
@@ -182,21 +177,16 @@ export function renderSecurityPage(params: SecurityPageParams): string {
         </div>`;
       })
       .join("\n")}
-  </div>
-  <div class="danger-zone">
-    <div class="danger-zone__text">
-      <div class="danger-zone__title">Sign out everywhere</div>
-      <div class="danger-zone__desc">Ends every other session.</div>
-    </div>
-    <form method="POST" action="/auth/sessions/sign-out-all">
-      <button type="submit" class="btn btn--danger-quiet btn--sm">Sign out everywhere</button>
-    </form>
-  </div>`;
+    <div class="actions" style="margin-top:18px">
+      <form method="POST" action="/auth/sessions/sign-out-all">
+        <button type="submit" class="btn btn--ghost">Sign out everywhere</button>
+      </form>
+    </div>`;
 
   const bodyHtml = `
-    <h1>Security</h1>
-    <p class="lede">Manage who has access to your Marfa account.</p>
-    <p class="lede">Signed in as <strong>${safeEmail}</strong>.</p>
+    <h1 class="title">Security</h1>
+    <p class="sub">Manage what has access to your account.</p>
+    <p class="sub">Signed in as <strong>${safeEmail}</strong>.</p>
 
     ${noticeHtml}
     ${grantsSection}

@@ -79,7 +79,7 @@ describe("full forgot → reset → sign-in flow", () => {
     expect(reset.status).toBe(200);
     const html = await reset.text();
     expect(html).toContain("Password updated");
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain('role="status"');
 
     // 5. Sign in with the new password
     const signIn = await request(ctx.app, "POST", "/auth/sign-in/email", {
@@ -140,8 +140,8 @@ describe("full forgot → reset → sign-in flow", () => {
     });
     expect(second.status).toBe(200);
     const html = await second.text();
-    expect(html).toContain("Reset failed");
-    expect(html).toContain('class="banner banner--error"');
+    expect(html).toContain("That link didn't work");
+    expect(html).toContain('href="/auth/forgot-password"');
   });
 
   it("revokeSessionsOnPasswordReset terminates pre-existing sessions", async () => {

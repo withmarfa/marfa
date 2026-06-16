@@ -78,7 +78,7 @@ describe("renderDeviceConsentScreen", () => {
 
   it("threads client name + user_code into the lede", () => {
     const html = renderDeviceConsentScreen(PARAMS);
-    expect(html).toContain('class="client-name">marfa CLI');
+    expect(html).toContain("<b>marfa CLI</b>");
     expect(html).toContain("ABCD-1234");
   });
 
@@ -98,22 +98,19 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).not.toContain("core.note:read");
   });
 
-  it("renders each capability as a .cap row with a trailing granted check", () => {
+  it("renders each capability as a .crow check row", () => {
     const html = renderDeviceConsentScreen(PARAMS);
-    expect(html).toContain('class="caps"');
-    expect(html).toContain('class="cap"');
-    expect(html).toContain('class="cap__title">Text you created.');
-    // The granted indicator is a checked + disabled squared check —
-    // informational, not toggleable.
-    expect(html).toContain('class="chk" checked disabled');
+    expect(html).toContain('class="crow"');
+    expect(html).toContain("Text you created.");
   });
 
-  it("renders the user_code in the new codebox, split around a dash", () => {
-    const html = renderDeviceConsentScreen({ ...PARAMS, userCode: "WDJBMJHT" });
-    expect(html).toContain('class="codebox"');
-    expect(html).toContain('class="codebox__seg">WDJB');
-    expect(html).toContain('class="codebox__seg">MJHT');
-    expect(html).toContain('class="codebox__dash"');
+  it("renders the user_code whole in a code tile, not an entry field", () => {
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      userCode: "WDJB-MJHT",
+    });
+    expect(html).toContain('class="codetile"');
+    expect(html).toContain("WDJB-MJHT");
     // The display is not a real form input — no entry <input> for the code.
     expect(html).not.toContain('class="field__input--code"');
   });
@@ -170,16 +167,16 @@ describe("renderDeviceConsentScreen", () => {
 });
 
 describe("renderDeviceDecisionPage", () => {
-  it("renders a success banner when approved", () => {
+  it("confirms the sign-in when approved", () => {
     const html = renderDeviceDecisionPage({ approved: true });
-    expect(html).toContain('class="banner banner--success"');
+    expect(html).toContain('role="status"');
     expect(html).toContain("You&#39;re signed in");
     expect(html).toContain("return to your other device");
   });
 
-  it("renders an error banner when denied", () => {
+  it("confirms the denial when denied", () => {
     const html = renderDeviceDecisionPage({ approved: false });
-    expect(html).toContain('class="banner banner--error"');
+    expect(html).toContain('role="status"');
     expect(html).toContain("You denied the request");
   });
 

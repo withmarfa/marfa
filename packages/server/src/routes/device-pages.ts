@@ -66,10 +66,6 @@ const OIDC_FRIENDLY_LABELS: Record<string, string> = {
   email: "See your email address",
 };
 
-/** A trailing, checked + disabled squared check: an informational
- *  "will be granted" affirmation, not a toggle. */
-const GRANTED_CHECK = `<input type="checkbox" class="chk" checked disabled aria-hidden="true" tabindex="-1">`;
-
 /**
  * Resolve the human-readable capability for a parsed scope, deduped across
  * the full set. OIDC literals map to friendly labels; everything else uses
@@ -98,22 +94,6 @@ function describeCapabilities(
   return out;
 }
 
-/**
- * Split a user_code display into two halves around a dash for the
- * `.codebox` (e.g. `WDJB-MJHT` → `["WDJB", "MJHT"]`). Codes already
- * carrying a separator split on it; an even-length unseparated code splits
- * down the middle; anything else renders as a single segment.
- */
-function splitUserCode(code: string): string[] {
-  if (code.includes("-")) {
-    return code.split("-").filter((seg) => seg.length > 0);
-  }
-  if (code.length >= 2 && code.length % 2 === 0) {
-    return [code.slice(0, code.length / 2), code.slice(code.length / 2)];
-  }
-  return [code];
-}
-
 /** Renders the verification form where the user types the user_code. */
 export function renderDevicePage(params: DevicePageParams): string {
   const errorMessage = params.error
@@ -125,8 +105,8 @@ export function renderDevicePage(params: DevicePageParams): string {
   const safePrefilled = escapeHtml(params.prefilled);
 
   const bodyHtml = `
-    <h1>Device sign-in</h1>
-    <p class="lede">Enter the code shown on your other device to authorize it.</p>
+    <h1 class="title">Sign in on your device</h1>
+    <p class="sub">Enter the code shown on your other device.</p>
     ${errorBanner}
     <form method="POST" action="/auth/device" class="form" novalidate>
       <label class="field">
@@ -145,11 +125,13 @@ export function renderDevicePage(params: DevicePageParams): string {
                maxlength="9"
                aria-required="true">
       </label>
-      <button type="submit" class="btn btn--primary">Continue</button>
+      <div class="actions">
+        <button type="submit" class="btn btn--primary">Continue</button>
+      </div>
     </form>
   `;
 
-  return renderAuthLayout({ title: "Device sign-in", bodyHtml });
+  return renderAuthLayout({ title: "Sign in on your device", bodyHtml });
 }
 
 /** Renders the consent screen for an approved device-code journey. */
@@ -157,45 +139,36 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const safeClient = escapeHtml(params.clientName);
   const safeUserCode = escapeHtml(params.userCode);
 
-  // Friendly, deduped capability labels rendered as static "will be
-  // granted" rows — each carries a trailing checked + disabled check.
+  // Friendly, deduped capability labels rendered as airy check rows — each
+  // a leading check glyph, no toggle (these are confirmed, not editable).
   const capRows = describeCapabilities(params.scopes, params.descriptions)
     .map(
       (human) =>
-        `<div class="cap"><span class="cap__text"><span class="cap__title">${escapeHtml(human)}</span></span>${GRANTED_CHECK}</div>`,
+        `<div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>${escapeHtml(human)}</span></div>`,
     )
     .join("");
 
-  // The code is a *display* (the user confirms it matches their other
-  // device), not an entry input — render it in the box that hugs the code,
-  // split into two halves around a dash.
-  const codeSegments = splitUserCode(params.userCode)
-    .map((seg) => `<span class="codebox__seg">${escapeHtml(seg)}</span>`)
-    .join(`<span class="codebox__dash">–</span>`);
-
+  // The code is a display (the user confirms it matches their other device),
+  // not an entry input — show it whole in a soft code tile.
   const bodyHtml = `
-    <header style="text-align:center">
-      <h1>Approve sign-in</h1>
-      <p class="lede"><span class="client-name">${safeClient}</span> on another device is trying to sign in as you. Approve only if this code matches what you see there.</p>
-    </header>
-    <div class="codebox-wrap"><div class="codebox">${codeSegments}</div></div>
-    <h2>What it can do</h2>
-    <div class="caps">
+    <h1 class="title">Approve sign-in</h1>
+    <p class="sub"><b>${safeClient}</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
+    <div class="codetile">${safeUserCode}</div>
+    <div style="margin-top:10px">
       ${capRows}
     </div>
     <div class="actions">
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="approve">
-        <button type="submit" class="btn btn--primary">Approve sign-in</button>
+        <button type="submit" class="btn btn--primary">Approve</button>
       </form>
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="deny">
-        <button type="submit" class="btn btn--outline">Deny</button>
+        <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
     </div>
-    <p class="consent-footnote">If you didn't start this, deny and change your password.</p>
   `;
 
   return renderAuthLayout({
@@ -210,16 +183,13 @@ export function renderDeviceDecisionPage(params: DeviceDecisionParams): string {
   const heading = params.approved
     ? "You're signed in"
     : "You denied the request";
-  const lede = params.approved
-    ? "You can return to your other device — it will pick up the sign-in shortly."
-    : "Your other device will not be granted access. You can close this window.";
-  const banner = params.approved
-    ? `<div class="banner banner--success" role="status">${escapeHtml(lede)}</div>`
-    : `<div class="banner banner--error" role="status">${escapeHtml(lede)}</div>`;
+  const sub = params.approved
+    ? "You can return to your other device. It will pick up the sign-in shortly."
+    : "Your other device won't be granted access. You can close this window.";
 
   const bodyHtml = `
-    <h1>${escapeHtml(heading)}</h1>
-    ${banner}
+    <h1 class="title">${escapeHtml(heading)}</h1>
+    <p class="sub" role="status">${escapeHtml(sub)}</p>
   `;
 
   return renderAuthLayout({ title: heading, bodyHtml });

@@ -119,17 +119,16 @@ describe("renderSecurityPage", () => {
     );
   });
 
-  it("renders Sign out everywhere as a quiet danger button in a danger zone", () => {
+  it("renders Sign out everywhere as a ghost block button (no danger zone)", () => {
     const html = renderSecurityPage({
       email: "alice@example.com",
       grants: [],
       sessions: [{ ...SAMPLE_SESSION, is_current: true }],
     });
-    expect(html).toContain('class="danger-zone"');
-    expect(html).toContain("Ends every other session.");
+    expect(html).not.toContain('class="danger-zone"');
     expect(html).toContain('action="/auth/sessions/sign-out-all"');
     expect(html).toMatch(
-      /<button[^>]*class="btn btn--danger-quiet btn--sm"[^>]*>Sign out everywhere<\/button>/,
+      /<button[^>]*class="btn btn--ghost"[^>]*>Sign out everywhere<\/button>/,
     );
   });
 

@@ -5,10 +5,9 @@
  *
  *   - `form` — initial render. Single email field, submit button,
  *     "Sign in instead" link.
- *   - `sent` — soft-fail success: "If an account exists for X, we've
- *     sent a password-reset link". Identical copy regardless of
- *     whether the address actually has an account, to prevent
- *     enumeration.
+ *   - `sent` — soft-fail confirmation: "If an account exists for X, a
+ *     reset link is on its way". Identical copy regardless of whether the
+ *     address actually has an account, to prevent enumeration.
  *   - `error` — render with an error banner (rare; rate-limit and
  *     misconfigured-backend are the main paths).
  */
@@ -57,48 +56,48 @@ export function renderForgotPasswordPage(
   const safeEmail = escapeHtml(params.email ?? "");
   const safeReturnTo = escapeHtml(params.returnTo ?? "/");
 
-  const form = `
-    <form method="POST" action="/auth/forgot-password" class="form" novalidate>
-      <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <label class="field">
-        <span class="field__label">Email</span>
-        <input type="email"
-               name="email"
-               value="${safeEmail}"
-               required
-               autocomplete="email"
-               autofocus
-               aria-required="true">
-      </label>
-      <button type="submit" class="btn btn--primary">Send reset link</button>
-    </form>
-    <p class="aux">Remembered it? <a href="/auth/sign-in">Sign in</a></p>
-  `;
+  // Sent confirmation — its own focused screen. The soft-fail copy never
+  // reveals whether the address has an account.
+  if (params.state === "sent") {
+    const forWhom = params.email ? ` for ${escapeHtml(params.email)}` : "";
+    return renderAuthLayout({
+      title: "Check your email",
+      bodyHtml: `
+        <h1 class="title">Check your email</h1>
+        <p class="sub" role="status">If an account exists${forWhom}, a password-reset link is on its way. It expires in an hour.</p>
+        <p class="aux">Wrong email? <a href="/auth/forgot-password">Try again</a></p>
+      `,
+    });
+  }
 
   const errorBanner =
     params.state === "error" && params.errorCode
       ? `<div class="banner banner--error" role="alert">${escapeHtml(ERROR_MESSAGES[params.errorCode])}</div>`
       : "";
 
-  const bodyHtml =
-    params.state === "sent"
-      ? `
-      <h1>Check your inbox</h1>
-      <div class="banner banner--success" role="status">If an account exists${
-        params.email ? ` for ${escapeHtml(params.email)}` : ""
-      }, we've sent a password-reset link. It expires in an hour.</div>
-      <p class="lede">Didn't get one? You can request another below.</p>
-      ${form}
-    `
-      : `
-      <h1>Reset your password</h1>
-      <p class="lede">Enter your email and we'll send you a link to choose a new password.</p>
-      ${errorBanner}
-      ${form}
-    `;
-
   return renderAuthLayout({
-    title: params.state === "sent" ? "Check your inbox" : "Reset your password",
-    bodyHtml,
+    title: "Reset your password",
+    bodyHtml: `
+      <h1 class="title">Reset your password</h1>
+      <p class="sub">Enter your email and we'll send you a link to set a new password.</p>
+      ${errorBanner}
+      <form method="POST" action="/auth/forgot-password" class="form" novalidate>
+        <input type="hidden" name="return_to" value="${safeReturnTo}">
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input type="email"
+                 name="email"
+                 value="${safeEmail}"
+                 required
+                 autocomplete="email"
+                 autofocus
+                 aria-required="true">
+        </label>
+        <div class="actions">
+          <button type="submit" class="btn btn--primary">Send reset link</button>
+        </div>
+      </form>
+      <p class="aux">Remembered it? <a href="/auth/sign-in">Sign in</a></p>
+    `,
   });
 }

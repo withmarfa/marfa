@@ -77,24 +77,24 @@ export function renderPasskeyEnrollPage(
   `.trim();
 
   const bodyHtml = `
-    <h1>Add a passkey</h1>
-    <p class="lede">Sign in faster on this device with Face ID, Touch ID, Windows Hello, or your security key.</p>
-    <p class="lede">Signed in as <strong>${safeEmail}</strong>.</p>
+    <h1 class="title">Add a passkey</h1>
+    <p class="sub">Sign in faster with Face ID, Touch ID, Windows Hello, or a security key.</p>
+    <p class="sub">Signed in as <strong>${safeEmail}</strong>.</p>
 
     <div id="passkey-success" class="banner banner--success" role="status" hidden>
-      Passkey added. You can now sign in with it next time.
+      Passkey added. You can sign in with it next time.
     </div>
     <div id="passkey-error" class="banner banner--error" role="alert" hidden></div>
 
     <div class="actions">
-      <button id="passkey-button" type="button" class="btn btn--primary">Register passkey</button>
+      <button id="passkey-button" type="button" class="btn btn--primary">Add a passkey</button>
     </div>
 
     <p id="passkey-unsupported" class="aux" hidden>
       Your browser doesn't support passkeys, or this connection isn't secure (HTTPS). Try a recent version of Chrome, Safari, or Firefox over HTTPS.
     </p>
 
-    <p class="aux"><a href="/auth/security">Back to security settings</a></p>
+    <p class="aux"><a href="/auth/security">Back to security</a></p>
 
     <script src="/auth/static/passkey.js"></script>
     <script>${inlineScript}</script>

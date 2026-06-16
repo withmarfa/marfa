@@ -382,74 +382,60 @@ export function parseOtelHeaders(
 }
 
 /**
- * The default four consent-screen permission bundles. Each renders as one
- * plain-language checkbox (all pre-ticked); the issued token carries the
- * concrete scopes the bundle expands to, enforced through the usual
+ * The default consent-screen permission bundles. Each scope renders as one
+ * plain-language per-type toggle (all pre-ticked); the issued token carries
+ * exactly the scopes the user keeps ticked, enforced through the usual
  * permission maps.
  *
- * `read` / `write` use per-namespace wildcards covering the user's content
- * (`core.*`, `user.*`, `app.*`, and the integration namespaces) plus edges
- * and tags. They deliberately EXCLUDE `system.*` so an app signed into
- * "your stuff" can't read your security internals (credentials, devices,
- * webhooks); `user.*` is what makes an app work against its own runtime
- * types without those types appearing in the static scope allowlist. The
- * separate `connected` bundle grants read on `system.connection` /
- * `system.integration` only. Full `*:read` / `*:write` stays available via
- * the consent screen's "Customize" path, never by default.
+ * `read` / `write` enumerate CONCRETE per-type scopes rather than a `core.*`
+ * wildcard. That's deliberate: the OAuth provider only lets a consent grant
+ * narrow to scopes that were literally requested, so for "untick Calendar"
+ * to genuinely narrow the token the request has to name each type up front.
+ * The flip side is the honest one the design wants — a content type added in
+ * a later release is NOT granted to an already-connected app automatically;
+ * the user is asked to approve it on the next connect.
+ *
+ * They deliberately EXCLUDE most of `system.*` so an app reading "your
+ * content" can't read your security internals (credentials, devices,
+ * webhooks); the one exception is `system.connection:read`, surfaced as the
+ * "Connected accounts" toggle. `system.integration` (the marketplace catalog)
+ * is no longer in the default grant — an app that needs it requests it.
  */
 export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "read",
-    label: "Read your stuff",
-    description: "See your items, tags, files, and how they connect.",
+    label: "Read your content",
+    description: "Your notes, tasks, bookmarks, and more.",
     scopes: [
-      "core.*:read",
-      "user.*:read",
-      "app.*:read",
-      "google.*:read",
-      "raindrop.*:read",
-      "readwise.*:read",
-      "todoist.*:read",
-      "withmarfa.*:read",
-      "edge.*:read",
-      "metadata:read",
+      "core.note:read",
+      "core.task:read",
+      "core.bookmark:read",
+      "core.highlight:read",
+      "core.event:read",
+      "core.entity.person:read",
+      "core.file:read",
+      "system.connection:read",
     ],
     default_on: true,
   },
   {
     id: "write",
-    label: "Write your stuff",
-    description:
-      "Create, change, and organize your data — and let the app set up the data types it needs.",
+    label: "Write your content",
+    description: "Add, edit, and organize what's in your space.",
     scopes: [
-      "core.*:write",
-      "user.*:write",
-      "app.*:write",
-      "google.*:write",
-      "raindrop.*:write",
-      "readwise.*:write",
-      "todoist.*:write",
-      "withmarfa.*:write",
-      "edge.*:write",
-      "metadata:write",
-      "metadata.types:write",
-      "metadata.edge_types:write",
+      "core.note:write",
+      "core.task:write",
+      "core.bookmark:write",
+      "core.event:write",
+      "core.file:write",
     ],
     default_on: true,
   },
   {
     id: "profile",
     label: "Your profile",
-    description: "See and update your name and account details.",
+    description: "Your name and email.",
     scopes: ["openid", "profile", "email"],
-    default_on: true,
-  },
-  {
-    id: "connected",
-    label: "Connected services",
-    description:
-      "See the outside services connected to your space, like Google.",
-    scopes: ["system.connection:read", "system.integration:read"],
     default_on: true,
   },
 ];

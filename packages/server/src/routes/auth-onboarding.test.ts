@@ -161,7 +161,7 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
     expect(cookie).toBeTruthy();
 
     const mintRes = await request(ctx.app, "POST", "/auth/keys", {
-      form: { label: "laptop CLI" },
+      form: { label: "laptop CLI", scopes: "core.note:read" },
       headers: { origin: ORIGIN, cookie: cookie ?? "" },
     });
     expect(mintRes.status).toBe(200);
@@ -197,7 +197,7 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
     );
 
     const mintRes = await request(ctx.app, "POST", "/auth/keys", {
-      form: { label: "throwaway" },
+      form: { label: "throwaway", scopes: "core.note:read" },
       headers: { origin: ORIGIN, cookie: cookie ?? "" },
     });
     const rawKey = extractRawKey(await mintRes.text());

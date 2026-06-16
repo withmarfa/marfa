@@ -45,7 +45,7 @@ describe("renderSignInPage", () => {
     // to its own screen, distinguished by button text from the magic submit.
     expect(html).toContain('name="mode" value="password"');
     expect(html).toContain('<form method="GET" action="/auth/sign-in">');
-    expect(html).toContain("Email me a one-time sign-in link");
+    expect(html).toContain("Email me a one-time link");
     expect(html).not.toContain("Email me a sign-in link");
     expect(html).toContain(
       '<input type="hidden" name="return_to" value="/auth/authorize?client_id=abc">',
@@ -73,7 +73,7 @@ describe("renderSignInPage", () => {
     });
     // Password view: a GET form to the one-time-email screen, not an inline
     // submit. Distinguished from the magic view by the button text.
-    expect(passwordView).toContain("Email me a one-time sign-in link");
+    expect(passwordView).toContain("Email me a one-time link");
     expect(passwordView).toContain(
       '<form method="GET" action="/auth/sign-in">',
     );
@@ -166,7 +166,7 @@ describe("renderSignInPage", () => {
     expect(html).toContain("Something went wrong");
   });
 
-  it("renders a success banner with role=status when magicLinkSent", () => {
+  it("renders a dedicated 'Check your email' screen when magicLinkSent", () => {
     const html = renderSignInPage({
       mode: "magic",
       returnTo: "/",
@@ -174,9 +174,11 @@ describe("renderSignInPage", () => {
       allowSignup: false,
       oidcProviderIds: [],
     });
-    expect(html).toContain('class="banner banner--success"');
-    expect(html).toContain('role="status"');
     expect(html).toContain("Check your email");
+    expect(html).toContain('role="status"');
+    // A focused confirmation screen — no password field, with a way back.
+    expect(html).not.toContain('name="password"');
+    expect(html).toContain("Use a password instead");
   });
 
   it("links to /auth/static/auth.css and carries no inline <style>", () => {

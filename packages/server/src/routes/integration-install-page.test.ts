@@ -81,10 +81,10 @@ describe("renderInstallConsentScreen — POST contract", () => {
 describe("renderInstallConsentScreen — data mapping", () => {
   const html = renderInstallConsentScreen(BASE_PARAMS);
 
-  it("shows a human data-type name in the lead row, not the raw identifier", () => {
+  it("shows a human data-type name in the capability tile, not the raw identifier", () => {
     // `core.event` → "Events", `google.calendar.event` → "Calendar events".
     expect(html).toContain("Calendar events");
-    expect(html).toMatch(/lead__name[^>]*>Events, Calendar events</);
+    expect(html).toMatch(/captile__t[^>]*>Events, Calendar events</);
   });
 
   it("shows the raw type identifiers in the Technical details disclosure", () => {
@@ -109,15 +109,11 @@ describe("renderInstallConsentScreen — data mapping", () => {
 describe("renderInstallConsentScreen — neutral tile", () => {
   const html = renderInstallConsentScreen(BASE_PARAMS);
 
-  it("renders a neutral glyph tile with no brand color", () => {
-    // Tile fill is the neutral surface token, glyph is the first letter.
-    expect(html).toContain(`class="app__logo"`);
-    expect(html).toContain("background: var(--surface-2)");
-    expect(html).toMatch(/app__logo[^>]*>G</);
-    // No brand-color hex should be baked into the tile.
-    expect(html).not.toMatch(
-      /app__logo\s*\{[^}]*background:\s*#(?!fff|f5f5f5)/i,
-    );
+  it("renders a neutral glyph tile (shared --tile fill, first-letter glyph)", () => {
+    expect(html).toContain(`class="logo"`);
+    expect(html).toMatch(/class="logo"[^>]*>G</);
+    // No inline brand color — the tile fill comes from the shared sheet.
+    expect(html).not.toMatch(/background:\s*#(?!fff|f5f5f5)/i);
   });
 
   it("labels the tile as a Marfa integration", () => {
