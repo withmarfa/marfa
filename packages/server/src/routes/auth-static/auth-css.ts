@@ -279,21 +279,6 @@ input[type="text"]:focus {
   letter-spacing: 0.18em;
 }
 
-/* Static device-code display on the device-consent screen. */
-.device-code {
-  margin: 4px 0 18px;
-  padding: 14px;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  color: var(--fg);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
@@ -415,26 +400,8 @@ input[type="text"]:focus {
 }
 
 /* ---------------------------------------------------------------- */
-/* Separator, federated stack, aux link                             */
+/* Federated provider stack, aux link                               */
 /* ---------------------------------------------------------------- */
-
-.separator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 20px 0 14px;
-  color: var(--fg-faint);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.separator::before,
-.separator::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
 
 .oidc {
   display: flex;
@@ -490,280 +457,17 @@ input[type="text"]:focus {
   color: var(--warn-fg);
 }
 
-/* The one-time API-key reveal renders a monospace block. */
-.scope-literal {
-  display: block;
-  width: 100%;
-  margin-top: 2px;
-  padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  color: var(--fg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  word-break: break-all;
-}
-.scope-human {
-  display: block;
-  font-size: 13px;
-  color: var(--fg);
-}
-
 /* ---------------------------------------------------------------- */
 /* Consent screen                                                   */
 /* ---------------------------------------------------------------- */
 
-.consent-header {
-  margin: 0 0 20px;
-}
-.consent-title {
-  margin: 0 0 6px;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-}
-.consent-lede {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--fg-muted);
-}
-.client-name,
-.consent-lede .client-name {
-  color: var(--fg);
-  font-weight: 600;
-}
 .consent-form {
   display: flex;
   flex-direction: column;
 }
-.consent-footnote {
-  margin: 18px 0 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--fg-faint);
-}
-
-/* Per-bundle expand view: each bundle is its own collapsible row (see the
-   details.bundle-expand block lower down) carrying these summary-text
-   classes; expanding a row reveals its granular scope sub-items. */
-.bundles {
-  display: flex;
-  flex-direction: column;
-}
-.bundle-row__text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
-  min-width: 0;
-}
-.bundle-row__label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.bundle-row__desc {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-/* "Other" group: requested scopes that map to no bundle. Visible (so the
-   user reads each description) but visually quiet, sitting below the bundle
-   rows. */
-.bundle--residual {
-  border-top: 1px solid var(--hairline);
-  padding-top: 8px;
-  margin-top: 2px;
-}
-.bundle-residual__head {
-  margin: 4px 0 2px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-faint);
-}
-.bundle--residual .scope-row {
-  padding: 7px 0;
-}
-.bundle--residual .scope-row__text {
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-
-/* Flat / re-consent-diff grouping (no bundles configured). */
-.section {
-  margin: 0;
-  border-top: 1px solid var(--hairline);
-  padding-top: 16px;
-}
-.section:first-of-type {
-  border-top: 0;
-  padding-top: 0;
-}
-details.section > summary {
-  list-style: none;
-}
-details.section > summary::-webkit-details-marker {
-  display: none;
-}
-.section__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 0 8px;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.section__head--static {
-  cursor: default;
-}
-.section__label {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg);
-}
-.section__count {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg-faint);
-  font-variant-numeric: tabular-nums;
-}
-.section__chevron {
-  width: 8px;
-  height: 8px;
-  border-right: 1.5px solid var(--fg-faint);
-  border-bottom: 1.5px solid var(--fg-faint);
-  transform: rotate(-45deg);
-  transition: transform 0.16s var(--ease);
-  flex-shrink: 0;
-}
-details.section[open] > summary .section__chevron {
-  transform: rotate(45deg);
-}
-.section__head--static .section__chevron {
-  display: none;
-}
-.section__hint {
-  margin: 0 0 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--fg-muted);
-}
-.section--added .section__label {
-  color: var(--success-fg);
-}
-.section--removed .section__label {
-  color: var(--fg-muted);
-}
-
-.scope-list {
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 4px;
-}
-.scope-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 0;
-  cursor: pointer;
-}
-.scope-row__text {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg);
-}
-.scope-row--removed {
-  cursor: default;
-}
-.scope-row--removed .scope-row__text {
-  color: var(--fg-faint);
-  text-decoration: line-through;
-}
-
-/* The plain scope list used by the device-consent screen. */
-.scopes {
-  margin: 0 0 4px;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.scopes li {
-  font-size: 14px;
-  color: var(--fg);
-}
 
 /* ---------------------------------------------------------------- */
-/* Toggle switch                                                    */
-/* ---------------------------------------------------------------- */
-
-.toggle {
-  position: relative;
-  display: inline-block;
-  width: 30px;
-  height: 18px;
-  flex-shrink: 0;
-}
-.toggle input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-  z-index: 1;
-}
-.toggle__track {
-  position: absolute;
-  inset: 0;
-  background: var(--border-strong);
-  border-radius: 999px;
-  transition: background 0.18s var(--ease);
-  pointer-events: none;
-}
-.toggle__track::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  background: var(--primary-fg);
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.18s var(--ease);
-}
-.toggle input:checked + .toggle__track {
-  background: var(--primary);
-}
-.toggle input:checked + .toggle__track::before {
-  transform: translateX(12px);
-}
-.toggle input:focus-visible + .toggle__track {
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.toggle input:disabled + .toggle__track {
-  opacity: 0.5;
-}
-
-/* ---------------------------------------------------------------- */
-/* Action row, unverified badge                                     */
+/* Stacked action row (Allow/Deny, Continue/Cancel, …)              */
 /* ---------------------------------------------------------------- */
 
 .actions {
@@ -778,20 +482,6 @@ details.section[open] > summary .section__chevron {
 .actions .btn,
 .actions button {
   width: 100%;
-}
-
-.unverified-badge {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 999px;
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  color: var(--warn-fg);
-  white-space: nowrap;
-  vertical-align: middle;
 }
 
 /* ---------------------------------------------------------------- */
@@ -829,24 +519,6 @@ details.section[open] > summary .section__chevron {
 .row__action {
   margin: 0;
   flex-shrink: 0;
-}
-
-.tag {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--fg-muted);
-  vertical-align: middle;
-}
-.tag--current {
-  background: var(--border);
-  color: var(--fg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -896,37 +568,6 @@ details.section[open] > summary .section__chevron {
 }
 
 /* ---------------------------------------------------------------- */
-/* Capability rows ("what it can do" / "this connection can")        */
-/* Label leading, squared check trailing.                            */
-/* ---------------------------------------------------------------- */
-
-.caps {
-  display: flex;
-  flex-direction: column;
-}
-.cap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 11px 0;
-}
-.cap__text {
-  min-width: 0;
-}
-.cap__title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg);
-}
-.cap__desc {
-  margin-top: 2px;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-
-/* ---------------------------------------------------------------- */
 /* Read-only monospace field (a full type identifier, scopes)        */
 /* ---------------------------------------------------------------- */
 
@@ -941,70 +582,6 @@ details.section[open] > summary .section__chevron {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   word-break: break-all;
-}
-
-/* ---------------------------------------------------------------- */
-/* Big code display + entry (device flow)                            */
-/* ---------------------------------------------------------------- */
-
-/* Confirm-the-code display: a box that hugs the code. */
-.codebox-wrap {
-  display: flex;
-  justify-content: center;
-  margin: 24px 0;
-}
-.codebox {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 24px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-.codebox__seg {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  line-height: 1;
-}
-.codebox__dash {
-  color: var(--fg-faint);
-}
-
-/* Enter-the-code: segmented OTP-style cells. */
-.otp {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 24px 0;
-}
-.otp__cell {
-  width: 42px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 24px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--card);
-}
-.otp__cell--empty {
-  background: var(--surface-2);
-  color: var(--fg-faint);
-}
-.otp__cell--active {
-  border-color: var(--fg);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.otp__dash {
-  color: var(--fg-faint);
-  font-size: 20px;
-  padding: 0 2px;
 }
 
 /* ---------------------------------------------------------------- */
@@ -1069,84 +646,9 @@ details.disclosure[open] > summary .disclosure__chevron {
 }
 
 /* ---------------------------------------------------------------- */
-/* Per-bundle expand (consent): summary row with master toggle,      */
-/* granular sub-items behind a per-row chevron, quieter squared.     */
+/* Active-session marker (security)                                  */
 /* ---------------------------------------------------------------- */
 
-details.bundle-expand {
-  border-top: 1px solid var(--hairline);
-}
-details.bundle-expand:first-of-type {
-  border-top: 0;
-}
-details.bundle-expand > summary {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 0;
-  cursor: pointer;
-}
-details.bundle-expand > summary::-webkit-details-marker {
-  display: none;
-}
-.bundle-expand__chevron {
-  width: 7px;
-  height: 7px;
-  border-right: 1.6px solid var(--fg-faint);
-  border-bottom: 1.6px solid var(--fg-faint);
-  transform: rotate(-45deg);
-  transition: transform 0.18s var(--ease);
-  flex-shrink: 0;
-}
-details.bundle-expand[open] .bundle-expand__chevron {
-  transform: rotate(45deg);
-}
-.bundle-expand__sub {
-  padding: 2px 0 18px 2px;
-}
-.bundle-sub {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 0;
-}
-.bundle-sub__label {
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-.bundle-sub .chk {
-  width: 18px;
-  height: 18px;
-}
-
-/* ---------------------------------------------------------------- */
-/* Danger zone + active-session marker (security)                    */
-/* ---------------------------------------------------------------- */
-
-.danger-zone {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--hairline);
-}
-.danger-zone__text {
-  min-width: 0;
-}
-.danger-zone__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.danger-zone__desc {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--fg-muted);
-}
 .row__title .this-device {
   color: var(--fg-muted);
   font-weight: 500;

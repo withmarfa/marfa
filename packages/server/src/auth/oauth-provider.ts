@@ -91,6 +91,11 @@ export function buildAllowedScopes(
     // Global type wildcards — full access, offered only via "Customize".
     "*:read",
     "*:write",
+    // Core subtree wildcards — requestable for back-compat (an app that asks
+    // for all content at once). The default bundle uses concrete per-type
+    // scopes instead; a requested wildcard renders as a single toggle.
+    "core.*:read",
+    "core.*:write",
     // Runtime + connected-service namespace wildcards. These cover an app's
     // own `user.*` / `app.*` runtime types and the integration namespaces the
     // static registry never enumerates. They stay REQUESTABLE (an app can ask
