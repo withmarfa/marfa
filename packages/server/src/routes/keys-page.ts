@@ -54,7 +54,7 @@ export interface KeysPageParams {
  * the picker shows. Read submits `<type>:read`, write submits `<type>:write`;
  * the POST handler projects the ticked set into the key's type permissions.
  */
-const KEY_CONTENT_TYPES: ReadonlyArray<{ label: string; type: string }> = [
+const KEY_CONTENT_TYPES: readonly { label: string; type: string }[] = [
   { label: "Notes", type: "core.note" },
   { label: "Tasks", type: "core.task" },
   { label: "Bookmarks", type: "core.bookmark" },
