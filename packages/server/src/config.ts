@@ -85,6 +85,11 @@ export interface AppConfig {
    *  Optional on the type so callers constructing `AppConfig` literals
    *  don't have to supply it; `index.ts` applies the 168 fallback. */
   eventLogRetentionHours?: number;
+  /** Cadence (ms) for the event-log cleanup sweep that purges expired
+   *  `event_log` rows. Default 3_600_000 (1h); env override
+   *  `MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS`. Optional on the type;
+   *  `index.ts` applies the 1h fallback when unset. */
+  eventLogCleanupIntervalMs?: number;
   versionThinningIntervalMs: number;
   versionRecentDays: number;
   versionDailySnapshotDays: number;
@@ -133,6 +138,16 @@ export interface AppConfig {
   /** Cadence (ms) for the `bulk_action_jobs` GC sweep. Default 3_600_000
    *  (1h); env override `MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
   bulkActionJobGcIntervalMs?: number;
+  /** Base (and floor) poll cadence for the in-process bulk-action worker
+   *  loop. Default 500ms; env override `MARFA_BULK_ACTION_POLL_INTERVAL_MS`. */
+  bulkActionPollIntervalMs?: number;
+  /** Ceiling the bulk-action worker's idle poll backoff widens toward, so a
+   *  quiet worker stops polling the DB every base interval. Default 60_000
+   *  (60s); env override `MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS`. */
+  bulkActionPollMaxIntervalMs?: number;
+  /** Factor the bulk-action worker's empty-poll interval grows by each idle
+   *  tick. Default 2; env override `MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER`. */
+  bulkActionPollBackoffMultiplier?: number;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -272,6 +287,13 @@ export interface AppConfig {
    */
   otelEnabled?: boolean;
   otelServiceName?: string;
+  /** Deployment environment stamped onto the `deployment.environment` OTel
+   *  resource attribute (`MARFA_OTEL_ENVIRONMENT`). Falls back to
+   *  `production` when `NODE_ENV=production`, else `development`. Mirrored
+   *  here for read-from-one-place consistency; the bootstrap in
+   *  `instrumentation.ts` reads the env var directly (it runs before
+   *  `loadConfig`). */
+  otelEnvironment?: string;
   /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Empty in
    *  hosted test mode — the trace pipeline is built but points at no store;
    *  PostHog has no general-trace ingest (only logs + errors). */
@@ -560,6 +582,10 @@ export function loadConfig(): AppConfig {
     eventLogRetentionHours: parseEventLogRetentionHours(
       process.env.MARFA_EVENT_LOG_RETENTION_HOURS,
     ),
+    eventLogCleanupIntervalMs: envNumber(
+      process.env.MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS,
+      3_600_000,
+    ),
     versionThinningIntervalMs: envNumber(
       process.env.VERSION_THINNING_INTERVAL_MS,
       3_600_000,
@@ -610,6 +636,18 @@ export function loadConfig(): AppConfig {
     bulkActionJobGcIntervalMs: envNumber(
       process.env.MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS,
       3_600_000,
+    ),
+    bulkActionPollIntervalMs: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_INTERVAL_MS,
+      500,
+    ),
+    bulkActionPollMaxIntervalMs: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS,
+      60_000,
+    ),
+    bulkActionPollBackoffMultiplier: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
+      2,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     errorWebhookTimeoutMs: envNumber(
@@ -663,6 +701,9 @@ export function loadConfig(): AppConfig {
     ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
+    otelEnvironment:
+      process.env.MARFA_OTEL_ENVIRONMENT ??
+      (process.env.NODE_ENV === "production" ? "production" : "development"),
     otelTracesEndpoint:
       process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
       process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??

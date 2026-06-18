@@ -36,7 +36,7 @@ name = "marfa-integration-readwise-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "readwise"
-MANIFEST_CRON = "0 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]

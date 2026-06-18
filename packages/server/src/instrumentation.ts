@@ -71,12 +71,22 @@ async function start(): Promise<void> {
     return;
   }
 
+  // Resource attribute key for the deployment environment. The literal
+  // string is used deliberately rather than a `@opentelemetry/semantic-conventions`
+  // constant — the deployment-environment attribute moved namespaces across
+  // spec versions, so a constant import risks resolving to `undefined` on a
+  // mismatched package version. The wire key is stable; pin it directly.
+  const deploymentEnvironment =
+    process.env.MARFA_OTEL_ENVIRONMENT ??
+    (process.env.NODE_ENV === "production" ? "production" : "development");
+
   const { resourceFromAttributes } = await import("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } =
     await import("@opentelemetry/semantic-conventions");
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: serviceName,
     [ATTR_SERVICE_VERSION]: process.env.MARFA_VERSION_SHA ?? "dev",
+    "deployment.environment": deploymentEnvironment,
   });
 
   interface Shutdownable {

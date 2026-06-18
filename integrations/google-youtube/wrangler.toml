@@ -32,7 +32,7 @@ name = "marfa-integration-google-youtube-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.youtube"
-MANIFEST_CRON = "0 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]

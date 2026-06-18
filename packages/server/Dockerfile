@@ -42,6 +42,10 @@ ENV NODE_ENV=production
 ENV PORT=8600
 # Deployed build identifier — read at startup, surfaced on GET / and /health.
 ARG VERSION_SHA=dev
+# Re-export the build arg as an env var so the OTel bootstrap
+# (instrumentation.ts) can stamp it onto the `service.version` resource
+# attribute — a bare ARG is build-scoped and invisible to the running process.
+ENV MARFA_VERSION_SHA=${VERSION_SHA}
 WORKDIR /app
 COPY --from=build --chown=node:node /app/out ./
 RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \

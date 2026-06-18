@@ -44,7 +44,7 @@ name = "marfa-integration-google-calendar-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.calendar"
-MANIFEST_CRON = "*/10 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
