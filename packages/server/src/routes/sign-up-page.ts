@@ -213,6 +213,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
     </form>
     <p class="aux">Already have an account? <a href="${signInHref}">Sign in</a></p>
     <script>${STEP_SCRIPT}</script>
+    <script src="/auth/static/password-toggle.js"></script>
   `;
 
   return renderAuthLayout({

@@ -279,6 +279,54 @@ input[type="text"]:focus {
   letter-spacing: 0.18em;
 }
 
+/* Password show/hide toggle. The button is injected by
+   /auth/static/password-toggle.js into a .pw-wrap around each password
+   input, so a scripting-disabled client just gets a normal field (no dead
+   control). Dark mode falls out of the tokens. */
+.pw-wrap {
+  position: relative;
+  display: block;
+}
+.pw-wrap input[type="password"],
+.pw-wrap input[type="text"] {
+  /* Room for the toggle so typed text never runs under the icon. */
+  padding-right: 46px;
+}
+.pw-toggle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 6px;
+  margin: auto 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.pw-toggle:hover {
+  color: var(--fg);
+}
+.pw-toggle:focus-visible {
+  outline: none;
+  color: var(--fg);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.pw-toggle svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */

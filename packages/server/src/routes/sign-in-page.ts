@@ -219,6 +219,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     ${signupLink}
     <script src="/auth/static/passkey.js"></script>
     <script>${passkeyScript}</script>
+    <script src="/auth/static/password-toggle.js"></script>
   `;
 
   // One-time-email view: a focused screen with just the email field and a way

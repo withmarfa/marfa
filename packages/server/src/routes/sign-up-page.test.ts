@@ -48,6 +48,13 @@ describe("renderSignUpPage", () => {
     expect(html).toContain("Create account");
   });
 
+  it("loads the password-toggle script", () => {
+    const html = renderSignUpPage({ returnTo: "/" });
+    expect(html).toContain(
+      '<script src="/auth/static/password-toggle.js"></script>',
+    );
+  });
+
   it("preserves return_to in the form's hidden field", () => {
     const html = renderSignUpPage({
       returnTo: "/auth/authorize?client_id=abc",

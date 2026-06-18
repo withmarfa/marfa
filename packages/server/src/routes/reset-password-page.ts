@@ -114,6 +114,7 @@ export function renderResetPasswordPage(
       <p class="sub">Your reset link works once, so finish setting it here.</p>
       ${formErrorBanner}
       ${form}
+      <script src="/auth/static/password-toggle.js"></script>
     `;
   }
 
