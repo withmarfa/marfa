@@ -25,7 +25,10 @@
 #   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
 #   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
 #   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
-#   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer $POSTHOG_PROJECT_KEY_MARFA"
+#   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer <per-env PostHog token>"
+#     staging <- POSTHOG_PROJECT_KEY_STAGING
+#     prod    <- POSTHOG_PROJECT_KEY_PROD || POSTHOG_PROJECT_KEY_MARFA (legacy)
+#     (per-env so staging and prod telemetry land in separate PostHog projects)
 # Optional (set only when the source var is present):
 #   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN_MARFA      (only if MARFA_SET_QUEUES=1)
 #   CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS <- CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
@@ -77,7 +80,24 @@ if [[ -z "$POOLED_DB_URL" ]]; then
 fi
 
 : "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
-: "${POSTHOG_PROJECT_KEY_MARFA:?set POSTHOG_PROJECT_KEY_MARFA}"
+
+# Resolve the PostHog ingestion token per-env so staging and prod telemetry land
+# in their OWN PostHog projects. Prod falls back to the legacy shared name so
+# existing operator shells keep working.
+if [[ "$ENV_NAME" == "staging" ]]; then
+  POSTHOG_TOKEN="${POSTHOG_PROJECT_KEY_STAGING:-}"
+else
+  POSTHOG_TOKEN="${POSTHOG_PROJECT_KEY_PROD:-${POSTHOG_PROJECT_KEY_MARFA:-}}"
+fi
+if [[ -z "$POSTHOG_TOKEN" ]]; then
+  echo "error: no PostHog ingestion token resolved for $ENV_NAME" >&2
+  if [[ "$ENV_NAME" == "staging" ]]; then
+    echo "  set POSTHOG_PROJECT_KEY_STAGING (project 204959 ingestion token)" >&2
+  else
+    echo "  set POSTHOG_PROJECT_KEY_PROD (or legacy POSTHOG_PROJECT_KEY_MARFA)" >&2
+  fi
+  exit 1
+fi
 
 AUTH_SECRET="${MARFA_SERVER_AUTH_SECRET:-}"
 SALT="${MARFA_SERVER_API_KEY_SALT:-}"
@@ -89,7 +109,7 @@ put_secret DATABASE_URL "$POOLED_DB_URL"
 put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
 put_secret API_KEY_SALT "$SALT"
 put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
-put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_PROJECT_KEY_MARFA}"
+put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_TOKEN}"
 
 # Optional — reactive runs / schedule arming / R2 blobs.
 if [[ "${MARFA_SET_QUEUES:-}" == "1" ]]; then
