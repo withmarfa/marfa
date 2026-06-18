@@ -272,6 +272,13 @@ export interface AppConfig {
    */
   otelEnabled?: boolean;
   otelServiceName?: string;
+  /** Deployment environment stamped onto the `deployment.environment` OTel
+   *  resource attribute (`MARFA_OTEL_ENVIRONMENT`). Falls back to
+   *  `production` when `NODE_ENV=production`, else `development`. Mirrored
+   *  here for read-from-one-place consistency; the bootstrap in
+   *  `instrumentation.ts` reads the env var directly (it runs before
+   *  `loadConfig`). */
+  otelEnvironment?: string;
   /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Empty in
    *  hosted test mode — the trace pipeline is built but points at no store;
    *  PostHog has no general-trace ingest (only logs + errors). */
@@ -663,6 +670,9 @@ export function loadConfig(): AppConfig {
     ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
+    otelEnvironment:
+      process.env.MARFA_OTEL_ENVIRONMENT ??
+      (process.env.NODE_ENV === "production" ? "production" : "development"),
     otelTracesEndpoint:
       process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
       process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
