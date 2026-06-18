@@ -86,11 +86,13 @@ export default [
       // also documented in the user-level CLAUDE.md). These hold
       // throwaway harnesses, captures, and never-tracked files; they
       // sit in the repo tree but aren't part of the project's source
-      // set. Without this ignore, lint trips on any `.ts` an agent
-      // drops there for local exploration.
-      "_local/",
-      "_tmp/",
-      "_ignore/",
+      // set. The `**/` prefix catches them anywhere in the monorepo
+      // (e.g. packages/server/_tmp/), not just the repo root. Without
+      // this ignore, lint trips on any `.ts`/`.mjs` an agent drops
+      // there for local exploration.
+      "**/_local/**",
+      "**/_tmp/**",
+      "**/_ignore/**",
     ],
   },
 ];
