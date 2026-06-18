@@ -475,6 +475,7 @@ export async function createTestContext(
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
+    seedStarterContent: false,
     authSecret: "test-auth-secret-change-in-production-not-required-here",
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,

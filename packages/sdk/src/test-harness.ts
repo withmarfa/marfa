@@ -82,6 +82,7 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
     s3SecretAccessKey: "",
     apiKeySalt: TEST_API_KEY_SALT,
     corsOrigins: [],
+    seedStarterContent: false,
     cdnBaseUrl: "",
     authMode: "keys",
     versionSnapshotIntervalMs: 600_000,

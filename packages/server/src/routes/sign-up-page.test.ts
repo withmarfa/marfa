@@ -465,6 +465,7 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
     trustedProxyCidrs: [],
     authBaseUrl: ORIGIN,
     authAllowSignup: true,
+    seedStarterContent: false,
     authRequireEmailVerification: true,
     authSecret: "test-auth-secret",
     oidcProviders: [],

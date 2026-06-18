@@ -48,6 +48,7 @@ const config: AppConfig = {
   trustedProxyCidrs: [],
   authBaseUrl: "http://localhost:8600",
   authAllowSignup: false,
+  seedStarterContent: false,
   authSecret: "openapi-generation-secret-not-for-production",
   oidcProviders: [],
   rateLimitDefaultLimit: 1000,

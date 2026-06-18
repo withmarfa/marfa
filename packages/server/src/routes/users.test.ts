@@ -84,6 +84,7 @@ async function createHostedContext(): Promise<HostedContext> {
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
+    seedStarterContent: false,
     authSecret: "test-auth-secret",
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
