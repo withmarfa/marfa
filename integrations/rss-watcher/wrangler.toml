@@ -29,7 +29,7 @@ name = "marfa-integration-rss-watcher-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "withmarfa.rss-watcher"
-MANIFEST_CRON = "0 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]

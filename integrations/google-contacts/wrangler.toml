@@ -31,7 +31,7 @@ name = "marfa-integration-google-contacts-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.contacts"
-MANIFEST_CRON = "*/10 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]

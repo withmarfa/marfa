@@ -33,7 +33,7 @@ name = "marfa-integration-google-drive-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.drive"
-MANIFEST_CRON = "*/10 * * * *"
+MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
