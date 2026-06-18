@@ -65,6 +65,25 @@ describe("renderSignInPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
+  it("loads the password-toggle script on the password view only", () => {
+    const passwordView = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(passwordView).toContain(
+      '<script src="/auth/static/password-toggle.js"></script>',
+    );
+    // The one-time-email view has no password field, so no toggle.
+    const magicView = renderSignInPage({
+      mode: "magic",
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(magicView).not.toContain("/auth/static/password-toggle.js");
+  });
+
   it("puts the one-time-email path on its own screen, linked from the password view", () => {
     const passwordView = renderSignInPage({
       returnTo: "/",

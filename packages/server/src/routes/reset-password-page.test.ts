@@ -44,6 +44,20 @@ describe("renderResetPasswordPage", () => {
     expect(html).toContain("Update password");
   });
 
+  it("form state loads the password-toggle script; success/failure don't", () => {
+    const formHtml = renderResetPasswordPage({ state: "form", token: "abc" });
+    expect(formHtml).toContain(
+      '<script src="/auth/static/password-toggle.js"></script>',
+    );
+    // No password fields outside the form state, so no toggle.
+    expect(renderResetPasswordPage({ state: "success" })).not.toContain(
+      "/auth/static/password-toggle.js",
+    );
+    expect(renderResetPasswordPage({ state: "failure" })).not.toContain(
+      "/auth/static/password-toggle.js",
+    );
+  });
+
   it("form state surfaces a formError banner when set", () => {
     const html = renderResetPasswordPage({
       state: "form",
