@@ -246,7 +246,7 @@ For a full local check before opening a PR, `pnpm test:full` runs the whole dual
 Per-target helpers for narrow runs:
 
 - **`pnpm test:changed`** — `vitest run --changed origin/main`. Runs tests for files changed vs main.
-- **`pnpm test:related <files…>`** — `vitest run --related …`. Runs tests that depend on the listed source files.
+- **`pnpm test:related <files…>`** — `vitest related --run …`. Runs tests that depend on the listed source files. (vitest 4 made `related` a subcommand; the old `vitest run --related` flag was removed.)
 - **`pnpm test`** — full SQLite suite, single run.
 - **`pnpm test:fresh-sqlite`** / **`pnpm test:pg`** — single-dialect runs.
 
