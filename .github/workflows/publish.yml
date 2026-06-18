@@ -14,7 +14,11 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Hardcoded hosted — npm OIDC trusted-publisher provenance only works on a
+    # GitHub-hosted runner; honoring CI_RUNNER (self-hosted) breaks the
+    # provenance attestation on publish. This workflow must not pick up the
+    # org/repo CI_RUNNER override the way the test workflows do.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
