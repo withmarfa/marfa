@@ -64,6 +64,7 @@ async function buildCtx(): Promise<Ctx> {
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
+    seedStarterContent: false,
     authSecret: "test-auth-secret",
     oidcProviders: [],
     rateLimitDefaultLimit: 2,
@@ -277,6 +278,7 @@ async function buildAggCtx(): Promise<Ctx> {
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
+    seedStarterContent: false,
     authSecret: "test-auth-secret",
     oidcProviders: [],
     // defaultLimit 2 → GET path window resolves to 4. Aggregate

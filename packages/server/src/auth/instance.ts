@@ -22,6 +22,7 @@ import {
   buildOauthProjectionPlugin,
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
+import { seedStarterContent } from "./starter-content.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -60,6 +61,11 @@ export interface MarfaAuthOptions {
    *  Default `false` per the orchestrator-confirmed sign-up policy
    *  (`MARFA_AUTH_ALLOW_SIGNUP=false`). Existing users can still sign in. */
   allowSignup: boolean;
+  /** When `true`, a fresh tenant is seeded with a few starter items on
+   *  sign-up so the space isn't empty on first open. Default off; hosted
+   *  deployments enable it. Best-effort — a seed failure never blocks
+   *  sign-up. */
+  seedStarterContent?: boolean;
   /** Optional shared secret used for cookie signing. When unset,
    *  better-auth generates an ephemeral secret per process — fine for
    *  dev, not safe for production. Production deployments must set
@@ -486,6 +492,29 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                 // user of the tenant".
                 role: "tenant_admin",
               });
+
+              // Best-effort starter content so a brand-new space isn't empty
+              // on first open. Gated by config and isolated in its own try:
+              // the outer catch rethrows to fail the sign-up loudly, but a
+              // seed hiccup is decorative, so it is audited and swallowed
+              // rather than stranding account creation.
+              if (options.seedStarterContent && options.storage) {
+                try {
+                  await seedStarterContent(options.storage, tenant.id);
+                } catch (seedErr) {
+                  void options.storage.audit.log({
+                    action: "auth.sign_up.seed_failed",
+                    resource_type: "tenant",
+                    resource_id: tenant.id,
+                    details: {
+                      error:
+                        seedErr instanceof Error
+                          ? seedErr.message
+                          : String(seedErr),
+                    },
+                  });
+                }
+              }
             } catch (err) {
               // Surface the failure loudly — a signed-up user with no
               // tenant is the exact stranded state this hook exists to

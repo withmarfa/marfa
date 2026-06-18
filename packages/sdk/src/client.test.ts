@@ -78,6 +78,7 @@ beforeAll(async () => {
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: false,
+    seedStarterContent: false,
     authSecret: "test-secret",
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,

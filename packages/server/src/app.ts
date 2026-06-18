@@ -444,6 +444,7 @@ export function createApp(
       dialect: storage.betterAuthDialect,
       baseURL: config.authBaseUrl,
       allowSignup: config.authAllowSignup,
+      seedStarterContent: config.seedStarterContent,
       secret: config.authSecret || undefined,
       trustedOrigins,
       oidcProviders: config.oidcProviders,

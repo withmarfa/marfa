@@ -178,6 +178,11 @@ export interface AppConfig {
    *  Default `false` — single-user self-hosted instances enable this
    *  only for the initial admin account. */
   authAllowSignup: boolean;
+  /** When `true`, a fresh sign-up's tenant is seeded with a few starter
+   *  items (a welcome note, a docs bookmark, a first task, one connecting
+   *  edge) so the space isn't empty on first open. Default `false`: self-host
+   *  and conformance get empty spaces; hosted deployments flip it on. */
+  seedStarterContent: boolean;
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
@@ -667,6 +672,7 @@ export function loadConfig(): AppConfig {
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
+    seedStarterContent: process.env.MARFA_SEED_STARTER_CONTENT === "true",
     authSecret,
     oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
