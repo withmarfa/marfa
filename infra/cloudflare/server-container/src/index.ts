@@ -78,6 +78,7 @@ export class MarfaServerContainer extends Container<Env> {
     DB_DIALECT: "pg",
     AUTH_MODE: "hosted",
     MARFA_AUTH_ALLOW_SIGNUP: "true",
+    MARFA_SEED_STARTER_CONTENT: "true",
     PORT: "8600",
     NODE_ENV: "production",
     ENABLE_HSTS: "true",
