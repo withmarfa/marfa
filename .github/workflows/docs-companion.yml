@@ -1,0 +1,149 @@
+name: Docs companion check
+
+# Non-blocking reminder: when a PR touches a documented surface (API routes,
+# OpenAPI generator, shared wire types, the core type registry, the SDK, or an
+# integration manifest) it should ship with a companion PR on withmarfa/docs —
+# the repo convention in CLAUDE.md ("pair the docs PR with the code PR on
+# documented-surface changes"). This workflow posts a single sticky reminder
+# when the companion link is missing, and clears it once a link or opt-out is
+# added. It NEVER fails the job, so it can't block a merge — it's a nudge, not
+# a gate.
+#
+# Opt out per-PR by adding a `Docs: n/a` line to the description or the
+# `no-docs` label. Declare the companion by referencing it in the body
+# (`withmarfa/docs#123` or the full PR URL).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# One run per PR; newer pushes/edits supersede in-flight runs.
+concurrency:
+  group: docs-companion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Flag documented-surface PRs without a docs companion
+    # Hardcoded hosted: a trivial API-only job — no pnpm, no build — so it does
+    # not consume a self-hosted runner slot the way the test matrix does.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Evaluate docs companion
+        uses: actions/github-script@v7
+        # Belt-and-braces non-blocking guard: even if the comment API errors
+        # (e.g. a fork PR's read-only token), the step is ignored, never red.
+        continue-on-error: true
+        with:
+          script: |
+            try {
+            const MARKER = '<!-- docs-companion-check -->';
+
+            // Documented surfaces — mirrors the freshness trigger set in
+            // packages/server/CLAUDE.md plus the SDK and integration manifests.
+            const SURFACE_PREFIXES = [
+              'packages/server/src/routes/',
+              'packages/server/src/openapi/',
+              'packages/shared/src/',
+              'packages/types/core/',
+              'packages/sdk/src/',
+            ];
+            const isDocSurface = (f) =>
+              SURFACE_PREFIXES.some((p) => f.startsWith(p)) ||
+              (f.startsWith('integrations/') && f.endsWith('manifest.ts'));
+
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+
+            // 1. Did this PR touch a documented surface?
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            const touched = files.map((f) => f.filename).filter(isDocSurface);
+            const touchesSurface = touched.length > 0;
+
+            // 2. Is a docs companion declared (link) or explicitly waived (opt-out)?
+            const body = pr.body || '';
+            const hasDocsRef =
+              /withmarfa\/docs#\d+/i.test(body) ||
+              /github\.com\/withmarfa\/docs\/pull\/\d+/i.test(body);
+            const hasOptOutLine = /^\s*docs:\s*(n\/?a|none|not\s+required|skip)/im.test(body);
+            const hasOptOutLabel = (pr.labels || []).some((l) => l.name === 'no-docs');
+            const hasCompanion = hasDocsRef || hasOptOutLine || hasOptOutLabel;
+
+            const shouldFlag = touchesSurface && !hasCompanion;
+
+            // 3. Find any prior sticky reminder from this workflow.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => (c.body || '').includes(MARKER));
+
+            if (shouldFlag) {
+              const sample = touched.slice(0, 8).map((f) => `- \`${f}\``).join('\n');
+              const more = touched.length > 8 ? `\n- …and ${touched.length - 8} more` : '';
+              const reminder = [
+                MARKER,
+                '**Docs companion check**',
+                '',
+                'This PR changes a documented surface but does not reference a `withmarfa/docs` companion PR:',
+                '',
+                sample + more,
+                '',
+                'If the change affects public behavior, open a companion PR on ' +
+                  '[`withmarfa/docs`](https://github.com/withmarfa/docs) and link it here ' +
+                  '(for example `withmarfa/docs#123`).',
+                '',
+                'If no docs change is needed, add a `Docs: n/a` line to the description, ' +
+                  'or apply the `no-docs` label, to clear this note.',
+                '',
+                '_This is a non-blocking reminder._',
+              ].join('\n');
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: reminder,
+                });
+                core.info(`Updated docs-companion reminder (${touched.length} surface file(s)).`);
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body: reminder,
+                });
+                core.info(`Posted docs-companion reminder (${touched.length} surface file(s)).`);
+              }
+            } else {
+              // Resolved (companion added, or no surface touched): clear the nag.
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                });
+                core.info('Cleared prior docs-companion reminder.');
+              } else {
+                core.info(
+                  touchesSurface
+                    ? 'Documented surface touched but companion present; no reminder needed.'
+                    : 'No documented surface touched; no reminder needed.',
+                );
+              }
+            }
+            } catch (err) {
+              core.warning(`docs-companion check skipped: ${err.message}`);
+            }
