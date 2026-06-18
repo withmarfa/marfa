@@ -124,7 +124,6 @@ fi
 # Shared / derived.
 export SERVER_INSTANCE_TYPE="standard-1"
 export SERVER_MAX_INSTANCES="1"
-export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-20m}"
 export V_EMAIL_FROM="Marfa <hello@mail.marfa.so>"
 export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"
 # R2 S3-API endpoint for blob storage. The default-jurisdiction R2 endpoint is
@@ -144,6 +143,13 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_WORKER_NAME="marfa-server-staging"
   export SERVER_WORKERS_DEV="true"
   export SERVER_ROUTES="[]"
+  # Tag staging telemetry so its logs are distinguishable from prod's in their
+  # separate PostHog projects (the container's NODE_ENV is "production" on both,
+  # so the OTel bootstrap can't derive this).
+  export V_OTEL_ENVIRONMENT="staging"
+  # Aggressive scale-to-zero on staging: idle awake-time is the dominant driver
+  # of Neon compute, and staging's free budget is the one that keeps lapsing.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
   export V_RUNTIME_CONTROL_URL="https://runtime-staging.marfa.so"
   export V_S3_BUCKET="marfa-blobs-staging"
   # workers.dev URL drives auth cookies. Defaults to the conventional host;
@@ -160,6 +166,10 @@ else
   export SERVER_WORKER_NAME="marfa-server"
   export SERVER_WORKERS_DEV="false"
   export SERVER_ROUTES='[{"pattern":"api.marfa.so","custom_domain":true}]'
+  export V_OTEL_ENVIRONMENT="production"
+  # Prod has its own free Neon budget, so a longer idle window is affordable and
+  # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
   export V_RUNTIME_CONTROL_URL="https://runtime.marfa.so"
   export V_S3_BUCKET="${PROD_R2_BUCKET:-marfa-blobs-prod}"
   export V_AUTH_BASE_URL="https://api.marfa.so"
@@ -208,7 +218,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"

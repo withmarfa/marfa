@@ -32,11 +32,14 @@
 # Required GitHub config (org or repo):
 #   secrets.CLOUDFLARE_API_TOKEN      marfa-account token (CLOUDFLARE_API_TOKEN_MARFA)
 #   secrets.CLOUDFLARE_ACCOUNT_ID     marfa account id
-#   secrets.NEON_DATABASE_URL_STAGING direct (unpooled) Neon URL, staging branch
-#   secrets.NEON_DATABASE_URL_PROD    direct (unpooled) Neon URL, production branch
+#   secrets.NEON_DATABASE_URL_STAGING direct (unpooled) Neon URL, staging project
+#   secrets.NEON_DATABASE_URL_PROD    direct (unpooled) Neon URL, production project
 #   vars.STAGING_API_BASE_URL         branded public host (e.g. https://staging.marfa.so);
 #                                     drives the auth base URL / OAuth issuer
 #   vars.STAGING_CORS_ORIGINS         comma-separated browser origins that call the API
+#   vars.PROD_CORS_ORIGINS            comma-separated browser origins for prod (e.g.
+#                                     https://app.marfa.so); optional — the deploy script
+#                                     defaults to https://api.marfa.so only when unset
 #   vars.STAGING_WORKERS_SUBDOMAIN    optional — account workers.dev subdomain. Leave
 #                                     UNSET so the auth base URL derives from
 #                                     STAGING_API_BASE_URL (the branded host); setting it
@@ -157,6 +160,10 @@ jobs:
           STAGING_WORKERS_SUBDOMAIN: ${{ vars.STAGING_WORKERS_SUBDOMAIN }}
           STAGING_API_BASE_URL: ${{ vars.STAGING_API_BASE_URL }}
           STAGING_CORS_ORIGINS: ${{ vars.STAGING_CORS_ORIGINS }}
+          # Prod CORS origins. The deploy script defaults to api.marfa.so only;
+          # set this so the prod web app (app.marfa.so) can call the API with
+          # credentials. An unset var renders empty and falls back to the default.
+          PROD_CORS_ORIGINS: ${{ vars.PROD_CORS_ORIGINS }}
           # Durable blob storage on R2 (S3 API) for the hosted deploy — the
           # container's local filesystem is ephemeral (scale-to-zero wipes it).
           # The S3 credential secrets (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY)

@@ -32,6 +32,11 @@ interface Env {
   S3_BUCKET?: string;
   S3_ENDPOINT?: string;
   OTEL_EXPORTER_OTLP_LOGS_ENDPOINT?: string;
+  // Deployment environment tag (staging | production) stamped onto the OTel
+  // `deployment.environment` resource attribute so staging and prod logs are
+  // distinguishable in their PostHog projects. Without it the bootstrap falls
+  // back to NODE_ENV, which is "production" in the container on both envs.
+  MARFA_OTEL_ENVIRONMENT?: string;
   // Secrets (wrangler secret put — not in wrangler config).
   DATABASE_URL?: string;
   MARFA_AUTH_SECRET?: string;
@@ -94,6 +99,7 @@ export class MarfaServerContainer extends Container<Env> {
     S3_BUCKET: cfEnv.S3_BUCKET,
     S3_ENDPOINT: cfEnv.S3_ENDPOINT,
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: cfEnv.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+    MARFA_OTEL_ENVIRONMENT: cfEnv.MARFA_OTEL_ENVIRONMENT,
     // Secrets.
     DATABASE_URL: cfEnv.DATABASE_URL,
     MARFA_AUTH_SECRET: cfEnv.MARFA_AUTH_SECRET,
