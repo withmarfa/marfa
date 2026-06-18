@@ -1874,3 +1874,5 @@ export function itemRoutes(storage: Storage) {
 
   return router;
 }
+
+// docs-companion self-test (throwaway, do not merge)
