@@ -85,6 +85,11 @@ export interface AppConfig {
    *  Optional on the type so callers constructing `AppConfig` literals
    *  don't have to supply it; `index.ts` applies the 168 fallback. */
   eventLogRetentionHours?: number;
+  /** Cadence (ms) for the event-log cleanup sweep that purges expired
+   *  `event_log` rows. Default 3_600_000 (1h); env override
+   *  `MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS`. Optional on the type;
+   *  `index.ts` applies the 1h fallback when unset. */
+  eventLogCleanupIntervalMs?: number;
   versionThinningIntervalMs: number;
   versionRecentDays: number;
   versionDailySnapshotDays: number;
@@ -133,6 +138,16 @@ export interface AppConfig {
   /** Cadence (ms) for the `bulk_action_jobs` GC sweep. Default 3_600_000
    *  (1h); env override `MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
   bulkActionJobGcIntervalMs?: number;
+  /** Base (and floor) poll cadence for the in-process bulk-action worker
+   *  loop. Default 500ms; env override `MARFA_BULK_ACTION_POLL_INTERVAL_MS`. */
+  bulkActionPollIntervalMs?: number;
+  /** Ceiling the bulk-action worker's idle poll backoff widens toward, so a
+   *  quiet worker stops polling the DB every base interval. Default 60_000
+   *  (60s); env override `MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS`. */
+  bulkActionPollMaxIntervalMs?: number;
+  /** Factor the bulk-action worker's empty-poll interval grows by each idle
+   *  tick. Default 2; env override `MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER`. */
+  bulkActionPollBackoffMultiplier?: number;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -567,6 +582,10 @@ export function loadConfig(): AppConfig {
     eventLogRetentionHours: parseEventLogRetentionHours(
       process.env.MARFA_EVENT_LOG_RETENTION_HOURS,
     ),
+    eventLogCleanupIntervalMs: envNumber(
+      process.env.MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS,
+      3_600_000,
+    ),
     versionThinningIntervalMs: envNumber(
       process.env.VERSION_THINNING_INTERVAL_MS,
       3_600_000,
@@ -617,6 +636,18 @@ export function loadConfig(): AppConfig {
     bulkActionJobGcIntervalMs: envNumber(
       process.env.MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS,
       3_600_000,
+    ),
+    bulkActionPollIntervalMs: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_INTERVAL_MS,
+      500,
+    ),
+    bulkActionPollMaxIntervalMs: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS,
+      60_000,
+    ),
+    bulkActionPollBackoffMultiplier: envNumber(
+      process.env.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
+      2,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     errorWebhookTimeoutMs: envNumber(

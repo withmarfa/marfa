@@ -140,7 +140,10 @@ async function main() {
     });
   };
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
-  const eventLogCleanupInterval = setInterval(runEventLogCleanup, 3_600_000);
+  const eventLogCleanupInterval = setInterval(
+    runEventLogCleanup,
+    config.eventLogCleanupIntervalMs ?? 3_600_000,
+  );
 
   const runAuditCleanup = () => {
     void runTenantCleanup({
@@ -247,7 +250,12 @@ async function main() {
       : undefined;
   dcrClientCleaner?.start();
 
-  const bulkActionWorker = new BulkActionWorker({ storage });
+  const bulkActionWorker = new BulkActionWorker({
+    storage,
+    pollIntervalMs: config.bulkActionPollIntervalMs ?? 500,
+    maxPollIntervalMs: config.bulkActionPollMaxIntervalMs ?? 60_000,
+    pollBackoffMultiplier: config.bulkActionPollBackoffMultiplier ?? 2,
+  });
   await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(
     storage,

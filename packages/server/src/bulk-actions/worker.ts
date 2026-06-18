@@ -27,6 +27,8 @@ import type { BulkActionInput, BulkActionResult } from "./types.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
+const DEFAULT_MAX_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_POLL_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_STALE_AFTER_MS = 60_000;
 /** Cap the `ids` array in the response envelope to match the existing
  *  `BulkActionResponse` shape (server emits ids only when small enough
@@ -37,8 +39,17 @@ export interface BulkActionWorkerOptions {
   storage: Storage;
   /** Override the chunk size. Default 100. */
   chunkSize?: number;
-  /** Poll cadence when the queue is empty. Default 500ms. */
+  /** Base (and floor) poll cadence. Used immediately after a job runs and
+   *  as the starting interval after an empty poll. Default 500ms. */
   pollIntervalMs?: number;
+  /** Ceiling the idle backoff widens toward. Once the queue goes quiet the
+   *  empty-poll interval grows by `pollBackoffMultiplier` each tick, capped
+   *  here, so an idle worker stops hammering the DB every 500ms. A claimed
+   *  job resets the interval back to `pollIntervalMs`. Default 60s. */
+  maxPollIntervalMs?: number;
+  /** Factor the empty-poll interval grows by each idle tick, between
+   *  `pollIntervalMs` and `maxPollIntervalMs`. Default 2 (geometric). */
+  pollBackoffMultiplier?: number;
   /** A job whose worker_heartbeat_at is older than this is recovered
    *  on boot. Default 60s. */
   staleAfterMs?: number;
@@ -54,6 +65,8 @@ export class BulkActionWorker {
   private readonly jobs: BulkActionJobStore;
   private readonly chunkSize: number;
   private readonly pollIntervalMs: number;
+  private readonly maxPollIntervalMs: number;
+  private readonly pollBackoffMultiplier: number;
   private readonly staleAfterMs: number;
   private readonly workerId: string;
   private readonly nowFn: () => Date;
@@ -62,15 +75,24 @@ export class BulkActionWorker {
   private stopped = false;
   /** Set when a run is in-flight; the next tick is queued behind it. */
   private inFlight = false;
+  /** Current idle backoff delay. Starts at `pollIntervalMs`, widens by
+   *  `pollBackoffMultiplier` on each empty poll up to `maxPollIntervalMs`,
+   *  and resets to `pollIntervalMs` whenever a job is claimed. */
+  private currentPollMs: number;
 
   constructor(options: BulkActionWorkerOptions) {
     this.storage = options.storage;
     this.jobs = options.storage.bulkActionJobs;
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.maxPollIntervalMs =
+      options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS;
+    this.pollBackoffMultiplier =
+      options.pollBackoffMultiplier ?? DEFAULT_POLL_BACKOFF_MULTIPLIER;
     this.staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
     this.workerId = options.workerId ?? `bulk-action-worker-${generateId()}`;
     this.nowFn = options.nowFn ?? (() => new Date());
+    this.currentPollMs = this.pollIntervalMs;
   }
 
   /** Start the periodic poll. Recovers stale jobs first, then schedules
@@ -142,22 +164,33 @@ export class BulkActionWorker {
   private async tick(): Promise<void> {
     if (this.stopped) return;
     if (this.inFlight) {
-      // A previous tick is still running. Re-arm and let it return
-      // before claiming again.
-      this.scheduleNext(this.pollIntervalMs);
+      // A previous tick is still running. Re-arm at the current cadence and
+      // let it return before claiming again.
+      this.scheduleNext(this.currentPollMs);
       return;
     }
     this.inFlight = true;
     try {
       const ran = await this.runOnce();
-      // If we ran a job, immediately try the next — there may be more
-      // queued. Otherwise wait the full interval.
-      this.scheduleNext(ran ? 0 : this.pollIntervalMs);
+      if (ran) {
+        // A job was claimed — reset the backoff and immediately try the
+        // next; there may be more queued. Keep the hot path at zero delay.
+        this.currentPollMs = this.pollIntervalMs;
+        this.scheduleNext(0);
+      } else {
+        // Empty queue — widen the idle interval geometrically up to the
+        // cap so a quiet worker stops polling the DB every pollIntervalMs.
+        this.currentPollMs = Math.min(
+          this.currentPollMs * this.pollBackoffMultiplier,
+          this.maxPollIntervalMs,
+        );
+        this.scheduleNext(this.currentPollMs);
+      }
     } catch (err) {
       log("error", "bulk_action_worker.tick_error", {
         error: err instanceof Error ? err.message : String(err),
       });
-      this.scheduleNext(this.pollIntervalMs);
+      this.scheduleNext(this.currentPollMs);
     } finally {
       this.inFlight = false;
     }
