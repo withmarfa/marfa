@@ -126,6 +126,13 @@ export SERVER_INSTANCE_TYPE="standard-1"
 export SERVER_MAX_INSTANCES="1"
 export V_EMAIL_FROM="Marfa <hello@mail.marfa.so>"
 export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"
+# Hosted containers delegate integrations to the Cloudflare substrate (control
+# plane + per-Integration Workers + Queues), not the in-process Node/pg-boss
+# one. The server code defaults to "local" so a self-host `docker compose up`
+# needs no Cloudflare account; the hosted deploy sets it explicitly. Reactive
+# runs + schedule arming also need the broker key + queue secrets — set those
+# via `MARFA_SET_QUEUES=1 init-server-container-secrets.sh <env>`.
+export V_INTEGRATION_RUNTIME="hosted"
 # R2 S3-API endpoint for blob storage. The default-jurisdiction R2 endpoint is
 # `<account>.r2.cloudflarestorage.com`; jurisdiction-restricted buckets (e.g.
 # EU) use `<account>.<jurisdiction>.r2.cloudflarestorage.com` instead. The
@@ -218,7 +225,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"
@@ -231,7 +238,7 @@ if [[ -n "$UNRESOLVED" ]]; then
 fi
 
 echo "→ Rendered config preview:"
-grep -E '"name"|"image"|"instance_type"|"max_instances"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL' "$RENDERED_JSONC" | sed 's/^/  /'
+grep -E '"name"|"image"|"instance_type"|"max_instances"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME' "$RENDERED_JSONC" | sed 's/^/  /'
 
 echo "→ wrangler deploy --config <rendered> ($ENV_NAME)"
 # Capture the output so we can detect the silent-no-roll case below, while still
