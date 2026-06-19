@@ -17,8 +17,9 @@
  * the previewed page. A view control frames the iframe as freeform (edge to
  * edge), a browser window, or a phone, so the page's own responsive CSS can be
  * checked at each width without changing what it renders. Arrow keys step the
- * screen (up / down) and state (left / right); a keyboard button in the
- * bottom-right corner pops up the shortcut reference.
+ * screen (up / down) and state (left / right); A toggles section, V cycles the
+ * view, T cycles the appearance; a keyboard button in the bottom-right corner
+ * pops up the shortcut reference.
  */
 
 import { serve } from "@hono/node-server";
@@ -249,10 +250,17 @@ function renderShell(): string {
       --accent: #e6e6ea;
       --accent-fg: #18181b;
       --card: #ffffff;
-      /* The device-frame outline (browser window + phone) — strong enough to
-         read as a hard edge against the page. Near-black on the light page; a
-         legible grey line on the dark page. */
-      --frame-border: #18181b;
+      /* The device-frame outline (browser window + phone + email box) — a clear
+         dark grey that still reads as a hard edge against the page without being
+         pure black. Slightly lighter on the dark page so it stays legible. */
+      --frame-border: #52525b;
+      /* Context-menu surface + its option states. The menu is frosted glass
+         (translucent + backdrop blur), and its hover/selected fills are
+         subtler than the sidebar nav so the popover reads as a light overlay,
+         not an opaque card. */
+      --menu-bg: rgba(255, 255, 255, 0.5);
+      --menu-hover: rgba(0, 0, 0, 0.05);
+      --menu-accent: rgba(0, 0, 0, 0.08);
       color-scheme: light;
     }
     html.dark {
@@ -263,7 +271,10 @@ function renderShell(): string {
       --accent: #27272a;
       --accent-fg: #fafafa;
       --card: #1a1a1a;
-      --frame-border: #52525b;
+      --frame-border: #71717a;
+      --menu-bg: rgba(26, 26, 26, 0.5);
+      --menu-hover: rgba(255, 255, 255, 0.06);
+      --menu-accent: rgba(255, 255, 255, 0.1);
       color-scheme: dark;
     }
     /* System theme: when no theme is forced, follow the OS so the shell tracks
@@ -278,11 +289,19 @@ function renderShell(): string {
         --accent: #27272a;
         --accent-fg: #fafafa;
         --card: #1a1a1a;
-        --frame-border: #52525b;
+        --frame-border: #71717a;
+        --menu-bg: rgba(26, 26, 26, 0.5);
+        --menu-hover: rgba(255, 255, 255, 0.06);
+        --menu-accent: rgba(255, 255, 255, 0.1);
         color-scheme: dark;
       }
     }
     * { box-sizing: border-box; }
+    /* Suppress the browser's blue focus ring on the gallery shell's own
+       controls — this is dev chrome, and the ring fires after every click. The
+       previewed page lives in a separate iframe document, so its own focus
+       rings are untouched. */
+    :focus, :focus-visible { outline: none; }
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -435,14 +454,16 @@ function renderShell(): string {
     }
     .stage.view-mobile .viewport iframe { border-radius: 12px; }
     /* Email + freeform: an email isn't a web page, so freeform here is NOT
-       edge-to-edge. It sits inside a black-outlined 5:3 landscape container —
-       the browser frame minus the Safari chrome bar — sized to fill the stage
-       the same way the browser window does. The tab-email marker (kept in sync
-       with state.tab) scopes this to the Email tab so AUTH freeform stays full-
-       bleed. Borders only — no shadow. */
+       edge-to-edge. It sits inside a dark-outlined box that matches the browser
+       window's HEIGHT exactly while being three-quarters its WIDTH (a bit
+       narrower, since an email column is tall and narrow). The browser is a 3:2
+       box; 9:8 is exactly 0.75 × that ratio, so at the same height the email box
+       comes out three-quarters as wide. The tab-email marker (kept in sync with
+       state.tab) scopes this to the Email tab so AUTH freeform stays full-bleed.
+       Borders only — no shadow. */
     .stage.tab-email:not(.view-browser):not(.view-mobile) .viewport {
-      aspect-ratio: 5 / 3;
-      width: min(calc(100% - 48px), calc((100vh - 48px) * 5 / 3));
+      aspect-ratio: 9 / 8;
+      width: min(calc((100% - 48px) * 0.75), calc((100vh - 48px) * 1.125));
       height: auto;
       max-height: calc(100% - 48px);
       border: 1.5px solid var(--frame-border);
@@ -483,7 +504,9 @@ function renderShell(): string {
       padding: 5px;
       border: 0.5px solid var(--accent);
       border-radius: 10px;
-      background: var(--card);
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .section.open .section__menu { display: flex; }
     .section__option {
@@ -500,8 +523,8 @@ function renderShell(): string {
       color: var(--fg);
       cursor: pointer;
     }
-    .section__option:hover { background: var(--hover); }
-    .section__option.active { background: var(--accent); color: var(--accent-fg); }
+    .section__option:hover { background: var(--menu-hover); }
+    .section__option.active { background: var(--menu-accent); color: var(--accent-fg); }
     /* Theme control, top-right: an icon button, same accent-pill style. The
        topbar centers it; no per-control vertical alignment so it shares the
        view trigger's baseline exactly. */
@@ -548,7 +571,8 @@ function renderShell(): string {
     }
     .view__button:hover { background: var(--hover); }
     .view__button svg { display: block; width: 14px; height: 14px; }
-    /* Menu separates from the page with a border, not a shadow. */
+    /* Menu separates from the page with a border, not a shadow — and the
+       frosted-glass surface keeps it legible over the preview behind it. */
     .view__menu {
       position: absolute;
       top: calc(100% + 6px);
@@ -561,7 +585,9 @@ function renderShell(): string {
       padding: 5px;
       border: 0.5px solid var(--accent);
       border-radius: 10px;
-      background: var(--card);
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .view.open .view__menu { display: flex; }
     .view__option {
@@ -578,8 +604,8 @@ function renderShell(): string {
       color: var(--fg);
       cursor: pointer;
     }
-    .view__option:hover { background: var(--hover); }
-    .view__option.active { background: var(--accent); color: var(--accent-fg); }
+    .view__option:hover { background: var(--menu-hover); }
+    .view__option.active { background: var(--menu-accent); color: var(--accent-fg); }
     /* Keyboard shortcuts: an icon button pinned to the bottom-right of the
        viewport (same borderless icon-button style as the theme control) whose
        popover opens UPWARD — it sits at the bottom edge. Bordered card, no
@@ -612,7 +638,9 @@ function renderShell(): string {
       padding: 12px;
       border: 0.5px solid var(--accent);
       border-radius: 10px;
-      background: var(--card);
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
     .shortcuts.open .shortcuts__menu { display: flex; }
     .shortcuts__row {
@@ -686,6 +714,18 @@ function renderShell(): string {
       <div class="shortcuts__row">
         <span class="shortcuts__label">Previous / next state</span>
         <span class="shortcuts__keys"><kbd>&larr;</kbd><kbd>&rarr;</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Toggle Auth / Email</span>
+        <span class="shortcuts__keys"><kbd>A</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Cycle view</span>
+        <span class="shortcuts__keys"><kbd>V</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Cycle appearance</span>
+        <span class="shortcuts__keys"><kbd>T</kbd></span>
       </div>
     </div>
     <button id="shortcuts-button" class="shortcuts__button" type="button" aria-label="Keyboard shortcuts" aria-haspopup="true" aria-expanded="false">${KEYBOARD}</button>
@@ -873,14 +913,6 @@ function renderShell(): string {
         shortcutsButton.setAttribute('aria-expanded', 'false');
       }
 
-      function anyMenuOpen() {
-        return (
-          sectionWrap.classList.contains('open') ||
-          viewWrap.classList.contains('open') ||
-          shortcutsWrap.classList.contains('open')
-        );
-      }
-
       function loadPreview() {
         frame.src =
           '/preview?tab=' + encodeURIComponent(state.tab) +
@@ -969,13 +1001,33 @@ function renderShell(): string {
         var btn = e.target.closest('.nav-item');
         if (btn) selectVariant(btn.getAttribute('data-variant'));
       });
-      themeCycleBtn.addEventListener('click', function () {
+      function cycleTheme() {
         var i = THEME_ORDER.indexOf(state.theme);
         state.theme = THEME_ORDER[(i + 1) % THEME_ORDER.length];
         applyShellTheme();
         markActive();
         loadPreview();
-      });
+      }
+      themeCycleBtn.addEventListener('click', cycleTheme);
+
+      // Toggle between the two sections (Auth <-> Email) by selecting the other
+      // tab. selectTab no-ops when the tab is unchanged, so the toggle only ever
+      // flips to a genuinely different section.
+      function toggleSection() {
+        var current = currentTab();
+        var other = TABS.filter(function (t) { return t.id !== current.id; })[0];
+        if (other) selectTab(other.id);
+      }
+
+      // Cycle the view to the next allowed view for the current tab, wrapping at
+      // the end (Auth: freeform -> browser -> mobile -> freeform; Email skips
+      // browser). Mirrors a click on the matching view option.
+      function cycleView() {
+        var allowed = VIEWS_BY_TAB[state.tab] || VIEWS_BY_TAB.auth;
+        var i = allowed.indexOf(state.view);
+        state.view = allowed[(i + 1) % allowed.length];
+        applyView();
+      }
 
       viewButton.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -1003,7 +1055,11 @@ function renderShell(): string {
         shortcutsButton.setAttribute('aria-expanded', String(open));
       });
 
-      // Any click outside an open menu closes it (each popover, independently).
+      // The section + view menus close on a click outside themselves (each
+      // popover, independently). The shortcuts popover is a passive reference
+      // with no actionable rows, so ANY click dismisses it — even a click on its
+      // own rows. The shortcuts button stops propagation, so its own toggle
+      // still works (a click there never reaches this handler).
       document.addEventListener('click', function (e) {
         if (sectionWrap.classList.contains('open') && !sectionWrap.contains(e.target)) {
           closeSectionMenu();
@@ -1011,23 +1067,32 @@ function renderShell(): string {
         if (viewWrap.classList.contains('open') && !viewWrap.contains(e.target)) {
           closeViewMenu();
         }
-        if (shortcutsWrap.classList.contains('open') && !shortcutsWrap.contains(e.target)) {
+        if (shortcutsWrap.classList.contains('open')) {
           closeShortcutsMenu();
         }
       });
 
-      // Arrow keys step the screen (up / down) and state (left / right). Ignored
-      // while typing in a form control or while any popover is open, so the keys
-      // don't fight an open menu's own affordances.
+      // Keyboard shortcuts. Any key first dismisses every open popover (the
+      // shortcuts reference disappears on the first keypress, and the
+      // section/view menus get out of the way), then the matching action runs.
+      // Arrows step the screen (up/down) and state (left/right) and preventDefault
+      // so the page doesn't scroll. The letter shortcuts (A/V/T) toggle section,
+      // cycle view, and cycle appearance — suppressed while typing in a form
+      // control so they don't hijack text entry.
       document.addEventListener('keydown', function (e) {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
+        closeShortcutsMenu();
+        closeSectionMenu();
+        closeViewMenu();
         var t = e.target;
-        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-        if (anyMenuOpen()) return;
+        var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
         if (e.key === 'ArrowDown') { e.preventDefault(); stepScreen(1); }
         else if (e.key === 'ArrowUp') { e.preventDefault(); stepScreen(-1); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); stepState(1); }
         else if (e.key === 'ArrowLeft') { e.preventDefault(); stepState(-1); }
+        else if (!typing && (e.key === 'a' || e.key === 'A')) { toggleSection(); }
+        else if (!typing && (e.key === 'v' || e.key === 'V')) { cycleView(); }
+        else if (!typing && (e.key === 't' || e.key === 'T')) { cycleTheme(); }
       });
 
       renderSectionMenu();
