@@ -107,7 +107,7 @@ export function renderResetPasswordPage(
     title = "Set a new password";
     bodyHtml = `
       <h1 class="title">Set a new password</h1>
-      <p class="sub">Your reset link works once, so finish setting it here.</p>
+      <p class="sub">Choose a new password for your account.</p>
       ${form}
       <script src="/auth/static/password-toggle.js"></script>
       <script src="/auth/static/submit-state.js"></script>

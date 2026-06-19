@@ -76,6 +76,29 @@ describe("renderVerifyEmailPage", () => {
     expect(html).toContain('action="/auth/verify-email/resend"');
   });
 
+  it("renders the resend as a primary button across the resend states", () => {
+    for (const state of ["pending", "failure", "resent"] as const) {
+      const html = renderVerifyEmailPage({ state, email: "alice@example.com" });
+      expect(html).toContain("btn btn--primary");
+    }
+  });
+
+  it("arms a 60s cooldown on the resent state's resend button only", () => {
+    const resent = renderVerifyEmailPage({
+      state: "resent",
+      email: "alice@example.com",
+    });
+    // The button carries the cooldown attribute and ships the countdown script.
+    expect(resent).toContain('data-cooldown="60"');
+    expect(resent).toContain("button[data-cooldown]");
+    // The first-view pending state has no cooldown — it hasn't been pressed yet.
+    const pending = renderVerifyEmailPage({
+      state: "pending",
+      email: "alice@example.com",
+    });
+    expect(pending).not.toContain("data-cooldown");
+  });
+
   it("escapes email + return_to to prevent template injection", () => {
     const html = renderVerifyEmailPage({
       state: "pending",

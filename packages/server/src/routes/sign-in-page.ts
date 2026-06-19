@@ -101,7 +101,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   // required (single-purpose form, so the browser validates and there's no
   // blank-password jank).
   const passwordForm = `
-    <form method="POST" action="/auth/sign-in">
+    <form method="POST" action="/auth/sign-in" novalidate>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <div class="form">
         <label class="field">
@@ -135,7 +135,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     ? `<span class="field__error" role="alert">${escapeHtml(magicFieldError)}</span>`
     : "";
   const magicForm = `
-    <form method="POST" action="/auth/sign-in" class="form">
+    <form method="POST" action="/auth/sign-in" class="form" novalidate>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <label class="field${magicFieldError ? " field--error" : ""}">
         <span class="field__label">Email</span>
@@ -261,7 +261,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   // back to the password form.
   const magicBody = `
     <h1 class="title">Sign in to Marfa</h1>
-    <p class="sub">Enter your email and we'll send a one-time sign-in link. No password needed.</p>
+    <p class="sub">We'll email you a one-time sign-in link. No password needed.</p>
     ${magicForm}
     <p class="aux"><a href="${toPasswordHref}">Back to password sign-in</a></p>
     <script src="/auth/static/submit-state.js"></script>
@@ -273,7 +273,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     <h1 class="title">Check your email</h1>
     <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
     <div class="actions">
-      <a href="/auth/sign-in?${buildQuery({ mode: "magic", return_to: params.returnTo })}" class="btn btn--oidc">Use a different email</a>
+      <a href="/auth/sign-in?${buildQuery({ mode: "magic", return_to: params.returnTo })}" class="btn btn--outline">Use a different email</a>
     </div>
     <p class="aux"><a href="${toPasswordHref}">Use a password instead</a></p>
   `;

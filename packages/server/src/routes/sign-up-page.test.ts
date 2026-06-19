@@ -122,6 +122,15 @@ describe("renderSignUpPage", () => {
     expect(html).toContain('type="button" class="btn btn--primary" data-next');
   });
 
+  it("gives the username field a friendly inline validation message", () => {
+    // The username pattern's generic validity message reads poorly; the inline
+    // validator uses this override instead of the browser's native bubble.
+    const html = renderSignUpPage({ returnTo: "/" });
+    expect(html).toContain(
+      'data-validate-msg="Use 3 to 32 lowercase letters, numbers, or hyphens."',
+    );
+  });
+
   it("escapes HTML in returnTo to prevent template injection", () => {
     const html = renderSignUpPage({
       returnTo: '/foo"><script>alert(1)</script>',

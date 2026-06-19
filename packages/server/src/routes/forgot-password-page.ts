@@ -73,7 +73,7 @@ export function renderForgotPasswordPage(
     title: "Reset your password",
     bodyHtml: `
       <h1 class="title">Reset your password</h1>
-      <p class="sub">Enter your email and we'll send you a link to set a new password.</p>
+      <p class="sub">We'll email you a link to set a new password.</p>
       <form method="POST" action="/auth/forgot-password" class="form" novalidate>
         <input type="hidden" name="return_to" value="${safeReturnTo}">
         <label class="field${errorCode ? " field--error" : ""}">

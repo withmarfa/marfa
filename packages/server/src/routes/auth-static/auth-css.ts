@@ -80,6 +80,18 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --r-input: 12px;
   --r-sm: 10px;
 
+  /* Vertical rhythm — three steps shared by every screen so the spacing reads
+     as one system rather than per-page guesses:
+       --gap-pair  binds a title to the sub beneath it (a tight pair).
+       --gap-base  the base gap: sub→content, and between form fields.
+       --gap-step  the larger step before a primary-action block, the
+                   "Or continue with" separator, and the footer link.
+     The field→button gap is --gap-step on EVERY screen; see the .actions
+     trim rule below for how the step stays constant regardless of wrapper. */
+  --gap-pair: 6px;
+  --gap-base: 16px;
+  --gap-step: 20px;
+
   --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -310,7 +322,7 @@ a {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--gap-base);
 }
 .field {
   display: flex;
@@ -438,6 +450,12 @@ input[type="text"]:focus {
     color 0.12s var(--ease),
     background 0.12s var(--ease);
 }
+/* The toggle script hides the eye until the field has a value (nothing to
+   reveal on an empty field). The author display:inline-flex above outranks
+   the UA hidden-attribute rule, so re-assert none here for it to take. */
+.pw-toggle[hidden] {
+  display: none;
+}
 .pw-toggle:hover {
   color: var(--fg);
 }
@@ -455,6 +473,19 @@ input[type="text"]:focus {
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
+
+/* Action hierarchy — one vocabulary across every screen:
+     - .btn--primary  the single committing action (Sign in, Allow access,
+                      Resend email). Filled, near-black. One per screen.
+     - .btn--outline  a secondary BUTTON for a real choice that isn't the
+                      primary (Use a different email). Bordered, neutral.
+     - .btn--ghost    the quiet half of a decision PAIR (Deny next to Allow).
+                      Borderless but full-width, so it still reads as a button.
+     - .btn--oidc     reserved for federated-provider buttons only.
+     - .aux a         NOT a button — a navigational / escape link (Back to
+                      security, Use a password instead). Clearly lighter than
+                      any button so a "go back" never competes with a decision.
+   Rule of thumb: a decision is a button; leaving the screen is a link. */
 
 .btn {
   display: inline-flex;
@@ -617,7 +648,7 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 20px 0;
+  margin: var(--gap-step) 0;
   font-size: 12px;
   color: var(--fg-faint);
 }
@@ -634,7 +665,7 @@ input[type="text"]:focus {
    the other expands to the full row width and the layout stays balanced. */
 .alts {
   display: flex;
-  gap: 16px;
+  gap: var(--gap-base);
 }
 .alts > * {
   flex: 1;
@@ -649,7 +680,7 @@ input[type="text"]:focus {
 }
 
 .aux {
-  margin: 20px 0 0;
+  margin: var(--gap-step) 0 0;
   text-align: center;
   font-size: 13px;
   color: var(--fg-muted);
@@ -717,7 +748,7 @@ input[type="text"]:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 20px;
+  margin-top: var(--gap-step);
 }
 .actions form {
   margin: 0;
@@ -725,6 +756,18 @@ input[type="text"]:focus {
 .actions .btn,
 .actions button {
   width: 100%;
+}
+/* The primary-action block sits one --gap-step (20px) below the content above
+   it, on every screen. When it directly follows something that already
+   contributes its own trailing space — a flex .form's column-gap, or the
+   bottom margin of a .sub / .banner immediately above it — subtract that base
+   gap so the step stays a single 20px instead of stacking to 36px. This one
+   rule is what makes the field→button gap identical across sign-in, sign-up,
+   one-time-link, reset, verify-email, and the device flow. */
+.form > .actions,
+.sub + .actions,
+.banner + .actions {
+  margin-top: calc(var(--gap-step) - var(--gap-base));
 }
 
 /* ---------------------------------------------------------------- */
@@ -915,7 +958,7 @@ details.disclosure[open] > summary .disclosure__chevron {
 /* Canonical card heading + subtitle. The reassurance line ("you can
    change this anytime in settings") lives in .sub, never a footnote. */
 .title {
-  margin: 0 0 6px;
+  margin: 0 0 var(--gap-pair);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -923,7 +966,7 @@ details.disclosure[open] > summary .disclosure__chevron {
   color: var(--fg);
 }
 .sub {
-  margin: 0 0 16px;
+  margin: 0 0 var(--gap-base);
   font-size: 14px;
   line-height: 1.5;
   color: var(--fg-muted);
