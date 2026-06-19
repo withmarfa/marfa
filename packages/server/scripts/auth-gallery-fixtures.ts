@@ -34,6 +34,11 @@ import { renderResetPasswordEmail } from "../src/auth/email-templates/reset-pass
 import { renderAccountDeleteConfirmEmail } from "../src/auth/email-templates/account-delete-confirm.js";
 import { renderAccountPendingDeletionEmail } from "../src/auth/email-templates/account-pending-deletion.js";
 import { renderAccountDeleteCancelEmail } from "../src/auth/email-templates/account-delete-cancel.js";
+import {
+  renderAuthSplit,
+  renderCheckEmail,
+  renderStepperConcept,
+} from "./auth-gallery-concepts.js";
 
 export interface GalleryVariant {
   /** Stable id used in the preview URL (`?variant=…`). */
@@ -49,7 +54,12 @@ export interface GalleryScreen {
   id: string;
   /** Human label shown in the left sidebar. */
   label: string;
+  /** Functional states of the screen (pending / success / error …) — the
+   *  "State" group in the right column. */
   variants: GalleryVariant[];
+  /** Alternative design directions for this same screen — the "Variant" group
+   *  shown beneath the states. Named v1 / v2 / v3. Optional. */
+  designVariants?: GalleryVariant[];
 }
 
 export interface GalleryTab {
@@ -96,10 +106,70 @@ const DEVICE_SCOPES: ParsedScope[] = [
   },
 ];
 
+// Design directions attached to existing screens — the "Variant" group shown
+// beneath that screen's states in the right column. The split concept renders
+// the screen's own form; numbering runs sequentially per screen.
+const SIGN_IN_DESIGN_VARIANTS: GalleryVariant[] = [
+  {
+    id: "split-warm",
+    label: "v1 · Split · warm",
+    render: () => renderAuthSplit("v1", "signin"),
+  },
+  {
+    id: "split-brand",
+    label: "v2 · Split · brand",
+    render: () => renderAuthSplit("v2", "signin"),
+  },
+  {
+    id: "split-quiet",
+    label: "v3 · Split · quiet",
+    render: () => renderAuthSplit("v3", "signin"),
+  },
+  {
+    id: "checkmail-icon",
+    label: "v4 · Check email · icon",
+    render: () => renderCheckEmail("v2"),
+  },
+  {
+    id: "checkmail-roomy",
+    label: "v5 · Check email · roomy",
+    render: () => renderCheckEmail("v3"),
+  },
+];
+
+const SIGN_UP_DESIGN_VARIANTS: GalleryVariant[] = [
+  {
+    id: "split-warm",
+    label: "v1 · Split · warm",
+    render: () => renderAuthSplit("v1", "signup"),
+  },
+  {
+    id: "split-brand",
+    label: "v2 · Split · brand",
+    render: () => renderAuthSplit("v2", "signup"),
+  },
+  {
+    id: "split-quiet",
+    label: "v3 · Split · quiet",
+    render: () => renderAuthSplit("v3", "signup"),
+  },
+  {
+    id: "stepper-thin",
+    label: "v4 · Stepper · thin",
+    render: () => renderStepperConcept("v2"),
+  },
+  {
+    id: "stepper-caption",
+    label: "v5 · Stepper · caption",
+    render: () => renderStepperConcept("v3"),
+  },
+];
+
 const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-in",
     label: "Sign in",
+    designVariants: SIGN_IN_DESIGN_VARIANTS,
     variants: [
       {
         id: "password",
@@ -150,6 +220,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-up",
     label: "Sign up",
+    designVariants: SIGN_UP_DESIGN_VARIANTS,
     variants: [
       {
         id: "default",
@@ -652,7 +723,11 @@ export function resolveVariant(
   if (!tab) return undefined;
   const screen = tab.screens.find((s) => s.id === screenId);
   if (!screen) return undefined;
-  const variant = screen.variants.find((v) => v.id === variantId);
+  // Resolve against the screen's states first, then its design variants — the
+  // two id-spaces don't collide, so a single `?variant=` param serves both.
+  const variant =
+    screen.variants.find((v) => v.id === variantId) ??
+    screen.designVariants?.find((v) => v.id === variantId);
   if (!variant) return undefined;
   return { tab, screen, variant };
 }

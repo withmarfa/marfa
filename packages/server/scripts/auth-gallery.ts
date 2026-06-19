@@ -211,6 +211,10 @@ function renderShell(): string {
       id: screen.id,
       label: screen.label,
       variants: screen.variants.map((v) => ({ id: v.id, label: v.label })),
+      designVariants: (screen.designVariants ?? []).map((v) => ({
+        id: v.id,
+        label: v.label,
+      })),
     })),
   }));
 
@@ -333,6 +337,15 @@ function renderShell(): string {
     .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
     .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
     .sidebar--right .nav-header { text-align: right; }
+    /* "Variant" group heading, separating design variants from states in the
+       right column. Sits with a clear gap above its list. */
+    .nav-subhead {
+      margin: 18px 10px 4px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .sidebar--right .nav-subhead { text-align: right; }
     .nav {
       flex: 1;
       overflow-y: auto;
@@ -703,7 +716,11 @@ function renderShell(): string {
     <div class="nav-header">
       <div class="nav-header__title">State</div>
     </div>
-    <div class="nav nav--right"><ul class="nav-list" id="states"></ul></div>
+    <div class="nav nav--right">
+      <ul class="nav-list" id="states"></ul>
+      <div class="nav-subhead" id="variants-subhead" hidden>Variant</div>
+      <ul class="nav-list" id="variants"></ul>
+    </div>
   </nav>
   <div class="shortcuts" id="shortcuts">
     <div class="shortcuts__menu" id="shortcuts-menu" role="menu">
@@ -746,6 +763,8 @@ function renderShell(): string {
       var frame = document.getElementById('preview');
       var screensList = document.getElementById('screens');
       var statesList = document.getElementById('states');
+      var variantsList = document.getElementById('variants');
+      var variantsSubhead = document.getElementById('variants-subhead');
       var themeCycleBtn = document.getElementById('theme-cycle');
       var stage = document.getElementById('stage');
       var sectionWrap = document.getElementById('section');
@@ -831,13 +850,27 @@ function renderShell(): string {
         });
       }
 
+      // Design variants for the current screen, listed under a "Variant"
+      // subheading beneath the states. Hidden when the screen has none.
+      function renderVariants() {
+        variantsList.innerHTML = '';
+        var dv = currentScreen().designVariants || [];
+        variantsSubhead.hidden = dv.length === 0;
+        dv.forEach(function (v) {
+          variantsList.appendChild(buildItem(v.label, 'state', state.screen, v.id));
+        });
+      }
+
       function markActive() {
         var all = document.querySelectorAll('.nav-item');
         for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
         var screenBtn = screensList.querySelector('.nav-item[data-screen="' + state.screen + '"]');
         if (screenBtn) screenBtn.classList.add('active');
-        var stateBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
-        if (stateBtn) stateBtn.classList.add('active');
+        // The active id lives in the states list or the variants list — both
+        // feed the same state.variant, and their ids do not collide.
+        var activeBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]')
+          || variantsList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
+        if (activeBtn) activeBtn.classList.add('active');
         sectionLabel.textContent = sectionLabelFor(state.tab);
         var sectionOptions = sectionMenu.querySelectorAll('.section__option');
         for (var j = 0; j < sectionOptions.length; j++) {
@@ -924,7 +957,10 @@ function renderShell(): string {
       function refresh(opts) {
         opts = opts || {};
         if (opts.rebuildScreens) renderScreens();
-        if (opts.rebuildStates || opts.rebuildScreens) renderStates();
+        if (opts.rebuildStates || opts.rebuildScreens) {
+          renderStates();
+          renderVariants();
+        }
         applyShellTheme();
         applyView();
         markActive();
@@ -969,7 +1005,10 @@ function renderShell(): string {
       }
 
       function stepState(delta) {
-        var variants = currentScreen().variants;
+        // Arrow keys cycle through the states and then the design variants, so
+        // left/right walks the whole right column.
+        var sc = currentScreen();
+        var variants = sc.variants.concat(sc.designVariants || []);
         var idx = -1;
         for (var i = 0; i < variants.length; i++) {
           if (variants[i].id === state.variant) { idx = i; break; }
@@ -998,6 +1037,10 @@ function renderShell(): string {
         if (btn) selectScreen(btn.getAttribute('data-screen'));
       });
       statesList.addEventListener('click', function (e) {
+        var btn = e.target.closest('.nav-item');
+        if (btn) selectVariant(btn.getAttribute('data-variant'));
+      });
+      variantsList.addEventListener('click', function (e) {
         var btn = e.target.closest('.nav-item');
         if (btn) selectVariant(btn.getAttribute('data-variant'));
       });
