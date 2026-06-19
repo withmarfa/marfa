@@ -64,6 +64,9 @@ async function main() {
     storage = await createPgStorage(config.databaseUrl, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
       authMode: config.authMode,
+      // Empty string (env unset) is treated as "no direct endpoint" by
+      // createConnection, which falls back to the pooled client.
+      directConnectionString: config.databaseUrlDirect,
     });
   } else {
     storage = await createSqliteStorage(config.sqlitePath, {

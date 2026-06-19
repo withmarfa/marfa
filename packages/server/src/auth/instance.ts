@@ -11,6 +11,8 @@ import {
 import type { UserStore } from "../storage/interface.js";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
+import type { PgDb } from "../storage/pg/connection.js";
+import { withOwnerRole } from "../storage/pg/owner-role.js";
 import { log } from "../middleware/logger.js";
 import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import type { Storage } from "../storage/interface.js";
@@ -442,9 +444,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           // for it. Keys-mode self-hosts have no per-user tenant model
           // (no users/tenants store) and skip this entirely.
           after: async (user, ctx) => {
-            const users = options.storage?.users;
-            const tenants = options.storage?.tenants;
-            if (!users || !tenants) return;
+            const storage = options.storage;
+            const users = storage?.users;
+            const tenants = storage?.tenants;
+            if (!storage || !users || !tenants) return;
 
             try {
               // Idempotent: Better Auth's no-enumeration sign-up returns
@@ -470,28 +473,41 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                 !isReservedHandle(submitted)
                   ? submitted
                   : deriveHandleFromEmail(user.email);
-              const handle = await claimFreeHandle(users, desired);
-
-              const tenant = await tenants.create(user.name);
-              await users.create({
-                name: user.name,
-                provider: "better-auth",
-                provider_id: user.id,
-                tenant_id: tenant.id,
-                handle,
-                auth_user_id: user.id,
-                // Every sign-up provisions a fresh tenant the user solely
-                // owns (line above), so the user IS that space's admin —
-                // stamp tenant_admin rather than the `member` default. This
-                // lets the owner administer their own space (register types /
-                // edge types, manage keys + connections). Data access for
-                // apps they sign into is still gated by the granted OAuth
-                // scopes (OAuth tokens are `scope_enforced`), so the role is
-                // the ceiling, not a full-access pass. If a shared-tenant
-                // membership model lands later, gate this on "first/owning
-                // user of the tenant".
-                role: "tenant_admin",
-              });
+              // Provision the handle claim + tenant + user as the database
+              // owner. These touch RLS-bearing auth/tenant tables and depend
+              // on owner-bypass; forcing the owner role for the transaction
+              // (transaction-scoped via SET LOCAL ROLE NONE, pooler-safe)
+              // guarantees they never run as a stranded `marfa_app` and hit
+              // RLS — the failure mode that took hosted sign-up down. On PG
+              // the writes are also atomic (tenant + user commit together).
+              const provision = async () => {
+                const handle = await claimFreeHandle(users, desired);
+                const tenant = await tenants.create(user.name);
+                await users.create({
+                  name: user.name,
+                  provider: "better-auth",
+                  provider_id: user.id,
+                  tenant_id: tenant.id,
+                  handle,
+                  auth_user_id: user.id,
+                  // Every sign-up provisions a fresh tenant the user solely
+                  // owns (line above), so the user IS that space's admin —
+                  // stamp tenant_admin rather than the `member` default. This
+                  // lets the owner administer their own space (register types /
+                  // edge types, manage keys + connections). Data access for
+                  // apps they sign into is still gated by the granted OAuth
+                  // scopes (OAuth tokens are `scope_enforced`), so the role is
+                  // the ceiling, not a full-access pass. If a shared-tenant
+                  // membership model lands later, gate this on "first/owning
+                  // user of the tenant".
+                  role: "tenant_admin",
+                });
+                return tenant;
+              };
+              const tenant =
+                storage.betterAuthDialect === "pg" && storage.pgDb
+                  ? await withOwnerRole(storage.pgDb as PgDb, provision)
+                  : await provision();
 
               // Best-effort starter content so a brand-new space isn't empty
               // on first open. Gated by config and isolated in its own try:
