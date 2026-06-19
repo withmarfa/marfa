@@ -578,7 +578,13 @@ export function createApp(
   // on the owner connection (no DB-level fence).
   const streamingRoutesOptions = {
     rlsEnforce: config.rlsEnforce ?? false,
-    pgClient: (storage.pgClient as PgClient | undefined) ?? null,
+    // Prefer the dedicated stream client (direct/session-mode endpoint) so
+    // streaming's session-level `SET ROLE` can't strand on the app's
+    // transaction-mode pooled connections; fall back to the main client when
+    // no direct endpoint is configured.
+    pgClient:
+      ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
+      null,
   };
   app.route(
     "/export",

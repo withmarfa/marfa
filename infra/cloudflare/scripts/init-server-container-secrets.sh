@@ -22,6 +22,15 @@
 # (Pre-deploy migrations use the DIRECT/unpooled URL instead — see
 # migrate-server-db.sh. App = pooled, migrate = direct.)
 #
+# MARFA_DATABASE_URL_DIRECT is the DIRECT (unpooled, session-mode) endpoint,
+# used by the app ONLY for streaming RLS: its session-level SET ROLE must not
+# run on the transaction-mode pooled endpoint, where the role can strand on a
+# shared backend and leak into a later write. Resolved per-env; OPTIONAL (the
+# app falls back to the pooled client if unset, with the role-leak risk):
+#
+#   MARFA_DATABASE_URL_DIRECT  staging  <- NEON_DATABASE_URL_STAGING || NEON_DATABASE_URL_MARFA
+#   MARFA_DATABASE_URL_DIRECT  prod     <- NEON_DATABASE_URL_PROD
+#
 #   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
 #   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
 #   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
@@ -79,6 +88,15 @@ if [[ -z "$POOLED_DB_URL" ]]; then
   exit 1
 fi
 
+# Resolve the DIRECT (session-mode, unpooled) DB URL per-env for streaming RLS.
+# Optional: if unset, the app falls back to the pooled client (the role-switch
+# can then strand on the pooler — only safe off a transaction-mode pooler).
+if [[ "$ENV_NAME" == "staging" ]]; then
+  DIRECT_DB_URL="${NEON_DATABASE_URL_STAGING:-${NEON_DATABASE_URL_MARFA:-}}"
+else
+  DIRECT_DB_URL="${NEON_DATABASE_URL_PROD:-}"
+fi
+
 : "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
 
 # Resolve the PostHog ingestion token per-env so staging and prod telemetry land
@@ -106,6 +124,7 @@ if [[ -z "$SALT" ]]; then SALT="$(openssl rand -hex 32)"; GEN_SALT=1; fi
 
 echo "→ Setting secrets on $WORKER"
 put_secret DATABASE_URL "$POOLED_DB_URL"
+put_secret MARFA_DATABASE_URL_DIRECT "$DIRECT_DB_URL"
 put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
 put_secret API_KEY_SALT "$SALT"
 put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"

@@ -50,13 +50,18 @@ export async function createPgStorage(
      *  test fixture passes `true` because cloned-from-template databases
      *  already have the schema. */
     skipBootstrap?: boolean;
+    /** Direct (session-mode) connection string for streaming RLS — see
+     *  `createConnection`. Keeps streaming's session-level `SET ROLE` off
+     *  the app's transaction-mode pooled connections. */
+    directConnectionString?: string;
   },
 ): Promise<Storage> {
-  const { db, baseDb, client, close } = await createConnection(
+  const { db, baseDb, client, streamClient, close } = await createConnection(
     connectionString,
     {
       maxPoolSize: options?.maxPoolSize,
       skipBootstrap: options?.skipBootstrap,
+      directConnectionString: options?.directConnectionString,
     },
   );
 
@@ -214,6 +219,7 @@ export async function createPgStorage(
     betterAuthDialect: "pg" as const,
     pgDb: db,
     pgClient: client,
+    pgStreamClient: streamClient,
   } satisfies Storage & {
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
     betterAuthDb: unknown;

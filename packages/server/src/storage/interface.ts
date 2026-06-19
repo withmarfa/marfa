@@ -1950,6 +1950,15 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * casts to `PgClient`.
    */
   pgClient?: unknown;
+  /**
+   * Dedicated postgres-js client for streaming RLS reservations. On the
+   * direct (session-mode) endpoint when one is configured, so streaming's
+   * session-level `SET ROLE` never strands on the app's transaction-mode
+   * pooled connections; otherwise the same handle as `pgClient`. Set only on
+   * PG storage; `undefined` on SQLite. Typed `unknown` for portability;
+   * consumer-site casts to `PgClient`.
+   */
+  pgStreamClient?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
    * Hard-delete every artifact tied to the given `auth_user.id`. Single

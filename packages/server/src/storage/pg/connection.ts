@@ -24,6 +24,19 @@ export async function createConnection(
      *  same DB via the advisory lock — meaningful overhead at scale.
      *  Defaults to false (production behavior preserved). */
     skipBootstrap?: boolean;
+    /**
+     * Optional direct (session-mode) connection string used ONLY for
+     * streaming RLS reservations. Streaming issues a SESSION-level
+     * `SET ROLE marfa_app`; over a transaction-mode pooler (Neon's pooled
+     * endpoint — the app's `DATABASE_URL`) that role can strand on a shared
+     * PgBouncer backend and be inherited by a later write (e.g. sign-up),
+     * which then hits RLS as the restricted role. Pointing streaming at the
+     * direct, unpooled endpoint keeps the reserve → SET ROLE → reset cycle
+     * 1:1 with a real backend, so nothing strands on the app pool. When
+     * unset, streaming reuses the main pooled client (correct for self-hosts
+     * not behind a transaction-mode pooler).
+     */
+    directConnectionString?: string;
   },
 ): Promise<{
   /**
@@ -42,6 +55,13 @@ export async function createConnection(
    */
   baseDb: PgDb;
   client: PgClient;
+  /**
+   * Dedicated client for streaming RLS reservations. A separate small pool
+   * on the direct (session-mode) endpoint when `directConnectionString` is
+   * set; otherwise the same `client`. Only `acquireStreamRls` reserves from
+   * it — never the data plane or Better Auth.
+   */
+  streamClient: PgClient;
   close: () => Promise<void>;
 }> {
   const client = postgres(connectionString, {
@@ -49,6 +69,19 @@ export async function createConnection(
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
+  // Dedicated streaming client on the direct (session-mode) endpoint, when
+  // configured, so streaming's session-level `SET ROLE` never strands on the
+  // app's transaction-mode pooled connections (see `directConnectionString`).
+  const streamClient = options?.directConnectionString
+    ? postgres(options.directConnectionString, {
+        // One slot per concurrent stream; streams are far rarer than
+        // data-plane requests and the direct endpoint has a tighter
+        // connection ceiling than the pooler.
+        max: Math.min(options.maxPoolSize ?? 10, 5),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        onnotice: () => {},
+      })
+    : client;
   const baseDb = drizzle(client, { schema });
   const db = wrapDbWithRequestContext(baseDb);
 
@@ -71,8 +104,12 @@ export async function createConnection(
     db,
     baseDb,
     client,
+    streamClient,
     close: async () => {
       await client.end();
+      if (streamClient !== client) {
+        await streamClient.end();
+      }
     },
   };
 }

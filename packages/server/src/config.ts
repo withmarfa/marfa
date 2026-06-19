@@ -30,6 +30,15 @@ export interface AppConfig {
   storageDialect: "sqlite" | "pg";
   sqlitePath: string;
   databaseUrl: string;
+  /**
+   * Optional direct (session-mode) Postgres URL for streaming RLS. `databaseUrl`
+   * points at the transaction-mode pooled endpoint; streaming issues a
+   * session-level `SET ROLE`, which must run on a direct connection so it never
+   * strands on a shared pooled backend and leak into a later write. Unset →
+   * streaming reuses the pooled client (fine for self-hosts not behind a
+   * transaction-mode pooler).
+   */
+  databaseUrlDirect?: string;
   blobPath: string;
   blobBackend: "fs" | "s3";
   /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
@@ -551,6 +560,7 @@ export function loadConfig(): AppConfig {
     storageDialect: process.env.DB_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
+    databaseUrlDirect: process.env.MARFA_DATABASE_URL_DIRECT ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),

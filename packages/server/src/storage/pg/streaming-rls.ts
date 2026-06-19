@@ -33,8 +33,21 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * **Why session-level rather than per-event short transactions:**
  * per-event txs add latency per emit and complicate cursor / replay
  * semantics. Session-level config persists for the connection's
- * lifetime without holding a tx open. Pool isolation prevents
- * cross-tenant contamination.
+ * lifetime without holding a tx open.
+ *
+ * **Connection requirement — must be a direct/session-mode endpoint.**
+ * Session-level `SET ROLE` is only self-contained when the reserved
+ * connection maps 1:1 to a real backend for its whole lifetime. Over a
+ * transaction-mode pooler (Neon's pooled endpoint, the app's
+ * `DATABASE_URL`) PgBouncer multiplexes backends per statement, so a
+ * session-level role can strand on a shared backend and be inherited by a
+ * later, unrelated write — this is exactly how hosted sign-up's owner write
+ * began running as `marfa_app` and hitting RLS. Callers therefore pass the
+ * dedicated direct/session-mode client (`storage.pgStreamClient`, configured
+ * via `MARFA_DATABASE_URL_DIRECT`; see `connection.ts`). On a direct
+ * connection the reserve → SET ROLE → reset-or-destroy cycle below is
+ * genuinely isolated and nothing leaks onto the app pool. There is NO pool
+ * isolation when this runs on a transaction-mode pooled client.
  *
  * **Trade-off:** each active stream consumes one pool slot. Today's
  * pool size is 10 (`pg/connection.ts`) — bottleneck is real only at
