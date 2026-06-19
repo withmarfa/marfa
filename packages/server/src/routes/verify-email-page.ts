@@ -18,7 +18,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 export type VerifyEmailState = "pending" | "success" | "failure" | "resent";
 
@@ -106,6 +106,7 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
   if (params.state === "success") {
     title = "Email verified";
     bodyHtml = `
+      ${confirmIcon("check")}
       <h1 class="title">Email verified</h1>
       <p class="sub" role="status">You're all set and signed in.</p>
       <div class="actions">
@@ -115,6 +116,7 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
   } else if (params.state === "failure") {
     title = "That link didn't work";
     bodyHtml = `
+      ${confirmIcon("alert")}
       <h1 class="title">That link didn't work</h1>
       <p class="sub" role="alert">It may have expired or already been used. Enter your email and we'll send a fresh one.</p>
       ${fieldResend("Send a new link", false)}
@@ -122,6 +124,7 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
   } else if (params.state === "resent") {
     title = "Check your email";
     bodyHtml = `
+      ${confirmIcon("mail")}
       <h1 class="title">Check your email</h1>
       <p class="sub" role="status">A fresh verification link is on its way. Open it to finish signing in.</p>
       ${emailKnown ? compactResend("Resend email", true) : fieldResend("Resend email", true)}
@@ -129,6 +132,7 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
   } else {
     title = "Verify your email";
     bodyHtml = `
+      ${confirmIcon("mail")}
       <h1 class="title">Verify your email</h1>
       <p class="sub">Welcome to Marfa. Open the link we just emailed to finish signing in.</p>
       ${emailKnown ? compactResend("Resend email", false) : fieldResend("Resend email", false)}
@@ -147,5 +151,5 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
     bodyHtml += `\n    <script>${RESEND_COOLDOWN_SCRIPT}</script>`;
   }
 
-  return renderAuthLayout({ title, bodyHtml });
+  return renderAuthLayout({ title, bodyHtml, centered: true });
 }

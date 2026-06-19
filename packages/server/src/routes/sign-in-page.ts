@@ -20,7 +20,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml, buildQuery } from "./auth-html.js";
+import { escapeHtml, buildQuery, confirmIcon } from "./auth-html.js";
 
 interface SignInPageParams {
   /**
@@ -270,6 +270,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   // Confirmation screen after a one-time link is sent — its own focused view,
   // not a banner stacked on the entry form.
   const sentBody = `
+    ${confirmIcon("mail")}
     <h1 class="title">Check your email</h1>
     <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
     <div class="actions">
@@ -287,6 +288,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   return renderAuthLayout({
     title: params.magicLinkSent ? "Check your email" : "Sign in to Marfa",
     bodyHtml: body,
+    centered: params.magicLinkSent === true,
   });
 }
 

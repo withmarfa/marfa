@@ -12,7 +12,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 export type ResetPasswordState = "form" | "success" | "failure";
 
@@ -85,9 +85,14 @@ export function renderResetPasswordPage(
   let title: string;
   let bodyHtml: string;
 
+  // Result states (success / failure) center their icon + heading; the form
+  // state stays left-aligned.
+  const centered = params.state !== "form";
+
   if (params.state === "success") {
     title = "Password updated";
     bodyHtml = `
+      ${confirmIcon("check")}
       <h1 class="title">Password updated</h1>
       <p class="sub" role="status">Your password is changed and your other sessions are signed out.</p>
       <div class="actions">
@@ -97,6 +102,7 @@ export function renderResetPasswordPage(
   } else if (params.state === "failure") {
     title = "That link didn't work";
     bodyHtml = `
+      ${confirmIcon("alert")}
       <h1 class="title">That link didn't work</h1>
       <p class="sub" role="alert">It may have expired or already been used. Request a fresh reset link.</p>
       <div class="actions">
@@ -114,5 +120,5 @@ export function renderResetPasswordPage(
     `;
   }
 
-  return renderAuthLayout({ title, bodyHtml });
+  return renderAuthLayout({ title, bodyHtml, centered });
 }

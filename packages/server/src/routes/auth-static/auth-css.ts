@@ -295,6 +295,31 @@ body {
   }
 }
 
+/* Confirmation / result screens (check your email, verified, link expired) —
+   center the heading, sub, and a leading icon chip so a content-light card
+   reads as deliberate rather than squat. Forms keep their left-aligned labels. */
+.card--confirm {
+  text-align: center;
+}
+.card--confirm .form {
+  text-align: left;
+}
+.card--confirm .sub {
+  max-width: 34ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+.confirm-icon {
+  width: 52px;
+  height: 52px;
+  margin: 2px auto 18px;
+  border-radius: 15px;
+  background: var(--tile);
+  color: var(--fg);
+  display: grid;
+  place-items: center;
+}
+
 h1 {
   margin: 0 0 6px;
   font-size: 20px;
