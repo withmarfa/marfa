@@ -637,6 +637,11 @@ input[type="text"]:focus {
 }
 .alts .btn {
   width: 100%;
+  border-color: var(--border);
+}
+.alts .btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
 }
 
 .aux {

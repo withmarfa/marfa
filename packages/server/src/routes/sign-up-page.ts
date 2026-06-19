@@ -108,7 +108,14 @@ const STEP_SCRIPT = `
     show(1);
   });
 
-  show(1);
+  // Open the step that carries a server-side error, so a password error on
+  // step 2 isn't left hidden while the page reloads showing step 1.
+  var initial = form.getAttribute('data-initial-step') === '2' ? 2 : 1;
+  show(initial);
+  if (initial === 2) {
+    var firstStep2 = panel2.querySelector('input');
+    if (firstStep2) firstStep2.focus();
+  }
 })();
 `;
 
@@ -138,6 +145,10 @@ export function renderSignUpPage(params: SignUpPageParams): string {
 
   // Which field (if any) the error belongs under.
   const errorField = params.error ? ERROR_FIELD[params.error] : undefined;
+
+  // A password error lives on step 2, so open the form there on reload rather
+  // than leaving the message hidden behind step 1.
+  const initialStep = errorField === "password" ? 2 : 1;
 
   // Field-level error markup + the `.field--error` modifier, rendered only on
   // the matching field. A small red message under the input.
@@ -169,7 +180,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
     <h1 class="title" data-title>Create your Marfa account</h1>
     <p class="sub" data-sub>Tell us who you are.</p>
     ${errorBanner}
-    <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form>
+    <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form data-initial-step="${initialStep}">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <div class="form" data-panel="1">
         <label class="field${fieldErrorClass("email")}">
