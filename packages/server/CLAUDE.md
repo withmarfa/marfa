@@ -379,6 +379,10 @@ User-facing page at `/auth/security` listing connected apps and active sessions,
 - **Notice flash** — `?notice=…` query param maps to a banner at the top of the page (`grant_revoked`, `session_revoked`, `session_not_found`, `cannot_revoke_current`, etc). Unknown codes resolve to no banner, not a 500.
 - **Auth gate** — all four handlers run through `requireConsentSession` (same gate as `/auth/authorize`). Unauthenticated requests 302 to `/auth/sign-in?return_to=…`.
 
+## Auth + email preview gallery (dev tool)
+
+`packages/server/scripts/auth-gallery.ts` (+ `auth-gallery-fixtures.ts`) is a zero-database dev tool for eyeballing every hosted auth page and transactional email in every state without standing up the server or clicking through flows. Run it with `pnpm --filter @withmarfa/server auth:gallery`; for a fixed port use `PORT=<n> pnpm exec tsx scripts/auth-gallery.ts` from `packages/server` (the pnpm filter does not reliably honor `PORT`). It imports the real page renderers (`routes/*-page.ts`, `routes/consent.ts`, `routes/device-pages.ts`, …), the real email templates (`auth/email-templates/*`), and the real `/auth/static/*` assets, so the preview is exactly what ships — never a re-implementation. The shell has an Auth/Email section toggle, the screens (left) and their states (right), the preview (center), Freeform / Browser / Mobile frames, light / system / dark, and arrow-key navigation. It is a script, never a mounted route, so it never deploys. Use it to review any change to the `/auth/*` surface or the email templates before shipping.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
