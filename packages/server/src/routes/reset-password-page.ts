@@ -12,6 +12,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 export type ResetPasswordState = "form" | "success" | "failure";
 
@@ -35,15 +36,6 @@ const FORM_ERROR_MESSAGES: Record<
   weak_password: "Password must be at least 8 characters.",
 };
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** Renders the reset-password page as a complete HTML document. */
 export function renderResetPasswordPage(
   params: ResetPasswordPageParams,
@@ -51,15 +43,18 @@ export function renderResetPasswordPage(
   const safeToken = escapeHtml(params.token ?? "");
   const safeReturnTo = escapeHtml(params.returnTo ?? "/");
 
-  const formErrorBanner = params.formError
-    ? `<div class="banner banner--error" role="alert">${escapeHtml(FORM_ERROR_MESSAGES[params.formError])}</div>`
+  // The reset errors are all password-related, so they render under the
+  // password field rather than in a top banner.
+  const formError = params.formError;
+  const fieldError = formError
+    ? `<span class="field__error" role="alert">${escapeHtml(FORM_ERROR_MESSAGES[formError])}</span>`
     : "";
 
   const form = `
     <form method="POST" action="/auth/reset-password" class="form" novalidate>
       <input type="hidden" name="token" value="${safeToken}">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <label class="field">
+      <label class="field${formError ? " field--error" : ""}">
         <span class="field__label">New password</span>
         <input type="password"
                name="password"
@@ -70,6 +65,7 @@ export function renderResetPasswordPage(
                aria-required="true"
                aria-describedby="password-hint">
         <span id="password-hint" class="field__hint">At least 8 characters.</span>
+        ${fieldError}
       </label>
       <label class="field">
         <span class="field__label">Confirm new password</span>
@@ -81,7 +77,7 @@ export function renderResetPasswordPage(
                aria-required="true">
       </label>
       <div class="actions">
-        <button type="submit" class="btn btn--primary">Update password</button>
+        <button type="submit" class="btn btn--primary" data-loading-label="Updating password...">Update password</button>
       </div>
     </form>
   `;
@@ -112,9 +108,9 @@ export function renderResetPasswordPage(
     bodyHtml = `
       <h1 class="title">Set a new password</h1>
       <p class="sub">Your reset link works once, so finish setting it here.</p>
-      ${formErrorBanner}
       ${form}
       <script src="/auth/static/password-toggle.js"></script>
+      <script src="/auth/static/submit-state.js"></script>
     `;
   }
 

@@ -17,6 +17,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 export type VerifyEmailState = "pending" | "success" | "failure" | "resent";
 
@@ -27,15 +28,6 @@ interface VerifyEmailPageParams {
   email?: string | null;
   /** `return_to` to thread through after a successful verification. */
   returnTo?: string;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /** Renders the verify-email page as a complete HTML document string. */
@@ -66,10 +58,11 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
                value="${safeEmail}"
                required
                autocomplete="email"
+               autofocus
                aria-required="true">
       </label>
       <div class="actions">
-        <button type="submit" class="btn btn--primary">${label}</button>
+        <button type="submit" class="btn btn--primary" data-loading-label="Sending...">${label}</button>
       </div>
     </form>
   `;
@@ -107,6 +100,12 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
       <p class="sub">Welcome to Marfa. Open the link we just emailed to finish signing in.</p>
       ${emailKnown ? compactResend("Resend email") : fieldResend("Resend email")}
     `;
+  }
+
+  // The success state is link-only; every other state carries a resend form
+  // that benefits from the submitting-state guard.
+  if (params.state !== "success") {
+    bodyHtml += `\n    <script src="/auth/static/submit-state.js"></script>`;
   }
 
   return renderAuthLayout({ title, bodyHtml });

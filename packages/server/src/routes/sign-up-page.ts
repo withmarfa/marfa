@@ -23,6 +23,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml, buildQuery } from "./auth-html.js";
 
 interface SignUpPageParams {
   /** Where to send the user after a successful sign-up. Validated by
@@ -45,15 +46,6 @@ const ERROR_MESSAGES: Record<string, string> = {
   handle_reserved: "That username is reserved. Try another.",
   handle_taken: "That username is already taken. Try another.",
 };
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /**
  * Inline progressive-enhancement script. The server renders both panels
@@ -120,6 +112,22 @@ const STEP_SCRIPT = `
 })();
 `;
 
+/**
+ * Map each error code to the field it belongs under, so the message renders
+ * inline at the offending input rather than in a top banner. Codes not listed
+ * here (missing_field, signup_failed, and the generic fallback) stay in the
+ * top banner because they aren't tied to one field.
+ */
+const ERROR_FIELD: Record<string, "email" | "password" | "username"> = {
+  email_invalid: "email",
+  email_exists: "email",
+  weak_password: "password",
+  password_mismatch: "password",
+  handle_invalid: "username",
+  handle_reserved: "username",
+  handle_taken: "username",
+};
+
 /** Renders the sign-up page as a complete HTML document string. */
 export function renderSignUpPage(params: SignUpPageParams): string {
   const safeReturnTo = escapeHtml(params.returnTo);
@@ -128,9 +136,23 @@ export function renderSignUpPage(params: SignUpPageParams): string {
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
     : null;
 
-  const errorBanner = errorMessage
-    ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
-    : "";
+  // Which field (if any) the error belongs under.
+  const errorField = params.error ? ERROR_FIELD[params.error] : undefined;
+
+  // Field-level error markup + the `.field--error` modifier, rendered only on
+  // the matching field. A small red message under the input.
+  const fieldError = (field: "email" | "password" | "username"): string =>
+    errorMessage && errorField === field
+      ? `<span class="field__error" role="alert">${escapeHtml(errorMessage)}</span>`
+      : "";
+  const fieldErrorClass = (field: "email" | "password" | "username"): string =>
+    errorMessage && errorField === field ? " field--error" : "";
+
+  // Top banner reserved for errors not tied to a single field.
+  const errorBanner =
+    errorMessage && !errorField
+      ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
+      : "";
 
   const signInHref = `/auth/sign-in?${escapeHtml(buildQuery({ return_to: params.returnTo }))}`;
 
@@ -150,7 +172,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
     <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <div class="form" data-panel="1">
-        <label class="field">
+        <label class="field${fieldErrorClass("email")}">
           <span class="field__label">Email</span>
           <input type="email"
                  name="email"
@@ -158,6 +180,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  autocomplete="email"
                  autofocus
                  aria-required="true">
+          ${fieldError("email")}
         </label>
         <label class="field">
           <span class="field__label">Display name</span>
@@ -167,7 +190,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  autocomplete="name"
                  aria-required="true">
         </label>
-        <label class="field">
+        <label class="field${fieldErrorClass("username")}">
           <span class="field__label">Username</span>
           <input type="text"
                  name="username"
@@ -178,13 +201,12 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  autocomplete="username"
                  autocapitalize="none"
                  spellcheck="false"
-                 aria-required="true"
-                 aria-describedby="username-hint">
-          <span id="username-hint" class="field__hint">Lowercase letters, numbers, hyphens. 3–32 characters. Public — used as your handle on Marfa.</span>
+                 aria-required="true">
+          ${fieldError("username")}
         </label>
       </div>
       <div class="form" data-panel="2">
-        <label class="field">
+        <label class="field${fieldErrorClass("password")}">
           <span class="field__label">Password</span>
           <input type="password"
                  name="password"
@@ -194,6 +216,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  aria-required="true"
                  aria-describedby="password-hint">
           <span id="password-hint" class="field__hint">At least 8 characters.</span>
+          ${fieldError("password")}
         </label>
         <label class="field">
           <span class="field__label">Confirm password</span>
@@ -207,28 +230,18 @@ export function renderSignUpPage(params: SignUpPageParams): string {
       </div>
       <div class="actions">
         <button type="button" class="btn btn--primary" data-next>Continue</button>
-        <button type="submit" class="btn btn--primary" data-create>Create account</button>
+        <button type="submit" class="btn btn--primary" data-create data-loading-label="Creating account...">Create account</button>
         <button type="button" class="btn btn--ghost" data-back>Back</button>
       </div>
     </form>
     <p class="aux">Already have an account? <a href="${signInHref}">Sign in</a></p>
     <script>${STEP_SCRIPT}</script>
     <script src="/auth/static/password-toggle.js"></script>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   return renderAuthLayout({
     title: "Create your Marfa account",
     bodyHtml,
-    wide: true,
   });
-}
-
-/** Build a URL-encoded query string. Only includes truthy values. */
-function buildQuery(params: Record<string, string>): string {
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(params)) {
-    if (value)
-      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
-  }
-  return parts.join("&");
 }

@@ -13,6 +13,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 export type ForgotPasswordState = "form" | "sent" | "error";
 
@@ -40,15 +41,6 @@ const ERROR_MESSAGES: Record<
   unknown: "Something went wrong. Try again in a moment.",
 };
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** Renders the forgot-password page as a complete HTML document. */
 export function renderForgotPasswordPage(
   params: ForgotPasswordPageParams,
@@ -70,20 +62,21 @@ export function renderForgotPasswordPage(
     });
   }
 
-  const errorBanner =
-    params.state === "error" && params.errorCode
-      ? `<div class="banner banner--error" role="alert">${escapeHtml(ERROR_MESSAGES[params.errorCode])}</div>`
-      : "";
+  // Single-field form, so the error renders under the email input rather than
+  // in a top banner.
+  const errorCode = params.state === "error" ? params.errorCode : undefined;
+  const fieldError = errorCode
+    ? `<span class="field__error" role="alert">${escapeHtml(ERROR_MESSAGES[errorCode])}</span>`
+    : "";
 
   return renderAuthLayout({
     title: "Reset your password",
     bodyHtml: `
       <h1 class="title">Reset your password</h1>
       <p class="sub">Enter your email and we'll send you a link to set a new password.</p>
-      ${errorBanner}
       <form method="POST" action="/auth/forgot-password" class="form" novalidate>
         <input type="hidden" name="return_to" value="${safeReturnTo}">
-        <label class="field">
+        <label class="field${errorCode ? " field--error" : ""}">
           <span class="field__label">Email</span>
           <input type="email"
                  name="email"
@@ -92,12 +85,14 @@ export function renderForgotPasswordPage(
                  autocomplete="email"
                  autofocus
                  aria-required="true">
+          ${fieldError}
         </label>
         <div class="actions">
-          <button type="submit" class="btn btn--primary">Send reset link</button>
+          <button type="submit" class="btn btn--primary" data-loading-label="Sending link...">Send reset link</button>
         </div>
       </form>
       <p class="aux">Remembered it? <a href="/auth/sign-in">Sign in</a></p>
+      <script src="/auth/static/submit-state.js"></script>
     `,
   });
 }

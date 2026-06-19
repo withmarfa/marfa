@@ -20,6 +20,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml, buildQuery } from "./auth-html.js";
 
 interface SignInPageParams {
   /**
@@ -63,15 +64,6 @@ const ERROR_MESSAGES: Record<string, string> = {
     "That sign-in link looked unsafe, so we ignored where it pointed. Please sign in again.",
 };
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** Renders the sign-in page as a complete HTML document string. */
 export function renderSignInPage(params: SignInPageParams): string {
   const safeReturnTo = escapeHtml(params.returnTo);
@@ -80,43 +72,72 @@ export function renderSignInPage(params: SignInPageParams): string {
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
     : null;
 
-  const errorBanner = errorMessage
-    ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
-    : "";
-
   const isMagic = params.mode === "magic";
 
-  // Password view form — email + password, both required (single-purpose form,
-  // so the browser validates and there's no blank-password jank).
+  // `invalid_credentials` spans the email + password pair, so on the password
+  // view it renders as an inline form-level line just above the actions, not a
+  // boxed top banner.
+  const isCredentialError = params.error === "invalid_credentials" && !isMagic;
+
+  // On the one-time-email view the only field is email, so any error there is
+  // rendered under that field rather than as a top banner.
+  const magicFieldError = errorMessage && isMagic ? errorMessage : null;
+
+  // Banner reserved for page-level errors not tied to a field or the
+  // credential pair (e.g. invalid_return_to, oauth_failed) on the password
+  // view. The magic view routes its errors to the field instead.
+  const errorBanner =
+    errorMessage && !isCredentialError && !isMagic
+      ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
+      : "";
+
+  // Inline credential error — sits inside the form, just above the button.
+  const credentialError = isCredentialError
+    ? `<p class="form__error" role="alert">${escapeHtml(errorMessage ?? "")}</p>`
+    : "";
+
+  // Password view form — fields in their own `.form` flex, the primary button
+  // in a full-width `.actions` block (matching sign-up). Both fields are
+  // required (single-purpose form, so the browser validates and there's no
+  // blank-password jank).
   const passwordForm = `
-    <form method="POST" action="/auth/sign-in" class="form">
+    <form method="POST" action="/auth/sign-in">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <label class="field">
-        <span class="field__label">Email</span>
-        <input type="email"
-               name="email"
-               required
-               autocomplete="email"
-               autofocus
-               aria-required="true">
-      </label>
-      <label class="field">
-        <span class="field__label">Password</span>
-        <input type="password"
-               name="password"
-               required
-               autocomplete="current-password"
-               aria-required="true">
-      </label>
-      <button type="submit" name="mode" value="password" class="btn btn--primary">Sign in</button>
+      <div class="form">
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input type="email"
+                 name="email"
+                 required
+                 autocomplete="email"
+                 autofocus
+                 aria-required="true">
+        </label>
+        <label class="field">
+          <span class="field__label">Password</span>
+          <input type="password"
+                 name="password"
+                 required
+                 autocomplete="current-password"
+                 aria-required="true">
+        </label>
+        ${credentialError}
+      </div>
+      <div class="actions">
+        <button type="submit" name="mode" value="password" class="btn btn--primary" data-loading-label="Signing in...">Sign in</button>
+      </div>
     </form>
   `;
 
   // One-time-email view form — just an email field; the server emails a link.
+  // A magic-view error lands under the field.
+  const magicFieldErrorHtml = magicFieldError
+    ? `<span class="field__error" role="alert">${escapeHtml(magicFieldError)}</span>`
+    : "";
   const magicForm = `
     <form method="POST" action="/auth/sign-in" class="form">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <label class="field">
+      <label class="field${magicFieldError ? " field--error" : ""}">
         <span class="field__label">Email</span>
         <input type="email"
                name="email"
@@ -124,28 +145,30 @@ export function renderSignInPage(params: SignInPageParams): string {
                autocomplete="email"
                autofocus
                aria-required="true">
+        ${magicFieldErrorHtml}
       </label>
-      <button type="submit" name="mode" value="magic" class="btn btn--primary">Email me a sign-in link</button>
+      <div class="actions">
+        <button type="submit" name="mode" value="magic" class="btn btn--primary" data-loading-label="Sending link...">Email me a sign-in link</button>
+      </div>
     </form>
   `;
 
   // Switch to the one-time-email view via a GET form (a real navigation that
-  // works without JS, and renders as a plain `.btn` so it needs no new CSS —
-  // the stylesheet is cached for an hour, so reusing existing classes keeps the
-  // button correct even on a stale cache). The browser URL-encodes the hidden
-  // fields, so the OAuth context folded into `return_to` survives the hop.
-  const toMagicForm = `
+  // works without JS). The browser URL-encodes the hidden fields, so the OAuth
+  // context folded into `return_to` survives the hop. Styled as a plain `.btn`
+  // so it flexes equally inside the alternatives row.
+  const oneTimeLinkButton = `
     <form method="GET" action="/auth/sign-in">
       <input type="hidden" name="mode" value="magic">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <button type="submit" class="btn btn--oidc">Email me a one-time link</button>
+      <button type="submit" class="btn">One-time link</button>
     </form>
   `;
   // Back link to the password view — a plain text link is the right weight.
   const toPasswordHref = `/auth/sign-in?${buildQuery({ return_to: params.returnTo })}`;
 
-  // Provider buttons only — no separator/wrapper of their own; they share the
-  // password view's single alternatives stack below.
+  // Federated provider buttons, rendered as full-width stacked pills BELOW the
+  // two-button alternatives row. The default/hosted case has none.
   const oidcButtons = params.oidcProviderIds
     .map(
       (id) => `
@@ -157,22 +180,31 @@ export function renderSignInPage(params: SignInPageParams): string {
     )
     .join("");
 
+  const oidcStack =
+    oidcButtons.length > 0
+      ? `<div class="oidc" style="margin-top:16px">${oidcButtons}</div>`
+      : "";
+
   const signupLink = params.allowSignup
     ? `<p class="aux">No account yet?
          <a href="/auth/sign-up?${buildQuery({ return_to: params.returnTo })}">Create one</a>
        </p>`
     : "";
 
-  // Passkey button — just the button (the shared stack provides the separator);
-  // hidden by default and revealed by the inline script only on browsers that
-  // support WebAuthn in a secure context. The script lives inline (rather than
-  // in passkey.js) because it needs `params.returnTo` to redirect on success.
-  const passkeyBlock = `
+  // Passkey button — hidden by default, revealed by the inline script only on
+  // browsers that support WebAuthn in a secure context. Sits in the
+  // alternatives row next to "One-time link"; when hidden the row collapses to
+  // "One-time link" filling the full width. The script lives inline (rather
+  // than in passkey.js) because it needs `params.returnTo` to redirect on
+  // success.
+  const passkeyButton = `
     <div id="passkey-block" hidden>
-      <button id="passkey-signin" type="button" class="btn btn--oidc">Use a passkey</button>
-      <div id="passkey-error" class="banner banner--error" role="alert" hidden style="margin-top:12px"></div>
+      <button id="passkey-signin" type="button" class="btn">Passkey</button>
     </div>
   `;
+  // The passkey error sits below the alternatives row, not inside it, so the
+  // flex row stays a clean two-button layout.
+  const passkeyError = `<div id="passkey-error" class="banner banner--error" role="alert" hidden style="margin-top:12px"></div>`;
 
   const passkeyScript = `
 (function () {
@@ -202,24 +234,27 @@ export function renderSignInPage(params: SignInPageParams): string {
 })();
   `.trim();
 
-  // Password view: email + password, then a stacked set of alternatives
-  // (one-time email link, passkey when supported, OIDC providers) as quiet
-  // outline pills — no "or" divider — then the optional sign-up link and the
-  // passkey script.
+  // Password view: email + password + the primary button, then an
+  // "Or continue with" separator, then a two-button alternatives row
+  // ("One-time link" + "Passkey", the latter revealed only when supported),
+  // then any federated providers, then the optional sign-up link.
   const passwordBody = `
     <h1 class="title">Sign in to Marfa</h1>
     <p class="sub">Welcome back.</p>
     ${errorBanner}
     ${passwordForm}
-    <div class="oidc" style="margin-top:8px">
-      ${toMagicForm}
-      ${passkeyBlock}
-      ${oidcButtons}
+    <div class="separator">Or continue with</div>
+    <div class="alts">
+      ${oneTimeLinkButton}
+      ${passkeyButton}
     </div>
+    ${passkeyError}
+    ${oidcStack}
     ${signupLink}
     <script src="/auth/static/passkey.js"></script>
     <script>${passkeyScript}</script>
     <script src="/auth/static/password-toggle.js"></script>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   // One-time-email view: a focused screen with just the email field and a way
@@ -227,9 +262,9 @@ export function renderSignInPage(params: SignInPageParams): string {
   const magicBody = `
     <h1 class="title">Sign in to Marfa</h1>
     <p class="sub">Enter your email and we'll send a one-time sign-in link. No password needed.</p>
-    ${errorBanner}
     ${magicForm}
     <p class="aux"><a href="${toPasswordHref}">Back to password sign-in</a></p>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   // Confirmation screen after a one-time link is sent — its own focused view,
@@ -253,16 +288,6 @@ export function renderSignInPage(params: SignInPageParams): string {
     title: params.magicLinkSent ? "Check your email" : "Sign in to Marfa",
     bodyHtml: body,
   });
-}
-
-/** Build a URL-encoded query string. Only includes truthy values. */
-function buildQuery(params: Record<string, string>): string {
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(params)) {
-    if (value)
-      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
-  }
-  return parts.join("&");
 }
 
 /**
