@@ -52,10 +52,10 @@ cd "$REPO_ROOT"
 
 # The seed runs the TypeScript source via tsx, but it imports @withmarfa/shared
 # at runtime (the OAuth scope registry). CI's migrate job runs `pnpm install`
-# with no build step, so build the server's workspace dependencies first —
-# otherwise the import resolves to a non-existent dist. Near-instant when they
-# are already built (local deploys).
-pnpm --filter "@withmarfa/server^..." run build
+# with no build step, so build @withmarfa/shared (and its deps) first —
+# otherwise the import resolves to a non-existent dist. Near-instant when it is
+# already built (local deploys).
+pnpm --filter "@withmarfa/shared..." run build
 
 DB_DIALECT=pg DATABASE_URL="$DIRECT_URL" \
   pnpm --filter @withmarfa/server exec tsx scripts/seed-oauth-clients.ts
