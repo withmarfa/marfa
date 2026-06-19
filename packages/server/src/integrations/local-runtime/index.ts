@@ -26,7 +26,7 @@ import {
   type LocalBridgeRuntime,
 } from "./reactive-bridge.js";
 import { createSupervisor } from "./supervisor.js";
-import type { PgBoss } from "./pg-boss-types.js";
+import type { PgBoss } from "pg-boss";
 import type { LocalIntegrationRegistration, LocalRuntime } from "./types.js";
 import { registerWebhookReceiptRoute } from "./webhook-receipt.js";
 

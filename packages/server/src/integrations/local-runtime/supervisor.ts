@@ -28,7 +28,6 @@ import {
   ConnectionClient,
   createActivitySink,
   SDK_DEFAULT_HOP_BUDGET,
-  type FailureReason,
   type HandlerResult,
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
@@ -48,10 +47,19 @@ import type {
   WorkerDispatchResponse,
 } from "./types.js";
 import { fanOutSchedule } from "./walker.js";
-import type { PgBoss } from "./pg-boss-types.js";
+import type { PgBoss } from "pg-boss";
 
 const QUEUE_NAME = "marfa.integrations.local";
-const SCHEDULE_PREFIX = "marfa.integrations.local.schedule:";
+const SCHEDULE_PREFIX = "marfa.integrations.local.schedule.";
+const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
+
+/** pg-boss 12 restricts queue and schedule names to `[A-Za-z0-9_.\-/]` and
+ *  throws on anything else. Map stray characters (a `:` or space in an
+ *  integration name) to `_` so a future integration name can't crash the
+ *  runtime at boot. */
+export function sanitizeQueueName(name: string): string {
+  return name.replace(/[^A-Za-z0-9_.\-/]/g, "_");
+}
 
 export interface SupervisorConfig {
   apiUrl: string;
@@ -149,45 +157,54 @@ export function createSupervisor(
     response: WorkerDispatchResponse,
   ): Promise<void> {
     if (response.result.ok) return;
-    // Retry semantics are pg-boss's job: { ok: false, retry: true } propagates
-    // back as a throw; pg-boss applies its retry policy. Permanent failures get
-    // a system.activity row and a recent_errors entry.
+    // { ok: false, retry: true } propagates back as a throw so pg-boss applies
+    // its retry policy and dead-letters after the limit (see the dead-letter
+    // worker in start()). Non-retryable failures are terminal now — record them.
     if (!response.result.retry) {
-      const reason: FailureReason = {
-        message: response.thrownMessage ?? response.result.reason,
-        class_name: response.thrownClassName ?? "HandlerResult",
-        attempts: 1,
-        failed_at: new Date().toISOString(),
-      };
-      await recordRuntimeError(storage, message.connection_id, {
-        timestamp_ms: Date.now(),
-        reason: reason.message,
-        message_kind: message.kind,
-      }).catch(() => undefined);
-      try {
-        const credential = await mintLocalRuntimeCredential(
-          storage,
-          config.apiKeySalt,
-          message.connection_id,
-        );
-        const client = new ConnectionClient({
-          apiUrl: config.apiUrl,
-          credential,
-          refreshCredential: () => Promise.resolve(credential),
-        });
-        const activity = createActivitySink(client, message.connection_id);
-        await activity.emit({
-          severity: "action_required",
-          summary: `Permanent failure handling ${message.kind} message (local runtime)`,
-          detail: {
-            reason: response.result.reason,
-            connection_id: message.connection_id,
-            class_name: reason.class_name,
-          },
-        });
-      } catch {
-        // Best-effort; recent_errors entry is the primary operator signal.
-      }
+      await recordTerminalFailure(
+        message,
+        response.thrownMessage ?? response.result.reason,
+        response.thrownClassName ?? "HandlerResult",
+      );
+    }
+  }
+
+  /** Record a terminal dispatch failure: a `recent_errors` tail entry plus an
+   *  `action_required` system.activity the operator can see. Used both for
+   *  non-retryable failures and for jobs that exhaust pg-boss retries. */
+  async function recordTerminalFailure(
+    message: QueueMessage,
+    reasonMessage: string,
+    className: string,
+  ): Promise<void> {
+    await recordRuntimeError(storage, message.connection_id, {
+      timestamp_ms: Date.now(),
+      reason: reasonMessage,
+      message_kind: message.kind,
+    }).catch(() => undefined);
+    try {
+      const credential = await mintLocalRuntimeCredential(
+        storage,
+        config.apiKeySalt,
+        message.connection_id,
+      );
+      const client = new ConnectionClient({
+        apiUrl: config.apiUrl,
+        credential,
+        refreshCredential: () => Promise.resolve(credential),
+      });
+      const activity = createActivitySink(client, message.connection_id);
+      await activity.emit({
+        severity: "action_required",
+        summary: `Permanent failure handling ${message.kind} message (local runtime)`,
+        detail: {
+          reason: reasonMessage,
+          connection_id: message.connection_id,
+          class_name: className,
+        },
+      });
+    } catch {
+      // Best-effort; the recent_errors entry is the primary operator signal.
     }
   }
 
@@ -235,7 +252,16 @@ export function createSupervisor(
       started = true;
       if (!config.boss) return;
       const boss = config.boss;
-      await boss.createQueue(QUEUE_NAME);
+      // The dead-letter queue must exist before the dispatch queue can name it.
+      await boss.createQueue(DEAD_LETTER_QUEUE);
+      // Retries are opt-out in pg-boss 12 (default limit 2). Make the policy
+      // explicit and dead-letter exhausted jobs so a persistently failing sync
+      // surfaces to the operator instead of silently vanishing.
+      await boss.createQueue(QUEUE_NAME, {
+        retryLimit: 3,
+        retryBackoff: true,
+        deadLetter: DEAD_LETTER_QUEUE,
+      });
       const batchSize = config.workerBatchSize ?? 4;
       await boss.work<SchedulerEnvelope>(
         QUEUE_NAME,
@@ -246,9 +272,24 @@ export function createSupervisor(
           }
         },
       );
+      // Jobs that exhaust their retries land on the dead-letter queue carrying
+      // their original payload; record the terminal failure for the operator.
+      await boss.work<SchedulerEnvelope>(
+        DEAD_LETTER_QUEUE,
+        { batchSize: 1, pollingIntervalSeconds: 5 },
+        async (jobs) => {
+          for (const job of jobs) {
+            await recordTerminalFailure(
+              job.data.message,
+              "Exhausted retries (local runtime)",
+              "DeadLetter",
+            );
+          }
+        },
+      );
       for (const reg of config.registrations) {
         if (!reg.scheduleCron) continue;
-        const scheduleName = SCHEDULE_PREFIX + reg.name;
+        const scheduleName = sanitizeQueueName(SCHEDULE_PREFIX + reg.name);
         await boss.createQueue(scheduleName);
         await boss.work(scheduleName, { batchSize: 1 }, async () => {
           await fanOutSchedule(storage, runtime, reg.name, Date.now());
@@ -263,7 +304,9 @@ export function createSupervisor(
         try {
           for (const reg of config.registrations) {
             if (!reg.scheduleCron) continue;
-            await config.boss.unschedule(SCHEDULE_PREFIX + reg.name);
+            await config.boss.unschedule(
+              sanitizeQueueName(SCHEDULE_PREFIX + reg.name),
+            );
           }
         } catch {
           // Best-effort on shutdown.

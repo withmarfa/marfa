@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { log } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
 import { checkRedirectAllowlist } from "./routes/redirect-allowlist-check.js";
+import { checkCorsOrigins } from "./routes/cors-origins-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
@@ -307,45 +308,59 @@ async function main() {
 
   const oidcSigner = await OidcSigner.init(storage);
 
-  // Default is "local"; set MARFA_INTEGRATION_RUNTIME=hosted to use Cloudflare instead.
+  // Integrations: the local substrate (Node + pg-boss) runs in-process; the
+  // hosted substrate delegates to Cloudflare. Default is "local". The local
+  // substrate needs Postgres, so on SQLite we skip it rather than crash the
+  // zero-config quickstart.
   let localRuntime: LocalRuntimeBundle | null = null;
   if ((config.integrationRuntime ?? "local") === "local") {
-    try {
-      const integrationsRoot = resolveIntegrationsRoot();
-      const registrations = integrationsRoot
-        ? await loadInTreeRegistrations({ integrationsRoot })
-        : [];
-      if (registrations.length === 0) {
-        log(
-          "warn",
-          "Local integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js. " +
-            "Set MARFA_INTEGRATION_RUNTIME=hosted to use the Cloudflare substrate instead.",
-        );
+    if (config.storageDialect !== "pg") {
+      // Don't construct pg-boss against a SQLite (empty) connection string —
+      // that crashes boot. Skip with a log instead. Warn when the operator
+      // asked for local explicitly; info when it merely defaulted (the SQLite
+      // zero-config quickstart path) so a first run stays clean.
+      const explicit = process.env.MARFA_INTEGRATION_RUNTIME === "local";
+      log(
+        explicit ? "warn" : "info",
+        explicit
+          ? "MARFA_INTEGRATION_RUNTIME=local requires DB_DIALECT=pg; integrations are disabled. " +
+              "Switch to Postgres, or set MARFA_INTEGRATION_RUNTIME=hosted for the Cloudflare substrate."
+          : "Integrations are off: the local substrate needs Postgres and this instance is on SQLite. " +
+              "Set DB_DIALECT=pg to enable in-process integrations, or MARFA_INTEGRATION_RUNTIME=hosted for the Cloudflare substrate.",
+      );
+    } else {
+      try {
+        const integrationsRoot = resolveIntegrationsRoot();
+        const registrations = integrationsRoot
+          ? await loadInTreeRegistrations({ integrationsRoot })
+          : [];
+        if (registrations.length === 0) {
+          log(
+            "warn",
+            "Local integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js. " +
+              "Set MARFA_INTEGRATION_RUNTIME=hosted to use the Cloudflare substrate instead.",
+          );
+        }
+        // pg-boss 12 is ESM with a named `PgBoss` export (no default).
+        const { PgBoss } = await import("pg-boss");
+        const boss = new PgBoss(config.databaseUrl);
+        await boss.start();
+        localRuntime = await tryStartLocalIntegrationRuntime({
+          storage,
+          config,
+          registrations,
+          boss,
+          apiUrl: `http://localhost:${String(config.port)}`,
+        });
+        log("info", "Local integration runtime started", {
+          registrations: registrations.length,
+        });
+      } catch (err) {
+        log("error", "Local integration runtime failed to start", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
       }
-      const PgBossModule = (await import("pg-boss")) as unknown as {
-        default: new (cs: string) => unknown;
-      };
-      const PgBoss = PgBossModule.default;
-      const boss = new PgBoss(config.databaseUrl);
-
-      await (boss as { start: () => Promise<unknown> }).start();
-      localRuntime = await tryStartLocalIntegrationRuntime({
-        storage,
-        config,
-        registrations,
-        boss: boss as Parameters<
-          typeof tryStartLocalIntegrationRuntime
-        >[0]["boss"],
-        apiUrl: `http://localhost:${String(config.port)}`,
-      });
-      log("info", "Local integration runtime started", {
-        registrations: registrations.length,
-      });
-    } catch (err) {
-      log("error", "Local integration runtime failed to start", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
     }
   }
 
@@ -355,6 +370,14 @@ async function main() {
   checkRedirectAllowlist({
     authMode: config.authMode,
     allowlist: config.oauthRedirectAllowlist,
+  });
+
+  // Boot guard: warn loud if hosted mode runs with an empty CORS allowlist —
+  // browser clients would fail their cross-origin API calls with no obvious
+  // cause. A warning, not a hard stop (API-only hosted deployments are fine).
+  checkCorsOrigins({
+    authMode: config.authMode,
+    corsOrigins: config.corsOrigins,
   });
 
   const app = createApp(

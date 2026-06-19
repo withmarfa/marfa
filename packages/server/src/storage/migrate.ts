@@ -4,13 +4,25 @@
  * Usage from CLI: tsx src/storage/migrate.ts [--dialect pg|sqlite]
  */
 
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function getMigrationFolder(dialect: "pg" | "sqlite"): string {
-  return join(__dirname, `../../drizzle/${dialect}`);
+  // Resolve relative to the running file so it works whether invoked as source
+  // (`tsx src/storage/migrate.ts` → ../../drizzle, used by the hosted deploy)
+  // or as the built standalone migrator (`node dist/migrate.js` → ../drizzle,
+  // used by the docker-compose self-host path).
+  const candidates = [
+    join(__dirname, `../../drizzle/${dialect}`),
+    join(__dirname, `../drizzle/${dialect}`),
+  ];
+  return (
+    candidates.find((c) => existsSync(c)) ??
+    join(__dirname, `../../drizzle/${dialect}`)
+  );
 }
 
 export async function runPgMigrations(connectionString: string): Promise<void> {
