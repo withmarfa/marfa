@@ -9,14 +9,16 @@
  *
  *   pnpm --filter @withmarfa/server auth:gallery
  *
- * Then open the printed URL. A top-center tab control switches between the Auth
- * pages and the Email templates. The left sidebar lists the screens for the
+ * Then open the printed URL. A top-left section dropdown switches between the
+ * Auth pages and the Email templates. The left sidebar lists the screens for the
  * active tab; the right sidebar lists the states of the selected screen; the
  * center shows the selected state in an iframe. A sun / monitor / moon control
  * forces light, follows the OS, or forces dark — for both the shell chrome and
  * the previewed page. A view control frames the iframe as freeform (edge to
  * edge), a browser window, or a phone, so the page's own responsive CSS can be
- * checked at each width without changing what it renders.
+ * checked at each width without changing what it renders. Arrow keys step the
+ * screen (up / down) and state (left / right); a keyboard button in the
+ * bottom-right corner pops up the shortcut reference.
  */
 
 import { serve } from "@hono/node-server";
@@ -211,11 +213,6 @@ function renderShell(): string {
     })),
   }));
 
-  const tabControl = TABS.map(
-    (tab) =>
-      `<button class="tab" data-tab="${tab.id}" type="button"><span>${tab.label}</span></button>`,
-  ).join("");
-
   // sun / monitor / moon — Lucide glyphs at the same stroke weight as the
   // password-toggle eye icons, sized down for the compact control.
   const SUN = svgIcon(
@@ -226,9 +223,14 @@ function renderShell(): string {
   );
   const MOON = svgIcon('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>');
 
-  // Chevron-down for the text view trigger (Lucide chevron-down), same stroke
-  // weight as the theme icons above.
+  // Chevron-down for the text view + section triggers (Lucide chevron-down),
+  // same stroke weight as the theme icons above.
   const CHEVRON_DOWN = svgIcon('<path d="m6 9 6 6 6-6"/>');
+
+  // Lucide keyboard glyph for the bottom-right shortcuts button.
+  const KEYBOARD = svgIcon(
+    '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M8 12h.001"/><path d="M12 12h.001"/><path d="M16 12h.001"/><path d="M7 16h10"/>',
+  );
 
   // The shell styling is plain inline CSS — it's dev chrome, not part of the
   // auth surface, so it deliberately doesn't share AUTH_CSS.
@@ -430,34 +432,59 @@ function renderShell(): string {
       overflow: hidden;
     }
     .stage.view-mobile .viewport iframe { border-radius: 12px; }
-    /* Top-center tab control: same no-border accent-pill style as the sidebar
-       selection, not a bordered segmented control. */
-    .tabs {
+    /* Top-left section dropdown: mirrors the view dropdown's interaction, but
+       its trigger label is black + slightly heavier — it's the primary selector,
+       so it reads as the strong control against the grey view trigger opposite.
+       Borderless trigger, popover menu separated by a border (no shadow). */
+    .section { position: relative; display: inline-flex; flex: none; margin: 0 0 0 4px; }
+    .section__button {
       display: inline-flex;
       align-items: center;
-      gap: 2px;
-      flex: none;
-      margin: 0 0 0 4px;
-    }
-    .tab {
+      gap: 4px;
+      height: var(--control-h);
       border: none;
       background: none;
-      padding: 0;
-      cursor: pointer;
-      font: inherit;
-    }
-    .tab > span {
-      display: inline-flex;
-      align-items: center;
-      height: var(--control-h);
-      padding: 0 14px;
+      padding: 0 8px;
       border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .section__button:hover { background: var(--hover); }
+    .section__button svg { display: block; width: 14px; height: 14px; }
+    .section__menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: 10;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 140px;
+      padding: 5px;
+      border: 0.5px solid var(--accent);
+      border-radius: 10px;
+      background: var(--card);
+    }
+    .section.open .section__menu { display: flex; }
+    .section__option {
+      display: block;
+      width: 100%;
+      border: none;
+      background: none;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font: inherit;
       font-size: 13px;
       font-weight: 500;
-      color: var(--muted);
+      text-align: left;
+      color: var(--fg);
+      cursor: pointer;
     }
-    .tab:hover > span { background: var(--hover); }
-    .tab.active > span { background: var(--accent); color: var(--accent-fg); }
+    .section__option:hover { background: var(--hover); }
+    .section__option.active { background: var(--accent); color: var(--accent-fg); }
     /* Theme control, top-right: an icon button, same accent-pill style. The
        topbar centers it; no per-control vertical alignment so it shares the
        view trigger's baseline exactly. */
@@ -536,12 +563,73 @@ function renderShell(): string {
     }
     .view__option:hover { background: var(--hover); }
     .view__option.active { background: var(--accent); color: var(--accent-fg); }
+    /* Keyboard shortcuts: an icon button pinned to the bottom-right of the
+       viewport (same borderless icon-button style as the theme control) whose
+       popover opens UPWARD — it sits at the bottom edge. Bordered card, no
+       shadow. */
+    .shortcuts { position: fixed; right: 16px; bottom: 16px; z-index: 20; }
+    .shortcuts__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: var(--control-h);
+      width: var(--control-h);
+      border: none;
+      background: none;
+      padding: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .shortcuts__button:hover { background: var(--hover); }
+    .shortcuts.open .shortcuts__button { background: var(--accent); color: var(--accent-fg); }
+    .shortcuts__button svg { display: block; width: 16px; height: 16px; }
+    .shortcuts__menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: 0;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 240px;
+      padding: 12px;
+      border: 0.5px solid var(--accent);
+      border-radius: 10px;
+      background: var(--card);
+    }
+    .shortcuts.open .shortcuts__menu { display: flex; }
+    .shortcuts__row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .shortcuts__label { font-size: 13px; color: var(--fg); }
+    .shortcuts__keys { display: inline-flex; gap: 4px; flex: none; }
+    /* kbd-style chip — bordered rounded box around the arrow glyph. */
+    .shortcuts__keys kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 5px;
+      border: 0.5px solid var(--accent);
+      border-radius: 5px;
+      background: var(--card);
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--fg);
+    }
   </style>
 </head>
 <body>
   <nav class="sidebar sidebar--left">
     <div class="topbar">
-      <div class="tabs" role="group" aria-label="Section">${tabControl}</div>
+      <div class="section" id="section">
+        <button id="section-button" class="section__button" type="button" aria-label="Change section" aria-haspopup="true" aria-expanded="false"><span id="section-label"></span>${CHEVRON_DOWN}</button>
+        <div class="section__menu" id="section-menu" role="menu"></div>
+      </div>
     </div>
     <div class="nav-header">
       <div class="nav-header__title">Screen</div>
@@ -572,6 +660,19 @@ function renderShell(): string {
     </div>
     <div class="nav nav--right"><ul class="nav-list" id="states"></ul></div>
   </nav>
+  <div class="shortcuts" id="shortcuts">
+    <div class="shortcuts__menu" id="shortcuts-menu" role="menu">
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Previous / next screen</span>
+        <span class="shortcuts__keys"><kbd>&uarr;</kbd><kbd>&darr;</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Previous / next state</span>
+        <span class="shortcuts__keys"><kbd>&larr;</kbd><kbd>&rarr;</kbd></span>
+      </div>
+    </div>
+    <button id="shortcuts-button" class="shortcuts__button" type="button" aria-label="Keyboard shortcuts" aria-haspopup="true" aria-expanded="false">${KEYBOARD}</button>
+  </div>
   <script>
     (function () {
       var TABS = ${JSON.stringify(tabData)};
@@ -590,10 +691,16 @@ function renderShell(): string {
       var statesList = document.getElementById('states');
       var themeCycleBtn = document.getElementById('theme-cycle');
       var stage = document.getElementById('stage');
+      var sectionWrap = document.getElementById('section');
+      var sectionButton = document.getElementById('section-button');
+      var sectionLabel = document.getElementById('section-label');
+      var sectionMenu = document.getElementById('section-menu');
       var viewWrap = document.getElementById('view');
       var viewButton = document.getElementById('view-button');
       var viewLabel = document.getElementById('view-label');
       var viewMenu = document.getElementById('view-menu');
+      var shortcutsWrap = document.getElementById('shortcuts');
+      var shortcutsButton = document.getElementById('shortcuts-button');
       var THEME_ORDER = ['light', 'system', 'dark'];
       var THEME_ICONS = {
         light: ${JSON.stringify(SUN)},
@@ -610,6 +717,12 @@ function renderShell(): string {
           if (VIEW_OPTIONS[i].id === id) return VIEW_OPTIONS[i].label;
         }
         return VIEW_OPTIONS[0].label;
+      }
+      function sectionLabelFor(id) {
+        for (var i = 0; i < TABS.length; i++) {
+          if (TABS[i].id === id) return TABS[i].label;
+        }
+        return TABS[0].label;
       }
 
       function currentTab() {
@@ -650,14 +763,18 @@ function renderShell(): string {
       }
 
       function markActive() {
-        var all = document.querySelectorAll('.nav-item, .tab');
+        var all = document.querySelectorAll('.nav-item');
         for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
         var screenBtn = screensList.querySelector('.nav-item[data-screen="' + state.screen + '"]');
         if (screenBtn) screenBtn.classList.add('active');
         var stateBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
         if (stateBtn) stateBtn.classList.add('active');
-        var tabBtn = document.querySelector('.tab[data-tab="' + state.tab + '"]');
-        if (tabBtn) tabBtn.classList.add('active');
+        sectionLabel.textContent = sectionLabelFor(state.tab);
+        var sectionOptions = sectionMenu.querySelectorAll('.section__option');
+        for (var j = 0; j < sectionOptions.length; j++) {
+          var sid = sectionOptions[j].getAttribute('data-tab');
+          sectionOptions[j].classList.toggle('active', sid === state.tab);
+        }
         themeCycleBtn.innerHTML = THEME_ICONS[state.theme];
         themeCycleBtn.title =
           state.theme === 'system' ? 'System appearance'
@@ -702,6 +819,37 @@ function renderShell(): string {
         viewButton.setAttribute('aria-expanded', 'false');
       }
 
+      function renderSectionMenu() {
+        sectionMenu.innerHTML = '';
+        TABS.forEach(function (tab) {
+          var btn = document.createElement('button');
+          btn.className = 'section__option';
+          btn.type = 'button';
+          btn.setAttribute('role', 'menuitem');
+          btn.setAttribute('data-tab', tab.id);
+          btn.textContent = tab.label;
+          sectionMenu.appendChild(btn);
+        });
+      }
+
+      function closeSectionMenu() {
+        sectionWrap.classList.remove('open');
+        sectionButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function closeShortcutsMenu() {
+        shortcutsWrap.classList.remove('open');
+        shortcutsButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function anyMenuOpen() {
+        return (
+          sectionWrap.classList.contains('open') ||
+          viewWrap.classList.contains('open') ||
+          shortcutsWrap.classList.contains('open')
+        );
+      }
+
       function loadPreview() {
         frame.src =
           '/preview?tab=' + encodeURIComponent(state.tab) +
@@ -740,8 +888,40 @@ function renderShell(): string {
         refresh();
       }
 
-      document.querySelectorAll('.tab').forEach(function (b) {
-        b.addEventListener('click', function () { selectTab(b.getAttribute('data-tab')); });
+      function stepScreen(delta) {
+        var screens = currentTab().screens;
+        var idx = -1;
+        for (var i = 0; i < screens.length; i++) {
+          if (screens[i].id === state.screen) { idx = i; break; }
+        }
+        var next = idx + delta;
+        // Clamp at the ends — do nothing past either edge.
+        if (next < 0 || next >= screens.length || next === idx) return;
+        selectScreen(screens[next].id);
+      }
+
+      function stepState(delta) {
+        var variants = currentScreen().variants;
+        var idx = -1;
+        for (var i = 0; i < variants.length; i++) {
+          if (variants[i].id === state.variant) { idx = i; break; }
+        }
+        var next = idx + delta;
+        if (next < 0 || next >= variants.length || next === idx) return;
+        selectVariant(variants[next].id);
+      }
+
+      sectionButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !sectionWrap.classList.contains('open');
+        sectionWrap.classList.toggle('open', open);
+        sectionButton.setAttribute('aria-expanded', String(open));
+      });
+      sectionMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('.section__option');
+        if (!btn) return;
+        selectTab(btn.getAttribute('data-tab'));
+        closeSectionMenu();
       });
       screensList.addEventListener('click', function (e) {
         var btn = e.target.closest('.nav-item');
@@ -773,13 +953,42 @@ function renderShell(): string {
         applyView();
         closeViewMenu();
       });
-      // Any click outside the open menu closes it.
+
+      shortcutsButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !shortcutsWrap.classList.contains('open');
+        shortcutsWrap.classList.toggle('open', open);
+        shortcutsButton.setAttribute('aria-expanded', String(open));
+      });
+
+      // Any click outside an open menu closes it (each popover, independently).
       document.addEventListener('click', function (e) {
+        if (sectionWrap.classList.contains('open') && !sectionWrap.contains(e.target)) {
+          closeSectionMenu();
+        }
         if (viewWrap.classList.contains('open') && !viewWrap.contains(e.target)) {
           closeViewMenu();
         }
+        if (shortcutsWrap.classList.contains('open') && !shortcutsWrap.contains(e.target)) {
+          closeShortcutsMenu();
+        }
       });
 
+      // Arrow keys step the screen (up / down) and state (left / right). Ignored
+      // while typing in a form control or while any popover is open, so the keys
+      // don't fight an open menu's own affordances.
+      document.addEventListener('keydown', function (e) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+        if (anyMenuOpen()) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); stepScreen(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); stepScreen(-1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); stepState(1); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); stepState(-1); }
+      });
+
+      renderSectionMenu();
       renderViewMenu();
       refresh({ rebuildScreens: true });
     })();
