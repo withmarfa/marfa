@@ -14,6 +14,8 @@
 
 export type ConceptVariant = "v1" | "v2" | "v3";
 export type AuthMode = "signin" | "signup";
+/** Text treatment for the wordmark + tagline over the split's gradient. */
+export type SplitInk = "plain" | "blend" | "gloss";
 
 /** Wrap variant markup in a full document that links the shared auth stylesheet. */
 function conceptDoc(title: string, style: string, body: string): string {
@@ -72,111 +74,118 @@ function authPanel(mode: AuthMode): string {
           <button type="submit" class="btn btn--primary">Sign in</button>
         </div>
       </form>
-      <div class="separator">Or continue with</div>
-      <div class="alts">
-        <button type="button" class="btn">One-time link</button>
-        <button type="button" class="btn">Passkey</button>
-      </div>
       <p class="aux">No account yet? <a href="#">Create one</a></p>
     </div>`;
 }
 
 /**
- * The split concept: a double-width modal split into a form half and a gradient
- * half, with an 8px "lip" of card around the inset panels, the Marfa wordmark
- * top-left of the gradient and a tagline bottom-left. Variants change the
- * gradient palette and which side it sits on.
+ * The split concept: a modal split into a form half and a soft gradient half,
+ * with a card "lip" around the inset panels, the Marfa wordmark top-left of the
+ * gradient and a tagline bottom-left. One warm gradient, softened with a white
+ * wash (and dimmed in dark mode so it isn't glaring). A dev-only "Flip side"
+ * button swaps which half the gradient sits on. The variants differ only in how
+ * the wordmark + tagline ink sits over the gradient (plain / inverse / glossy).
  */
 export function renderAuthSplit(
-  variant: ConceptVariant,
-  mode: AuthMode,
+  ink: SplitInk,
+  mode: AuthMode = "signup",
 ): string {
-  // side: which half the gradient occupies. dark: dark ink for the pale v3
-  // gradient (white ink would vanish on it).
-  const cfg: Record<ConceptVariant, { side: "left" | "right"; dark: boolean }> =
-    {
-      v1: { side: "right", dark: false },
-      v2: { side: "left", dark: false },
-      v3: { side: "right", dark: true },
-    };
-  const c = cfg[variant];
-  const ink = c.dark ? " split__ink--dark" : "";
-  const art = `<div class="split__art art--${variant}">
-      <span class="split__brand${ink}">Marfa</span>
-      <span class="split__tagline${ink}">Your personal data workspace.</span>
+  const inkClass =
+    ink === "blend"
+      ? "ink--blend"
+      : ink === "gloss"
+        ? "ink--gloss"
+        : "ink--plain";
+  const art = `<div class="split__art">
+      <span class="split__brand ${inkClass}">Marfa</span>
+      <span class="split__tagline ${inkClass}">Your personal data workspace.</span>
     </div>`;
   const form = authPanel(mode);
-  const inner = c.side === "left" ? art + form : form + art;
   const title =
     mode === "signup" ? "Create your Marfa account" : "Sign in to Marfa";
 
   const style = `
     body { padding: 32px 24px; }
     .split {
-      width: min(880px, calc(100% - 24px));
-      min-height: 540px;
+      position: relative;
+      width: min(720px, calc(100% - 32px));
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 28px;
-      padding: 8px;
+      border-radius: 26px;
+      padding: 10px;
       display: flex;
       gap: 0;
       overflow: hidden;
       box-shadow: var(--shadow);
     }
+    /* Dev-only: flip which half the gradient occupies. */
+    .split.flip { flex-direction: row-reverse; }
     .split > * { flex: 1 1 50%; min-width: 0; }
     .split__form {
-      padding: 48px 44px;
+      padding: 38px 34px;
       display: flex;
       flex-direction: column;
       justify-content: center;
     }
     .split__art {
       position: relative;
-      border-radius: 21px;
+      min-height: 340px;
+      border-radius: 18px;
       overflow: hidden;
+      /* Warm mesh, lightened so it reads soft and dreamy rather than vivid. */
+      background:
+        radial-gradient(75% 55% at 50% 110%, #ffbe8a 0%, rgba(255,190,138,0) 60%),
+        radial-gradient(85% 65% at 78% 88%, #ffaccf 0%, rgba(255,172,207,0) 55%),
+        radial-gradient(85% 65% at 22% 72%, #b6ccff 0%, rgba(182,204,255,0) 55%),
+        linear-gradient(176deg, #f7f2ec 0%, #efeaf2 34%, #f7d9d1 72%, #ffdab4 100%);
     }
+    /* A white wash floats over the gradient to soften it; text sits above it. */
+    .split__art::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.2);
+      pointer-events: none;
+    }
+    /* Dark mode: dim rather than lighten, so the gradient doesn't glare. */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .split__art::after { background: rgba(8, 8, 10, 0.42); }
+    }
+    :root[data-theme="dark"] .split__art::after { background: rgba(8, 8, 10, 0.42); }
     .split__brand {
-      position: absolute; top: 24px; left: 26px;
-      font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: #fff;
+      position: absolute; top: 22px; left: 24px; z-index: 1;
+      font-size: 16px; font-weight: 600; letter-spacing: -0.01em;
     }
     .split__tagline {
-      position: absolute; left: 26px; right: 26px; bottom: 24px;
-      font-size: 22px; font-weight: 600; line-height: 1.25;
-      letter-spacing: -0.015em; color: #fff;
+      position: absolute; left: 24px; right: 24px; bottom: 22px; z-index: 1;
+      font-size: 21px; font-weight: 600; line-height: 1.25; letter-spacing: -0.015em;
     }
-    .split__ink--dark { color: #3f3f46; }
-    /* v1 — warm, soft mesh (cream → blue → pink → peach). */
-    .art--v1 {
-      background:
-        radial-gradient(75% 55% at 50% 108%, #ffb074 0%, rgba(255,176,116,0) 60%),
-        radial-gradient(85% 65% at 78% 88%, #ff9ec6 0%, rgba(255,158,198,0) 55%),
-        radial-gradient(85% 65% at 22% 72%, #a8c3ff 0%, rgba(168,195,255,0) 55%),
-        linear-gradient(176deg, #f4efe6 0%, #e8e2ee 34%, #f4ccc2 72%, #ffcc9e 100%);
+    /* Ink treatments over the soft gradient:
+       plain — a calm dark ink that reads across the whole wash.
+       blend — white set to difference, so it inverts against whatever's behind.
+       gloss — white with a layered highlight + shadow for an embossed sheen. */
+    .ink--plain { color: #3f3f46; }
+    .ink--blend { color: #fff; mix-blend-mode: difference; }
+    .ink--gloss {
+      color: rgba(255, 255, 255, 0.96);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 7px rgba(70, 35, 22, 0.3);
     }
-    /* v2 — Marfa brand (purple → magenta → orange), diagonal. */
-    .art--v2 {
-      background:
-        radial-gradient(80% 60% at 18% 16%, #9b6bff 0%, rgba(155,107,255,0) 58%),
-        radial-gradient(85% 70% at 82% 90%, #ff8a4c 0%, rgba(255,138,76,0) 58%),
-        linear-gradient(150deg, #7d5cff 0%, #c95fae 46%, #ff8347 100%);
+    /* Dev-only flip control. */
+    .flip-btn {
+      position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+      border: 1px solid var(--border); background: var(--card); color: var(--fg-muted);
+      font: inherit; font-size: 12px; padding: 6px 13px; border-radius: 999px; cursor: pointer;
     }
-    /* v3 — quiet grey-violet, a calmer enterprise take. */
-    .art--v3 {
-      background:
-        radial-gradient(70% 60% at 72% 22%, #ece7f6 0%, rgba(236,231,246,0) 60%),
-        radial-gradient(70% 70% at 30% 92%, #efe6ec 0%, rgba(239,230,236,0) 60%),
-        linear-gradient(170deg, #f4f2f8 0%, #eae9f1 52%, #f0e8ec 100%);
-    }
-    /* Below ~720px the split would crush; drop the gradient half so the form
-       stays legible at narrow frame widths. */
-    @media (max-width: 720px) {
-      .split { min-height: 0; }
-      .split__art { display: none; }
-    }
+    .flip-btn:hover { color: var(--fg); border-color: var(--border-strong); }
+    /* Below ~640px the split would crush; drop the gradient half. */
+    @media (max-width: 640px) { .split__art { display: none; } }
   `;
 
-  const body = `<main class="split" aria-label="${title}">${inner}</main>
+  const flipScript = `(function(){var s=document.getElementById('split');var b=document.getElementById('flip-btn');if(s&&b){b.addEventListener('click',function(){s.classList.toggle('flip');});}})();`;
+
+  const body = `<main class="split" id="split" aria-label="${title}">${form}${art}</main>
+  <button type="button" class="flip-btn" id="flip-btn">Flip gradient side</button>
+  <script>${flipScript}</script>
   <script src="/auth/static/password-toggle.js"></script>
   <script src="/auth/static/submit-state.js"></script>`;
   return conceptDoc(title, style, body);

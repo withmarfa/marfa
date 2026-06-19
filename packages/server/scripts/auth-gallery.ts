@@ -338,9 +338,10 @@ function renderShell(): string {
     .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
     .sidebar--right .nav-header { text-align: right; }
     /* "Variant" group heading, separating design variants from states in the
-       right column. Sits with a clear gap above its list. */
+       right column. A large gap pushes it well clear of the states list so the
+       two groups read as distinct. */
     .nav-subhead {
-      margin: 18px 10px 4px;
+      margin: 160px 10px 4px;
       font-size: 12px;
       font-weight: 500;
       color: var(--muted);

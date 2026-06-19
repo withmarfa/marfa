@@ -109,49 +109,39 @@ const DEVICE_SCOPES: ParsedScope[] = [
 // Design directions attached to existing screens — the "Variant" group shown
 // beneath that screen's states in the right column. The split concept renders
 // the screen's own form; numbering runs sequentially per screen.
+// Sign-in keeps only the "Check your email" treatments (the gradient split is
+// a sign-up-only experiment per review).
 const SIGN_IN_DESIGN_VARIANTS: GalleryVariant[] = [
   {
-    id: "split-warm",
-    label: "v1 · Split · warm",
-    render: () => renderAuthSplit("v1", "signin"),
-  },
-  {
-    id: "split-brand",
-    label: "v2 · Split · brand",
-    render: () => renderAuthSplit("v2", "signin"),
-  },
-  {
-    id: "split-quiet",
-    label: "v3 · Split · quiet",
-    render: () => renderAuthSplit("v3", "signin"),
-  },
-  {
     id: "checkmail-icon",
-    label: "v4 · Check email · icon",
+    label: "v1 · Check email · icon",
     render: () => renderCheckEmail("v2"),
   },
   {
     id: "checkmail-roomy",
-    label: "v5 · Check email · roomy",
+    label: "v2 · Check email · roomy",
     render: () => renderCheckEmail("v3"),
   },
 ];
 
+// Sign-up carries the split-screen gradient experiments — one warm gradient,
+// a "Flip gradient side" control in the preview, and three ink treatments for
+// the wordmark + tagline over it — plus the two stepper treatments.
 const SIGN_UP_DESIGN_VARIANTS: GalleryVariant[] = [
   {
-    id: "split-warm",
-    label: "v1 · Split · warm",
-    render: () => renderAuthSplit("v1", "signup"),
+    id: "split-ink",
+    label: "v1 · Split · ink",
+    render: () => renderAuthSplit("plain"),
   },
   {
-    id: "split-brand",
-    label: "v2 · Split · brand",
-    render: () => renderAuthSplit("v2", "signup"),
+    id: "split-inverse",
+    label: "v2 · Split · inverse text",
+    render: () => renderAuthSplit("blend"),
   },
   {
-    id: "split-quiet",
-    label: "v3 · Split · quiet",
-    render: () => renderAuthSplit("v3", "signup"),
+    id: "split-gloss",
+    label: "v3 · Split · glossy text",
+    render: () => renderAuthSplit("gloss"),
   },
   {
     id: "stepper-thin",
