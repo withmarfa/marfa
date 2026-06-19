@@ -14,6 +14,7 @@
 
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -43,15 +44,6 @@ const ERROR_MESSAGES: Record<string, string> = {
   too_many_attempts:
     "Too many attempts for that code. Restart the sign-in on your other device.",
 };
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /**
  * Friendly, second-person labels for the standard OIDC literals. The OIDC
@@ -99,17 +91,18 @@ export function renderDevicePage(params: DevicePageParams): string {
   const errorMessage = params.error
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
     : null;
-  const errorBanner = errorMessage
-    ? `<div class="banner banner--error" role="alert">${escapeHtml(errorMessage)}</div>`
+  // Single-field form, so the error renders under the code input.
+  const hasError = errorMessage !== null;
+  const fieldError = hasError
+    ? `<span class="field__error" role="alert">${escapeHtml(errorMessage)}</span>`
     : "";
   const safePrefilled = escapeHtml(params.prefilled);
 
   const bodyHtml = `
     <h1 class="title">Sign in on your device</h1>
     <p class="sub">Enter the code shown on your other device.</p>
-    ${errorBanner}
     <form method="POST" action="/auth/device" class="form" novalidate>
-      <label class="field">
+      <label class="field${hasError ? " field--error" : ""}">
         <span class="field__label">Code</span>
         <input type="text"
                class="field__input--code"
@@ -124,11 +117,13 @@ export function renderDevicePage(params: DevicePageParams): string {
                autofocus
                maxlength="9"
                aria-required="true">
+        ${fieldError}
       </label>
       <div class="actions">
-        <button type="submit" class="btn btn--primary">Continue</button>
+        <button type="submit" class="btn btn--primary" data-loading-label="Checking...">Continue</button>
       </div>
     </form>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   return renderAuthLayout({ title: "Sign in on your device", bodyHtml });
@@ -161,7 +156,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
         <input type="hidden" name="decision" value="approve">
-        <button type="submit" class="btn btn--primary">Approve</button>
+        <button type="submit" class="btn btn--primary" data-loading-label="Approving...">Approve</button>
       </form>
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="${safeUserCode}">
@@ -169,12 +164,12 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
         <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
     </div>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   return renderAuthLayout({
     title: "Approve device sign-in",
     bodyHtml,
-    wide: true,
   });
 }
 

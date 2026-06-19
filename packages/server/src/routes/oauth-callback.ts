@@ -49,6 +49,7 @@ import {
   type OAuthStateEnvelope,
 } from "../oauth/state.js";
 import { setNoStore } from "./no-store.js";
+import { escapeHtml } from "./auth-html.js";
 
 interface OAuthAuthorizeConfig {
   oauth_authorize_url: string;
@@ -246,15 +247,6 @@ async function exchangeAuthorizationCode(
     expires_at: expiresAt,
     scopes,
   };
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /* Standalone monochrome "Luma" card — these callback pages render outside

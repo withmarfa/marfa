@@ -9,6 +9,8 @@
  * Title is escaped here so callers don't have to remember.
  */
 
+import { escapeHtml } from "./auth-html.js";
+
 interface AuthLayoutParams {
   /** Document title — rendered into <title>, escaped. */
   title: string;
@@ -26,20 +28,11 @@ interface AuthLayoutParams {
    */
   ariaLabel?: string;
   /**
-   * When `true`, the card uses the wider variant (`max-width: 560px`).
+   * When `true`, the card uses the wider variant (`max-width: 520px`).
    * Used by surfaces that show longer scope lists / diff sections —
    * consent today, the security page once it ships.
    */
   wide?: boolean;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /** Wrap inner page HTML in the shared auth-layout shell. */

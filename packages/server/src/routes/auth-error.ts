@@ -19,6 +19,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { setNoStore } from "./no-store.js";
+import { escapeHtml } from "./auth-html.js";
 
 /**
  * Friendly copy per OAuth error code. The raw protocol token is never shown to
@@ -42,15 +43,6 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 const GENERIC_MESSAGE =
   "We couldn't finish signing you in. Head back and sign in again.";
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /**
  * Render the OAuth error page as a complete HTML document. Pure (the route

@@ -1,0 +1,1115 @@
+/**
+ * Auth + email preview gallery — a dev-only tool, never deployed.
+ *
+ * Boots a tiny standalone server (no database, no app wiring) that renders the
+ * real auth page renderers + the real transactional email templates, and serves
+ * the real `/auth/static/*` assets, so you can eyeball every screen and state in
+ * light, dark, and system without standing up the full server or clicking
+ * through flows. Run with:
+ *
+ *   pnpm --filter @withmarfa/server auth:gallery
+ *
+ * Then open the printed URL. A top-left section dropdown switches between the
+ * Auth pages and the Email templates. The left sidebar lists the screens for the
+ * active tab; the right sidebar lists the states of the selected screen; the
+ * center shows the selected state in an iframe. A sun / monitor / moon control
+ * forces light, follows the OS, or forces dark — for both the shell chrome and
+ * the previewed page. A view control frames the iframe as freeform (edge to
+ * edge), a browser window, or a phone, so the page's own responsive CSS can be
+ * checked at each width without changing what it renders. Arrow keys step the
+ * screen (up / down) and state (left / right); A toggles section, V cycles the
+ * view, T cycles the appearance; a keyboard button in the bottom-right corner
+ * pops up the shortcut reference.
+ */
+
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { AUTH_CSS } from "../src/routes/auth-static/auth-css.js";
+import { PASSKEY_JS } from "../src/routes/auth-static/passkey-js.js";
+import { PASSWORD_TOGGLE_JS } from "../src/routes/auth-static/password-toggle-js.js";
+import { SUBMIT_STATE_JS } from "../src/routes/auth-static/submit-state-js.js";
+import { TABS, resolveVariant } from "./auth-gallery-fixtures.js";
+
+const app = new Hono();
+
+const JS_HEADERS = { "Content-Type": "application/javascript; charset=utf-8" };
+
+// Serve the real static assets so the previewed iframes load exactly what
+// ships, not a re-implementation.
+app.get("/auth/static/auth.css", (c) =>
+  c.body(AUTH_CSS, 200, { "Content-Type": "text/css; charset=utf-8" }),
+);
+app.get("/auth/static/passkey.js", (c) => c.body(PASSKEY_JS, 200, JS_HEADERS));
+app.get("/auth/static/password-toggle.js", (c) =>
+  c.body(PASSWORD_TOGGLE_JS, 200, JS_HEADERS),
+);
+app.get("/auth/static/submit-state.js", (c) =>
+  c.body(SUBMIT_STATE_JS, 200, JS_HEADERS),
+);
+
+type PreviewTheme = "light" | "dark" | "system";
+
+function parseTheme(raw: string | undefined): PreviewTheme {
+  if (raw === "dark") return "dark";
+  if (raw === "light") return "light";
+  // Anything else (including the absent param and an explicit `system`) lets
+  // the page's own `prefers-color-scheme` rules apply.
+  return "system";
+}
+
+/** Escape the five HTML-significant characters for safe text interpolation. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Pull a human subject line out of the email document: the `<title>` is the
+ * canonical source, the first `<h1>` is the fallback (its inner tags stripped),
+ * and a generic placeholder covers a template that carries neither.
+ */
+function extractEmailSubject(html: string): string {
+  const titleText = /<title>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
+  if (titleText) return titleText;
+  const h1Inner = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1];
+  if (h1Inner) {
+    const text = h1Inner.replace(/<[^>]+>/g, "").trim();
+    if (text) return text;
+  }
+  return "New message";
+}
+
+/**
+ * A white Apple-Mail-style message header injected at the top of the email body
+ * so the preview reads as an opened message rather than a floating email canvas:
+ * round avatar, bold sender, subject, To line, and a received time. Sender, To,
+ * and time are fixed mock values — only the subject is read from the document.
+ */
+function emailHeaderMarkup(subject: string): string {
+  return (
+    '<div class="m-mailhead">' +
+    '<div class="m-mailhead__avatar">M</div>' +
+    '<div class="m-mailhead__body">' +
+    '<div class="m-mailhead__row">' +
+    '<span class="m-mailhead__sender">Marfa</span>' +
+    '<span class="m-mailhead__time">9:57 AM</span>' +
+    "</div>" +
+    `<div class="m-mailhead__subject">${escapeHtml(subject)}</div>` +
+    '<div class="m-mailhead__to">To: you@example.com</div>' +
+    "</div>" +
+    "</div>"
+  );
+}
+
+/**
+ * Force the requested theme on the document and intercept form submits so a
+ * click demonstrates the loading state (button disables + label swap) without
+ * navigating away from the preview.
+ *
+ * `system` deliberately sets no `data-theme`: the auth CSS already carries a
+ * `prefers-color-scheme` block, so leaving the attribute off lets the OS
+ * setting drive the page exactly as it would in production.
+ */
+function decorate(html: string, theme: PreviewTheme, isEmail: boolean): string {
+  let out =
+    theme === "system"
+      ? html
+      : html.replace(
+          /<html lang="en">/,
+          `<html lang="en" data-theme="${theme}">`,
+        );
+  // In a real inbox the email is the body of an opened message, not a centered
+  // card. The preview reproduces that: a white mail-app header (sender, subject,
+  // To, time) pinned to the top, the email canvas top-aligned right beneath it.
+  if (isEmail) {
+    const subject = extractEmailSubject(out);
+    const mailStyle =
+      "<style>" +
+      // Top-align the canvas under the header instead of vertically centering it.
+      "body.m-canvas{display:block;min-height:0}" +
+      "table.m-canvas{padding-top:16px !important;padding-bottom:24px !important}" +
+      // The injected header: full-width white strip, subtle bottom hairline, no
+      // shadow. Tokens are inlined (the email document doesn't load the shell CSS).
+      ".m-mailhead{display:flex;gap:12px;align-items:flex-start;padding:16px 20px;" +
+      "background:#ffffff;border-bottom:1px solid #e6e6ea;" +
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}" +
+      ".m-mailhead__avatar{flex:none;width:40px;height:40px;border-radius:50%;" +
+      "display:flex;align-items:center;justify-content:center;background:#18181b;" +
+      "color:#ffffff;font-size:16px;font-weight:600}" +
+      ".m-mailhead__body{flex:1;min-width:0}" +
+      ".m-mailhead__row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}" +
+      ".m-mailhead__sender{font-size:15px;font-weight:700;color:#18181b}" +
+      ".m-mailhead__time{flex:none;font-size:12px;color:#71717a}" +
+      ".m-mailhead__subject{margin-top:2px;font-size:14px;font-weight:500;color:#18181b}" +
+      ".m-mailhead__to{margin-top:2px;font-size:12px;color:#71717a}" +
+      "</style>";
+    out = out.includes("</head>")
+      ? out.replace("</head>", `${mailStyle}</head>`)
+      : mailStyle + out;
+    // Inject the header right after the opening <body …> tag, robust to any
+    // attributes the email canvas carries (it ships <body class="m-canvas" …>).
+    const header = emailHeaderMarkup(subject);
+    out = /<body[^>]*>/i.test(out)
+      ? out.replace(/<body[^>]*>/i, (tag) => `${tag}${header}`)
+      : header + out;
+  }
+  const interceptor = `
+<script>
+  // Preview-only: stop POST navigations so the submitting state is visible.
+  // GET forms (the one-time-link switch) stay live so view switches still work.
+  document.addEventListener('submit', function (e) {
+    var method = (e.target.getAttribute('method') || 'get').toLowerCase();
+    if (method === 'post') e.preventDefault();
+  }, true);
+</script>
+`;
+  return out.includes("</body>")
+    ? out.replace("</body>", `${interceptor}</body>`)
+    : out + interceptor;
+}
+
+app.get("/preview", (c) => {
+  const tab = c.req.query("tab") ?? "";
+  const screen = c.req.query("screen") ?? "";
+  const variant = c.req.query("variant") ?? "";
+  const theme = parseTheme(c.req.query("theme"));
+  const resolved = resolveVariant(tab, screen, variant);
+  if (!resolved) {
+    return c.text(
+      `Unknown tab/screen/variant: ${tab}/${screen}/${variant}`,
+      404,
+    );
+  }
+  const isEmail = tab === "email";
+  return c.html(decorate(resolved.variant.render(), theme, isEmail));
+});
+
+app.get("/", (c) => c.html(renderShell()));
+
+/**
+ * The gallery shell: a top-center tab control, a left sidebar of screens, an
+ * iframe, and a right sidebar of states, plus a theme control.
+ */
+function renderShell(): string {
+  const firstTab = TABS[0];
+  const firstScreen = firstTab?.screens[0];
+  const firstVariant = firstScreen?.variants[0];
+  const initialTab = firstTab?.id ?? "";
+  const initialScreen = firstScreen?.id ?? "";
+  const initialVariant = firstVariant?.id ?? "";
+
+  // The full tab → screens → variants tree, handed to the client so it can
+  // rebuild both sidebars when the tab or screen changes without a round-trip.
+  const tabData = TABS.map((tab) => ({
+    id: tab.id,
+    label: tab.label,
+    screens: tab.screens.map((screen) => ({
+      id: screen.id,
+      label: screen.label,
+      variants: screen.variants.map((v) => ({ id: v.id, label: v.label })),
+    })),
+  }));
+
+  // sun / monitor / moon — Lucide glyphs at the same stroke weight as the
+  // password-toggle eye icons, sized down for the compact control.
+  const SUN = svgIcon(
+    '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  );
+  const MONITOR = svgIcon(
+    '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+  );
+  const MOON = svgIcon('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>');
+
+  // Chevron-down for the text view + section triggers (Lucide chevron-down),
+  // same stroke weight as the theme icons above.
+  const CHEVRON_DOWN = svgIcon('<path d="m6 9 6 6 6-6"/>');
+
+  // Lucide keyboard glyph for the bottom-right shortcuts button.
+  const KEYBOARD = svgIcon(
+    '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M8 12h.001"/><path d="M12 12h.001"/><path d="M16 12h.001"/><path d="M7 16h10"/>',
+  );
+
+  // The shell styling is plain inline CSS — it's dev chrome, not part of the
+  // auth surface, so it deliberately doesn't share AUTH_CSS.
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marfa auth gallery</title>
+  <style>
+    :root {
+      --page: #f5f5f5;
+      --fg: #18181b;
+      --muted: #71717a;
+      --hover: #ececef;
+      --accent: #e6e6ea;
+      --accent-fg: #18181b;
+      --card: #ffffff;
+      /* The device-frame outline (browser window + phone + email box) — a clear
+         dark grey that still reads as a hard edge against the page without being
+         pure black. Slightly lighter on the dark page so it stays legible. */
+      --frame-border: #52525b;
+      /* Context-menu surface + its option states. The menu is frosted glass
+         (translucent + backdrop blur), and its hover/selected fills are
+         subtler than the sidebar nav so the popover reads as a light overlay,
+         not an opaque card. */
+      --menu-bg: rgba(255, 255, 255, 0.5);
+      --menu-hover: rgba(0, 0, 0, 0.05);
+      --menu-accent: rgba(0, 0, 0, 0.08);
+      color-scheme: light;
+    }
+    html.dark {
+      --page: #0a0a0a;
+      --fg: #fafafa;
+      --muted: #a1a1aa;
+      --hover: #1d1d20;
+      --accent: #27272a;
+      --accent-fg: #fafafa;
+      --card: #1a1a1a;
+      --frame-border: #71717a;
+      --menu-bg: rgba(26, 26, 26, 0.5);
+      --menu-hover: rgba(255, 255, 255, 0.06);
+      --menu-accent: rgba(255, 255, 255, 0.1);
+      color-scheme: dark;
+    }
+    /* System theme: when no theme is forced, follow the OS so the shell tracks
+       the preview. Mirrors the html.dark block above, keyed on the media query
+       instead of the class. */
+    @media (prefers-color-scheme: dark) {
+      html.theme-system {
+        --page: #0a0a0a;
+        --fg: #fafafa;
+        --muted: #a1a1aa;
+        --hover: #1d1d20;
+        --accent: #27272a;
+        --accent-fg: #fafafa;
+        --card: #1a1a1a;
+        --frame-border: #71717a;
+        --menu-bg: rgba(26, 26, 26, 0.5);
+        --menu-hover: rgba(255, 255, 255, 0.06);
+        --menu-accent: rgba(255, 255, 255, 0.1);
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    /* Suppress the browser's blue focus ring on the gallery shell's own
+       controls — this is dev chrome, and the ring fires after every click. The
+       previewed page lives in a separate iframe document, so its own focus
+       rings are untouched. */
+    :focus, :focus-visible { outline: none; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      display: grid;
+      grid-template-columns: 220px 1fr 220px;
+      height: 100vh;
+      color: var(--fg);
+      background: var(--page);
+    }
+    /* Both sidebars: no border, no chrome — they blend into the soft-grey page
+       like the shadcn docs nav. The nav scrolls between generous top/bottom
+       padding with a soft fade at both edges. */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      padding: 12px 14px 0;
+    }
+    /* A fixed-height bar holds each side's top controls (tabs left, theme + view
+       right) so the equal margin-top on the headers below lands them on the
+       same horizontal line regardless of the controls' own heights. Every
+       interactive control inside a topbar shares --control-h and centers its
+       contents, so the tab pill, view trigger, and theme button line up to the
+       pixel top and bottom. */
+    :root { --control-h: 30px; }
+    .topbar { flex: none; height: var(--control-h); display: flex; align-items: center; }
+    .sidebar--right .topbar { justify-content: flex-end; gap: 4px; }
+    .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
+    .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
+    .sidebar--right .nav-header { text-align: right; }
+    .nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0 40px;
+      scrollbar-width: none;
+    }
+    .nav::-webkit-scrollbar { display: none; }
+    .nav--right { text-align: right; }
+    .nav--right .nav-item > span { font-weight: 400; }
+    .nav-list { list-style: none; margin: 0; padding: 0; }
+    /* Full-width click target, but the pill hugs the label (shadcn w-fit). */
+    .nav-item {
+      display: block;
+      width: 100%;
+      text-align: inherit;
+      border: none;
+      background: none;
+      padding: 1px 0;
+      cursor: pointer;
+      font: inherit;
+    }
+    .nav-item > span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.2;
+      color: var(--fg);
+    }
+    .nav-item:hover > span { background: var(--hover); }
+    .nav-item.active > span { background: var(--accent); color: var(--accent-fg); }
+    .stage {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+    }
+    /* The viewport wraps the iframe so the surrounding frame (browser window /
+       phone) can be sized and styled without touching the iframe src. The
+       freeform default fills the stage edge to edge. */
+    .viewport { width: 100%; height: 100%; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+    /* The chrome bar (browser dots + address pill) only shows in the browser
+       view; mobile has no browser chrome. */
+    .chrome { display: none; }
+    /* Browser view: a Safari-style window framed as a realistic 3:2 landscape
+       window, centered in the stage. Explicitly fill the larger dimension so the
+       window grows to the biggest 3:2 box that fits the stage — without a fill
+       width the box collapses to a small intrinsic size and clips the page. The
+       width is the lesser of "the stage minus breathing room" and "what a full-
+       height 3:2 box would be", so it never crops, overflows, or flips to
+       portrait. A hard dark outline makes it stand off the page. Borders only —
+       no shadow. */
+    .stage.view-browser .viewport {
+      aspect-ratio: 3 / 2;
+      width: min(calc(100% - 48px), calc((100vh - 48px) * 1.5));
+      height: auto;
+      max-height: calc(100% - 48px);
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border: 1.5px solid var(--frame-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .stage.view-browser .chrome {
+      position: relative;
+      flex: none;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-bottom: 0.5px solid var(--accent);
+    }
+    /* Three traffic-light dots, pinned left. */
+    .stage.view-browser .chrome .dots { display: inline-flex; gap: 7px; }
+    .stage.view-browser .chrome .dots i {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--muted);
+      opacity: 0.45;
+    }
+    /* Centered rounded address pill reading the host. */
+    .stage.view-browser .chrome .addr {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 180px;
+      max-width: 60%;
+      height: 22px;
+      padding: 0 12px;
+      border-radius: 7px;
+      background: var(--hover);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .stage.view-browser .viewport iframe { flex: 1; height: auto; }
+    /* Mobile view: a plain bordered viewport at a realistic phone size — no
+       device bezel, no status bar, no home indicator. The same hard dark
+       outline as the browser frame makes the phone shape read clearly against
+       the page (a faint border vanished on the light-grey page). The auth
+       page's own mobile CSS top-aligns the card. Borders only — no shadow. */
+    .stage.view-mobile .viewport {
+      width: 390px;
+      max-width: calc(100% - 24px);
+      height: min(780px, calc(100% - 24px));
+      background: var(--page);
+      border: 1.5px solid var(--frame-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .stage.view-mobile .viewport iframe { border-radius: 12px; }
+    /* Email + freeform: an email isn't a web page, so freeform here is NOT
+       edge-to-edge. It sits inside a dark-outlined box that matches the browser
+       window's HEIGHT exactly while being three-quarters its WIDTH (a bit
+       narrower, since an email column is tall and narrow). The browser is a 3:2
+       box; 9:8 is exactly 0.75 × that ratio, so at the same height the email box
+       comes out three-quarters as wide. The tab-email marker (kept in sync with
+       state.tab) scopes this to the Email tab so AUTH freeform stays full-bleed.
+       Borders only — no shadow. */
+    .stage.tab-email:not(.view-browser):not(.view-mobile) .viewport {
+      aspect-ratio: 9 / 8;
+      width: min(calc((100% - 48px) * 0.75), calc((100vh - 48px) * 1.125));
+      height: auto;
+      max-height: calc(100% - 48px);
+      border: 1.5px solid var(--frame-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    /* Top-left section dropdown: mirrors the view dropdown's interaction, but
+       its trigger label is black + slightly heavier — it's the primary selector,
+       so it reads as the strong control against the grey view trigger opposite.
+       Borderless trigger, popover menu separated by a border (no shadow). */
+    .section { position: relative; display: inline-flex; flex: none; margin: 0 0 0 4px; }
+    .section__button {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: var(--control-h);
+      border: none;
+      background: none;
+      padding: 0 8px;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .section__button:hover { background: var(--hover); }
+    .section__button svg { display: block; width: 14px; height: 14px; }
+    .section__menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: 10;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 140px;
+      padding: 5px;
+      border: 0.5px solid var(--accent);
+      border-radius: 10px;
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .section.open .section__menu { display: flex; }
+    .section__option {
+      display: block;
+      width: 100%;
+      border: none;
+      background: none;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .section__option:hover { background: var(--menu-hover); }
+    .section__option.active { background: var(--menu-accent); color: var(--accent-fg); }
+    /* Theme control, top-right: an icon button, same accent-pill style. The
+       topbar centers it; no per-control vertical alignment so it shares the
+       view trigger's baseline exactly. */
+    .theme {
+      display: inline-flex;
+      align-items: center;
+      flex: none;
+      margin: 0 4px 0 0;
+    }
+    .theme button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: var(--control-h);
+      width: var(--control-h);
+      border: none;
+      background: none;
+      padding: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .theme button:hover { background: var(--hover); }
+    .theme button.active { background: var(--accent); color: var(--accent-fg); }
+    .theme svg { display: block; width: 16px; height: 16px; }
+    /* View control: a borderless text trigger (current mode's label + a small
+       chevron) that toggles a popover menu of frame modes. Same family as the
+       tabs — no border, no background, subtle hover. */
+    .view { position: relative; display: inline-flex; flex: none; }
+    .view__button {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: var(--control-h);
+      border: none;
+      background: none;
+      padding: 0 8px;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .view__button:hover { background: var(--hover); }
+    .view__button svg { display: block; width: 14px; height: 14px; }
+    /* Menu separates from the page with a border, not a shadow — and the
+       frosted-glass surface keeps it legible over the preview behind it. */
+    .view__menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 10;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 140px;
+      padding: 5px;
+      border: 0.5px solid var(--accent);
+      border-radius: 10px;
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .view.open .view__menu { display: flex; }
+    .view__option {
+      display: block;
+      width: 100%;
+      border: none;
+      background: none;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .view__option:hover { background: var(--menu-hover); }
+    .view__option.active { background: var(--menu-accent); color: var(--accent-fg); }
+    /* Keyboard shortcuts: an icon button pinned to the bottom-right of the
+       viewport (same borderless icon-button style as the theme control) whose
+       popover opens UPWARD — it sits at the bottom edge. Bordered card, no
+       shadow. */
+    .shortcuts { position: fixed; right: 16px; bottom: 16px; z-index: 20; }
+    .shortcuts__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: var(--control-h);
+      width: var(--control-h);
+      border: none;
+      background: none;
+      padding: 0;
+      border-radius: 7px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .shortcuts__button:hover { background: var(--hover); }
+    .shortcuts.open .shortcuts__button { background: var(--accent); color: var(--accent-fg); }
+    .shortcuts__button svg { display: block; width: 16px; height: 16px; }
+    .shortcuts__menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: 0;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 240px;
+      padding: 12px;
+      border: 0.5px solid var(--accent);
+      border-radius: 10px;
+      background: var(--menu-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .shortcuts.open .shortcuts__menu { display: flex; }
+    .shortcuts__row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .shortcuts__label { font-size: 13px; color: var(--fg); }
+    .shortcuts__keys { display: inline-flex; gap: 4px; flex: none; }
+    /* kbd-style chip — bordered rounded box around the arrow glyph. */
+    .shortcuts__keys kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 5px;
+      border: 0.5px solid var(--accent);
+      border-radius: 5px;
+      background: var(--card);
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--fg);
+    }
+  </style>
+</head>
+<body>
+  <nav class="sidebar sidebar--left">
+    <div class="topbar">
+      <div class="section" id="section">
+        <button id="section-button" class="section__button" type="button" aria-label="Change section" aria-haspopup="true" aria-expanded="false"><span id="section-label"></span>${CHEVRON_DOWN}</button>
+        <div class="section__menu" id="section-menu" role="menu"></div>
+      </div>
+    </div>
+    <div class="nav-header">
+      <div class="nav-header__title">Screen</div>
+    </div>
+    <div class="nav"><ul class="nav-list" id="screens"></ul></div>
+  </nav>
+  <main class="stage" id="stage">
+    <div class="viewport">
+      <div class="chrome" aria-hidden="true">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="addr">marfa.so</span>
+      </div>
+      <iframe id="preview" title="Preview"></iframe>
+    </div>
+  </main>
+  <nav class="sidebar sidebar--right">
+    <div class="topbar">
+      <div class="view" id="view">
+        <button id="view-button" class="view__button" type="button" aria-label="Change view" aria-haspopup="true" aria-expanded="false"><span id="view-label"></span>${CHEVRON_DOWN}</button>
+        <div class="view__menu" id="view-menu" role="menu"></div>
+      </div>
+      <div class="theme">
+        <button id="theme-cycle" type="button" aria-label="Toggle theme">${MONITOR}</button>
+      </div>
+    </div>
+    <div class="nav-header">
+      <div class="nav-header__title">State</div>
+    </div>
+    <div class="nav nav--right"><ul class="nav-list" id="states"></ul></div>
+  </nav>
+  <div class="shortcuts" id="shortcuts">
+    <div class="shortcuts__menu" id="shortcuts-menu" role="menu">
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Previous / next screen</span>
+        <span class="shortcuts__keys"><kbd>&uarr;</kbd><kbd>&darr;</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Previous / next state</span>
+        <span class="shortcuts__keys"><kbd>&larr;</kbd><kbd>&rarr;</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Toggle Auth / Email</span>
+        <span class="shortcuts__keys"><kbd>A</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Cycle view</span>
+        <span class="shortcuts__keys"><kbd>V</kbd></span>
+      </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Cycle appearance</span>
+        <span class="shortcuts__keys"><kbd>T</kbd></span>
+      </div>
+    </div>
+    <button id="shortcuts-button" class="shortcuts__button" type="button" aria-label="Keyboard shortcuts" aria-haspopup="true" aria-expanded="false">${KEYBOARD}</button>
+  </div>
+  <script>
+    (function () {
+      var TABS = ${JSON.stringify(tabData)};
+      // System is the default theme; freeform is the default view (iframe fills
+      // the stage edge to edge).
+      var state = {
+        tab: ${JSON.stringify(initialTab)},
+        screen: ${JSON.stringify(initialScreen)},
+        variant: ${JSON.stringify(initialVariant)},
+        theme: 'system',
+        view: 'freeform',
+      };
+
+      var frame = document.getElementById('preview');
+      var screensList = document.getElementById('screens');
+      var statesList = document.getElementById('states');
+      var themeCycleBtn = document.getElementById('theme-cycle');
+      var stage = document.getElementById('stage');
+      var sectionWrap = document.getElementById('section');
+      var sectionButton = document.getElementById('section-button');
+      var sectionLabel = document.getElementById('section-label');
+      var sectionMenu = document.getElementById('section-menu');
+      var viewWrap = document.getElementById('view');
+      var viewButton = document.getElementById('view-button');
+      var viewLabel = document.getElementById('view-label');
+      var viewMenu = document.getElementById('view-menu');
+      var shortcutsWrap = document.getElementById('shortcuts');
+      var shortcutsButton = document.getElementById('shortcuts-button');
+      var THEME_ORDER = ['light', 'system', 'dark'];
+      var THEME_ICONS = {
+        light: ${JSON.stringify(SUN)},
+        system: ${JSON.stringify(MONITOR)},
+        dark: ${JSON.stringify(MOON)},
+      };
+      var VIEW_OPTIONS = [
+        { id: 'freeform', label: 'Freeform' },
+        { id: 'browser', label: 'Browser' },
+        { id: 'mobile', label: 'Mobile' },
+      ];
+      // Browser mode makes no sense for an email, so the Email tab offers only
+      // Freeform + Mobile. The view menu is rebuilt per tab from this list.
+      var VIEWS_BY_TAB = {
+        auth: ['freeform', 'browser', 'mobile'],
+        email: ['freeform', 'mobile'],
+      };
+      function viewOptionsForTab(tabId) {
+        var ids = VIEWS_BY_TAB[tabId] || VIEWS_BY_TAB.auth;
+        return VIEW_OPTIONS.filter(function (opt) {
+          return ids.indexOf(opt.id) !== -1;
+        });
+      }
+      function viewLabelFor(id) {
+        for (var i = 0; i < VIEW_OPTIONS.length; i++) {
+          if (VIEW_OPTIONS[i].id === id) return VIEW_OPTIONS[i].label;
+        }
+        return VIEW_OPTIONS[0].label;
+      }
+      function sectionLabelFor(id) {
+        for (var i = 0; i < TABS.length; i++) {
+          if (TABS[i].id === id) return TABS[i].label;
+        }
+        return TABS[0].label;
+      }
+
+      function currentTab() {
+        return TABS.filter(function (t) { return t.id === state.tab; })[0] || TABS[0];
+      }
+      function currentScreen() {
+        var tab = currentTab();
+        return tab.screens.filter(function (s) { return s.id === state.screen; })[0] || tab.screens[0];
+      }
+
+      function buildItem(label, kind, screenId, variantId) {
+        var li = document.createElement('li');
+        var btn = document.createElement('button');
+        btn.className = 'nav-item';
+        btn.type = 'button';
+        btn.setAttribute('data-kind', kind);
+        btn.setAttribute('data-screen', screenId);
+        if (variantId) btn.setAttribute('data-variant', variantId);
+        var span = document.createElement('span');
+        span.textContent = label;
+        btn.appendChild(span);
+        li.appendChild(btn);
+        return li;
+      }
+
+      function renderScreens() {
+        screensList.innerHTML = '';
+        currentTab().screens.forEach(function (s) {
+          screensList.appendChild(buildItem(s.label, 'screen', s.id, null));
+        });
+      }
+
+      function renderStates() {
+        statesList.innerHTML = '';
+        currentScreen().variants.forEach(function (v) {
+          statesList.appendChild(buildItem(v.label, 'state', state.screen, v.id));
+        });
+      }
+
+      function markActive() {
+        var all = document.querySelectorAll('.nav-item');
+        for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+        var screenBtn = screensList.querySelector('.nav-item[data-screen="' + state.screen + '"]');
+        if (screenBtn) screenBtn.classList.add('active');
+        var stateBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
+        if (stateBtn) stateBtn.classList.add('active');
+        sectionLabel.textContent = sectionLabelFor(state.tab);
+        var sectionOptions = sectionMenu.querySelectorAll('.section__option');
+        for (var j = 0; j < sectionOptions.length; j++) {
+          var sid = sectionOptions[j].getAttribute('data-tab');
+          sectionOptions[j].classList.toggle('active', sid === state.tab);
+        }
+        themeCycleBtn.innerHTML = THEME_ICONS[state.theme];
+        themeCycleBtn.title =
+          state.theme === 'system' ? 'System appearance'
+          : state.theme === 'dark' ? 'Dark'
+          : 'Light';
+      }
+
+      function applyShellTheme() {
+        var el = document.documentElement;
+        el.classList.toggle('dark', state.theme === 'dark');
+        el.classList.toggle('theme-system', state.theme === 'system');
+      }
+
+      function applyView() {
+        // Only the surrounding frame changes; the iframe src is untouched, so
+        // the page inside responds purely to its new width. The tab-email marker
+        // scopes the email-freeform box CSS to the Email tab.
+        stage.classList.toggle('view-browser', state.view === 'browser');
+        stage.classList.toggle('view-mobile', state.view === 'mobile');
+        stage.classList.toggle('tab-email', state.tab === 'email');
+        viewLabel.textContent = viewLabelFor(state.view);
+        var options = viewMenu.querySelectorAll('.view__option');
+        for (var i = 0; i < options.length; i++) {
+          var id = options[i].getAttribute('data-view');
+          options[i].classList.toggle('active', id === state.view);
+        }
+      }
+
+      function renderViewMenu() {
+        viewMenu.innerHTML = '';
+        viewOptionsForTab(state.tab).forEach(function (opt) {
+          var btn = document.createElement('button');
+          btn.className = 'view__option';
+          btn.type = 'button';
+          btn.setAttribute('role', 'menuitem');
+          btn.setAttribute('data-view', opt.id);
+          btn.textContent = opt.label;
+          viewMenu.appendChild(btn);
+        });
+      }
+
+      function closeViewMenu() {
+        viewWrap.classList.remove('open');
+        viewButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function renderSectionMenu() {
+        sectionMenu.innerHTML = '';
+        TABS.forEach(function (tab) {
+          var btn = document.createElement('button');
+          btn.className = 'section__option';
+          btn.type = 'button';
+          btn.setAttribute('role', 'menuitem');
+          btn.setAttribute('data-tab', tab.id);
+          btn.textContent = tab.label;
+          sectionMenu.appendChild(btn);
+        });
+      }
+
+      function closeSectionMenu() {
+        sectionWrap.classList.remove('open');
+        sectionButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function closeShortcutsMenu() {
+        shortcutsWrap.classList.remove('open');
+        shortcutsButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function loadPreview() {
+        frame.src =
+          '/preview?tab=' + encodeURIComponent(state.tab) +
+          '&screen=' + encodeURIComponent(state.screen) +
+          '&variant=' + encodeURIComponent(state.variant) +
+          '&theme=' + state.theme;
+      }
+
+      function refresh(opts) {
+        opts = opts || {};
+        if (opts.rebuildScreens) renderScreens();
+        if (opts.rebuildStates || opts.rebuildScreens) renderStates();
+        applyShellTheme();
+        applyView();
+        markActive();
+        loadPreview();
+      }
+
+      function selectTab(tabId) {
+        if (state.tab === tabId) return;
+        state.tab = tabId;
+        var tab = currentTab();
+        state.screen = tab.screens[0].id;
+        state.variant = tab.screens[0].variants[0].id;
+        // Some views don't exist on every tab (no Browser on Email). If the
+        // active view isn't offered by the new tab, fall back to Freeform.
+        var allowed = VIEWS_BY_TAB[state.tab] || VIEWS_BY_TAB.auth;
+        if (allowed.indexOf(state.view) === -1) state.view = 'freeform';
+        renderViewMenu();
+        refresh({ rebuildScreens: true });
+      }
+
+      function selectScreen(screenId) {
+        state.screen = screenId;
+        state.variant = currentScreen().variants[0].id;
+        refresh({ rebuildStates: true });
+      }
+
+      function selectVariant(variantId) {
+        state.variant = variantId;
+        refresh();
+      }
+
+      function stepScreen(delta) {
+        var screens = currentTab().screens;
+        var idx = -1;
+        for (var i = 0; i < screens.length; i++) {
+          if (screens[i].id === state.screen) { idx = i; break; }
+        }
+        var next = idx + delta;
+        // Clamp at the ends — do nothing past either edge.
+        if (next < 0 || next >= screens.length || next === idx) return;
+        selectScreen(screens[next].id);
+      }
+
+      function stepState(delta) {
+        var variants = currentScreen().variants;
+        var idx = -1;
+        for (var i = 0; i < variants.length; i++) {
+          if (variants[i].id === state.variant) { idx = i; break; }
+        }
+        var next = idx + delta;
+        if (next < 0 || next >= variants.length || next === idx) return;
+        selectVariant(variants[next].id);
+      }
+
+      sectionButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !sectionWrap.classList.contains('open');
+        closeViewMenu();
+        closeShortcutsMenu();
+        sectionWrap.classList.toggle('open', open);
+        sectionButton.setAttribute('aria-expanded', String(open));
+      });
+      sectionMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('.section__option');
+        if (!btn) return;
+        selectTab(btn.getAttribute('data-tab'));
+        closeSectionMenu();
+      });
+      screensList.addEventListener('click', function (e) {
+        var btn = e.target.closest('.nav-item');
+        if (btn) selectScreen(btn.getAttribute('data-screen'));
+      });
+      statesList.addEventListener('click', function (e) {
+        var btn = e.target.closest('.nav-item');
+        if (btn) selectVariant(btn.getAttribute('data-variant'));
+      });
+      function cycleTheme() {
+        var i = THEME_ORDER.indexOf(state.theme);
+        state.theme = THEME_ORDER[(i + 1) % THEME_ORDER.length];
+        applyShellTheme();
+        markActive();
+        loadPreview();
+      }
+      themeCycleBtn.addEventListener('click', cycleTheme);
+
+      // Toggle between the two sections (Auth <-> Email) by selecting the other
+      // tab. selectTab no-ops when the tab is unchanged, so the toggle only ever
+      // flips to a genuinely different section.
+      function toggleSection() {
+        var current = currentTab();
+        var other = TABS.filter(function (t) { return t.id !== current.id; })[0];
+        if (other) selectTab(other.id);
+      }
+
+      // Cycle the view to the next allowed view for the current tab, wrapping at
+      // the end (Auth: freeform -> browser -> mobile -> freeform; Email skips
+      // browser). Mirrors a click on the matching view option.
+      function cycleView() {
+        var allowed = VIEWS_BY_TAB[state.tab] || VIEWS_BY_TAB.auth;
+        var i = allowed.indexOf(state.view);
+        state.view = allowed[(i + 1) % allowed.length];
+        applyView();
+      }
+
+      viewButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !viewWrap.classList.contains('open');
+        closeSectionMenu();
+        closeShortcutsMenu();
+        viewWrap.classList.toggle('open', open);
+        viewButton.setAttribute('aria-expanded', String(open));
+      });
+      viewMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('.view__option');
+        if (!btn) return;
+        // The frame change is preview-only; no iframe reload, so don't refresh().
+        state.view = btn.getAttribute('data-view');
+        applyView();
+        closeViewMenu();
+      });
+
+      shortcutsButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !shortcutsWrap.classList.contains('open');
+        closeSectionMenu();
+        closeViewMenu();
+        shortcutsWrap.classList.toggle('open', open);
+        shortcutsButton.setAttribute('aria-expanded', String(open));
+      });
+
+      // The section + view menus close on a click outside themselves (each
+      // popover, independently). The shortcuts popover is a passive reference
+      // with no actionable rows, so ANY click dismisses it — even a click on its
+      // own rows. The shortcuts button stops propagation, so its own toggle
+      // still works (a click there never reaches this handler).
+      document.addEventListener('click', function (e) {
+        if (sectionWrap.classList.contains('open') && !sectionWrap.contains(e.target)) {
+          closeSectionMenu();
+        }
+        if (viewWrap.classList.contains('open') && !viewWrap.contains(e.target)) {
+          closeViewMenu();
+        }
+        if (shortcutsWrap.classList.contains('open')) {
+          closeShortcutsMenu();
+        }
+      });
+
+      // Keyboard shortcuts. Any key first dismisses every open popover (the
+      // shortcuts reference disappears on the first keypress, and the
+      // section/view menus get out of the way), then the matching action runs.
+      // Arrows step the screen (up/down) and state (left/right) and preventDefault
+      // so the page doesn't scroll. The letter shortcuts (A/V/T) toggle section,
+      // cycle view, and cycle appearance — suppressed while typing in a form
+      // control so they don't hijack text entry.
+      document.addEventListener('keydown', function (e) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        closeShortcutsMenu();
+        closeSectionMenu();
+        closeViewMenu();
+        var t = e.target;
+        var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+        if (e.key === 'ArrowDown') { e.preventDefault(); stepScreen(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); stepScreen(-1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); stepState(1); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); stepState(-1); }
+        else if (!typing && (e.key === 'a' || e.key === 'A')) { toggleSection(); }
+        else if (!typing && (e.key === 'v' || e.key === 'V')) { cycleView(); }
+        else if (!typing && (e.key === 't' || e.key === 'T')) { cycleTheme(); }
+      });
+
+      renderSectionMenu();
+      renderViewMenu();
+      refresh({ rebuildScreens: true });
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+/** Wrap Lucide path data in an SVG matching the password-toggle eye weight. */
+function svgIcon(paths: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+}
+
+const port = Number(process.env.PORT ?? 8650);
+serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
+  console.log(`Auth gallery running at http://127.0.0.1:${String(info.port)}`);
+});

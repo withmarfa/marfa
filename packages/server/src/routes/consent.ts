@@ -36,6 +36,7 @@
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
+import { escapeHtml } from "./auth-html.js";
 
 interface ConsentParams {
   clientName: string;
@@ -123,15 +124,6 @@ const OIDC_LABELS: Record<string, string> = {
 };
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function scopeLiteralFor(scope: ParsedScope): string {
   return scope.kind === "oidc"
@@ -336,11 +328,12 @@ export function renderConsentScreen(params: ConsentParams): string {
       <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
       ${contentHtml}
       <div class="actions">
-        <button type="submit" name="accept" value="true" class="btn btn--primary">${escapeHtml(primaryLabel)}</button>
+        <button type="submit" name="accept" value="true" class="btn btn--primary" data-loading-label="${escapeHtml(primaryLabel)}...">${escapeHtml(primaryLabel)}</button>
         <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
       </div>
     </form>
     <script>${enhancementScript}</script>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   return renderAuthLayout({

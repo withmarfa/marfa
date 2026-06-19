@@ -64,20 +64,62 @@ describe("renderSignUpPage", () => {
     );
   });
 
-  it("renders error banner with role=alert when error is set", () => {
+  it("renders email_exists as a field-level error under the email input", () => {
     const html = renderSignUpPage({
       returnTo: "/",
       error: "email_exists",
     });
-    expect(html).toContain('class="banner banner--error"');
-    expect(html).toContain('role="alert"');
+    // email_exists maps to the email field, so it renders inline there, not as
+    // a top banner.
+    expect(html).toContain('class="field field--error"');
+    expect(html).toContain('class="field__error"');
     expect(html).toContain("already exists");
+    expect(html).not.toContain('class="banner banner--error"');
   });
 
-  it("falls back to a generic message for unknown error codes", () => {
+  it("maps weak_password / password_mismatch / handle errors to their fields", () => {
+    const weak = renderSignUpPage({ returnTo: "/", error: "weak_password" });
+    expect(weak).toContain('class="field__error"');
+    expect(weak).toContain("at least 8 characters");
+    expect(weak).not.toContain('class="banner banner--error"');
+
+    const handle = renderSignUpPage({ returnTo: "/", error: "handle_taken" });
+    expect(handle).toContain('class="field__error"');
+    expect(handle).toContain("already taken");
+    expect(handle).not.toContain('class="banner banner--error"');
+  });
+
+  it("keeps non-field errors (missing_field, unknown) in the top banner", () => {
+    const missing = renderSignUpPage({ returnTo: "/", error: "missing_field" });
+    expect(missing).toContain('class="banner banner--error"');
+    expect(missing).toContain('role="alert"');
+    expect(missing).toContain("fill in every field");
+
     const html = renderSignUpPage({ returnTo: "/", error: "unknown_code" });
-    expect(html).toContain('role="alert"');
+    expect(html).toContain('class="banner banner--error"');
     expect(html).toContain("Something went wrong");
+  });
+
+  it("drops the username hint and renders at the standard (non-wide) width", () => {
+    const html = renderSignUpPage({ returnTo: "/" });
+    // The username field-hint copy is gone; native pattern validation remains.
+    expect(html).not.toContain("Public");
+    expect(html).not.toContain("used as your handle");
+    expect(html).toContain('pattern="[a-z0-9]');
+    // Standard width — no card--wide modifier.
+    expect(html).not.toContain("card--wide");
+    expect(html).toContain('<main class="card"');
+  });
+
+  it("loads the submit-state script and labels the create button", () => {
+    const html = renderSignUpPage({ returnTo: "/" });
+    expect(html).toContain(
+      '<script src="/auth/static/submit-state.js"></script>',
+    );
+    expect(html).toContain('data-loading-label="Creating account..."');
+    // Continue / Back stay type=button so the loading script never fires on
+    // them.
+    expect(html).toContain('type="button" class="btn btn--primary" data-next');
   });
 
   it("escapes HTML in returnTo to prevent template injection", () => {

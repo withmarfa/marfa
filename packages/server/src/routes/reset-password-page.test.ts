@@ -58,14 +58,18 @@ describe("renderResetPasswordPage", () => {
     );
   });
 
-  it("form state surfaces a formError banner when set", () => {
+  it("form state surfaces a formError under the password field when set", () => {
     const html = renderResetPasswordPage({
       state: "form",
       token: "x",
       formError: "password_mismatch",
     });
-    expect(html).toContain('class="banner banner--error"');
+    // The reset errors are password-related, so they render inline at the
+    // field, not a top banner.
+    expect(html).toContain('class="field field--error"');
+    expect(html).toContain('class="field__error"');
     expect(html).toContain("Passwords don&#39;t match");
+    expect(html).not.toContain('class="banner banner--error"');
   });
 
   it("success state confirms the update with a sign-in link", () => {

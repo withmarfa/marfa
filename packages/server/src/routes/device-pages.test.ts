@@ -46,11 +46,15 @@ describe("renderDevicePage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("surfaces error codes as a banner with role=alert", () => {
+  it("surfaces error codes under the code field with role=alert", () => {
     const html = renderDevicePage({ prefilled: "", error: "invalid_code" });
-    expect(html).toContain('class="banner banner--error"');
+    // Single-field form, so the error renders inline at the code input, not a
+    // top banner.
+    expect(html).toContain('class="field field--error"');
+    expect(html).toContain('class="field__error"');
     expect(html).toContain('role="alert"');
     expect(html).toContain("recognized. Check for typos");
+    expect(html).not.toContain('class="banner banner--error"');
   });
 
   it("falls back to a generic message for unknown error codes", () => {

@@ -21,6 +21,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 export interface SecurityPageGrant {
   id: string;
@@ -54,15 +55,6 @@ interface SecurityPageParams {
   /** Optional flash banner — set by the route handlers to confirm a
    *  revoke / sign-out-all action. */
   notice?: { kind: "success" | "error"; text: string };
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 const MONTHS = [

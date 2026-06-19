@@ -29,7 +29,8 @@
     "schema-sql:generate:pg": "bash scripts/with-temp-pg.sh tsx scripts/generate-schema-sql.ts --dialect=pg",
     "lint:sqlite-migrations": "tsx scripts/lint-sqlite-migrations.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts",
-    "smoke:worker-entry": "tsx scripts/smoke-worker-entry.ts"
+    "smoke:worker-entry": "tsx scripts/smoke-worker-entry.ts",
+    "auth:gallery": "tsx scripts/auth-gallery.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1058.0",

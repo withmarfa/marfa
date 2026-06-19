@@ -84,8 +84,16 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+/* Dark tokens. Applied two ways: by the OS preference when no theme is
+   forced (default — matches the prior behavior exactly), and by an explicit
+   :root[data-theme="dark"] regardless of OS (so the gallery can force a
+   theme). The token list lives once in a custom-property mixin would be
+   ideal, but plain CSS can't share a declaration block across a media
+   boundary, so the values are stated once here and re-applied below via a
+   shared rule reference. */
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0a0a0a;
     --card: #161616;
     --fg: #fafafa;
@@ -126,9 +134,100 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
 
     --shadow: none;
   }
-  .card {
+  :root:not([data-theme="light"]) .card {
     box-shadow: none;
   }
+}
+
+/* Forced dark — applies in any OS mode. */
+:root[data-theme="dark"] {
+  --bg: #0a0a0a;
+  --card: #161616;
+  --fg: #fafafa;
+  --fg-muted: #a3a3a3;
+  --fg-faint: #6e6e6e;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --hairline: #242424;
+  --field: #232323;
+  --field-hover: #2b2b2b;
+  --surface-2: #1f1f1f;
+  --tile: #1c1c1c;
+
+  --primary: #fafafa;
+  --primary-hover: #e5e5e5;
+  --primary-fg: #171717;
+
+  --ring: rgba(250, 250, 250, 0.2);
+
+  --destructive: #f87171;
+  --destructive-hover: #ef4444;
+  --destructive-fg: #1a0a0a;
+  --destructive-soft-border: #4d2424;
+
+  --success-bg: #0e1f14;
+  --success-border: #1f3d28;
+  --success-fg: #86efac;
+  --error-bg: #1f1212;
+  --error-border: #3d1f1f;
+  --error-fg: #fca5a5;
+  --warn-bg: #1f1a0e;
+  --warn-border: #3d3320;
+  --warn-fg: #fcd34d;
+  --callout-bg: #241f10;
+  --callout-border: #4a3f1c;
+  --callout-fg: #e9c46a;
+  --callout-icon: #d4a73a;
+
+  --shadow: none;
+}
+:root[data-theme="dark"] .card {
+  box-shadow: none;
+}
+
+/* Forced light — re-asserts the default light tokens so a page can pin light
+   even when the OS prefers dark. The :root block above is the canonical light
+   ramp; only the tokens the dark theme overrides need re-stating here. */
+:root[data-theme="light"] {
+  --bg: #f5f5f5;
+  --card: #ffffff;
+  --fg: #0a0a0a;
+  --fg-muted: #737373;
+  --fg-faint: #a3a3a3;
+  --border: #e5e5e5;
+  --border-strong: #d4d4d4;
+  --hairline: #ededed;
+  --field: #f5f5f5;
+  --field-hover: #ececec;
+  --surface-2: #f5f5f5;
+  --tile: #f6f6f7;
+
+  --primary: #171717;
+  --primary-hover: #2a2a2a;
+  --primary-fg: #fafafa;
+
+  --ring: rgba(10, 10, 10, 0.13);
+
+  --destructive: #dc2626;
+  --destructive-hover: #b91c1c;
+  --destructive-fg: #ffffff;
+  --destructive-soft-border: #f3c5bf;
+
+  --success-bg: #f0fdf4;
+  --success-border: #bbf7d0;
+  --success-fg: #166534;
+  --error-bg: #fef2f2;
+  --error-border: #fecaca;
+  --error-fg: #991b1b;
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+  --warn-fg: #92400e;
+  --callout-bg: #fdf6e3;
+  --callout-border: #f3e0a3;
+  --callout-fg: #854d0e;
+  --callout-icon: #a16207;
+
+  --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
 }
 
 * {
@@ -172,7 +271,11 @@ body {
 }
 @media (max-width: 460px) {
   body {
-    padding: 16px;
+    /* Top-align on phones. Vertically centering a short card in a tall mobile
+       viewport (taller still behind the in-app browser chrome) strands a large
+       empty band above the card. */
+    align-items: start;
+    padding: 24px 16px;
   }
   .card {
     padding: 22px;
@@ -194,19 +297,6 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-muted);
-}
-.lede {
-  margin: 0 0 22px;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--fg-muted);
-}
-.lede strong {
-  color: var(--fg);
-  font-weight: 600;
-}
-.lede + .lede {
-  margin-top: -16px;
 }
 a {
   color: var(--fg);
@@ -236,6 +326,23 @@ a {
   margin: 0;
   font-size: 12px;
   color: var(--fg-faint);
+}
+/* Field-level error message, rendered under the offending input. Replaces a
+   top error banner so the error sits where the eye is. */
+.field__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--error-fg);
+}
+/* Form-level error line for an error that isn't tied to a single field
+   (e.g. sign-in's wrong email-or-password, which spans both inputs). An
+   inline red line, NOT a boxed banner. */
+.form__error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--error-fg);
 }
 
 input[type="email"],
@@ -270,6 +377,24 @@ input[type="text"]:focus {
   background: var(--card);
   border-color: var(--fg);
   box-shadow: 0 0 0 3px var(--ring);
+}
+/* A field carrying a validation error: red border + matching focus ring on its
+   input. Targets the input directly (and through the password-toggle wrapper,
+   which inserts a .pw-wrap between .field and the input). */
+.field--error > input[type="email"],
+.field--error > input[type="password"],
+.field--error > input[type="text"],
+.field--error .pw-wrap > input[type="password"],
+.field--error .pw-wrap > input[type="text"] {
+  border-color: var(--error-border);
+}
+.field--error > input[type="email"]:focus,
+.field--error > input[type="password"]:focus,
+.field--error > input[type="text"]:focus,
+.field--error .pw-wrap > input[type="password"]:focus,
+.field--error .pw-wrap > input[type="text"]:focus {
+  border-color: var(--error-fg);
+  box-shadow: 0 0 0 3px var(--error-bg);
 }
 .field__input--code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -348,6 +473,9 @@ input[type="text"]:focus {
   color: var(--fg);
   cursor: pointer;
   white-space: nowrap;
+  /* A link styled as a button (e.g. "Use a different email") must never carry
+     the default anchor underline. */
+  text-decoration: none;
   transition:
     background 0.12s var(--ease),
     border-color 0.12s var(--ease),
@@ -365,6 +493,29 @@ input[type="text"]:focus {
 .btn[disabled] {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Submitting state — set by submit-state.js on form submit. A small leading
+   spinner plus the swapped label keeps the button calm and on-brand; the
+   button keeps its size so the layout doesn't jump. The disabled styles above
+   handle the dimming once the script also disables the control. */
+.btn.is-loading {
+  cursor: progress;
+}
+.btn.is-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.6s linear infinite;
+  opacity: 0.7;
+}
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .btn--primary {
@@ -460,15 +611,59 @@ input[type="text"]:focus {
   margin: 0;
 }
 
+/* "Or continue with" separator — a hairline rule with a centered label.
+   20px of breathing room above and below. */
+.separator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  font-size: 12px;
+  color: var(--fg-faint);
+}
+.separator::before,
+.separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Alternatives row — equal-width buttons sitting side by side (one-time link,
+   passkey). Each child is a .btn that flexes to fill, so when one is hidden
+   the other expands to the full row width and the layout stays balanced. */
+.alts {
+  display: flex;
+  gap: 16px;
+}
+.alts > * {
+  flex: 1;
+}
+.alts .btn {
+  width: 100%;
+  border-color: var(--border);
+}
+.alts .btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
 .aux {
   margin: 20px 0 0;
   text-align: center;
   font-size: 13px;
   color: var(--fg-muted);
 }
+/* Aux links lean on weight + color, not an underline, to match the design
+   ("Create one", "Use a password instead"). Underline returns on hover as a
+   quiet affordance. */
 .aux a {
   color: var(--fg);
   font-weight: 500;
+  text-decoration: none;
+}
+.aux a:hover {
+  text-decoration: underline;
 }
 
 /* ---------------------------------------------------------------- */
@@ -567,6 +762,16 @@ input[type="text"]:focus {
 .row__action {
   margin: 0;
   flex-shrink: 0;
+}
+
+/* Muted small line under a section label — used by the consent re-consent
+   diff's "No longer needed" group to list dropped capabilities as a quiet
+   line rather than toggle rows. */
+.rmeta {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-muted);
 }
 
 /* ---------------------------------------------------------------- */
@@ -727,6 +932,12 @@ details.disclosure[open] > summary .disclosure__chevron {
 .sub strong {
   color: var(--fg);
   font-weight: 600;
+}
+/* Two stacked .sub lines (e.g. a subtitle plus a "Signed in as …" line on
+   passkey-enroll / security) would otherwise double the gap. Pull the second
+   up so the pair reads as one block. */
+.sub + .sub {
+  margin-top: -10px;
 }
 
 /* Inline section label inside a panel ("Connected apps", "New", …) —
