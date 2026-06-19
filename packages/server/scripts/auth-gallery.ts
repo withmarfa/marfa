@@ -88,7 +88,7 @@ function renderShell(): string {
     const items = screen.variants
       .map(
         (v) =>
-          `<li><button class="variant" data-screen="${screen.id}" data-variant="${v.id}">${v.label}</button></li>`,
+          `<li><button class="variant" data-screen="${screen.id}" data-variant="${v.id}"><span>${v.label}</span></button></li>`,
       )
       .join("");
     return `<div class="group">
@@ -106,99 +106,142 @@ function renderShell(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Marfa auth gallery</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      --page: #f5f5f5;
+      --fg: #18181b;
+      --muted: #71717a;
+      --hover: #ececef;
+      --accent: #e6e6ea;
+      --accent-fg: #18181b;
+      --toggle-bg: #ffffff;
+      --toggle-border: #e4e4e7;
+      --toggle-active: #ededf0;
+      color-scheme: light;
+    }
+    html.dark {
+      --page: #0a0a0a;
+      --fg: #fafafa;
+      --muted: #a1a1aa;
+      --hover: #1d1d20;
+      --accent: #27272a;
+      --accent-fg: #fafafa;
+      --toggle-bg: #18181b;
+      --toggle-border: #2a2a2e;
+      --toggle-active: #303036;
+      color-scheme: dark;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       display: grid;
-      grid-template-columns: 260px 1fr;
+      grid-template-columns: 248px 1fr;
       height: 100vh;
-      color: #0a0a0a;
-      background: #fafafa;
+      color: var(--fg);
+      background: var(--page);
     }
+    /* Sidebar: no border, no chrome — blends into the soft-grey page like the
+       shadcn docs nav. Brand pinned, nav scrolls under a bottom fade. */
     .sidebar {
-      border-right: 1px solid #e5e5e5;
-      overflow-y: auto;
-      padding: 16px 12px 40px;
-      background: #fff;
+      display: flex;
+      flex-direction: column;
+      padding: 22px 14px 0;
+      min-height: 0;
     }
-    .brand { font-weight: 600; font-size: 15px; padding: 4px 8px 12px; }
-    .group { margin-bottom: 16px; }
+    .brand {
+      flex: none;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      padding: 0 10px 14px;
+    }
+    .nav {
+      flex: 1;
+      overflow-y: auto;
+      padding-bottom: 48px;
+      -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent 100%);
+      scrollbar-width: none;
+    }
+    .nav::-webkit-scrollbar { display: none; }
+    .group { margin-bottom: 18px; }
     .group__label {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #737373;
-      padding: 0 8px 4px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      padding: 0 10px 4px;
     }
     .variants { list-style: none; margin: 0; padding: 0; }
+    /* Full-width click target, but the pill hugs the label (shadcn w-fit). */
     .variant {
+      display: block;
       width: 100%;
       text-align: left;
       border: none;
       background: none;
-      padding: 6px 8px;
-      border-radius: 8px;
-      font-size: 13px;
-      color: #404040;
+      padding: 1px 0;
       cursor: pointer;
+      font: inherit;
     }
-    .variant:hover { background: #f2f2f2; }
-    .variant.active { background: #171717; color: #fafafa; }
-    .stage { display: flex; flex-direction: column; min-width: 0; }
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
-      border-bottom: 1px solid #e5e5e5;
-      background: #fff;
-    }
-    .toolbar .title { font-size: 14px; font-weight: 600; }
-    .toolbar .spacer { flex: 1; }
-    .toggle {
+    .variant > span {
       display: inline-flex;
-      border: 1px solid #d4d4d4;
-      border-radius: 999px;
-      overflow: hidden;
-    }
-    .toggle button {
-      border: none;
-      background: #fff;
-      padding: 6px 14px;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      border-radius: 7px;
       font-size: 13px;
-      cursor: pointer;
-      color: #404040;
+      font-weight: 500;
+      line-height: 1.2;
+      color: var(--fg);
     }
-    .toggle button.active { background: #171717; color: #fafafa; }
-    .frame-wrap { flex: 1; min-height: 0; }
-    iframe { width: 100%; height: 100%; border: none; }
+    .variant:hover > span { background: var(--hover); }
+    .variant.active > span { background: var(--accent); color: var(--accent-fg); }
+    .stage { position: relative; min-width: 0; }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+    /* Floating theme toggle, top-right, over the preview. No nav bar. */
+    .theme {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 5;
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      background: var(--toggle-bg);
+      border: 1px solid var(--toggle-border);
+      border-radius: 999px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+    .theme button {
+      border: none;
+      background: none;
+      padding: 4px 13px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 999px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .theme button.active { background: var(--toggle-active); color: var(--fg); }
   </style>
 </head>
 <body>
   <nav class="sidebar">
-    <div class="brand">Marfa auth gallery</div>
-    ${sidebar}
+    <div class="brand">Marfa auth</div>
+    <div class="nav">${sidebar}</div>
   </nav>
   <main class="stage">
-    <div class="toolbar">
-      <span class="title" id="stage-title"></span>
-      <span class="spacer"></span>
-      <div class="toggle" role="group" aria-label="Theme">
-        <button id="theme-light" class="active" type="button">Light</button>
-        <button id="theme-dark" type="button">Dark</button>
-      </div>
+    <div class="theme" role="group" aria-label="Theme">
+      <button id="theme-light" class="active" type="button">Light</button>
+      <button id="theme-dark" type="button">Dark</button>
     </div>
-    <div class="frame-wrap">
-      <iframe id="preview" title="Auth page preview"></iframe>
-    </div>
+    <iframe id="preview" title="Auth page preview"></iframe>
   </main>
   <script>
     (function () {
       var state = { screen: ${JSON.stringify(initialScreen)}, variant: ${JSON.stringify(initialVariant)}, theme: 'light' };
       var frame = document.getElementById('preview');
-      var title = document.getElementById('stage-title');
       var lightBtn = document.getElementById('theme-light');
       var darkBtn = document.getElementById('theme-dark');
 
@@ -212,12 +255,8 @@ function renderShell(): string {
         var btn = document.querySelector(
           '.variant[data-screen="' + state.screen + '"][data-variant="' + state.variant + '"]'
         );
-        if (btn) {
-          btn.classList.add('active');
-          title.textContent =
-            btn.closest('.group').querySelector('.group__label').textContent +
-            ' · ' + btn.textContent;
-        }
+        if (btn) btn.classList.add('active');
+        document.documentElement.classList.toggle('dark', state.theme === 'dark');
         lightBtn.classList.toggle('active', state.theme === 'light');
         darkBtn.classList.toggle('active', state.theme === 'dark');
       }
