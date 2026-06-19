@@ -70,6 +70,7 @@ import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
 import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
 import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
+import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
@@ -639,6 +640,13 @@ export function createApp(
       ),
     );
   }
+
+  // Marfa-owned /auth/error page. The @better-auth/oauth-provider plugin
+  // redirects unrecoverable authorize failures here (e.g. invalid_client from
+  // a stale client_id); without this explicit route the better-auth core
+  // handler 302s to the API root JSON in production. Mounted before the
+  // catch-all so this GET wins.
+  app.route("/auth", authErrorRoutes());
 
   // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
   // magic-link, passkey, federated OIDC, session, plus the oauth-provider

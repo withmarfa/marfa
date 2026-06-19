@@ -128,6 +128,18 @@ jobs:
           NEON_DATABASE_URL_STAGING: ${{ secrets.NEON_DATABASE_URL_STAGING }}
           NEON_DATABASE_URL_PROD: ${{ secrets.NEON_DATABASE_URL_PROD }}
         run: ./infra/cloudflare/scripts/migrate-server-db.sh "$ENVIRONMENT"
+      # Seed the fixed first-party OAuth clients (idempotent) right after
+      # migrations, on the same direct URL. The browser apps use stable
+      # client_ids rather than per-browser DCR, so a DB reset would otherwise
+      # orphan every cached client; running this each deploy self-heals it.
+      # Lives in the migrate job (not deploy) because the deploy job passes
+      # SKIP_MIGRATE=1 and carries no DB URL.
+      - name: Seed first-party OAuth clients (direct Neon URL)
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          NEON_DATABASE_URL_STAGING: ${{ secrets.NEON_DATABASE_URL_STAGING }}
+          NEON_DATABASE_URL_PROD: ${{ secrets.NEON_DATABASE_URL_PROD }}
+        run: ./infra/cloudflare/scripts/seed-server-oauth-clients.sh "$ENVIRONMENT"
 
   deploy:
     needs: [build-push, migrate]
