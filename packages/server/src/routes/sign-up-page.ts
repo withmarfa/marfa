@@ -180,7 +180,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
     <h1 class="title" data-title>Create your Marfa account</h1>
     <p class="sub" data-sub>Tell us who you are.</p>
     ${errorBanner}
-    <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form data-initial-step="${initialStep}">
+    <form method="POST" action="/auth/sign-up" class="form" novalidate data-signup-form data-initial-step="${String(initialStep)}">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <div class="form" data-panel="1">
         <label class="field${fieldErrorClass("email")}">
