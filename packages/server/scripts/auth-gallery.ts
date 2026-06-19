@@ -14,7 +14,9 @@
  * active tab; the right sidebar lists the states of the selected screen; the
  * center shows the selected state in an iframe. A sun / monitor / moon control
  * forces light, follows the OS, or forces dark — for both the shell chrome and
- * the previewed page.
+ * the previewed page. A view control frames the iframe as freeform (edge to
+ * edge), a browser window, or a phone, so the page's own responsive CSS can be
+ * checked at each width without changing what it renders.
  */
 
 import { serve } from "@hono/node-server";
@@ -152,6 +154,18 @@ function renderShell(): string {
   );
   const MOON = svgIcon('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>');
 
+  // View-mode glyphs (Lucide maximize / app-window / smartphone), same stroke
+  // weight as the theme icons above.
+  const MAXIMIZE = svgIcon(
+    '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  );
+  const APP_WINDOW = svgIcon(
+    '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+  );
+  const SMARTPHONE = svgIcon(
+    '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+  );
+
   // The shell styling is plain inline CSS — it's dev chrome, not part of the
   // auth surface, so it deliberately doesn't share AUTH_CSS.
   return `<!DOCTYPE html>
@@ -168,6 +182,7 @@ function renderShell(): string {
       --hover: #ececef;
       --accent: #e6e6ea;
       --accent-fg: #18181b;
+      --card: #ffffff;
       color-scheme: light;
     }
     html.dark {
@@ -177,6 +192,7 @@ function renderShell(): string {
       --hover: #1d1d20;
       --accent: #27272a;
       --accent-fg: #fafafa;
+      --card: #1a1a1a;
       color-scheme: dark;
     }
     /* System theme: when no theme is forced, follow the OS so the shell tracks
@@ -190,6 +206,7 @@ function renderShell(): string {
         --hover: #1d1d20;
         --accent: #27272a;
         --accent-fg: #fafafa;
+        --card: #1a1a1a;
         color-scheme: dark;
       }
     }
@@ -213,15 +230,18 @@ function renderShell(): string {
       overflow: hidden;
       padding: 12px 14px 0;
     }
+    /* A fixed-height bar holds each side's top controls (tabs left, theme + view
+       right) so the equal margin-top on the headers below lands them on the
+       same horizontal line regardless of the controls' own heights. */
+    .topbar { flex: none; height: 30px; display: flex; align-items: center; }
+    .sidebar--right .topbar { justify-content: flex-end; gap: 4px; }
     .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
-    .nav-header__title { font-size: 12px; font-weight: 600; color: var(--fg); }
+    .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
     .sidebar--right .nav-header { text-align: right; }
     .nav {
       flex: 1;
       overflow-y: auto;
-      padding: 6px 0 90px;
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 90px), transparent 100%);
-      mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 90px), transparent 100%);
+      padding: 6px 0 40px;
       scrollbar-width: none;
     }
     .nav::-webkit-scrollbar { display: none; }
@@ -252,8 +272,62 @@ function renderShell(): string {
     }
     .nav-item:hover > span { background: var(--hover); }
     .nav-item.active > span { background: var(--accent); color: var(--accent-fg); }
-    .stage { position: relative; min-width: 0; }
+    .stage {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+    }
+    /* The viewport wraps the iframe so the surrounding frame (browser window /
+       phone) can be sized and styled without touching the iframe src. The
+       freeform default fills the stage edge to edge. */
+    .viewport { width: 100%; height: 100%; }
     iframe { width: 100%; height: 100%; border: none; display: block; }
+    /* The chrome bar (browser dots) only shows in the browser view. */
+    .chrome { display: none; }
+    /* Browser view: a centered rounded window with a small top chrome bar. */
+    .stage.view-browser .viewport {
+      width: min(1120px, 100%);
+      height: calc(100% - 48px);
+      max-height: 860px;
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+    .stage.view-browser .chrome {
+      flex: none;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 14px;
+      background: var(--hover);
+    }
+    .stage.view-browser .chrome i {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--muted);
+      opacity: 0.5;
+    }
+    .stage.view-browser .viewport iframe { flex: 1; height: auto; }
+    /* Mobile view: a centered rounded device with a subtle bezel so the auth
+       page's own mobile CSS (max-width 460px) takes over. */
+    .stage.view-mobile .viewport {
+      width: 394px;
+      max-width: calc(100% - 32px);
+      height: calc(100% - 48px);
+      max-height: 840px;
+      padding: 10px;
+      background: var(--card);
+      border-radius: 36px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+    }
+    .stage.view-mobile .viewport iframe { border-radius: 26px; }
     /* Top-center tab control: same no-border accent-pill style as the sidebar
        selection, not a bordered segmented control. */
     .tabs {
@@ -301,22 +375,83 @@ function renderShell(): string {
     .theme button:hover { background: var(--hover); }
     .theme button.active { background: var(--accent); color: var(--accent-fg); }
     .theme svg { display: block; width: 16px; height: 16px; }
+    /* View control: an icon button that toggles a popover menu of frame modes.
+       Same borderless accent-pill aesthetic as the theme control. */
+    .view { position: relative; display: inline-flex; flex: none; }
+    .view__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: none;
+      padding: 6px;
+      border-radius: 7px;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .view__button:hover { background: var(--hover); }
+    .view__button svg { display: block; width: 16px; height: 16px; }
+    .view__menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 10;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 150px;
+      padding: 5px;
+      border-radius: 10px;
+      background: var(--card);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+    }
+    .view.open .view__menu { display: flex; }
+    .view__option {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      border: none;
+      background: none;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .view__option:hover { background: var(--hover); }
+    .view__option.active { background: var(--accent); color: var(--accent-fg); }
+    .view__option svg { display: block; width: 16px; height: 16px; flex: none; }
   </style>
 </head>
 <body>
   <nav class="sidebar sidebar--left">
-    <div class="tabs" role="group" aria-label="Section">${tabControl}</div>
+    <div class="topbar">
+      <div class="tabs" role="group" aria-label="Section">${tabControl}</div>
+    </div>
     <div class="nav-header">
       <div class="nav-header__title">Screen</div>
     </div>
     <div class="nav"><ul class="nav-list" id="screens"></ul></div>
   </nav>
-  <main class="stage">
-    <iframe id="preview" title="Preview"></iframe>
+  <main class="stage" id="stage">
+    <div class="viewport">
+      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
+      <iframe id="preview" title="Preview"></iframe>
+    </div>
   </main>
   <nav class="sidebar sidebar--right">
-    <div class="theme">
-      <button id="theme-cycle" type="button" aria-label="Toggle theme">${MONITOR}</button>
+    <div class="topbar">
+      <div class="view" id="view">
+        <button id="view-button" class="view__button" type="button" aria-label="Change view" aria-haspopup="true" aria-expanded="false">${MAXIMIZE}</button>
+        <div class="view__menu" id="view-menu" role="menu"></div>
+      </div>
+      <div class="theme">
+        <button id="theme-cycle" type="button" aria-label="Toggle theme">${MONITOR}</button>
+      </div>
     </div>
     <div class="nav-header">
       <div class="nav-header__title">State</div>
@@ -326,24 +461,40 @@ function renderShell(): string {
   <script>
     (function () {
       var TABS = ${JSON.stringify(tabData)};
-      // System is the default theme: follow the OS for both shell and preview.
+      // System is the default theme; freeform is the default view (iframe fills
+      // the stage edge to edge).
       var state = {
         tab: ${JSON.stringify(initialTab)},
         screen: ${JSON.stringify(initialScreen)},
         variant: ${JSON.stringify(initialVariant)},
         theme: 'system',
+        view: 'freeform',
       };
 
       var frame = document.getElementById('preview');
       var screensList = document.getElementById('screens');
       var statesList = document.getElementById('states');
       var themeCycleBtn = document.getElementById('theme-cycle');
+      var stage = document.getElementById('stage');
+      var viewWrap = document.getElementById('view');
+      var viewButton = document.getElementById('view-button');
+      var viewMenu = document.getElementById('view-menu');
       var THEME_ORDER = ['light', 'system', 'dark'];
       var THEME_ICONS = {
         light: ${JSON.stringify(SUN)},
         system: ${JSON.stringify(MONITOR)},
         dark: ${JSON.stringify(MOON)},
       };
+      var VIEW_ICONS = {
+        freeform: ${JSON.stringify(MAXIMIZE)},
+        browser: ${JSON.stringify(APP_WINDOW)},
+        mobile: ${JSON.stringify(SMARTPHONE)},
+      };
+      var VIEW_OPTIONS = [
+        { id: 'freeform', label: 'Freeform' },
+        { id: 'browser', label: 'Browser' },
+        { id: 'mobile', label: 'Mobile' },
+      ];
 
       function currentTab() {
         return TABS.filter(function (t) { return t.id === state.tab; })[0] || TABS[0];
@@ -404,6 +555,37 @@ function renderShell(): string {
         el.classList.toggle('theme-system', state.theme === 'system');
       }
 
+      function applyView() {
+        // Only the surrounding frame changes; the iframe src is untouched, so
+        // the page inside responds purely to its new width.
+        stage.classList.toggle('view-browser', state.view === 'browser');
+        stage.classList.toggle('view-mobile', state.view === 'mobile');
+        viewButton.innerHTML = VIEW_ICONS[state.view];
+        var options = viewMenu.querySelectorAll('.view__option');
+        for (var i = 0; i < options.length; i++) {
+          var id = options[i].getAttribute('data-view');
+          options[i].classList.toggle('active', id === state.view);
+        }
+      }
+
+      function renderViewMenu() {
+        viewMenu.innerHTML = '';
+        VIEW_OPTIONS.forEach(function (opt) {
+          var btn = document.createElement('button');
+          btn.className = 'view__option';
+          btn.type = 'button';
+          btn.setAttribute('role', 'menuitem');
+          btn.setAttribute('data-view', opt.id);
+          btn.innerHTML = VIEW_ICONS[opt.id] + '<span>' + opt.label + '</span>';
+          viewMenu.appendChild(btn);
+        });
+      }
+
+      function closeViewMenu() {
+        viewWrap.classList.remove('open');
+        viewButton.setAttribute('aria-expanded', 'false');
+      }
+
       function loadPreview() {
         frame.src =
           '/preview?tab=' + encodeURIComponent(state.tab) +
@@ -417,6 +599,7 @@ function renderShell(): string {
         if (opts.rebuildScreens) renderScreens();
         if (opts.rebuildStates || opts.rebuildScreens) renderStates();
         applyShellTheme();
+        applyView();
         markActive();
         loadPreview();
       }
@@ -460,6 +643,28 @@ function renderShell(): string {
         loadPreview();
       });
 
+      viewButton.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = !viewWrap.classList.contains('open');
+        viewWrap.classList.toggle('open', open);
+        viewButton.setAttribute('aria-expanded', String(open));
+      });
+      viewMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('.view__option');
+        if (!btn) return;
+        // The frame change is preview-only; no iframe reload, so don't refresh().
+        state.view = btn.getAttribute('data-view');
+        applyView();
+        closeViewMenu();
+      });
+      // Any click outside the open menu closes it.
+      document.addEventListener('click', function (e) {
+        if (viewWrap.classList.contains('open') && !viewWrap.contains(e.target)) {
+          closeViewMenu();
+        }
+      });
+
+      renderViewMenu();
       refresh({ rebuildScreens: true });
     })();
   </script>
