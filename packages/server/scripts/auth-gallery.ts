@@ -154,17 +154,9 @@ function renderShell(): string {
   );
   const MOON = svgIcon('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>');
 
-  // View-mode glyphs (Lucide maximize / app-window / smartphone), same stroke
+  // Chevron-down for the text view trigger (Lucide chevron-down), same stroke
   // weight as the theme icons above.
-  const MAXIMIZE = svgIcon(
-    '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
-  );
-  const APP_WINDOW = svgIcon(
-    '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
-  );
-  const SMARTPHONE = svgIcon(
-    '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
-  );
+  const CHEVRON_DOWN = svgIcon('<path d="m6 9 6 6 6-6"/>');
 
   // The shell styling is plain inline CSS — it's dev chrome, not part of the
   // auth surface, so it deliberately doesn't share AUTH_CSS.
@@ -284,50 +276,72 @@ function renderShell(): string {
        freeform default fills the stage edge to edge. */
     .viewport { width: 100%; height: 100%; }
     iframe { width: 100%; height: 100%; border: none; display: block; }
-    /* The chrome bar (browser dots) only shows in the browser view. */
+    /* The chrome bar (browser dots + address pill) only shows in the browser
+       view; mobile has no browser chrome. */
     .chrome { display: none; }
-    /* Browser view: a centered rounded window with a small top chrome bar. */
+    /* Browser view: a Safari-style window that fills the stage responsively, so
+       the preview never crops or overflows. The stage adds a small inset and the
+       window fills the rest. Borders only — no shadow. */
+    .stage.view-browser { padding: 22px; }
     .stage.view-browser .viewport {
-      width: min(1120px, 100%);
-      height: calc(100% - 48px);
-      max-height: 860px;
+      width: 100%;
+      height: 100%;
       display: flex;
       flex-direction: column;
       background: var(--card);
+      border: 0.5px solid var(--accent);
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
     }
     .stage.view-browser .chrome {
+      position: relative;
       flex: none;
-      height: 36px;
+      height: 38px;
       display: flex;
       align-items: center;
-      gap: 7px;
       padding: 0 14px;
-      background: var(--hover);
+      border-bottom: 0.5px solid var(--accent);
     }
-    .stage.view-browser .chrome i {
+    /* Three traffic-light dots, pinned left. */
+    .stage.view-browser .chrome .dots { display: inline-flex; gap: 7px; }
+    .stage.view-browser .chrome .dots i {
       width: 11px;
       height: 11px;
       border-radius: 50%;
       background: var(--muted);
-      opacity: 0.5;
+      opacity: 0.45;
+    }
+    /* Centered rounded address pill reading the host. */
+    .stage.view-browser .chrome .addr {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 180px;
+      max-width: 60%;
+      height: 22px;
+      padding: 0 12px;
+      border-radius: 7px;
+      background: var(--hover);
+      font-size: 12px;
+      color: var(--muted);
     }
     .stage.view-browser .viewport iframe { flex: 1; height: auto; }
-    /* Mobile view: a centered rounded device with a subtle bezel so the auth
-       page's own mobile CSS (max-width 460px) takes over. */
+    /* Mobile view: a plain bordered viewport at a realistic phone size — no
+       device bezel, no status bar, no home indicator. The auth page's own mobile
+       CSS top-aligns the card. Borders only — no shadow. */
     .stage.view-mobile .viewport {
-      width: 394px;
-      max-width: calc(100% - 32px);
-      height: calc(100% - 48px);
-      max-height: 840px;
-      padding: 10px;
-      background: var(--card);
-      border-radius: 36px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+      width: 390px;
+      max-width: calc(100% - 24px);
+      height: min(844px, calc(100% - 24px));
+      background: var(--page);
+      border: 0.5px solid var(--accent);
+      border-radius: 12px;
+      overflow: hidden;
     }
-    .stage.view-mobile .viewport iframe { border-radius: 26px; }
+    .stage.view-mobile .viewport iframe { border-radius: 12px; }
     /* Top-center tab control: same no-border accent-pill style as the sidebar
        selection, not a bordered segmented control. */
     .tabs {
@@ -375,22 +389,27 @@ function renderShell(): string {
     .theme button:hover { background: var(--hover); }
     .theme button.active { background: var(--accent); color: var(--accent-fg); }
     .theme svg { display: block; width: 16px; height: 16px; }
-    /* View control: an icon button that toggles a popover menu of frame modes.
-       Same borderless accent-pill aesthetic as the theme control. */
+    /* View control: a borderless text trigger (current mode's label + a small
+       chevron) that toggles a popover menu of frame modes. Same family as the
+       tabs — no border, no background, subtle hover. */
     .view { position: relative; display: inline-flex; flex: none; }
     .view__button {
       display: inline-flex;
       align-items: center;
-      justify-content: center;
+      gap: 4px;
       border: none;
       background: none;
-      padding: 6px;
+      padding: 5px 8px;
       border-radius: 7px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
       color: var(--muted);
       cursor: pointer;
     }
     .view__button:hover { background: var(--hover); }
-    .view__button svg { display: block; width: 16px; height: 16px; }
+    .view__button svg { display: block; width: 14px; height: 14px; }
+    /* Menu separates from the page with a border, not a shadow. */
     .view__menu {
       position: absolute;
       top: calc(100% + 6px);
@@ -399,17 +418,15 @@ function renderShell(): string {
       display: none;
       flex-direction: column;
       gap: 2px;
-      min-width: 150px;
+      min-width: 140px;
       padding: 5px;
+      border: 0.5px solid var(--accent);
       border-radius: 10px;
       background: var(--card);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
     }
     .view.open .view__menu { display: flex; }
     .view__option {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
+      display: block;
       width: 100%;
       border: none;
       background: none;
@@ -424,7 +441,6 @@ function renderShell(): string {
     }
     .view__option:hover { background: var(--hover); }
     .view__option.active { background: var(--accent); color: var(--accent-fg); }
-    .view__option svg { display: block; width: 16px; height: 16px; flex: none; }
   </style>
 </head>
 <body>
@@ -439,14 +455,17 @@ function renderShell(): string {
   </nav>
   <main class="stage" id="stage">
     <div class="viewport">
-      <div class="chrome" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="chrome" aria-hidden="true">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="addr">marfa.so</span>
+      </div>
       <iframe id="preview" title="Preview"></iframe>
     </div>
   </main>
   <nav class="sidebar sidebar--right">
     <div class="topbar">
       <div class="view" id="view">
-        <button id="view-button" class="view__button" type="button" aria-label="Change view" aria-haspopup="true" aria-expanded="false">${MAXIMIZE}</button>
+        <button id="view-button" class="view__button" type="button" aria-label="Change view" aria-haspopup="true" aria-expanded="false"><span id="view-label"></span>${CHEVRON_DOWN}</button>
         <div class="view__menu" id="view-menu" role="menu"></div>
       </div>
       <div class="theme">
@@ -478,6 +497,7 @@ function renderShell(): string {
       var stage = document.getElementById('stage');
       var viewWrap = document.getElementById('view');
       var viewButton = document.getElementById('view-button');
+      var viewLabel = document.getElementById('view-label');
       var viewMenu = document.getElementById('view-menu');
       var THEME_ORDER = ['light', 'system', 'dark'];
       var THEME_ICONS = {
@@ -485,16 +505,17 @@ function renderShell(): string {
         system: ${JSON.stringify(MONITOR)},
         dark: ${JSON.stringify(MOON)},
       };
-      var VIEW_ICONS = {
-        freeform: ${JSON.stringify(MAXIMIZE)},
-        browser: ${JSON.stringify(APP_WINDOW)},
-        mobile: ${JSON.stringify(SMARTPHONE)},
-      };
       var VIEW_OPTIONS = [
         { id: 'freeform', label: 'Freeform' },
         { id: 'browser', label: 'Browser' },
         { id: 'mobile', label: 'Mobile' },
       ];
+      function viewLabelFor(id) {
+        for (var i = 0; i < VIEW_OPTIONS.length; i++) {
+          if (VIEW_OPTIONS[i].id === id) return VIEW_OPTIONS[i].label;
+        }
+        return VIEW_OPTIONS[0].label;
+      }
 
       function currentTab() {
         return TABS.filter(function (t) { return t.id === state.tab; })[0] || TABS[0];
@@ -560,7 +581,7 @@ function renderShell(): string {
         // the page inside responds purely to its new width.
         stage.classList.toggle('view-browser', state.view === 'browser');
         stage.classList.toggle('view-mobile', state.view === 'mobile');
-        viewButton.innerHTML = VIEW_ICONS[state.view];
+        viewLabel.textContent = viewLabelFor(state.view);
         var options = viewMenu.querySelectorAll('.view__option');
         for (var i = 0; i < options.length; i++) {
           var id = options[i].getAttribute('data-view');
@@ -576,7 +597,7 @@ function renderShell(): string {
           btn.type = 'button';
           btn.setAttribute('role', 'menuitem');
           btn.setAttribute('data-view', opt.id);
-          btn.innerHTML = VIEW_ICONS[opt.id] + '<span>' + opt.label + '</span>';
+          btn.textContent = opt.label;
           viewMenu.appendChild(btn);
         });
       }
