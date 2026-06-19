@@ -339,6 +339,12 @@ a {
   font-size: 12px;
   color: var(--fg-faint);
 }
+/* When a field is in error, drop its helper hint — the error message already
+   occupies that line, and "At least 8 characters" stacked above "Password
+   must be at least 8 characters" reads as a stutter. */
+.field--error .field__hint {
+  display: none;
+}
 /* Field-level error message, rendered under the offending input. Replaces a
    top error banner so the error sits where the eye is. */
 .field__error {
