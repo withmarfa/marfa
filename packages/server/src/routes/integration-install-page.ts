@@ -19,6 +19,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 interface ConsentParams {
   integrationId: string;
@@ -51,15 +52,6 @@ interface ConsentParams {
    * id when omitted.
    */
   credentialRefLabel?: string;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function describeDirection(direction: "read" | "write" | "both"): string {

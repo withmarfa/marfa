@@ -22,6 +22,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 export interface KeysPageKey {
   id: string;
@@ -63,15 +64,6 @@ const KEY_CONTENT_TYPES: readonly { label: string; type: string }[] = [
   { label: "Contacts", type: "core.entity.person" },
   { label: "Files", type: "core.file" },
 ];
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 const MONTHS = [
   "Jan",

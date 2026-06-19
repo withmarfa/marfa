@@ -12,24 +12,16 @@
  * (`MarfaPasskey.isSupported()`), which hides the button on
  * unsupported browsers — no server-side UA sniffing.
  *
- * Shape mirrors the rest of the auth surface — single H1, lede,
+ * Shape mirrors the rest of the auth surface — single H1, sub,
  * status banner, primary action.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml } from "./auth-html.js";
 
 interface PasskeyEnrollPageParams {
   /** Authenticated user's email — shown for confirmation. */
   email: string;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /** Renders the passkey enroll page as a complete HTML document. */
