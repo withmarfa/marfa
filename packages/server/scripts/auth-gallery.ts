@@ -364,16 +364,18 @@ function renderShell(): string {
        view; mobile has no browser chrome. */
     .chrome { display: none; }
     /* Browser view: a Safari-style window framed as a realistic 3:2 landscape
-       window, centered in the stage. aspect-ratio drives the shape; the max
-       constraints keep it inside the stage at any size, so it never crops,
-       overflows, or flips to portrait. A hard dark outline makes it stand off
-       the page. Borders only — no shadow. */
+       window, centered in the stage. Explicitly fill the larger dimension so the
+       window grows to the biggest 3:2 box that fits the stage — without a fill
+       width the box collapses to a small intrinsic size and clips the page. The
+       width is the lesser of "the stage minus breathing room" and "what a full-
+       height 3:2 box would be", so it never crops, overflows, or flips to
+       portrait. A hard dark outline makes it stand off the page. Borders only —
+       no shadow. */
     .stage.view-browser .viewport {
-      width: auto;
-      height: auto;
       aspect-ratio: 3 / 2;
-      max-width: calc(100% - 40px);
-      max-height: calc(100% - 40px);
+      width: min(calc(100% - 48px), calc((100vh - 48px) * 1.5));
+      height: auto;
+      max-height: calc(100% - 48px);
       display: flex;
       flex-direction: column;
       background: var(--card);
@@ -432,6 +434,21 @@ function renderShell(): string {
       overflow: hidden;
     }
     .stage.view-mobile .viewport iframe { border-radius: 12px; }
+    /* Email + freeform: an email isn't a web page, so freeform here is NOT
+       edge-to-edge. It sits inside a black-outlined 5:3 landscape container —
+       the browser frame minus the Safari chrome bar — sized to fill the stage
+       the same way the browser window does. The tab-email marker (kept in sync
+       with state.tab) scopes this to the Email tab so AUTH freeform stays full-
+       bleed. Borders only — no shadow. */
+    .stage.tab-email:not(.view-browser):not(.view-mobile) .viewport {
+      aspect-ratio: 5 / 3;
+      width: min(calc(100% - 48px), calc((100vh - 48px) * 5 / 3));
+      height: auto;
+      max-height: calc(100% - 48px);
+      border: 1.5px solid var(--frame-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
     /* Top-left section dropdown: mirrors the view dropdown's interaction, but
        its trigger label is black + slightly heavier — it's the primary selector,
        so it reads as the strong control against the grey view trigger opposite.
@@ -712,6 +729,18 @@ function renderShell(): string {
         { id: 'browser', label: 'Browser' },
         { id: 'mobile', label: 'Mobile' },
       ];
+      // Browser mode makes no sense for an email, so the Email tab offers only
+      // Freeform + Mobile. The view menu is rebuilt per tab from this list.
+      var VIEWS_BY_TAB = {
+        auth: ['freeform', 'browser', 'mobile'],
+        email: ['freeform', 'mobile'],
+      };
+      function viewOptionsForTab(tabId) {
+        var ids = VIEWS_BY_TAB[tabId] || VIEWS_BY_TAB.auth;
+        return VIEW_OPTIONS.filter(function (opt) {
+          return ids.indexOf(opt.id) !== -1;
+        });
+      }
       function viewLabelFor(id) {
         for (var i = 0; i < VIEW_OPTIONS.length; i++) {
           if (VIEW_OPTIONS[i].id === id) return VIEW_OPTIONS[i].label;
@@ -790,9 +819,11 @@ function renderShell(): string {
 
       function applyView() {
         // Only the surrounding frame changes; the iframe src is untouched, so
-        // the page inside responds purely to its new width.
+        // the page inside responds purely to its new width. The tab-email marker
+        // scopes the email-freeform box CSS to the Email tab.
         stage.classList.toggle('view-browser', state.view === 'browser');
         stage.classList.toggle('view-mobile', state.view === 'mobile');
+        stage.classList.toggle('tab-email', state.tab === 'email');
         viewLabel.textContent = viewLabelFor(state.view);
         var options = viewMenu.querySelectorAll('.view__option');
         for (var i = 0; i < options.length; i++) {
@@ -803,7 +834,7 @@ function renderShell(): string {
 
       function renderViewMenu() {
         viewMenu.innerHTML = '';
-        VIEW_OPTIONS.forEach(function (opt) {
+        viewOptionsForTab(state.tab).forEach(function (opt) {
           var btn = document.createElement('button');
           btn.className = 'view__option';
           btn.type = 'button';
@@ -874,6 +905,11 @@ function renderShell(): string {
         var tab = currentTab();
         state.screen = tab.screens[0].id;
         state.variant = tab.screens[0].variants[0].id;
+        // Some views don't exist on every tab (no Browser on Email). If the
+        // active view isn't offered by the new tab, fall back to Freeform.
+        var allowed = VIEWS_BY_TAB[state.tab] || VIEWS_BY_TAB.auth;
+        if (allowed.indexOf(state.view) === -1) state.view = 'freeform';
+        renderViewMenu();
         refresh({ rebuildScreens: true });
       }
 
