@@ -271,7 +271,11 @@ body {
 }
 @media (max-width: 460px) {
   body {
-    padding: 16px;
+    /* Top-align on phones. Vertically centering a short card in a tall mobile
+       viewport (taller still behind the in-app browser chrome) strands a large
+       empty band above the card. */
+    align-items: start;
+    padding: 24px 16px;
   }
   .card {
     padding: 22px;
