@@ -2,11 +2,16 @@
  * Single source of truth for the auth-page preview gallery: every screen and
  * its state variants, each with the exact params its renderer expects.
  *
- * This is a dev-only tool (never deployed). It imports the real page renderers
- * plus the shared `AUTH_CSS` and static JS strings so the gallery shows exactly
- * what ships, not a re-implementation. A variant is `{ label, render() }` — the
- * gallery groups them under their screen and renders the selected one into an
- * iframe.
+ * This is a dev-only tool (never deployed). It imports the real page renderers,
+ * the real transactional email templates, plus the shared `AUTH_CSS` and static
+ * JS strings so the gallery shows exactly what ships, not a re-implementation.
+ * A variant is `{ label, render() }`; screens group variants; tabs group
+ * screens. The gallery renders the selected variant's full HTML document into
+ * an iframe.
+ *
+ * Two tabs: `auth` (the hosted auth-page renderers) and `email` (the
+ * transactional email templates). Both tabs share the same screen/variant
+ * shape, so `resolveVariant` works uniformly across them.
  */
 
 import type { ParsedScope } from "@withmarfa/shared";
@@ -23,6 +28,12 @@ import {
 import { renderPasskeyEnrollPage } from "../src/routes/passkey-enroll-page.js";
 import { renderSecurityPage } from "../src/routes/security-page.js";
 import { renderKeysPage } from "../src/routes/keys-page.js";
+import { renderVerifyEmailEmail } from "../src/auth/email-templates/verify-email.js";
+import { renderMagicLinkEmail } from "../src/auth/email-templates/magic-link.js";
+import { renderResetPasswordEmail } from "../src/auth/email-templates/reset-password.js";
+import { renderAccountDeleteConfirmEmail } from "../src/auth/email-templates/account-delete-confirm.js";
+import { renderAccountPendingDeletionEmail } from "../src/auth/email-templates/account-pending-deletion.js";
+import { renderAccountDeleteCancelEmail } from "../src/auth/email-templates/account-delete-cancel.js";
 
 export interface GalleryVariant {
   /** Stable id used in the preview URL (`?variant=…`). */
@@ -36,9 +47,17 @@ export interface GalleryVariant {
 export interface GalleryScreen {
   /** Stable id used in the preview URL (`?screen=…`). */
   id: string;
-  /** Human label shown in the sidebar group header. */
+  /** Human label shown in the left sidebar. */
   label: string;
   variants: GalleryVariant[];
+}
+
+export interface GalleryTab {
+  /** Stable id used in the preview URL (`?tab=…`). */
+  id: string;
+  /** Human label shown in the top-center tab control. */
+  label: string;
+  screens: GalleryScreen[];
 }
 
 const RETURN_TO = "/auth/authorize?client_id=marfa-cli&response_type=code";
@@ -77,7 +96,7 @@ const DEVICE_SCOPES: ParsedScope[] = [
   },
 ];
 
-export const SCREENS: GalleryScreen[] = [
+const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-in",
     label: "Sign in",
@@ -500,14 +519,150 @@ export const SCREENS: GalleryScreen[] = [
   },
 ];
 
-/** Resolve a screen + variant pair, or `undefined` if either id is unknown. */
+// Realistic fixture data for the transactional email previews. Names, URLs,
+// and dates are illustrative; the action URLs are obviously fake so nobody
+// mistakes a preview for a live link.
+const EMAIL_NAME = "Jonah";
+const VERIFY_URL =
+  "https://staging.marfa.so/auth/verify-email?token=preview-verify-token";
+const MAGIC_URL =
+  "https://staging.marfa.so/auth/magic-link?token=preview-magic-token";
+const RESET_URL =
+  "https://staging.marfa.so/auth/reset-password?token=preview-reset-token";
+const DELETE_CONFIRM_URL =
+  "https://staging.marfa.so/auth/account/delete/confirm?token=preview-confirm-token";
+const DELETE_CANCEL_URL =
+  "https://staging.marfa.so/auth/account/cancel?token=preview-cancel-token";
+const DELETION_DATE = "July 19, 2026";
+
+const EMAIL_SCREENS: GalleryScreen[] = [
+  {
+    id: "verify-email",
+    label: "Verify email",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () =>
+          renderVerifyEmailEmail({ url: VERIFY_URL, name: EMAIL_NAME }).html,
+      },
+      {
+        id: "no-name",
+        label: "No name",
+        render: () => renderVerifyEmailEmail({ url: VERIFY_URL }).html,
+      },
+    ],
+  },
+  {
+    id: "magic-link",
+    label: "Sign-in link",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () => renderMagicLinkEmail({ url: MAGIC_URL }).html,
+      },
+    ],
+  },
+  {
+    id: "reset-password",
+    label: "Reset password",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () =>
+          renderResetPasswordEmail({ url: RESET_URL, name: EMAIL_NAME }).html,
+      },
+      {
+        id: "no-name",
+        label: "No name",
+        render: () => renderResetPasswordEmail({ url: RESET_URL }).html,
+      },
+    ],
+  },
+  {
+    id: "delete-confirm",
+    label: "Delete confirm",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () =>
+          renderAccountDeleteConfirmEmail({
+            url: DELETE_CONFIRM_URL,
+            name: EMAIL_NAME,
+          }).html,
+      },
+    ],
+  },
+  {
+    id: "pending-deletion",
+    label: "Pending deletion",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () =>
+          renderAccountPendingDeletionEmail({
+            url: DELETE_CANCEL_URL,
+            deletionDate: DELETION_DATE,
+            graceDays: 30,
+            name: EMAIL_NAME,
+          }).html,
+      },
+    ],
+  },
+  {
+    id: "delete-cancel",
+    label: "Sign-in attempt",
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        render: () =>
+          renderAccountDeleteCancelEmail({
+            url: DELETE_CANCEL_URL,
+            deletionDate: DELETION_DATE,
+            name: EMAIL_NAME,
+          }).html,
+      },
+      {
+        id: "no-date",
+        label: "No deadline",
+        render: () =>
+          renderAccountDeleteCancelEmail({
+            url: DELETE_CANCEL_URL,
+            name: EMAIL_NAME,
+          }).html,
+      },
+    ],
+  },
+];
+
+export const TABS: GalleryTab[] = [
+  { id: "auth", label: "Auth", screens: AUTH_SCREENS },
+  { id: "email", label: "Email", screens: EMAIL_SCREENS },
+];
+
+/**
+ * Resolve a tab + screen + variant triple, or `undefined` if any id is
+ * unknown. The screen id is unique within a tab but not across tabs (both
+ * tabs carry a `verify-email` and a `reset-password` screen), so resolution
+ * is always scoped by tab.
+ */
 export function resolveVariant(
+  tabId: string,
   screenId: string,
   variantId: string,
-): { screen: GalleryScreen; variant: GalleryVariant } | undefined {
-  const screen = SCREENS.find((s) => s.id === screenId);
+):
+  | { tab: GalleryTab; screen: GalleryScreen; variant: GalleryVariant }
+  | undefined {
+  const tab = TABS.find((t) => t.id === tabId);
+  if (!tab) return undefined;
+  const screen = tab.screens.find((s) => s.id === screenId);
   if (!screen) return undefined;
   const variant = screen.variants.find((v) => v.id === variantId);
   if (!variant) return undefined;
-  return { screen, variant };
+  return { tab, screen, variant };
 }
