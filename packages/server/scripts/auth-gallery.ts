@@ -464,7 +464,7 @@ function renderShell(): string {
       padding: 0 8px;
       border-radius: 7px;
       font: inherit;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 600;
       color: var(--fg);
       cursor: pointer;
@@ -950,6 +950,8 @@ function renderShell(): string {
       sectionButton.addEventListener('click', function (e) {
         e.stopPropagation();
         var open = !sectionWrap.classList.contains('open');
+        closeViewMenu();
+        closeShortcutsMenu();
         sectionWrap.classList.toggle('open', open);
         sectionButton.setAttribute('aria-expanded', String(open));
       });
@@ -978,6 +980,8 @@ function renderShell(): string {
       viewButton.addEventListener('click', function (e) {
         e.stopPropagation();
         var open = !viewWrap.classList.contains('open');
+        closeSectionMenu();
+        closeShortcutsMenu();
         viewWrap.classList.toggle('open', open);
         viewButton.setAttribute('aria-expanded', String(open));
       });
@@ -993,6 +997,8 @@ function renderShell(): string {
       shortcutsButton.addEventListener('click', function (e) {
         e.stopPropagation();
         var open = !shortcutsWrap.classList.contains('open');
+        closeSectionMenu();
+        closeViewMenu();
         shortcutsWrap.classList.toggle('open', open);
         shortcutsButton.setAttribute('aria-expanded', String(open));
       });
