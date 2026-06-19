@@ -9,12 +9,9 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
       - "LICENSE"
   pull_request:
+    # No paths-ignore here: a required status check must report on every PR,
+    # including docs-only ones, or branch protection blocks the merge.
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE"
   # Freshness jobs are also triggerable manually so agents can verify
   # generated-artifact drift (types registry, openapi.json) before merging
   # a PR that touches schema or shared-type sources. See marfa/CLAUDE.md for
