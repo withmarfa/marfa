@@ -188,7 +188,7 @@ export function renderKeysPage(params: KeysPageParams): string {
   // the + button and walks step 1 (name) → step 2 (permissions). With no JS
   // the whole form is visible and submits the default (all content) in one go.
   const createPanel = `
-    <div id="create-panel">
+    <div id="create-panel" style="margin-bottom:18px">
       <form method="POST" action="/auth/keys" class="form" data-key-form novalidate>
         <div class="steps" data-steps aria-hidden="true">
           <span class="steps__seg steps__seg--on"></span>
@@ -211,7 +211,7 @@ export function renderKeysPage(params: KeysPageParams): string {
         </div>
         <div class="actions">
           <button type="button" class="btn btn--primary" data-next>Continue</button>
-          <button type="submit" class="btn btn--primary" data-create>Create key</button>
+          <button type="submit" class="btn btn--primary" data-create data-loading-label="Creating key...">Create key</button>
           <button type="button" class="btn btn--ghost" data-back>Back</button>
         </div>
       </form>
@@ -231,6 +231,7 @@ export function renderKeysPage(params: KeysPageParams): string {
     ${createPanel}
     ${keysList}
 
+    <script src="/auth/static/submit-state.js"></script>
     <script>${CREATE_FLOW_SCRIPT}</script>
   `;
 
@@ -300,8 +301,9 @@ const CREATE_FLOW_SCRIPT = `
   openBtn.addEventListener('click', function () { setOpen(panel.hidden); });
 
   next.addEventListener('click', function () {
-    var label = panel1.querySelector('input[name="label"]');
-    if (label && !label.reportValidity()) return;
+    var invalid = window.MarfaForm && window.MarfaForm.validate ? window.MarfaForm.validate(panel1) : null;
+    if (!window.MarfaForm) { var l = panel1.querySelector('input'); if (l && !l.checkValidity()) invalid = l; }
+    if (invalid) { if (invalid.focus) invalid.focus(); return; }
     step(2);
   });
   back.addEventListener('click', function () { step(1); });

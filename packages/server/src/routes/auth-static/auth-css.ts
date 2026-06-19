@@ -990,9 +990,10 @@ details.disclosure[open] > summary .disclosure__chevron {
 }
 
 /* Inline section label inside a panel ("Connected apps", "New", …) —
-   sentence case, not a shouty uppercase eyebrow. */
+   sentence case, not a shouty uppercase eyebrow. The bottom gap gives the
+   grouped tiles below a little breathing room rather than sitting tight. */
 .lsec {
-  margin: 18px 0 2px;
+  margin: 18px 0 10px;
   font-size: 13px;
   font-weight: 600;
   color: var(--fg);
