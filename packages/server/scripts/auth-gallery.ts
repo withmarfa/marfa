@@ -54,6 +54,54 @@ function parseTheme(raw: string | undefined): PreviewTheme {
   return "system";
 }
 
+/** Escape the five HTML-significant characters for safe text interpolation. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Pull a human subject line out of the email document: the `<title>` is the
+ * canonical source, the first `<h1>` is the fallback (its inner tags stripped),
+ * and a generic placeholder covers a template that carries neither.
+ */
+function extractEmailSubject(html: string): string {
+  const titleText = /<title>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
+  if (titleText) return titleText;
+  const h1Inner = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1];
+  if (h1Inner) {
+    const text = h1Inner.replace(/<[^>]+>/g, "").trim();
+    if (text) return text;
+  }
+  return "New message";
+}
+
+/**
+ * A white Apple-Mail-style message header injected at the top of the email body
+ * so the preview reads as an opened message rather than a floating email canvas:
+ * round avatar, bold sender, subject, To line, and a received time. Sender, To,
+ * and time are fixed mock values — only the subject is read from the document.
+ */
+function emailHeaderMarkup(subject: string): string {
+  return (
+    '<div class="m-mailhead">' +
+    '<div class="m-mailhead__avatar">M</div>' +
+    '<div class="m-mailhead__body">' +
+    '<div class="m-mailhead__row">' +
+    '<span class="m-mailhead__sender">Marfa</span>' +
+    '<span class="m-mailhead__time">9:57 AM</span>' +
+    "</div>" +
+    `<div class="m-mailhead__subject">${escapeHtml(subject)}</div>` +
+    '<div class="m-mailhead__to">To: you@example.com</div>' +
+    "</div>" +
+    "</div>"
+  );
+}
+
 /**
  * Force the requested theme on the document and intercept form submits so a
  * click demonstrates the loading state (button disables + label swap) without
@@ -71,16 +119,40 @@ function decorate(html: string, theme: PreviewTheme, isEmail: boolean): string {
           /<html lang="en">/,
           `<html lang="en" data-theme="${theme}">`,
         );
-  // Emails render top-aligned (correct in a real inbox). In the preview we want
-  // them centered vertically like the auth pages, with less canvas top padding.
+  // In a real inbox the email is the body of an opened message, not a centered
+  // card. The preview reproduces that: a white mail-app header (sender, subject,
+  // To, time) pinned to the top, the email canvas top-aligned right beneath it.
   if (isEmail) {
-    const center =
-      "<style>html{height:100%}" +
-      "body.m-canvas{min-height:100vh;display:flex;flex-direction:column;justify-content:center}" +
-      "table.m-canvas{padding-top:16px !important;padding-bottom:16px !important}</style>";
+    const subject = extractEmailSubject(out);
+    const mailStyle =
+      "<style>" +
+      // Top-align the canvas under the header instead of vertically centering it.
+      "body.m-canvas{display:block;min-height:0}" +
+      "table.m-canvas{padding-top:16px !important;padding-bottom:24px !important}" +
+      // The injected header: full-width white strip, subtle bottom hairline, no
+      // shadow. Tokens are inlined (the email document doesn't load the shell CSS).
+      ".m-mailhead{display:flex;gap:12px;align-items:flex-start;padding:16px 20px;" +
+      "background:#ffffff;border-bottom:1px solid #e6e6ea;" +
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}" +
+      ".m-mailhead__avatar{flex:none;width:40px;height:40px;border-radius:50%;" +
+      "display:flex;align-items:center;justify-content:center;background:#18181b;" +
+      "color:#ffffff;font-size:16px;font-weight:600}" +
+      ".m-mailhead__body{flex:1;min-width:0}" +
+      ".m-mailhead__row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}" +
+      ".m-mailhead__sender{font-size:15px;font-weight:700;color:#18181b}" +
+      ".m-mailhead__time{flex:none;font-size:12px;color:#71717a}" +
+      ".m-mailhead__subject{margin-top:2px;font-size:14px;font-weight:500;color:#18181b}" +
+      ".m-mailhead__to{margin-top:2px;font-size:12px;color:#71717a}" +
+      "</style>";
     out = out.includes("</head>")
-      ? out.replace("</head>", `${center}</head>`)
-      : center + out;
+      ? out.replace("</head>", `${mailStyle}</head>`)
+      : mailStyle + out;
+    // Inject the header right after the opening <body …> tag, robust to any
+    // attributes the email canvas carries (it ships <body class="m-canvas" …>).
+    const header = emailHeaderMarkup(subject);
+    out = /<body[^>]*>/i.test(out)
+      ? out.replace(/<body[^>]*>/i, (tag) => `${tag}${header}`)
+      : header + out;
   }
   const interceptor = `
 <script>
@@ -175,6 +247,10 @@ function renderShell(): string {
       --accent: #e6e6ea;
       --accent-fg: #18181b;
       --card: #ffffff;
+      /* The device-frame outline (browser window + phone) — strong enough to
+         read as a hard edge against the page. Near-black on the light page; a
+         legible grey line on the dark page. */
+      --frame-border: #18181b;
       color-scheme: light;
     }
     html.dark {
@@ -185,6 +261,7 @@ function renderShell(): string {
       --accent: #27272a;
       --accent-fg: #fafafa;
       --card: #1a1a1a;
+      --frame-border: #52525b;
       color-scheme: dark;
     }
     /* System theme: when no theme is forced, follow the OS so the shell tracks
@@ -199,6 +276,7 @@ function renderShell(): string {
         --accent: #27272a;
         --accent-fg: #fafafa;
         --card: #1a1a1a;
+        --frame-border: #52525b;
         color-scheme: dark;
       }
     }
@@ -224,8 +302,12 @@ function renderShell(): string {
     }
     /* A fixed-height bar holds each side's top controls (tabs left, theme + view
        right) so the equal margin-top on the headers below lands them on the
-       same horizontal line regardless of the controls' own heights. */
-    .topbar { flex: none; height: 30px; display: flex; align-items: center; }
+       same horizontal line regardless of the controls' own heights. Every
+       interactive control inside a topbar shares --control-h and centers its
+       contents, so the tab pill, view trigger, and theme button line up to the
+       pixel top and bottom. */
+    :root { --control-h: 30px; }
+    .topbar { flex: none; height: var(--control-h); display: flex; align-items: center; }
     .sidebar--right .topbar { justify-content: flex-end; gap: 4px; }
     .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
     .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -279,17 +361,21 @@ function renderShell(): string {
     /* The chrome bar (browser dots + address pill) only shows in the browser
        view; mobile has no browser chrome. */
     .chrome { display: none; }
-    /* Browser view: a Safari-style window that fills the stage responsively, so
-       the preview never crops or overflows. The stage adds a small inset and the
-       window fills the rest. Borders only — no shadow. */
-    .stage.view-browser { padding: 22px; }
+    /* Browser view: a Safari-style window framed as a realistic 3:2 landscape
+       window, centered in the stage. aspect-ratio drives the shape; the max
+       constraints keep it inside the stage at any size, so it never crops,
+       overflows, or flips to portrait. A hard dark outline makes it stand off
+       the page. Borders only — no shadow. */
     .stage.view-browser .viewport {
-      width: 100%;
-      height: 100%;
+      width: auto;
+      height: auto;
+      aspect-ratio: 3 / 2;
+      max-width: calc(100% - 40px);
+      max-height: calc(100% - 40px);
       display: flex;
       flex-direction: column;
       background: var(--card);
-      border: 0.5px solid var(--accent);
+      border: 1.5px solid var(--frame-border);
       border-radius: 12px;
       overflow: hidden;
     }
@@ -330,14 +416,16 @@ function renderShell(): string {
     }
     .stage.view-browser .viewport iframe { flex: 1; height: auto; }
     /* Mobile view: a plain bordered viewport at a realistic phone size — no
-       device bezel, no status bar, no home indicator. The auth page's own mobile
-       CSS top-aligns the card. Borders only — no shadow. */
+       device bezel, no status bar, no home indicator. The same hard dark
+       outline as the browser frame makes the phone shape read clearly against
+       the page (a faint border vanished on the light-grey page). The auth
+       page's own mobile CSS top-aligns the card. Borders only — no shadow. */
     .stage.view-mobile .viewport {
       width: 390px;
       max-width: calc(100% - 24px);
-      height: min(844px, calc(100% - 24px));
+      height: min(780px, calc(100% - 24px));
       background: var(--page);
-      border: 0.5px solid var(--accent);
+      border: 1.5px solid var(--frame-border);
       border-radius: 12px;
       overflow: hidden;
     }
@@ -346,6 +434,7 @@ function renderShell(): string {
        selection, not a bordered segmented control. */
     .tabs {
       display: inline-flex;
+      align-items: center;
       gap: 2px;
       flex: none;
       margin: 0 0 0 4px;
@@ -360,7 +449,8 @@ function renderShell(): string {
     .tab > span {
       display: inline-flex;
       align-items: center;
-      padding: 5px 14px;
+      height: var(--control-h);
+      padding: 0 14px;
       border-radius: 7px;
       font-size: 13px;
       font-weight: 500;
@@ -368,10 +458,12 @@ function renderShell(): string {
     }
     .tab:hover > span { background: var(--hover); }
     .tab.active > span { background: var(--accent); color: var(--accent-fg); }
-    /* Theme control, top-right: three icon buttons, same accent-pill style. */
+    /* Theme control, top-right: an icon button, same accent-pill style. The
+       topbar centers it; no per-control vertical alignment so it shares the
+       view trigger's baseline exactly. */
     .theme {
       display: inline-flex;
-      align-self: flex-end;
+      align-items: center;
       flex: none;
       margin: 0 4px 0 0;
     }
@@ -379,9 +471,11 @@ function renderShell(): string {
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      height: var(--control-h);
+      width: var(--control-h);
       border: none;
       background: none;
-      padding: 6px;
+      padding: 0;
       border-radius: 7px;
       color: var(--muted);
       cursor: pointer;
@@ -397,9 +491,10 @@ function renderShell(): string {
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      height: var(--control-h);
       border: none;
       background: none;
-      padding: 5px 8px;
+      padding: 0 8px;
       border-radius: 7px;
       font: inherit;
       font-size: 13px;
