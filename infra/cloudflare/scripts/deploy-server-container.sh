@@ -119,6 +119,10 @@ if [[ "${SKIP_MIGRATE:-}" == "1" ]]; then
   echo "→ SKIP_MIGRATE=1 — skipping pre-deploy migration (operator asserts DB already migrated)"
 else
   "$SCRIPT_DIR/migrate-server-db.sh" "$ENV_NAME"
+  # Seed the fixed first-party OAuth clients after migrations (idempotent) so a
+  # DB reset self-heals on the next deploy — the browser apps use stable
+  # client_ids rather than per-browser DCR.
+  "$SCRIPT_DIR/seed-server-oauth-clients.sh" "$ENV_NAME"
 fi
 
 # Shared / derived.
