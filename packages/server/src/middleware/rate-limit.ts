@@ -136,9 +136,11 @@ export function rateLimitMiddleware(
     const path = c.req.path;
 
     let limit = config.defaultLimit;
+    let matchedPrefix: string | null = null;
     for (const [prefix, pathLimit] of Object.entries(config.pathLimits)) {
       if (path.startsWith(prefix)) {
         limit = pathLimit;
+        matchedPrefix = prefix;
         break;
       }
     }
@@ -148,7 +150,14 @@ export function rateLimitMiddleware(
       limit = config.defaultLimit * 2;
     }
 
-    const pathPrefix = path.split("/").slice(0, 2).join("/");
+    // Window key: when a specific path-limit matched, scope the per-credential
+    // window to that exact prefix so sibling endpoints under the same coarse
+    // group get independent buckets. Otherwise a storm on one auth endpoint
+    // (e.g. /auth/oauth2/token) would exhaust the shared `/auth` window and
+    // 429 every other auth endpoint (sign-up, /authorize) for that caller.
+    // The `all:<identifier>` aggregate window below still caps total spend, so
+    // finer per-path keys can't be used to multiply a caller's overall budget.
+    const pathPrefix = matchedPrefix ?? path.split("/").slice(0, 2).join("/");
     const credentialWindowKey = `${identifier}:${pathPrefix}`;
     const now = Date.now();
     const nowIso = new Date(now).toISOString();

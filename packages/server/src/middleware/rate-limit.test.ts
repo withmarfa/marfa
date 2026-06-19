@@ -357,3 +357,45 @@ describe("rate-limit aggregate per-identifier window", () => {
     expect(overflow.status).toBe(429);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-path window isolation under /auth — a storm on one auth endpoint must
+// not 429 a sibling. Pre-fix the window was keyed on the coarse `/auth`
+// prefix, so all /auth/* paths shared one counter and a /token storm pushed
+// the shared count past a sibling's (lower) cap, 429ing it.
+// ---------------------------------------------------------------------------
+
+describe("rate-limit per-path isolation under /auth", () => {
+  let isoCtx: Ctx;
+
+  beforeAll(async () => {
+    // Fresh context so the windows aren't pre-warmed by the suites above.
+    isoCtx = await buildCtx();
+  });
+
+  afterAll(async () => {
+    await isoCtx.cleanup();
+  });
+
+  it("a /auth/oauth2/token storm does not 429 /auth/oauth2/register", async () => {
+    // Storm /token 15x — comfortably under its own cap (60) so none 429 on
+    // their own window. Pre-fix this pushed the shared `/auth` counter to 15,
+    // past /register's cap (10); a subsequent /register would 429. Post-fix
+    // each matched path has an independent window, so /register is untouched.
+    for (let i = 0; i < 15; i++) {
+      const res = await isoCtx.app.request("/auth/oauth2/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code&code=bogus",
+      });
+      expect(res.status).not.toBe(429);
+    }
+
+    const register = await isoCtx.app.request("/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(register.status).not.toBe(429);
+  });
+});

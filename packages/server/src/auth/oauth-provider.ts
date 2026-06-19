@@ -23,7 +23,7 @@
  */
 
 import { oauthProvider } from "@better-auth/oauth-provider";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { createHmac } from "node:crypto";
 import {
   TYPE_REGISTRY,
@@ -412,34 +412,20 @@ export function buildOauthProjectionPlugin(opts: {
         ...(refreshHasher
           ? [
               {
-                // Refresh-replay defense: the plugin detects stale
-                // refresh tokens (rotation: old marked `revoked: true`,
-                // new issued; replay finds old → plugin deletes refresh
-                // chain + throws invalid_grant). The plugin does NOT
-                // delete access tokens from the same chain, leaving them
-                // valid until TTL (default 1h). We close that gap: on
-                // every /oauth2/token with grant_type=refresh_token, we
-                // hash the refresh token and peek at the row — if revoked,
-                // this is a replay and we pre-emptively delete access
-                // tokens for (clientId, userId). The plugin's own logic
-                // then runs (returning invalid_grant); access tokens gone.
-                //
-                // Best-effort — failures are logged, the 1h TTL still
-                // bounds exposure. Idempotent on repeat calls.
+                // Guards POST /auth/oauth2/token for the refresh_token grant:
+                //  (1) an UNKNOWN/orphaned refresh token gets a clean RFC 6749
+                //      `invalid_grant` (400) BEFORE the plugin can 500 on it —
+                //      a 500 is non-terminal to clients, so a stale token (e.g.
+                //      orphaned by a data reset) turns into a hard retry storm.
+                //  (2) a REVOKED (replayed) token: pre-emptively zap the chain's
+                //      access tokens (the plugin then returns invalid_grant),
+                //      closing the gap where they'd outlive the refresh chain.
+                //  Active tokens fall through to the plugin's rotation. The
+                //  invalid_grant throw MUST propagate (not be swallowed).
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-                handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
-                  try {
-                    await detectAndZapReplayedAccessTokens(
-                      ctx,
-                      storage,
-                      refreshHasher,
-                    );
-                  } catch (err) {
-                    log("warn", "oauth refresh-replay check failed", {
-                      error: err instanceof Error ? err.message : String(err),
-                    });
-                  }
-                }),
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  guardRefreshTokenGrant(ctx, storage, refreshHasher),
+                ),
               },
             ]
           : []),
@@ -449,65 +435,96 @@ export function buildOauthProjectionPlugin(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Refresh-replay before-hook handler
+// Refresh-token grant guard (before-hook)
 // ---------------------------------------------------------------------------
 
 /**
- * Refresh-replay before-hook. Runs before the plugin handles a
- * `/oauth2/token` request. If the request body is a
- * `grant_type=refresh_token` request AND the supplied refresh token
- * corresponds to a row marked `revoked: true`, this is a replay attempt
- * — the plugin is about to delete the refresh chain + throw
- * `invalid_grant`. We pre-emptively delete access tokens for the same
- * (clientId, userId) so a parallel request can't slip through with one.
+ * Before-hook for `/oauth2/token` with `grant_type=refresh_token`. One
+ * lookup of the refresh-token row drives two behaviours:
  *
- * Best-effort: if the hash lookup misses (refresh row already cleaned
- * up), we skip silently. If access-token deletion fails, we log and
- * continue. The 1h TTL on access tokens always bounds exposure.
+ *  1. **Unknown token → clean `invalid_grant` (400).** The
+ *     @better-auth/oauth-provider plugin 500s when handed a refresh token
+ *     with no matching row (e.g. orphaned by a data reset). A 500 is
+ *     non-terminal to most OAuth clients, so they retry hard and the storm
+ *     saturates the auth rate limit. We throw the RFC 6749 `invalid_grant`
+ *     instead — terminal, so a well-behaved client stops. The throw
+ *     propagates (it is NOT swallowed) to short-circuit the request.
  *
- * The consent, revoke, last_used_at, and end-session flows are all owned
- * by explicit Marfa-side handlers — adding after-hooks for those would
- * double-write or no-op. This shell exists only for the before-hook.
+ *  2. **Revoked (replayed) token → zap the chain's access tokens.** The
+ *     plugin marks the old refresh token `revoked` on rotation and returns
+ *     `invalid_grant` on replay, but leaves the chain's access tokens valid
+ *     until TTL. We pre-emptively delete them for (clientId, userId) so a
+ *     parallel request can't slip through with one. Best-effort.
+ *
+ * Active tokens fall through to the plugin's rotation. Any failure of the
+ * lookup itself fails open (logs, returns) so a transient DB blip never
+ * turns a legitimate refresh into a hard error.
  */
-async function detectAndZapReplayedAccessTokens(
+async function guardRefreshTokenGrant(
   ctx: HookCtxLite,
   storage: Storage,
   hasher: (token: string) => string,
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
-  const grantType = body.grant_type;
-  if (grantType !== "refresh_token") return;
+  if (body.grant_type !== "refresh_token") return;
   const refreshTokenRaw = body.refresh_token;
   if (typeof refreshTokenRaw !== "string" || refreshTokenRaw.length === 0)
     return;
+  if (typeof storage.oauthProvider?.findRefreshTokenGrantKey !== "function")
+    return;
 
   // The plugin strips the `prefix.refreshToken` (`marfa_rt_`) BEFORE
-  // calling our hasher (verified `index.mjs:394`) — same shape as the
-  // access-token side. To match the stored hash, strip here too.
+  // calling our hasher (verified `index.mjs:394`). Strip here too so the
+  // hash matches the stored value.
   const REFRESH_PREFIX = "marfa_rt_";
   const bare = refreshTokenRaw.startsWith(REFRESH_PREFIX)
     ? refreshTokenRaw.slice(REFRESH_PREFIX.length)
     : refreshTokenRaw;
-  const tokenHash = hasher(bare);
-  if (typeof storage.oauthProvider?.findRefreshTokenGrantKey !== "function") {
+
+  let row: Awaited<
+    ReturnType<
+      NonNullable<Storage["oauthProvider"]>["findRefreshTokenGrantKey"]
+    >
+  >;
+  try {
+    row = await storage.oauthProvider.findRefreshTokenGrantKey(hasher(bare));
+  } catch (err) {
+    // Fail open to the plugin — never 500 a legitimate refresh on a blip.
+    log("warn", "oauth refresh-token precheck failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return;
   }
-  const row = await storage.oauthProvider.findRefreshTokenGrantKey(tokenHash);
-  if (!row) return;
-  if (!row.revoked) return;
 
-  // Confirmed replay. Zap access tokens for this grant chain so they
-  // can't outlive the now-poisoned refresh chain. Idempotent — re-runs
-  // on burst replays harmlessly hit zero rows.
-  if (typeof storage.oauthProvider.revokeAccessTokensForGrant === "function") {
-    await storage.oauthProvider.revokeAccessTokensForGrant(
-      row.clientId,
-      row.userId,
-    );
+  if (!row) {
+    // Unknown token — terminal, spec-correct rejection (prevents the
+    // plugin 500ing and the resulting client retry storm).
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_grant",
+      error_description: "The refresh token is invalid, expired, or revoked.",
+    });
   }
-  log("info", "oauth refresh-replay: revoked access tokens for grant", {
-    client_id: row.clientId,
-    user_id: row.userId,
-  });
+  if (!row.revoked) return; // active — let the plugin rotate
+
+  // Confirmed replay. Zap access tokens for this grant chain so they can't
+  // outlive the now-poisoned refresh chain. Best-effort + idempotent.
+  try {
+    if (
+      typeof storage.oauthProvider.revokeAccessTokensForGrant === "function"
+    ) {
+      await storage.oauthProvider.revokeAccessTokensForGrant(
+        row.clientId,
+        row.userId,
+      );
+      log("info", "oauth refresh-replay: revoked access tokens for grant", {
+        client_id: row.clientId,
+        user_id: row.userId,
+      });
+    }
+  } catch (err) {
+    log("warn", "oauth refresh-replay zap failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
