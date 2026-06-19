@@ -61,14 +61,25 @@ function parseTheme(raw: string | undefined): PreviewTheme {
  * `prefers-color-scheme` block, so leaving the attribute off lets the OS
  * setting drive the page exactly as it would in production.
  */
-function decorate(html: string, theme: PreviewTheme): string {
-  const themed =
+function decorate(html: string, theme: PreviewTheme, isEmail: boolean): string {
+  let out =
     theme === "system"
       ? html
       : html.replace(
           /<html lang="en">/,
           `<html lang="en" data-theme="${theme}">`,
         );
+  // Emails render top-aligned (correct in a real inbox). In the preview we want
+  // them centered vertically like the auth pages, with less canvas top padding.
+  if (isEmail) {
+    const center =
+      "<style>html{height:100%}" +
+      "body.m-canvas{min-height:100vh;display:flex;flex-direction:column;justify-content:center}" +
+      "table.m-canvas{padding-top:16px !important;padding-bottom:16px !important}</style>";
+    out = out.includes("</head>")
+      ? out.replace("</head>", `${center}</head>`)
+      : center + out;
+  }
   const interceptor = `
 <script>
   // Preview-only: stop POST navigations so the submitting state is visible.
@@ -79,9 +90,9 @@ function decorate(html: string, theme: PreviewTheme): string {
   }, true);
 </script>
 `;
-  return themed.includes("</body>")
-    ? themed.replace("</body>", `${interceptor}</body>`)
-    : themed + interceptor;
+  return out.includes("</body>")
+    ? out.replace("</body>", `${interceptor}</body>`)
+    : out + interceptor;
 }
 
 app.get("/preview", (c) => {
@@ -96,7 +107,8 @@ app.get("/preview", (c) => {
       404,
     );
   }
-  return c.html(decorate(resolved.variant.render(), theme));
+  const isEmail = tab === "email";
+  return c.html(decorate(resolved.variant.render(), theme, isEmail));
 });
 
 app.get("/", (c) => c.html(renderShell()));
@@ -199,17 +211,22 @@ function renderShell(): string {
       flex-direction: column;
       min-height: 0;
       overflow: hidden;
+      padding: 12px 14px 0;
     }
+    .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
+    .nav-header__title { font-size: 12px; font-weight: 600; color: var(--fg); }
+    .sidebar--right .nav-header { text-align: right; }
     .nav {
       flex: 1;
       overflow-y: auto;
-      padding: 120px 14px;
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 120px, #000 calc(100% - 120px), transparent 100%);
-      mask-image: linear-gradient(to bottom, transparent 0, #000 120px, #000 calc(100% - 120px), transparent 100%);
+      padding: 6px 0 90px;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 90px), transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 90px), transparent 100%);
       scrollbar-width: none;
     }
     .nav::-webkit-scrollbar { display: none; }
     .nav--right { text-align: right; }
+    .nav--right .nav-item > span { font-weight: 400; }
     .nav-list { list-style: none; margin: 0; padding: 0; }
     /* Full-width click target, but the pill hugs the label (shadcn w-fit). */
     .nav-item {
@@ -240,13 +257,10 @@ function renderShell(): string {
     /* Top-center tab control: same no-border accent-pill style as the sidebar
        selection, not a bordered segmented control. */
     .tabs {
-      position: absolute;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 5;
       display: inline-flex;
       gap: 2px;
+      flex: none;
+      margin: 0 0 0 4px;
     }
     .tab {
       border: none;
@@ -268,12 +282,10 @@ function renderShell(): string {
     .tab.active > span { background: var(--accent); color: var(--accent-fg); }
     /* Theme control, top-right: three icon buttons, same accent-pill style. */
     .theme {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      z-index: 5;
       display: inline-flex;
-      gap: 2px;
+      align-self: flex-end;
+      flex: none;
+      margin: 0 4px 0 0;
     }
     .theme button {
       display: inline-flex;
@@ -292,19 +304,23 @@ function renderShell(): string {
   </style>
 </head>
 <body>
-  <nav class="sidebar">
+  <nav class="sidebar sidebar--left">
+    <div class="tabs" role="group" aria-label="Section">${tabControl}</div>
+    <div class="nav-header">
+      <div class="nav-header__title">Screen</div>
+    </div>
     <div class="nav"><ul class="nav-list" id="screens"></ul></div>
   </nav>
   <main class="stage">
-    <div class="tabs" role="group" aria-label="Section">${tabControl}</div>
-    <div class="theme" role="group" aria-label="Theme">
-      <button id="theme-light" type="button" title="Light" aria-label="Light">${SUN}</button>
-      <button id="theme-system" type="button" title="System" aria-label="System">${MONITOR}</button>
-      <button id="theme-dark" type="button" title="Dark" aria-label="Dark">${MOON}</button>
-    </div>
     <iframe id="preview" title="Preview"></iframe>
   </main>
-  <nav class="sidebar">
+  <nav class="sidebar sidebar--right">
+    <div class="theme">
+      <button id="theme-cycle" type="button" aria-label="Toggle theme">${MONITOR}</button>
+    </div>
+    <div class="nav-header">
+      <div class="nav-header__title">State</div>
+    </div>
     <div class="nav nav--right"><ul class="nav-list" id="states"></ul></div>
   </nav>
   <script>
@@ -321,10 +337,12 @@ function renderShell(): string {
       var frame = document.getElementById('preview');
       var screensList = document.getElementById('screens');
       var statesList = document.getElementById('states');
-      var themeBtns = {
-        light: document.getElementById('theme-light'),
-        system: document.getElementById('theme-system'),
-        dark: document.getElementById('theme-dark'),
+      var themeCycleBtn = document.getElementById('theme-cycle');
+      var THEME_ORDER = ['light', 'system', 'dark'];
+      var THEME_ICONS = {
+        light: ${JSON.stringify(SUN)},
+        system: ${JSON.stringify(MONITOR)},
+        dark: ${JSON.stringify(MOON)},
       };
 
       function currentTab() {
@@ -373,11 +391,11 @@ function renderShell(): string {
         if (stateBtn) stateBtn.classList.add('active');
         var tabBtn = document.querySelector('.tab[data-tab="' + state.tab + '"]');
         if (tabBtn) tabBtn.classList.add('active');
-        for (var key in themeBtns) {
-          if (themeBtns.hasOwnProperty(key)) {
-            themeBtns[key].classList.toggle('active', state.theme === key);
-          }
-        }
+        themeCycleBtn.innerHTML = THEME_ICONS[state.theme];
+        themeCycleBtn.title =
+          state.theme === 'system' ? 'System appearance'
+          : state.theme === 'dark' ? 'Dark'
+          : 'Light';
       }
 
       function applyShellTheme() {
@@ -434,13 +452,12 @@ function renderShell(): string {
         var btn = e.target.closest('.nav-item');
         if (btn) selectVariant(btn.getAttribute('data-variant'));
       });
-      Object.keys(themeBtns).forEach(function (key) {
-        themeBtns[key].addEventListener('click', function () {
-          state.theme = key;
-          applyShellTheme();
-          markActive();
-          loadPreview();
-        });
+      themeCycleBtn.addEventListener('click', function () {
+        var i = THEME_ORDER.indexOf(state.theme);
+        state.theme = THEME_ORDER[(i + 1) % THEME_ORDER.length];
+        applyShellTheme();
+        markActive();
+        loadPreview();
       });
 
       refresh({ rebuildScreens: true });

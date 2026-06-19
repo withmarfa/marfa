@@ -112,16 +112,6 @@ const AUTH_SCREENS: GalleryScreen[] = [
           }),
       },
       {
-        id: "password-oidc",
-        label: "Password + federated",
-        render: () =>
-          renderSignInPage({
-            returnTo: RETURN_TO,
-            allowSignup: true,
-            oidcProviderIds: ["google", "github"],
-          }),
-      },
-      {
         id: "magic",
         label: "One-time link",
         render: () =>
