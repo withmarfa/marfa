@@ -41,17 +41,57 @@ describe("renderSignInPage", () => {
       oidcProviderIds: [],
     });
     expect(html).toContain('<form method="POST" action="/auth/sign-in"');
-    // Default view submits mode=password; the one-time-email path is a GET form
-    // to its own screen, distinguished by button text from the magic submit.
+    // Default view submits mode=password; the one-time-link path is a GET form
+    // in the alternatives row, distinguished by button text from the magic
+    // submit.
     expect(html).toContain('name="mode" value="password"');
     expect(html).toContain('<form method="GET" action="/auth/sign-in">');
-    expect(html).toContain("Email me a one-time link");
+    expect(html).toContain(">One-time link</button>");
     expect(html).not.toContain("Email me a sign-in link");
     expect(html).toContain(
       '<input type="hidden" name="return_to" value="/auth/authorize?client_id=abc">',
     );
     expect(html).toContain('name="email"');
     expect(html).toContain('name="password"');
+  });
+
+  it("structures the password form with fields in .form and the button in .actions", () => {
+    const html = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    // The primary button lives in an .actions block inside the form (uniform
+    // with sign-up), so it renders full width below the fields.
+    expect(html).toMatch(
+      /<div class="actions">\s*<button type="submit" name="mode" value="password" class="btn btn--primary"/,
+    );
+    expect(html).toContain('data-loading-label="Signing in..."');
+  });
+
+  it("renders the 'Or continue with' separator and the two-button alternatives row", () => {
+    const html = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).toContain('<div class="separator">Or continue with</div>');
+    expect(html).toContain('<div class="alts">');
+    // One-time link + the (hidden) passkey button both live in the row.
+    expect(html).toContain(">One-time link</button>");
+    expect(html).toContain('id="passkey-signin"');
+    expect(html).toContain(">Passkey</button>");
+  });
+
+  it("includes the submit-state script on the password view", () => {
+    const html = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).toContain(
+      '<script src="/auth/static/submit-state.js"></script>',
+    );
   });
 
   it("escapes HTML in returnTo to prevent template injection", () => {
@@ -92,7 +132,7 @@ describe("renderSignInPage", () => {
     });
     // Password view: a GET form to the one-time-email screen, not an inline
     // submit. Distinguished from the magic view by the button text.
-    expect(passwordView).toContain("Email me a one-time link");
+    expect(passwordView).toContain(">One-time link</button>");
     expect(passwordView).toContain(
       '<form method="GET" action="/auth/sign-in">',
     );
@@ -160,7 +200,7 @@ describe("renderSignInPage", () => {
     // don't assert their absence here.
   });
 
-  it("renders an error banner with role=alert when error is set", () => {
+  it("renders invalid_credentials as an inline form-level error, not a top banner", () => {
     const html = renderSignInPage({
       mode: "password",
       returnTo: "/",
@@ -168,12 +208,17 @@ describe("renderSignInPage", () => {
       allowSignup: false,
       oidcProviderIds: [],
     });
-    expect(html).toContain('class="banner banner--error"');
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("That email or password is wrong");
+    // The credential error spans email + password, so it renders as an inline
+    // .form__error line above the actions, never the boxed top banner. (The
+    // always-present hidden passkey-error div is a banner, so we assert the
+    // credential copy itself isn't inside a banner rather than that no banner
+    // class exists at all.)
+    expect(html).toContain(
+      'class="form__error" role="alert">That email or password is wrong',
+    );
   });
 
-  it("falls back to a generic message for unknown error codes", () => {
+  it("falls back to a generic message for unknown error codes (top banner on password view)", () => {
     const html = renderSignInPage({
       mode: "password",
       returnTo: "/",
@@ -181,8 +226,24 @@ describe("renderSignInPage", () => {
       allowSignup: false,
       oidcProviderIds: [],
     });
+    // A non-credential, non-field error still renders as the top banner.
+    expect(html).toContain('class="banner banner--error"');
     expect(html).toContain('role="alert"');
     expect(html).toContain("Something went wrong");
+  });
+
+  it("renders a magic-view error under the email field, not a top banner", () => {
+    const html = renderSignInPage({
+      mode: "magic",
+      returnTo: "/",
+      error: "magic_send_failed",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).toContain('class="field field--error"');
+    expect(html).toContain('class="field__error"');
+    expect(html).toContain("couldn&#39;t send the sign-in link");
+    expect(html).not.toContain('class="banner banner--error"');
   });
 
   it("renders a dedicated 'Check your email' screen when magicLinkSent", () => {

@@ -48,14 +48,18 @@ describe("renderForgotPasswordPage", () => {
     expect(html).toContain("If an account exists");
   });
 
-  it("error state with rate_limited renders the friendly throttle message", () => {
+  it("error state with rate_limited renders the throttle message under the email field", () => {
     const html = renderForgotPasswordPage({
       state: "error",
       errorCode: "rate_limited",
     });
-    expect(html).toContain('class="banner banner--error"');
+    // Single-field form, so the error renders inline at the field, not a top
+    // banner.
+    expect(html).toContain('class="field field--error"');
+    expect(html).toContain('class="field__error"');
     expect(html).toContain('role="alert"');
     expect(html).toContain("Too many reset requests");
+    expect(html).not.toContain('class="banner banner--error"');
   });
 
   it("error state with email_not_configured renders the operator-error message", () => {
