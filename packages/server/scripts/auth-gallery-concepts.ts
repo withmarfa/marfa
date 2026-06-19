@@ -281,3 +281,123 @@ export function renderStepperConcept(variant: ConceptVariant): string {
   const body = `<main class="card" aria-label="Create your Marfa account">${card}</main>`;
   return conceptDoc("Create your Marfa account", style, body);
 }
+
+const KEY_ICON = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;
+const CHECK = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+
+/**
+ * Variants for the "Add a passkey" screen, which felt spaced-out with its
+ * "Signed in as" line sitting tight under the description. v1 centers it with a
+ * key icon and gives the meta line its own room; v2 spells out the methods as
+ * airy check rows.
+ */
+export function renderPasskeyConcept(variant: "v1" | "v2"): string {
+  if (variant === "v1") {
+    const body = `<main class="card card--confirm" aria-label="Add a passkey">
+      <div class="confirm-icon">${KEY_ICON}</div>
+      <h1 class="title">Add a passkey</h1>
+      <p class="sub">Sign in faster with Face ID, Touch ID, Windows Hello, or a security key.</p>
+      <div class="actions">
+        <button type="button" class="btn btn--primary">Add a passkey</button>
+      </div>
+      <p class="aux">Signed in as <strong>jonah@example.com</strong></p>
+      <p class="aux"><a href="#">Back to security</a></p>
+    </main>`;
+    return conceptDoc("Add a passkey", "", body);
+  }
+  const methods = [
+    "Face ID or Touch ID",
+    "Windows Hello",
+    "A hardware security key",
+  ]
+    .map((m) => `<div class="crow">${CHECK}<span>${m}</span></div>`)
+    .join("");
+  const body = `<main class="card" aria-label="Add a passkey">
+    <h1 class="title">Add a passkey</h1>
+    <p class="sub">A passkey lets you sign in without a password — it stays on your device.</p>
+    <p class="sub">Signed in as <strong>jonah@example.com</strong>.</p>
+    <div style="margin:18px 0 2px">${methods}</div>
+    <div class="actions">
+      <button type="button" class="btn btn--primary">Add a passkey</button>
+    </div>
+    <p class="aux"><a href="#">Back to security</a></p>
+  </main>`;
+  return conceptDoc("Add a passkey", "", body);
+}
+
+/**
+ * Fresh ideas for the OAuth consent screen (with the unverified-app caution).
+ * v1 leads with an app-identity header and shows permissions as a read-only
+ * checklist; v2 keeps the editable toggles but as plain grouped rows rather
+ * than collapsible soft tiles.
+ */
+export function renderConsentConcept(variant: "v1" | "v2"): string {
+  const caution = `<div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>`;
+  const actions = `<div class="actions">
+      <button type="button" class="btn btn--primary">Allow access</button>
+      <button type="button" class="btn btn--ghost">Deny</button>
+    </div>`;
+
+  if (variant === "v1") {
+    const style = `.apphead{display:flex;gap:13px;align-items:center;margin:2px 0 16px}
+      .applogo{width:46px;height:46px;border-radius:13px;background:var(--tile);display:grid;
+        place-items:center;font-size:20px;font-weight:600;color:var(--fg);flex:none}
+      .appname{font-size:17px;font-weight:600;letter-spacing:-0.01em}
+      .appname small{display:block;font-size:13px;font-weight:400;color:var(--fg-muted);margin-top:2px}
+      .perm{display:flex;gap:11px;align-items:flex-start;padding:9px 0}
+      .perm svg{flex:none;margin-top:2px;color:var(--fg)}
+      .perm b{font-size:14px;font-weight:500;color:var(--fg)}
+      .perm span{display:block;font-size:13px;color:var(--fg-muted);margin-top:1px}`;
+    const perms = (
+      [
+        ["Read your content", "Notes, tasks, bookmarks, and more."],
+        ["Write your content", "Add, edit, and organize what's in your space."],
+        ["Your profile", "Your name and email."],
+      ] as [string, string][]
+    )
+      .map(
+        ([t, d]) =>
+          `<div class="perm">${CHECK}<div><b>${t}</b><span>${d}</span></div></div>`,
+      )
+      .join("");
+    const body = `<main class="card" aria-label="Allow access">
+      <div class="apphead">
+        <div class="applogo">R</div>
+        <div class="appname">Raycast<small>wants to access your space</small></div>
+      </div>
+      ${caution}
+      <div>${perms}</div>
+      ${actions}
+      <p class="aux">You can change this anytime in settings.</p>
+    </main>`;
+    return conceptDoc("Allow access", style, body);
+  }
+
+  const style = `.grow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0}
+    .grow + .grow{border-top:1px solid var(--hairline)}
+    .grow b{font-size:14px;font-weight:500}
+    .grow small{display:block;font-size:12.5px;color:var(--fg-muted);font-weight:400;margin-top:1px}
+    .gsec{margin:18px 0 2px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--fg-faint)}`;
+  const sw = `<label class="sw"><input type="checkbox" checked><span class="tk"></span></label>`;
+  const section = (title: string, rows: [string, string][]): string =>
+    `<p class="gsec">${title}</p>` +
+    rows
+      .map(
+        ([t, d]) =>
+          `<div class="grow"><div><b>${t}</b><small>${d}</small></div>${sw}</div>`,
+      )
+      .join("");
+  const body = `<main class="card" aria-label="Allow access">
+    <h1 class="title">Allow access</h1>
+    <p class="sub"><b>Raycast</b> wants to access your space.</p>
+    ${caution}
+    ${section("Read", [
+      ["Notes", "Your notes"],
+      ["Tasks", "Your tasks and to-dos"],
+    ])}
+    ${section("Write", [["Notes & tasks", "Add and edit your content"]])}
+    ${section("Profile", [["Your profile", "Name and email"]])}
+    ${actions}
+  </main>`;
+  return conceptDoc("Allow access", style, body);
+}

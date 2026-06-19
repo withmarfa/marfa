@@ -38,6 +38,8 @@ import {
   renderAuthSplit,
   renderCheckEmail,
   renderStepperConcept,
+  renderPasskeyConcept,
+  renderConsentConcept,
 } from "./auth-gallery-concepts.js";
 
 export interface GalleryVariant {
@@ -367,6 +369,18 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "consent",
     label: "OAuth consent",
+    designVariants: [
+      {
+        id: "v1",
+        label: "v1 · App header + checklist",
+        render: () => renderConsentConcept("v1"),
+      },
+      {
+        id: "v2",
+        label: "v2 · Plain grouped rows",
+        render: () => renderConsentConcept("v2"),
+      },
+    ],
     variants: [
       {
         id: "first-time",
@@ -433,6 +447,18 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "passkey-enroll",
     label: "Passkey enroll",
+    designVariants: [
+      {
+        id: "v1",
+        label: "v1 · Centered + icon",
+        render: () => renderPasskeyConcept("v1"),
+      },
+      {
+        id: "v2",
+        label: "v2 · Method rows",
+        render: () => renderPasskeyConcept("v2"),
+      },
+    ],
     variants: [
       {
         id: "default",
@@ -537,6 +563,24 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 source: "script",
                 created_at: "2026-03-01T10:00:00.000Z",
                 last_used_at: null,
+              },
+            ],
+          }),
+      },
+      {
+        id: "create",
+        label: "Create key",
+        render: () =>
+          renderKeysPage({
+            email: "jonah@example.com",
+            forceCreate: true,
+            keys: [
+              {
+                id: "key-1",
+                label: "Personal laptop",
+                source: "cli",
+                created_at: "2026-05-10T10:00:00.000Z",
+                last_used_at: "2026-06-18T09:00:00.000Z",
               },
             ],
           }),
