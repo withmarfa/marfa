@@ -14,7 +14,7 @@
 
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -183,9 +183,10 @@ export function renderDeviceDecisionPage(params: DeviceDecisionParams): string {
     : "Your other device won't be granted access. You can close this window.";
 
   const bodyHtml = `
+    ${confirmIcon(params.approved ? "check" : "alert")}
     <h1 class="title">${escapeHtml(heading)}</h1>
     <p class="sub" role="status">${escapeHtml(sub)}</p>
   `;
 
-  return renderAuthLayout({ title: heading, bodyHtml });
+  return renderAuthLayout({ title: heading, bodyHtml, centered: true });
 }
