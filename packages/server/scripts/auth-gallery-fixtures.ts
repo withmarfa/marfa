@@ -24,6 +24,7 @@ import { renderConsentScreen } from "../src/routes/consent.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
+  renderDeviceDecisionPage,
 } from "../src/routes/device-pages.js";
 import { renderPasskeyEnrollPage } from "../src/routes/passkey-enroll-page.js";
 import { renderSecurityPage } from "../src/routes/security-page.js";
@@ -40,6 +41,8 @@ import {
   renderStepperConcept,
   renderPasskeyConcept,
   renderConsentConcept,
+  renderAuthHero,
+  renderDeviceConcept,
 } from "./auth-gallery-concepts.js";
 
 export interface GalleryVariant {
@@ -146,13 +149,18 @@ const SIGN_UP_DESIGN_VARIANTS: GalleryVariant[] = [
     render: () => renderAuthSplit("gloss"),
   },
   {
+    id: "hero",
+    label: "v4 · Full-bleed gradient",
+    render: () => renderAuthHero(),
+  },
+  {
     id: "stepper-thin",
-    label: "v4 · Stepper · thin",
+    label: "v5 · Stepper · thin",
     render: () => renderStepperConcept("v2"),
   },
   {
     id: "stepper-caption",
-    label: "v5 · Stepper · caption",
+    label: "v6 · Stepper · caption",
     render: () => renderStepperConcept("v3"),
   },
 ];
@@ -380,6 +388,11 @@ const AUTH_SCREENS: GalleryScreen[] = [
         label: "v2 · Plain grouped rows",
         render: () => renderConsentConcept("v2"),
       },
+      {
+        id: "v3",
+        label: "v3 · Compact + disclosure",
+        render: () => renderConsentConcept("v3"),
+      },
     ],
     variants: [
       {
@@ -416,6 +429,13 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "device",
     label: "Device flow",
+    designVariants: [
+      {
+        id: "v1",
+        label: "v1 · Segmented code",
+        render: () => renderDeviceConcept(),
+      },
+    ],
     variants: [
       {
         id: "verify",
@@ -441,6 +461,16 @@ const AUTH_SCREENS: GalleryScreen[] = [
               "core.task": "Your tasks",
             },
           }),
+      },
+      {
+        id: "approved",
+        label: "Approved",
+        render: () => renderDeviceDecisionPage({ approved: true }),
+      },
+      {
+        id: "denied",
+        label: "Denied",
+        render: () => renderDeviceDecisionPage({ approved: false }),
       },
     ],
   },

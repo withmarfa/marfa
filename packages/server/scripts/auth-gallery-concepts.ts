@@ -329,9 +329,10 @@ export function renderPasskeyConcept(variant: "v1" | "v2"): string {
  * Fresh ideas for the OAuth consent screen (with the unverified-app caution).
  * v1 leads with an app-identity header and shows permissions as a read-only
  * checklist; v2 keeps the editable toggles but as plain grouped rows rather
- * than collapsible soft tiles.
+ * than collapsible soft tiles; v3 is a compact one-line summary that hides the
+ * detail behind a disclosure.
  */
-export function renderConsentConcept(variant: "v1" | "v2"): string {
+export function renderConsentConcept(variant: "v1" | "v2" | "v3"): string {
   const caution = `<div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>`;
   const actions = `<div class="actions">
       <button type="button" class="btn btn--primary">Allow access</button>
@@ -373,6 +374,37 @@ export function renderConsentConcept(variant: "v1" | "v2"): string {
     return conceptDoc("Allow access", style, body);
   }
 
+  if (variant === "v3") {
+    const style = `.applogo{width:46px;height:46px;border-radius:13px;background:var(--tile);display:grid;
+        place-items:center;font-size:20px;font-weight:600;color:var(--fg);flex:none;margin:2px auto 16px}
+      .summary{font-size:14px;line-height:1.55;color:var(--fg-muted);max-width:34ch;margin:0 auto 4px}
+      details.disc{margin:14px 0 2px;text-align:left}
+      details.disc>summary{list-style:none;cursor:pointer;font-size:13px;font-weight:500;color:var(--fg-muted);
+        text-align:center;padding:8px}
+      details.disc>summary::-webkit-details-marker{display:none}
+      .drow{display:flex;gap:10px;align-items:flex-start;padding:7px 0}
+      .drow svg{flex:none;margin-top:2px;color:var(--fg)}
+      .drow span{font-size:13.5px;color:var(--fg)}`;
+    const detail = (
+      [
+        "Read your content",
+        "Write your content",
+        "Your name and email",
+      ] as string[]
+    )
+      .map((t) => `<div class="drow">${CHECK}<span>${t}</span></div>`)
+      .join("");
+    const body = `<main class="card card--confirm" aria-label="Allow access">
+      <div class="applogo">R</div>
+      <h1 class="title">Allow Raycast?</h1>
+      <p class="summary">It wants to read and write your content, and see your name and email.</p>
+      ${caution}
+      <details class="disc"><summary>What it can access</summary>${detail}</details>
+      ${actions}
+    </main>`;
+    return conceptDoc("Allow access", style, body);
+  }
+
   const style = `.grow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0}
     .grow + .grow{border-top:1px solid var(--hairline)}
     .grow b{font-size:14px;font-weight:500}
@@ -400,4 +432,91 @@ export function renderConsentConcept(variant: "v1" | "v2"): string {
     ${actions}
   </main>`;
   return conceptDoc("Allow access", style, body);
+}
+
+/**
+ * A different take on the gradient sign-up: instead of a 50/50 split, the warm
+ * gradient fills the whole page and a white card floats on top, with the
+ * wordmark in the corner. Dimmed in dark mode like the split.
+ */
+export function renderAuthHero(): string {
+  const style = `
+    body {
+      margin: 0; min-height: 100vh; padding: 24px;
+      display: grid; place-items: center;
+      background:
+        radial-gradient(60% 50% at 50% 112%, #ffbe8a 0%, rgba(255,190,138,0) 60%),
+        radial-gradient(72% 60% at 82% 92%, #ffaccf 0%, rgba(255,172,207,0) 55%),
+        radial-gradient(72% 60% at 18% 68%, #b6ccff 0%, rgba(182,204,255,0) 55%),
+        linear-gradient(158deg, #f7f2ec 0%, #efeaf2 38%, #f7d9d1 74%, #ffdab4 100%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) body::before {
+        content: ""; position: fixed; inset: 0; background: rgba(8, 8, 10, 0.5); pointer-events: none;
+      }
+    }
+    :root[data-theme="dark"] body::before {
+      content: ""; position: fixed; inset: 0; background: rgba(8, 8, 10, 0.5); pointer-events: none;
+    }
+    .hero-mark {
+      position: fixed; top: 26px; left: 30px; z-index: 2;
+      font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: #3f3f46;
+    }
+    .hero-card {
+      position: relative; z-index: 1;
+      width: min(400px, calc(100% - 32px));
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--r-card); padding: 28px;
+      box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05), 0 20px 60px rgba(40, 20, 35, 0.18);
+    }
+  `;
+  const inner = `
+    <h1 class="title">Create your Marfa account</h1>
+    <p class="sub">Start your space in seconds.</p>
+    <form class="form" novalidate onsubmit="return false">
+      <label class="field"><span class="field__label">Email</span>
+        <input type="email" autocomplete="email"></label>
+      <label class="field"><span class="field__label">Password</span>
+        <input type="password" autocomplete="new-password"></label>
+      <div class="actions"><button type="submit" class="btn btn--primary">Sign up</button></div>
+    </form>
+    <p class="aux">Already have an account? <a href="#">Sign in</a></p>
+  `;
+  const body = `<span class="hero-mark">Marfa</span>
+  <main class="hero-card">${inner}</main>
+  <script src="/auth/static/password-toggle.js"></script>
+  <script src="/auth/static/submit-state.js"></script>`;
+  return conceptDoc("Create your Marfa account", style, body);
+}
+
+/**
+ * A fresh take on the device "enter code" screen: the code reads as individual
+ * segmented cells rather than one monospace field.
+ */
+export function renderDeviceConcept(): string {
+  const style = `
+    .codegrid { display: flex; gap: 8px; justify-content: center; margin: 8px 0 2px; }
+    .codegrid .cell {
+      width: 44px; height: 56px; border: 1px solid var(--border); border-radius: 12px;
+      display: grid; place-items: center; background: var(--card);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 24px; font-weight: 600; color: var(--fg);
+    }
+    .codegrid .cell.filled { border-color: var(--fg); }
+    .codegrid .dash { align-self: center; color: var(--fg-faint); font-size: 20px; }
+  `;
+  const cells = "BDRF7H2K"
+    .split("")
+    .map(
+      (c, i) =>
+        `${i === 4 ? '<span class="dash">–</span>' : ""}<div class="cell filled">${c}</div>`,
+    )
+    .join("");
+  const body = `<main class="card card--confirm" aria-label="Sign in on your device">
+    <h1 class="title">Enter the code</h1>
+    <p class="sub">Type the code shown on your other device.</p>
+    <div class="codegrid">${cells}</div>
+    <div class="actions"><button type="button" class="btn btn--primary">Continue</button></div>
+  </main>`;
+  return conceptDoc("Sign in on your device", style, body);
 }
