@@ -114,6 +114,20 @@ export class MarfaServerContainer extends Container<Env> {
     S3_SECRET_ACCESS_KEY: cfEnv.S3_SECRET_ACCESS_KEY,
     OTEL_EXPORTER_OTLP_HEADERS: cfEnv.OTEL_EXPORTER_OTLP_HEADERS,
   });
+
+  /**
+   * A scale-to-zero wake can receive its first proxy request before Node has
+   * opened the HTTP port. Wait for the declared port rather than exposing
+   * Cloudflare's transient "container is not listening" response to clients.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    await this.startAndWaitForPorts();
+    return this.containerFetch(request);
+  }
+
+  override onError(error: unknown): void {
+    console.error("Marfa server container failed", error);
+  }
 }
 
 export default {
