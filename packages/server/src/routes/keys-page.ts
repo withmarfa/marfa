@@ -199,7 +199,8 @@ export function renderKeysPage(params: KeysPageParams): string {
           <span class="field__hint">Name it so you can recognize it later.</span>
         </label>
         <div>
-          <p class="lsec" style="margin-top:2px">What can this key do?</p>
+          <p class="lsec" style="margin-top:2px">What content can this key reach?</p>
+          <p class="field__hint" style="margin:0 0 10px">A key acts on your behalf over the content you pick. Your profile and account stay private.</p>
           <div class="t-soft">
             ${permissionGroup("read", "Read your content", "Your notes, tasks, bookmarks, and more.", "read")}
             ${permissionGroup("write", "Write your content", "Add, edit, and organize what's in your space.", "write")}

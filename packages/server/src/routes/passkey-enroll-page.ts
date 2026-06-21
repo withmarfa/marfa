@@ -50,9 +50,9 @@ export function renderPasskeyEnrollPage(
   if (methods) {
     var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
     if (/mac|iphone|ipad|ipod/i.test(ua)) {
-      methods.textContent = 'Sign in faster with Touch ID, Face ID, or a security key.';
+      methods.textContent = 'Use Touch ID or Face ID to sign in faster.';
     } else if (/win/i.test(ua)) {
-      methods.textContent = 'Sign in faster with Windows Hello or a security key.';
+      methods.textContent = 'Use Windows Hello to sign in faster.';
     }
   }
 
@@ -84,7 +84,7 @@ export function renderPasskeyEnrollPage(
   const bodyHtml = `
     <div class="confirm-icon">${KEY_ICON}</div>
     <h1 class="title">Add a passkey</h1>
-    <p class="sub" data-passkey-methods>Sign in faster with your fingerprint, face, or a security key.</p>
+    <p class="sub" data-passkey-methods>Use your device or a security key to sign in faster.</p>
 
     <div id="passkey-success" class="banner banner--success" role="status" hidden>
       Passkey added. You can sign in with it next time.
@@ -92,7 +92,7 @@ export function renderPasskeyEnrollPage(
     <div id="passkey-error" class="banner banner--error" role="alert" hidden></div>
 
     <div class="actions">
-      <button id="passkey-button" type="button" class="btn btn--primary">Add a passkey</button>
+      <button id="passkey-button" type="button" class="btn btn--primary">Create passkey</button>
     </div>
 
     <p id="passkey-unsupported" class="aux" hidden>
