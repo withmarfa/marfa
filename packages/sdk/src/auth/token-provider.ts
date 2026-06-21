@@ -6,6 +6,8 @@ import { normalizeIssuer } from "./issuer.js";
 interface PersistedTokens {
   access_token: string;
   refresh_token: string;
+  /** OIDC ID token from the original authorization-code exchange. */
+  id_token?: string;
   /** Unix ms */
   access_expires_at: number;
   scope: string;
@@ -146,6 +148,7 @@ export class StoredTokenProvider implements TokenProvider {
         const updated: PersistedTokens = {
           access_token: body.access_token,
           refresh_token: body.refresh_token ?? refreshToken,
+          id_token: this.cache?.id_token,
           access_expires_at: Date.now() + expiresInMs,
           scope: body.scope ?? previousScope,
         };

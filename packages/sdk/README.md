@@ -26,6 +26,24 @@ const note = await client.items.create({
 
 The OAuth helpers (PKCE, device flow, token storages, `MarfaAuth`) ship under the `@withmarfa/sdk/auth` subpath.
 
+### Browser sign-out
+
+Browser clients that request `openid` can end the hosted Marfa session with
+the provider's RP-initiated logout endpoint. Clear the local token bundle
+explicitly before navigating so the app is already signed out if navigation is
+interrupted.
+
+```ts
+await auth.signOut(provider);
+window.location.assign(
+  await auth.buildBrowserSignOutUrl(`${window.location.origin}/`),
+);
+```
+
+The post-logout return URI must be registered for the OAuth client. The SDK
+throws before navigation when the stored session predates ID-token support; in
+that case, send the user through a fresh sign-in before offering browser logout.
+
 ## Testing
 
 The SDK ships two in-process test fixtures so consumers can exercise the client against a real Hono server without a network. Both are in `packages/sdk/src/test-harness.ts`.

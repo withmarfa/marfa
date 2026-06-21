@@ -94,6 +94,7 @@ const RegisterBodySchema = z.object({
   // enforce a presence-check inside the handler (after `grant_types`
   // resolution).
   redirect_uris: z.array(z.string().min(1)).optional(),
+  post_logout_redirect_uris: z.array(z.string().min(1)).optional(),
   grant_types: z.array(z.enum(ACCEPTED_GRANT_TYPES)).optional(),
   response_types: z.array(z.enum(["code"])).optional(),
   scope: z.string().optional(),
@@ -304,6 +305,13 @@ export function oauthRegisterRoutes(
         return c.json(dcrError("invalid_redirect_uri", err), 400);
       }
     }
+    const postLogoutRedirectUris = body.post_logout_redirect_uris ?? [];
+    for (const uri of postLogoutRedirectUris) {
+      const err = validateRedirectUri(uri, trustedOrigins);
+      if (err) {
+        return c.json(dcrError("invalid_client_metadata", err), 400);
+      }
+    }
 
     // `scope` must be a subset of the server-allowed set. Omitted → full set
     // (mirrors plugin behavior at `dist/index.mjs:1205`).
@@ -372,6 +380,7 @@ export function oauthRegisterRoutes(
         tokenEndpointAuthMethod,
         scopes: requestedScopes,
         redirectUris,
+        postLogoutRedirectUris,
         referenceId,
         clientUri: body.client_uri ?? null,
         logoUri: body.logo_uri ?? null,
@@ -399,6 +408,9 @@ export function oauthRegisterRoutes(
         client_id_issued_at: created.clientIdIssuedAt,
         client_name: body.client_name ?? undefined,
         redirect_uris: redirectUris,
+        ...(postLogoutRedirectUris.length > 0 && {
+          post_logout_redirect_uris: postLogoutRedirectUris,
+        }),
         token_endpoint_auth_method: tokenEndpointAuthMethod,
         grant_types: grantTypes,
         response_types: responseTypes,

@@ -67,9 +67,14 @@ async function main(): Promise<void> {
   let created = 0;
   let existed = 0;
   for (const client of CLIENTS) {
+    const postLogoutRedirectUris = client.origins.map((origin) => `${origin}/`);
     if (await oauth.clientExists(client.clientId)) {
+      await oauth.updateClientLogoutConfig(
+        client.clientId,
+        postLogoutRedirectUris,
+      );
       existed += 1;
-      console.log(`exists     ${client.clientId}`);
+      console.log(`updated    ${client.clientId}`);
       continue;
     }
     await oauth.createClient({
@@ -81,6 +86,7 @@ async function main(): Promise<void> {
       tokenEndpointAuthMethod: "none",
       scopes,
       redirectUris: client.origins.map((o) => `${o}/auth/callback`),
+      postLogoutRedirectUris,
       referenceId: null,
     });
     created += 1;

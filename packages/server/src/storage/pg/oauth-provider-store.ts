@@ -81,6 +81,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
         clientId: auth_oauth_client.clientId,
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
+        postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
         referenceId: auth_oauth_client.referenceId,
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
@@ -93,14 +94,36 @@ export class PgOauthProviderStore implements OauthProviderStore {
     const redirectUris = Array.isArray(row.redirectUris)
       ? row.redirectUris.filter((s): s is string => typeof s === "string")
       : [];
+    const postLogoutRedirectUris = Array.isArray(row.postLogoutRedirectUris)
+      ? row.postLogoutRedirectUris.filter(
+          (s): s is string => typeof s === "string",
+        )
+      : [];
     return {
       id: row.id,
       clientId: row.clientId,
       name: row.name,
       redirectUris,
+      postLogoutRedirectUris,
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
     };
+  }
+
+  async updateClientLogoutConfig(
+    clientId: string,
+    postLogoutRedirectUris: readonly string[],
+  ): Promise<boolean> {
+    const updated = await this.db
+      .update(auth_oauth_client)
+      .set({
+        enableEndSession: true,
+        postLogoutRedirectUris: [...postLogoutRedirectUris],
+        updatedAt: new Date(),
+      })
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .returning({ id: auth_oauth_client.id });
+    return updated.length > 0;
   }
 
   async revokeTokensForGrant(
@@ -249,7 +272,12 @@ export class PgOauthProviderStore implements OauthProviderStore {
       softwareVersion: input.softwareVersion ?? null,
       softwareStatement: input.softwareStatement ?? null,
       redirectUris: [...input.redirectUris],
-      postLogoutRedirectUris: null,
+      postLogoutRedirectUris: input.postLogoutRedirectUris
+        ? [...input.postLogoutRedirectUris]
+        : null,
+      enableEndSession: input.postLogoutRedirectUris
+        ? input.postLogoutRedirectUris.length > 0
+        : false,
       tokenEndpointAuthMethod: input.tokenEndpointAuthMethod,
       grantTypes: [...input.grantTypes],
       responseTypes: [...input.responseTypes],
