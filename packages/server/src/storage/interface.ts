@@ -1021,6 +1021,8 @@ export interface OauthClientRow {
   clientId: string;
   name: string | null;
   redirectUris: string[];
+  /** Exact post-logout redirect URIs accepted for this client. */
+  postLogoutRedirectUris: string[];
   /** Tenant binding from `clientReference` (Marfa: tenant_id). */
   referenceId: string | null;
   /**
@@ -1082,6 +1084,8 @@ export interface CreateClientInput {
   /** Allowed redirect URIs. May be empty for clients that only run the
    *  device-code grant (no browser redirect). */
   redirectUris: readonly string[];
+  /** Exact post-logout redirect URIs accepted for browser logout. */
+  postLogoutRedirectUris?: readonly string[];
   /** Tenant binding from the resolver — null for unauthenticated /
    *  keys-mode DCR. Mirrors `clientReference` in the plugin's wiring. */
   referenceId: string | null;
@@ -1130,6 +1134,13 @@ export interface OauthProviderStore {
   /** Full client row by business key. Used by the device-flow initiation
    *  path to validate `redirect_uri` and resolve a display name. */
   getClient(clientId: string): Promise<OauthClientRow | null>;
+  /** Update the browser-logout configuration for an existing first-party
+   * client. Used by the deployment seed so a pre-existing client gains new
+   * redirect URIs without requiring a destructive reset. */
+  updateClientLogoutConfig(
+    clientId: string,
+    postLogoutRedirectUris: readonly string[],
+  ): Promise<boolean>;
   /** Look up the user's most recent prior consent scopes for
    *  (clientId, authUserId). Returns the scope literals from the
    *  `auth_oauth_consent` row, or `undefined` if no prior grant. */

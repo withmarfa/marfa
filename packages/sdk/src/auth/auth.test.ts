@@ -114,4 +114,43 @@ describe("MarfaAuth", () => {
     const provider = await auth.restore();
     expect(provider).toBeNull();
   });
+
+  it("buildBrowserSignOutUrl uses the persisted ID token and return URI", async () => {
+    const storage = new InMemoryTokenStorage();
+    await storage.set(
+      "marfa.auth.tokens:http://localhost:8602:test-client",
+      JSON.stringify({ id_token: "signed-id-token" }),
+    );
+    const auth = new MarfaAuth({
+      issuer: "http://localhost:8602",
+      clientId: "test-client",
+      redirectUri: "http://localhost:5173/auth/callback",
+      scopes: ["openid"],
+      storage,
+    });
+
+    const url = new URL(
+      await auth.buildBrowserSignOutUrl("http://localhost:5173/"),
+    );
+    expect(url.pathname).toBe("/auth/oauth2/end-session");
+    expect(url.searchParams.get("client_id")).toBe("test-client");
+    expect(url.searchParams.get("id_token_hint")).toBe("signed-id-token");
+    expect(url.searchParams.get("post_logout_redirect_uri")).toBe(
+      "http://localhost:5173/",
+    );
+  });
+
+  it("refuses to construct browser logout without an ID token", async () => {
+    const auth = new MarfaAuth({
+      issuer: "http://localhost:8602",
+      clientId: "test-client",
+      redirectUri: "http://localhost:5173/auth/callback",
+      scopes: ["openid"],
+      storage: new InMemoryTokenStorage(),
+    });
+
+    await expect(
+      auth.buildBrowserSignOutUrl("http://localhost:5173/"),
+    ).rejects.toThrow("No ID token");
+  });
 });

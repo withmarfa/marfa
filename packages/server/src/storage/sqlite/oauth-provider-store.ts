@@ -88,6 +88,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         clientId: auth_oauth_client.clientId,
         name: auth_oauth_client.name,
         redirectUris: auth_oauth_client.redirectUris,
+        postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
         referenceId: auth_oauth_client.referenceId,
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
@@ -105,14 +106,40 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     const redirectUris = Array.isArray(parsed)
       ? parsed.filter((s): s is string => typeof s === "string")
       : [];
+    const parsedPostLogoutRedirectUris = safeJsonParse<unknown>(
+      row.postLogoutRedirectUris ?? "[]",
+      [],
+      "auth_oauth_client.post_logout_redirect_uris",
+    );
+    const postLogoutRedirectUris = Array.isArray(parsedPostLogoutRedirectUris)
+      ? parsedPostLogoutRedirectUris.filter(
+          (s): s is string => typeof s === "string",
+        )
+      : [];
     return {
       id: row.id,
       clientId: row.clientId,
       name: row.name,
       redirectUris,
+      postLogoutRedirectUris,
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
     };
+  }
+
+  async updateClientLogoutConfig(
+    clientId: string,
+    postLogoutRedirectUris: readonly string[],
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(auth_oauth_client)
+      .set({
+        enableEndSession: true,
+        postLogoutRedirectUris: JSON.stringify(postLogoutRedirectUris),
+        updatedAt: new Date(),
+      })
+      .where(eq(auth_oauth_client.clientId, clientId));
+    return result.rowsAffected > 0;
   }
 
   async revokeTokensForGrant(
@@ -256,7 +283,12 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       softwareVersion: input.softwareVersion ?? null,
       softwareStatement: input.softwareStatement ?? null,
       redirectUris: JSON.stringify(input.redirectUris),
-      postLogoutRedirectUris: null,
+      postLogoutRedirectUris: input.postLogoutRedirectUris
+        ? JSON.stringify(input.postLogoutRedirectUris)
+        : null,
+      enableEndSession: input.postLogoutRedirectUris
+        ? input.postLogoutRedirectUris.length > 0
+        : false,
       tokenEndpointAuthMethod: input.tokenEndpointAuthMethod,
       grantTypes: JSON.stringify(input.grantTypes),
       responseTypes: JSON.stringify(input.responseTypes),

@@ -50,6 +50,10 @@ interface PendingState {
   redirectUri: string;
 }
 
+interface StoredBrowserSession {
+  id_token?: unknown;
+}
+
 export class MarfaAuth {
   private readonly issuer: string;
   private readonly clientId: string;
@@ -98,6 +102,34 @@ export class MarfaAuth {
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
     url.searchParams.set("state", state);
+    return url.toString();
+  }
+
+  /**
+   * Build a standards-based hosted browser logout URL for this OAuth client.
+   * The issuer validates the ID token and exact registered return URI before
+   * ending the browser session. Local token clearing stays explicit through
+   * `signOut()`.
+   */
+  async buildBrowserSignOutUrl(postLogoutRedirectUri: string): Promise<string> {
+    const raw = await this.storage.get(this.tokensKey);
+    let idToken: unknown;
+    try {
+      idToken = raw ? (JSON.parse(raw) as StoredBrowserSession).id_token : null;
+    } catch {
+      idToken = null;
+    }
+    if (typeof idToken !== "string" || idToken.length === 0) {
+      throw new OAuthError(
+        "invalid_request",
+        "No ID token is available for browser sign-out. Sign in again before signing out.",
+      );
+    }
+
+    const url = new URL("/auth/oauth2/end-session", this.issuer);
+    url.searchParams.set("client_id", this.clientId);
+    url.searchParams.set("post_logout_redirect_uri", postLogoutRedirectUri);
+    url.searchParams.set("id_token_hint", idToken);
     return url.toString();
   }
 
@@ -151,6 +183,7 @@ export class MarfaAuth {
       refresh_token?: string;
       expires_in?: number;
       scope?: string;
+      id_token?: string;
       error?: string;
       error_description?: string;
     };
@@ -190,6 +223,7 @@ export class MarfaAuth {
       refresh_token: body.refresh_token,
       access_expires_at: Date.now() + (body.expires_in ?? 3600) * 1000,
       scope: body.scope ?? this.scopes.join(" "),
+      id_token: body.id_token,
     });
     return provider;
   }

@@ -195,6 +195,42 @@ describe("POST /auth/oauth2/register", () => {
     }
   });
 
+  it("persists registered post-logout redirect URIs", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+    const postLogoutRedirectUri = "http://localhost:5173/";
+    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        redirect_uris: ["http://localhost:5173/auth/callback"],
+        post_logout_redirect_uris: [postLogoutRedirectUri],
+        grant_types: ["authorization_code"],
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      client_id: string;
+      post_logout_redirect_uris?: string[];
+    };
+    expect(body.post_logout_redirect_uris).toEqual([postLogoutRedirectUri]);
+
+    const client = await ctx.storage.oauthProvider?.getClient(body.client_id);
+    expect(client?.postLogoutRedirectUris).toEqual([postLogoutRedirectUri]);
+  });
+
+  it("rejects unsafe post-logout redirect URIs", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        redirect_uris: ["http://localhost:5173/auth/callback"],
+        post_logout_redirect_uris: ["javascript:alert(1)"],
+        grant_types: ["authorization_code"],
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "invalid_client_metadata",
+    );
+  });
+
   it("accepts http:// redirect URIs whose origin is in the trusted-origin allowlist", async () => {
     // A self-hosted browser client served over plain http on a private
     // network (a LAN host, a Tailscale MagicDNS name) registers a
