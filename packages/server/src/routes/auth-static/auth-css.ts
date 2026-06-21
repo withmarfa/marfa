@@ -453,18 +453,22 @@ input[type="text"]:focus {
    so a typed code reads as soft chips, not boxed letters. */
 .otp {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: center;
 }
 /* Scoped under .otp so these beat the base input[type="text"] rule (which
-   would otherwise force full width + the field padding and clip the glyph). */
+   would otherwise force full width + the field padding and clip the glyph).
+   The cells flex to share the row and shrink on narrow cards (capped on wide),
+   so eight of them plus the dash always fit inside the card without widening it. */
 .otp .otp__cell {
-  width: 42px;
-  height: 52px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 36px;
+  height: 46px;
   padding: 0;
   text-align: center;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--fg);
@@ -488,7 +492,7 @@ input[type="text"]:focus {
 .otp__dash {
   align-self: center;
   color: var(--fg-faint);
-  font-size: 20px;
+  font-size: 18px;
 }
 .field--error .otp .otp__cell {
   border-color: var(--error-border);
