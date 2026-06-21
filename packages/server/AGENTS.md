@@ -221,7 +221,7 @@ Both dialects index the same set of property fields and respect the same per-typ
 
 `searchable: false` on a type's `FieldDefinition` opts the field out of FTS for both dialects. The flag is honored for the four core fields (title, body, description, name) via `isFieldSearchableExcluded` and for the long tail via `getSearchableStringFields`. Defaults to `true` (searchable): a type that omits the flag indexes the field.
 
-`PgSearchStore` writes go through the request-context-aware Drizzle instance (`db.execute(sql\`...\`)`) so an `index()`call inside a`db.transaction(...)` runs on the same reserved connection as the parent INSERT/UPDATE, preserving atomicity. Reads (the search query) use the bare client; search isn't typically nested in a write transaction.
+`PgSearchStore` writes go through the request-context-aware Drizzle instance (the `db.execute` tagged-`sql` path), so an `index()` call inside a `db.transaction(...)` runs on the same reserved connection as the parent INSERT/UPDATE, preserving atomicity. Reads (the search query) use the bare client; search isn't typically nested in a write transaction.
 
 The PG migration set is two steps: `0038_items_search_vector.sql` adds the column + index, `0039_backfill_items_search_vector.sql` populates `search_vector` for every existing row using the same field set as the write-time indexer, so any DB running the migrator catches up cleanly. The backfill doesn't consult per-type `searchable: false` opt-outs (those are TS-side metadata): back-filled rows surface a slightly broader vector than their type metadata implies until the next write rewrites them, never narrower.
 
