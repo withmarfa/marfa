@@ -35,12 +35,6 @@ import { renderResetPasswordEmail } from "../src/auth/email-templates/reset-pass
 import { renderAccountDeleteConfirmEmail } from "../src/auth/email-templates/account-delete-confirm.js";
 import { renderAccountPendingDeletionEmail } from "../src/auth/email-templates/account-pending-deletion.js";
 import { renderAccountDeleteCancelEmail } from "../src/auth/email-templates/account-delete-cancel.js";
-import {
-  renderCheckEmail,
-  renderPasskeyConcept,
-  renderConsentConcept,
-  renderDeviceConcept,
-} from "./auth-gallery-concepts.js";
 
 export interface GalleryVariant {
   /** Stable id used in the preview URL (`?variant=…`). */
@@ -108,29 +102,10 @@ const DEVICE_SCOPES: ParsedScope[] = [
   },
 ];
 
-// Design directions attached to existing screens — the "Variant" group shown
-// beneath that screen's states in the right column. The split concept renders
-// the screen's own form; numbering runs sequentially per screen.
-// Sign-in keeps only the "Check your email" treatments (the gradient split is
-// a sign-up-only experiment per review).
-const SIGN_IN_DESIGN_VARIANTS: GalleryVariant[] = [
-  {
-    id: "checkmail-icon",
-    label: "v1 · Check email · icon",
-    render: () => renderCheckEmail("v2"),
-  },
-  {
-    id: "checkmail-roomy",
-    label: "v2 · Check email · roomy",
-    render: () => renderCheckEmail("v3"),
-  },
-];
-
 const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-in",
     label: "Sign in",
-    designVariants: SIGN_IN_DESIGN_VARIANTS,
     variants: [
       {
         id: "password",
@@ -337,23 +312,6 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "consent",
     label: "OAuth consent",
-    designVariants: [
-      {
-        id: "v1",
-        label: "v1 · App header + checklist",
-        render: () => renderConsentConcept("v1"),
-      },
-      {
-        id: "v2",
-        label: "v2 · Plain grouped rows",
-        render: () => renderConsentConcept("v2"),
-      },
-      {
-        id: "v3",
-        label: "v3 · Compact + disclosure",
-        render: () => renderConsentConcept("v3"),
-      },
-    ],
     variants: [
       {
         id: "first-time",
@@ -389,13 +347,6 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "device",
     label: "Device flow",
-    designVariants: [
-      {
-        id: "v1",
-        label: "v1 · Segmented code",
-        render: () => renderDeviceConcept(),
-      },
-    ],
     variants: [
       {
         id: "verify",
@@ -437,18 +388,6 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "passkey-enroll",
     label: "Passkey enroll",
-    designVariants: [
-      {
-        id: "v1",
-        label: "v1 · Centered + icon",
-        render: () => renderPasskeyConcept("v1"),
-      },
-      {
-        id: "v2",
-        label: "v2 · Method rows",
-        render: () => renderPasskeyConcept("v2"),
-      },
-    ],
     variants: [
       {
         id: "default",
