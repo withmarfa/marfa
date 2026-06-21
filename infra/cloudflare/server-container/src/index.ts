@@ -116,17 +116,12 @@ export class MarfaServerContainer extends Container<Env> {
   });
 
   /**
-   * A scale-to-zero wake can receive its first proxy request before Node has
-   * opened the HTTP port. Wait for the declared port rather than exposing
-   * Cloudflare's transient "container is not listening" response to clients.
+   * The helper's graceful idle stop can leave a stale running state until the
+   * process exit is observed. Destroying the disposable hosted server instead
+   * lets the next request take its normal fresh-start and port-readiness path.
    */
-  override async fetch(request: Request): Promise<Response> {
-    await this.startAndWaitForPorts();
-    return this.containerFetch(request);
-  }
-
-  override onError(error: unknown): void {
-    console.error("Marfa server container failed", error);
+  override async onActivityExpired(): Promise<void> {
+    await this.destroy();
   }
 }
 
