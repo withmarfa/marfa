@@ -4,7 +4,7 @@ Typed data layer. This monorepo holds eight active workspace packages, six in-tr
 
 **Docs MCP convention.** When working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or `marfa docs search "<query>"` from the CLI) before re-deriving from source.
 
-**Docs roles.** Published docs live **only** in `withmarfa/docs` — never author docs pages in this repo. In-repo READMEs stay tight (what the repo is, how to build and run it, where canonical docs live); CLAUDE.md carries agent and build context. When a change touches a public surface, open a companion `withmarfa/docs` PR as part of the same change and link it from this PR.
+**Docs roles.** Published docs live **only** in `withmarfa/docs` — never author docs pages in this repo. In-repo READMEs stay tight (what the repo is, how to build and run it, where canonical docs live); AGENTS.md carries agent and build context. When a change touches a public surface, open a companion `withmarfa/docs` PR as part of the same change and link it from this PR.
 
 **Core packages (`packages/`):**
 
@@ -84,7 +84,7 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 
 ## Reserved extension namespaces
 
-The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. `packages/server/CLAUDE.md` carries the full list.
+The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. `packages/server/AGENTS.md` carries the full list.
 
 ## Connections runtime substrate
 
@@ -94,9 +94,9 @@ Three coupled subsystems shipped together as the Connections build:
 - **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Marfa directly without holding the connection's full credential. Manifest-capability gated.
 - **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show loop detection. The Cloudflare control plane (`runtime-control`) mints a short-lived per-connection broker key the Worker uses for callbacks.
 
-**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. The `local` substrate is a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map is in `packages/server/CLAUDE.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
+**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. The `local` substrate is a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map is in `packages/server/AGENTS.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
 
-For per-route specifics, including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern, see `packages/server/CLAUDE.md`.
+For per-route specifics, including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern, see `packages/server/AGENTS.md`.
 
 ## Environment variables
 

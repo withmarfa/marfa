@@ -118,4 +118,4 @@ Re-run the helper whenever the broker key rotates. Each integration's `wrangler.
 - **`task-auto-archive`** — item-event automation on `core.task` items.
 - **`sync`** — re-presents the external sync daemon as a connection (local-only).
 
-Per-integration `CLAUDE.md` files (where present) carry upstream-specific gotchas: scope choices, dedup quirks, recurrence handling, channel renewal patterns.
+Per-integration `AGENTS.md` files (where present) carry upstream-specific gotchas: scope choices, dedup quirks, recurrence handling, channel renewal patterns.
