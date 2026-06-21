@@ -1197,6 +1197,21 @@ function renderShell(): string {
       themeCycleBtn.addEventListener('click', cycleTheme);
       motionBtn.addEventListener('click', cycleMotion);
 
+      // Keep keyboard navigation with the gallery. A previewed page may pull
+      // focus into one of its own fields (an autofocus attribute, or a script
+      // that focuses an input — e.g. the device code cells). With focus inside
+      // the iframe, the arrow keys feed that field instead of stepping the nav.
+      // Same-origin, so after each preview loads we reach in and drop that
+      // focus back to the gallery. Clicking a field still focuses it normally.
+      frame.addEventListener('load', function () {
+        try {
+          var doc = frame.contentDocument;
+          var el = doc && doc.activeElement;
+          if (el && el !== doc.body && typeof el.blur === 'function') el.blur();
+        } catch (e) {}
+        window.focus();
+      });
+
       // Toggle between the two sections (Auth <-> Email) by selecting the other
       // tab. selectTab no-ops when the tab is unchanged, so the toggle only ever
       // flips to a genuinely different section.
