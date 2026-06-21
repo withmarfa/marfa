@@ -36,12 +36,9 @@ import { renderAccountDeleteConfirmEmail } from "../src/auth/email-templates/acc
 import { renderAccountPendingDeletionEmail } from "../src/auth/email-templates/account-pending-deletion.js";
 import { renderAccountDeleteCancelEmail } from "../src/auth/email-templates/account-delete-cancel.js";
 import {
-  renderAuthSplit,
   renderCheckEmail,
-  renderStepperConcept,
   renderPasskeyConcept,
   renderConsentConcept,
-  renderAuthHero,
   renderDeviceConcept,
 } from "./auth-gallery-concepts.js";
 
@@ -129,42 +126,6 @@ const SIGN_IN_DESIGN_VARIANTS: GalleryVariant[] = [
   },
 ];
 
-// Sign-up carries the split-screen gradient experiments — one warm gradient,
-// a "Flip gradient side" control in the preview, and three ink treatments for
-// the wordmark + tagline over it — plus the two stepper treatments.
-const SIGN_UP_DESIGN_VARIANTS: GalleryVariant[] = [
-  {
-    id: "split-ink",
-    label: "v1 · Split · ink",
-    render: () => renderAuthSplit("plain"),
-  },
-  {
-    id: "split-inverse",
-    label: "v2 · Split · inverse text",
-    render: () => renderAuthSplit("blend"),
-  },
-  {
-    id: "split-gloss",
-    label: "v3 · Split · glossy text",
-    render: () => renderAuthSplit("gloss"),
-  },
-  {
-    id: "hero",
-    label: "v4 · Full-bleed gradient",
-    render: () => renderAuthHero(),
-  },
-  {
-    id: "stepper-thin",
-    label: "v5 · Stepper · thin",
-    render: () => renderStepperConcept("v2"),
-  },
-  {
-    id: "stepper-caption",
-    label: "v6 · Stepper · caption",
-    render: () => renderStepperConcept("v3"),
-  },
-];
-
 const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-in",
@@ -220,7 +181,6 @@ const AUTH_SCREENS: GalleryScreen[] = [
   {
     id: "sign-up",
     label: "Sign up",
-    designVariants: SIGN_UP_DESIGN_VARIANTS,
     variants: [
       {
         id: "default",
