@@ -211,6 +211,10 @@ function renderShell(): string {
       id: screen.id,
       label: screen.label,
       variants: screen.variants.map((v) => ({ id: v.id, label: v.label })),
+      designVariants: (screen.designVariants ?? []).map((v) => ({
+        id: v.id,
+        label: v.label,
+      })),
     })),
   }));
 
@@ -333,6 +337,16 @@ function renderShell(): string {
     .nav-header { flex: none; padding: 0 10px 6px; margin-top: 120px; }
     .nav-header__title { font-size: 12px; font-weight: 500; color: var(--muted); }
     .sidebar--right .nav-header { text-align: right; }
+    /* "Variant" group heading, separating design variants from states in the
+       right column. A large gap pushes it well clear of the states list so the
+       two groups read as distinct. */
+    .nav-subhead {
+      margin: 160px 10px 4px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .sidebar--right .nav-subhead { text-align: right; }
     .nav {
       flex: 1;
       overflow-y: auto;
@@ -342,7 +356,7 @@ function renderShell(): string {
     .nav::-webkit-scrollbar { display: none; }
     .nav--right { text-align: right; }
     .nav--right .nav-item > span { font-weight: 400; }
-    .nav-list { list-style: none; margin: 0; padding: 0; }
+    .nav-list { list-style: none; margin: 0; padding: 0; position: relative; }
     /* Full-width click target, but the pill hugs the label (shadcn w-fit). */
     .nav-item {
       display: block;
@@ -355,6 +369,8 @@ function renderShell(): string {
       font: inherit;
     }
     .nav-item > span {
+      position: relative;
+      z-index: 1;
       display: inline-flex;
       align-items: center;
       gap: 7px;
@@ -366,7 +382,46 @@ function renderShell(): string {
       color: var(--fg);
     }
     .nav-item:hover > span { background: var(--hover); }
-    .nav-item.active > span { background: var(--accent); color: var(--accent-fg); }
+    /* The active pill is drawn by a single .nav-marker that animates between
+       items (see the motion control); the active label itself goes transparent
+       so the moving marker shows through. */
+    .nav-item.active > span { background: transparent; color: var(--accent-fg); }
+    .nav-marker {
+      position: absolute;
+      left: 0; top: 0;
+      z-index: 0;
+      height: 0;
+      background: var(--accent);
+      border-radius: 7px;
+      will-change: translate, height, scale, opacity;
+    }
+    /* Motion styles — the same marker, moved different ways. data-motion lives
+       on <body>; "none" jumps instantly (no transition). */
+    body[data-motion="slide"] .nav-marker {
+      transition: translate 0.22s cubic-bezier(0.2, 0.7, 0.2, 1),
+                  height 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    body[data-motion="spring"] .nav-marker {
+      transition: translate 0.36s cubic-bezier(0.34, 1.56, 0.64, 1),
+                  height 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    body[data-motion="trail"] .nav-marker {
+      transition: translate 0.28s cubic-bezier(0.34, 1.4, 0.5, 1),
+                  height 0.28s cubic-bezier(0.34, 1.4, 0.5, 1),
+                  scale 0.26s ease-out;
+    }
+    body[data-motion="morph"] .nav-marker { transition: opacity 0.16s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .nav-marker { transition: none !important; }
+    }
+    /* Bottom-left motion switcher, mirroring the shortcuts button opposite. */
+    .motion { position: fixed; left: 16px; bottom: 16px; z-index: 20; }
+    .motion__button {
+      border: 0.5px solid var(--accent); background: var(--card); color: var(--muted);
+      font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    }
+    .motion__button b { color: var(--fg); font-weight: 500; }
+    .motion__button:hover { color: var(--fg); }
     .stage {
       position: relative;
       min-width: 0;
@@ -703,7 +758,11 @@ function renderShell(): string {
     <div class="nav-header">
       <div class="nav-header__title">State</div>
     </div>
-    <div class="nav nav--right"><ul class="nav-list" id="states"></ul></div>
+    <div class="nav nav--right">
+      <ul class="nav-list" id="states"></ul>
+      <div class="nav-subhead" id="variants-subhead" hidden>Variant</div>
+      <ul class="nav-list" id="variants"></ul>
+    </div>
   </nav>
   <div class="shortcuts" id="shortcuts">
     <div class="shortcuts__menu" id="shortcuts-menu" role="menu">
@@ -727,8 +786,15 @@ function renderShell(): string {
         <span class="shortcuts__label">Cycle appearance</span>
         <span class="shortcuts__keys"><kbd>T</kbd></span>
       </div>
+      <div class="shortcuts__row">
+        <span class="shortcuts__label">Cycle nav motion</span>
+        <span class="shortcuts__keys"><kbd>M</kbd></span>
+      </div>
     </div>
     <button id="shortcuts-button" class="shortcuts__button" type="button" aria-label="Keyboard shortcuts" aria-haspopup="true" aria-expanded="false">${KEYBOARD}</button>
+  </div>
+  <div class="motion" id="motion">
+    <button id="motion-btn" class="motion__button" type="button" aria-label="Cycle nav motion">Motion · <b id="motion-name">Slide</b></button>
   </div>
   <script>
     (function () {
@@ -741,11 +807,18 @@ function renderShell(): string {
         variant: ${JSON.stringify(initialVariant)},
         theme: 'system',
         view: 'freeform',
+        motion: 'slide',
       };
 
       var frame = document.getElementById('preview');
       var screensList = document.getElementById('screens');
       var statesList = document.getElementById('states');
+      var variantsList = document.getElementById('variants');
+      var variantsSubhead = document.getElementById('variants-subhead');
+      var motionBtn = document.getElementById('motion-btn');
+      var motionName = document.getElementById('motion-name');
+      var MOTION_ORDER = ['none', 'slide', 'spring', 'trail', 'morph'];
+      var MOTION_LABELS = { none: 'None', slide: 'Slide', spring: 'Spring', trail: 'Trail', morph: 'Morph' };
       var themeCycleBtn = document.getElementById('theme-cycle');
       var stage = document.getElementById('stage');
       var sectionWrap = document.getElementById('section');
@@ -831,13 +904,27 @@ function renderShell(): string {
         });
       }
 
+      // Design variants for the current screen, listed under a "Variant"
+      // subheading beneath the states. Hidden when the screen has none.
+      function renderVariants() {
+        variantsList.innerHTML = '';
+        var dv = currentScreen().designVariants || [];
+        variantsSubhead.hidden = dv.length === 0;
+        dv.forEach(function (v) {
+          variantsList.appendChild(buildItem(v.label, 'state', state.screen, v.id));
+        });
+      }
+
       function markActive() {
         var all = document.querySelectorAll('.nav-item');
         for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
         var screenBtn = screensList.querySelector('.nav-item[data-screen="' + state.screen + '"]');
         if (screenBtn) screenBtn.classList.add('active');
-        var stateBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
-        if (stateBtn) stateBtn.classList.add('active');
+        // The active id lives in the states list or the variants list — both
+        // feed the same state.variant, and their ids do not collide.
+        var activeBtn = statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]')
+          || variantsList.querySelector('.nav-item[data-variant="' + state.variant + '"]');
+        if (activeBtn) activeBtn.classList.add('active');
         sectionLabel.textContent = sectionLabelFor(state.tab);
         var sectionOptions = sectionMenu.querySelectorAll('.section__option');
         for (var j = 0; j < sectionOptions.length; j++) {
@@ -855,6 +942,94 @@ function renderShell(): string {
         var el = document.documentElement;
         el.classList.toggle('dark', state.theme === 'dark');
         el.classList.toggle('theme-system', state.theme === 'system');
+      }
+
+      // ---- Nav active-marker motion ----
+      // One pill per list animates between items; the motion style governs how.
+      function positionMarker(ul, btn, animate) {
+        if (!ul) return;
+        var marker = ul.querySelector('.nav-marker');
+        if (!btn) { if (marker) marker.style.opacity = '0'; return; }
+        if (!marker) {
+          marker = document.createElement('div');
+          marker.className = 'nav-marker';
+          ul.insertBefore(marker, ul.firstChild);
+          animate = false; // a freshly (re)built list places without animating in
+        }
+        marker.style.opacity = '1';
+        var span = btn.querySelector('span') || btn;
+        var ulRect = ul.getBoundingClientRect();
+        var r = span.getBoundingClientRect();
+        var x = r.left - ulRect.left;
+        var y = r.top - ulRect.top;
+        function place() {
+          marker.style.width = r.width + 'px';
+          marker.style.height = r.height + 'px';
+          marker.style.translate = x + 'px ' + y + 'px';
+        }
+        if (!animate || state.motion === 'none') {
+          marker.style.transition = 'none';
+          marker.style.scale = '1 1';
+          place();
+          void marker.offsetWidth; // flush so a later move animates
+          marker.style.transition = '';
+          return;
+        }
+        if (state.motion === 'morph') {
+          // Fade out at the old spot, jump, fade in at the new one.
+          marker.style.opacity = '0';
+          requestAnimationFrame(function () {
+            var keep = marker.style.transition;
+            marker.style.transition = 'none';
+            place();
+            void marker.offsetWidth;
+            marker.style.transition = keep;
+            marker.style.opacity = '1';
+          });
+          return;
+        }
+        place();
+        if (state.motion === 'trail') {
+          // Stretch tall mid-flight, then settle to the item height.
+          marker.style.scale = '1 1.5';
+          clearTimeout(marker._t);
+          marker._t = setTimeout(function () { marker.style.scale = '1 1'; }, 70);
+        } else {
+          marker.style.scale = '1 1';
+        }
+      }
+
+      function updateMarkers(opts) {
+        opts = opts || {};
+        positionMarker(
+          screensList,
+          screensList.querySelector('.nav-item[data-screen="' + state.screen + '"]'),
+          !opts.rebuildScreens
+        );
+        // The active state lives in the states list OR the variants list; place a
+        // marker in whichever holds it and hide the other's.
+        var stateAnimate = !(opts.rebuildStates || opts.rebuildScreens);
+        positionMarker(
+          statesList,
+          statesList.querySelector('.nav-item[data-variant="' + state.variant + '"]'),
+          stateAnimate
+        );
+        positionMarker(
+          variantsList,
+          variantsList.querySelector('.nav-item[data-variant="' + state.variant + '"]'),
+          stateAnimate
+        );
+      }
+
+      function applyMotion() {
+        document.body.setAttribute('data-motion', state.motion);
+        if (motionName) motionName.textContent = MOTION_LABELS[state.motion] || state.motion;
+      }
+
+      function cycleMotion() {
+        var i = MOTION_ORDER.indexOf(state.motion);
+        state.motion = MOTION_ORDER[(i + 1) % MOTION_ORDER.length];
+        applyMotion();
       }
 
       function applyView() {
@@ -924,10 +1099,14 @@ function renderShell(): string {
       function refresh(opts) {
         opts = opts || {};
         if (opts.rebuildScreens) renderScreens();
-        if (opts.rebuildStates || opts.rebuildScreens) renderStates();
+        if (opts.rebuildStates || opts.rebuildScreens) {
+          renderStates();
+          renderVariants();
+        }
         applyShellTheme();
         applyView();
         markActive();
+        updateMarkers(opts);
         loadPreview();
       }
 
@@ -969,7 +1148,10 @@ function renderShell(): string {
       }
 
       function stepState(delta) {
-        var variants = currentScreen().variants;
+        // Arrow keys cycle through the states and then the design variants, so
+        // left/right walks the whole right column.
+        var sc = currentScreen();
+        var variants = sc.variants.concat(sc.designVariants || []);
         var idx = -1;
         for (var i = 0; i < variants.length; i++) {
           if (variants[i].id === state.variant) { idx = i; break; }
@@ -1001,6 +1183,10 @@ function renderShell(): string {
         var btn = e.target.closest('.nav-item');
         if (btn) selectVariant(btn.getAttribute('data-variant'));
       });
+      variantsList.addEventListener('click', function (e) {
+        var btn = e.target.closest('.nav-item');
+        if (btn) selectVariant(btn.getAttribute('data-variant'));
+      });
       function cycleTheme() {
         var i = THEME_ORDER.indexOf(state.theme);
         state.theme = THEME_ORDER[(i + 1) % THEME_ORDER.length];
@@ -1009,6 +1195,22 @@ function renderShell(): string {
         loadPreview();
       }
       themeCycleBtn.addEventListener('click', cycleTheme);
+      motionBtn.addEventListener('click', cycleMotion);
+
+      // Keep keyboard navigation with the gallery. A previewed page may pull
+      // focus into one of its own fields (an autofocus attribute, or a script
+      // that focuses an input — e.g. the device code cells). With focus inside
+      // the iframe, the arrow keys feed that field instead of stepping the nav.
+      // Same-origin, so after each preview loads we reach in and drop that
+      // focus back to the gallery. Clicking a field still focuses it normally.
+      frame.addEventListener('load', function () {
+        try {
+          var doc = frame.contentDocument;
+          var el = doc && doc.activeElement;
+          if (el && el !== doc.body && typeof el.blur === 'function') el.blur();
+        } catch (e) {}
+        window.focus();
+      });
 
       // Toggle between the two sections (Auth <-> Email) by selecting the other
       // tab. selectTab no-ops when the tab is unchanged, so the toggle only ever
@@ -1093,10 +1295,12 @@ function renderShell(): string {
         else if (!typing && (e.key === 'a' || e.key === 'A')) { toggleSection(); }
         else if (!typing && (e.key === 'v' || e.key === 'V')) { cycleView(); }
         else if (!typing && (e.key === 't' || e.key === 'T')) { cycleTheme(); }
+        else if (!typing && (e.key === 'm' || e.key === 'M')) { cycleMotion(); }
       });
 
       renderSectionMenu();
       renderViewMenu();
+      applyMotion();
       refresh({ rebuildScreens: true });
     })();
   </script>

@@ -94,6 +94,28 @@ describe("renderSignInPage", () => {
     );
   });
 
+  it("marks both forms novalidate so the native validation bubble never shows", () => {
+    // The browser's own tooltip is replaced by the inline field-level errors
+    // from submit-state.js; novalidate is what suppresses the native bubble.
+    const passwordView = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(passwordView).toContain(
+      '<form method="POST" action="/auth/sign-in" novalidate>',
+    );
+    const magicView = renderSignInPage({
+      mode: "magic",
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(magicView).toContain(
+      '<form method="POST" action="/auth/sign-in" class="form" novalidate>',
+    );
+  });
+
   it("escapes HTML in returnTo to prevent template injection", () => {
     const html = renderSignInPage({
       mode: "password",

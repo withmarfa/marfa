@@ -33,13 +33,25 @@ interface AuthLayoutParams {
    * consent today, the security page once it ships.
    */
   wide?: boolean;
+  /**
+   * When `true`, the card centers its heading / sub / icon — the treatment for
+   * content-light result screens (check your email, verified, link expired).
+   * Form fields inside stay left-aligned.
+   */
+  centered?: boolean;
 }
 
 /** Wrap inner page HTML in the shared auth-layout shell. */
 export function renderAuthLayout(params: AuthLayoutParams): string {
   const safeTitle = escapeHtml(params.title);
   const safeAria = escapeHtml(params.ariaLabel ?? params.title);
-  const cardClass = params.wide ? "card card--wide" : "card";
+  const cardClass = [
+    "card",
+    params.wide ? "card--wide" : "",
+    params.centered ? "card--confirm" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return `<!DOCTYPE html>
 <html lang="en">

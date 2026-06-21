@@ -8,8 +8,10 @@
  *
  * The script runs once on load and enhances every `input[type="password"]`
  * on the page: it wraps the input in a positioned container and injects an
- * eye button that flips the input between `password` and `text`. Pages opt
- * in by linking the script — no per-field markup. Because the button is
+ * eye button that flips the input between `password` and `text`. The eye is
+ * hidden until the field has a value (nothing to reveal on an empty field)
+ * and appears with the first character typed. Pages opt in by linking the
+ * script — no per-field markup. Because the button is
  * created by JS, a client with scripting disabled simply sees a normal
  * password field (no dead control), preserving the no-JavaScript path that
  * the auth forms are built around.
@@ -49,6 +51,15 @@ export const PASSWORD_TOGGLE_JS = `(function () {
     btn.title = SHOW;
     btn.innerHTML = EYE;
     wrap.appendChild(btn);
+
+    // Nothing to reveal until the user has typed, so the eye stays hidden on an
+    // empty field and appears with the first character. The input keeps its
+    // right padding either way, so the icon's arrival shifts nothing.
+    function syncVisible() {
+      btn.hidden = input.value.length === 0;
+    }
+    syncVisible();
+    input.addEventListener('input', syncVisible);
 
     btn.addEventListener('click', function () {
       var reveal = input.type === 'password';

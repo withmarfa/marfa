@@ -12,17 +12,17 @@
  * once, in the POST response body (never via a redirect query), since it is
  * unrecoverable afterwards.
  *
- * Creating a key is a short stepped flow: name it, choose what it can reach
- * (the same soft-tile permission groups the consent screen uses), then copy
- * the one-time secret. The chosen permissions are real — a scoped key is a
- * `member` key carrying the selected per-type permissions, not a blanket
- * admin credential.
+ * Creating a key swaps the list out for a focused create form — name it and
+ * choose what it can reach (the same soft-tile permission groups the consent
+ * screen uses) in one step — then the one-time secret is shown on its own
+ * screen. The chosen permissions are real — a scoped key is a `member` key
+ * carrying the selected per-type permissions, not a blanket admin credential.
  *
  * Uses the shared auth-page layout, wide variant.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 export interface KeysPageKey {
   id: string;
@@ -48,6 +48,9 @@ export interface KeysPageParams {
    *  content"), shown on the reveal step. */
   newKeyAccess?: string;
   notice?: KeysPageNotice;
+  /** Dev/gallery only: render with the create form in focus instead of the
+   *  list, so the create step is reviewable without driving the + button. */
+  forceCreate?: boolean;
 }
 
 /**
@@ -129,11 +132,7 @@ export function renderKeysPage(params: KeysPageParams): string {
       ? `<b>${escapeHtml(params.newKeyLabel)}</b>`
       : "Your key";
     const reveal = `
-      <div class="steps" aria-hidden="true">
-        <span class="steps__seg steps__seg--on"></span>
-        <span class="steps__seg steps__seg--on"></span>
-        <span class="steps__seg steps__seg--on"></span>
-      </div>
+      ${confirmIcon("check")}
       <h1 class="title">Your key is ready</h1>
       <p class="sub">${label}${access}.</p>
       <div class="copyfield">
@@ -152,6 +151,7 @@ export function renderKeysPage(params: KeysPageParams): string {
       title: "Your key is ready",
       bodyHtml: reveal,
       wide: true,
+      centered: true,
     });
   }
 
@@ -184,37 +184,41 @@ export function renderKeysPage(params: KeysPageParams): string {
           })
           .join("\n");
 
-  // The stepped create flow. One form; the enhancement script reveals it from
-  // the + button and walks step 1 (name) → step 2 (permissions). With no JS
-  // the whole form is visible and submits the default (all content) in one go.
-  const createPanel = `
-    <div id="create-panel">
+  // Focused create view. The + button swaps the list out for this form (a
+  // single step — name + permissions together, no mid-page stepper); Cancel
+  // swaps back. With no JS both views render, so the form stays reachable and
+  // submits the default (all content) in one POST. `forceCreate` (gallery only)
+  // opens straight into this view.
+  const createView = `
+    <div id="create-panel" data-create-view${params.forceCreate ? ' data-start-open="1"' : ""}>
+      <p class="sub">Name your key and choose what it can reach.</p>
       <form method="POST" action="/auth/keys" class="form" data-key-form novalidate>
-        <div class="steps" data-steps aria-hidden="true">
-          <span class="steps__seg steps__seg--on"></span>
-          <span class="steps__seg"></span>
-          <span class="steps__seg"></span>
-        </div>
-        <div data-panel="1">
-          <label class="field">
-            <span class="field__label">Label</span>
-            <input type="text" name="label" required maxlength="200" placeholder="e.g. Laptop CLI" autocomplete="off">
-            <span class="field__hint">Name it so you can recognize it later.</span>
-          </label>
-        </div>
-        <div data-panel="2">
-          <p class="lsec" style="margin-top:0">What can this key do?</p>
+        <label class="field">
+          <span class="field__label">Label</span>
+          <input type="text" name="label" required maxlength="200" placeholder="e.g. Laptop CLI" autocomplete="off">
+          <span class="field__hint">Name it so you can recognize it later.</span>
+        </label>
+        <div>
+          <p class="lsec" style="margin-top:2px">What content can this key reach?</p>
+          <p class="field__hint" style="margin:0 0 10px">A key acts on your behalf over the content you pick. Your profile and account stay private.</p>
           <div class="t-soft">
             ${permissionGroup("read", "Read your content", "Your notes, tasks, bookmarks, and more.", "read")}
             ${permissionGroup("write", "Write your content", "Add, edit, and organize what's in your space.", "write")}
           </div>
         </div>
         <div class="actions">
-          <button type="button" class="btn btn--primary" data-next>Continue</button>
-          <button type="submit" class="btn btn--primary" data-create>Create key</button>
-          <button type="button" class="btn btn--ghost" data-back>Back</button>
+          <button type="submit" class="btn btn--primary" data-create data-loading-label="Creating key...">Create key</button>
+          <button type="button" class="btn btn--ghost" data-cancel>Cancel</button>
         </div>
       </form>
+    </div>
+  `;
+
+  const listView = `
+    <div data-list-view${params.forceCreate ? " hidden" : ""}>
+      <p class="sub">Keys let the Marfa API and command line act on your behalf. Signed in as <strong>${safeEmail}</strong>.</p>
+      ${noticeHtml}
+      ${keysList}
     </div>
   `;
 
@@ -225,12 +229,11 @@ export function renderKeysPage(params: KeysPageParams): string {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
     </div>
-    <p class="sub">Keys let the Marfa API and command line act on your behalf. Signed in as <strong>${safeEmail}</strong>.</p>
 
-    ${noticeHtml}
-    ${createPanel}
-    ${keysList}
+    ${listView}
+    ${createView}
 
+    <script src="/auth/static/submit-state.js"></script>
     <script>${CREATE_FLOW_SCRIPT}</script>
   `;
 
@@ -260,51 +263,29 @@ const COPY_SCRIPT = `
 })();
 `.trim();
 
-/* Reveals the create panel from the + button, walks the two client-side
-   steps, and links each permission group's master toggle to its members.
-   With no JS the panel stays visible and every member checkbox is real +
-   checked, so the form is a working single-step create. Minified with
-   `replace(/\\s+/g, " ")`, so NO `//` line comments. */
+/* Swaps the key list out for the create form (and back), and links each
+   permission group's master toggle to its members. The create form is a single
+   step — name + permissions together, no stepper. With no JS both views render,
+   so the form stays reachable and submits the default (all content) in one
+   POST. Validation runs through window.MarfaForm (submit-state.js), never the
+   native bubble. Minified with `replace(/\\s+/g, " ")`, so NO `//` comments. */
 const CREATE_FLOW_SCRIPT = `
 (function () {
-  var panel = document.getElementById('create-panel');
   var openBtn = document.getElementById('new-key-btn');
-  var form = panel ? panel.querySelector('[data-key-form]') : null;
-  if (!panel || !openBtn || !form) return;
+  var listView = document.querySelector('[data-list-view]');
+  var createView = document.querySelector('[data-create-view]');
+  var form = createView ? createView.querySelector('[data-key-form]') : null;
+  if (!openBtn || !listView || !createView || !form) return;
 
-  var steps = form.querySelector('[data-steps]');
-  var segs = steps ? steps.querySelectorAll('.steps__seg') : [];
-  var panel1 = form.querySelector('[data-panel="1"]');
-  var panel2 = form.querySelector('[data-panel="2"]');
-  var next = form.querySelector('[data-next]');
-  var create = form.querySelector('[data-create]');
-  var back = form.querySelector('[data-back]');
-
-  function step(n) {
-    panel1.style.display = n === 1 ? 'block' : 'none';
-    panel2.style.display = n === 2 ? 'block' : 'none';
-    next.style.display = n === 1 ? 'inline-flex' : 'none';
-    create.style.display = n === 2 ? 'inline-flex' : 'none';
-    back.style.display = n === 2 ? 'inline-flex' : 'none';
-    for (var i = 0; i < segs.length; i++) {
-      segs[i].classList.toggle('steps__seg--on', i < n);
-    }
+  function setCreating(on) {
+    listView.hidden = on;
+    createView.hidden = !on;
+    openBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) { var f = form.querySelector('input'); if (f) f.focus(); }
   }
-
-  panel.hidden = true;
-  function setOpen(open) {
-    panel.hidden = !open;
-    openBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) { step(1); var f = panel1.querySelector('input'); if (f) f.focus(); }
-  }
-  openBtn.addEventListener('click', function () { setOpen(panel.hidden); });
-
-  next.addEventListener('click', function () {
-    var label = panel1.querySelector('input[name="label"]');
-    if (label && !label.reportValidity()) return;
-    step(2);
-  });
-  back.addEventListener('click', function () { step(1); });
+  openBtn.addEventListener('click', function () { setCreating(createView.hidden); });
+  var cancel = form.querySelector('[data-cancel]');
+  if (cancel) cancel.addEventListener('click', function () { setCreating(false); });
 
   form.querySelectorAll('[data-master]').forEach(function (master) {
     var id = master.getAttribute('data-master');
@@ -321,7 +302,7 @@ const CREATE_FLOW_SCRIPT = `
     sync();
   });
 
-  step(1);
+  setCreating(createView.getAttribute('data-start-open') === '1');
 })();
 `
   .trim()

@@ -24,6 +24,7 @@ import { renderConsentScreen } from "../src/routes/consent.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
+  renderDeviceDecisionPage,
 } from "../src/routes/device-pages.js";
 import { renderPasskeyEnrollPage } from "../src/routes/passkey-enroll-page.js";
 import { renderSecurityPage } from "../src/routes/security-page.js";
@@ -49,7 +50,12 @@ export interface GalleryScreen {
   id: string;
   /** Human label shown in the left sidebar. */
   label: string;
+  /** Functional states of the screen (pending / success / error …) — the
+   *  "State" group in the right column. */
   variants: GalleryVariant[];
+  /** Alternative design directions for this same screen — the "Variant" group
+   *  shown beneath the states. Named v1 / v2 / v3. Optional. */
+  designVariants?: GalleryVariant[];
 }
 
 export interface GalleryTab {
@@ -367,6 +373,16 @@ const AUTH_SCREENS: GalleryScreen[] = [
             },
           }),
       },
+      {
+        id: "approved",
+        label: "Approved",
+        render: () => renderDeviceDecisionPage({ approved: true }),
+      },
+      {
+        id: "denied",
+        label: "Denied",
+        render: () => renderDeviceDecisionPage({ approved: false }),
+      },
     ],
   },
   {
@@ -476,6 +492,24 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 source: "script",
                 created_at: "2026-03-01T10:00:00.000Z",
                 last_used_at: null,
+              },
+            ],
+          }),
+      },
+      {
+        id: "create",
+        label: "Create key",
+        render: () =>
+          renderKeysPage({
+            email: "jonah@example.com",
+            forceCreate: true,
+            keys: [
+              {
+                id: "key-1",
+                label: "Personal laptop",
+                source: "cli",
+                created_at: "2026-05-10T10:00:00.000Z",
+                last_used_at: "2026-06-18T09:00:00.000Z",
               },
             ],
           }),
@@ -652,7 +686,11 @@ export function resolveVariant(
   if (!tab) return undefined;
   const screen = tab.screens.find((s) => s.id === screenId);
   if (!screen) return undefined;
-  const variant = screen.variants.find((v) => v.id === variantId);
+  // Resolve against the screen's states first, then its design variants — the
+  // two id-spaces don't collide, so a single `?variant=` param serves both.
+  const variant =
+    screen.variants.find((v) => v.id === variantId) ??
+    screen.designVariants?.find((v) => v.id === variantId);
   if (!variant) return undefined;
   return { tab, screen, variant };
 }

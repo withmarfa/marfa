@@ -13,7 +13,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 export type ForgotPasswordState = "form" | "sent" | "error";
 
@@ -54,7 +54,9 @@ export function renderForgotPasswordPage(
     const forWhom = params.email ? ` for ${escapeHtml(params.email)}` : "";
     return renderAuthLayout({
       title: "Check your email",
+      centered: true,
       bodyHtml: `
+        ${confirmIcon("mail")}
         <h1 class="title">Check your email</h1>
         <p class="sub" role="status">If an account exists${forWhom}, a password-reset link is on its way. It expires in an hour.</p>
         <p class="aux">Wrong email? <a href="/auth/forgot-password">Try again</a></p>
@@ -73,7 +75,7 @@ export function renderForgotPasswordPage(
     title: "Reset your password",
     bodyHtml: `
       <h1 class="title">Reset your password</h1>
-      <p class="sub">Enter your email and we'll send you a link to set a new password.</p>
+      <p class="sub">We'll email you a link to set a new password.</p>
       <form method="POST" action="/auth/forgot-password" class="form" novalidate>
         <input type="hidden" name="return_to" value="${safeReturnTo}">
         <label class="field${errorCode ? " field--error" : ""}">

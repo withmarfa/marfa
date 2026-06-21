@@ -52,8 +52,10 @@ const ERROR_MESSAGES: Record<string, string> = {
  * visible; this script (when JS runs) collapses to step 1 and wires the
  * Continue/Back buttons. No-JS users keep a single, fully-visible form.
  *
- * Continue runs native HTML5 validity on the step-1 fields before
- * advancing so a user can't tab past an empty required field; the real
+ * Continue runs the shared inline validation (`window.MarfaForm.validate`,
+ * from submit-state.js) on the step-1 fields before advancing, so a user
+ * can't tab past an empty required field and any error shows as our own
+ * field-level message rather than the browser's native tooltip. The real
  * submit lives on the step-2 "Create account" button and posts every
  * field — both panels' inputs share one form, so the two-step split is
  * presentation only.
@@ -96,10 +98,19 @@ const STEP_SCRIPT = `
   }
 
   next.addEventListener('click', function () {
-    var fields = panel1.querySelectorAll('input');
-    for (var i = 0; i < fields.length; i++) {
-      if (!fields[i].reportValidity()) return;
+    // Validate step one with the shared inline messages — never the browser's
+    // native validation tooltip. Falls back to a bubble-free validity check if
+    // the enhancement script hasn't loaded yet.
+    var invalid = null;
+    if (window.MarfaForm && window.MarfaForm.validate) {
+      invalid = window.MarfaForm.validate(panel1);
+    } else {
+      var fields = panel1.querySelectorAll('input');
+      for (var i = 0; i < fields.length; i++) {
+        if (!fields[i].checkValidity()) { invalid = fields[i]; break; }
+      }
     }
+    if (invalid) { if (invalid.focus) invalid.focus(); return; }
     show(2);
     var first = panel2.querySelector('input');
     if (first) first.focus();
@@ -212,7 +223,8 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                  autocomplete="username"
                  autocapitalize="none"
                  spellcheck="false"
-                 aria-required="true">
+                 aria-required="true"
+                 data-validate-msg="Use 3 to 32 lowercase letters, numbers, or hyphens.">
           ${fieldError("username")}
         </label>
       </div>

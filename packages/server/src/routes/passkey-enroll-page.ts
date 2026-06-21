@@ -43,6 +43,19 @@ export function renderPasskeyEnrollPage(
     hide('passkey-success');
   }
 
+  // Name the biometric the user's own platform actually offers, rather than
+  // listing every platform's name (no "Windows Hello" on a Mac). The server
+  // renders a device-agnostic line; this refines it once we know the platform.
+  var methods = document.querySelector('[data-passkey-methods]');
+  if (methods) {
+    var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+    if (/mac|iphone|ipad|ipod/i.test(ua)) {
+      methods.textContent = 'Use Touch ID or Face ID to sign in faster.';
+    } else if (/win/i.test(ua)) {
+      methods.textContent = 'Use Windows Hello to sign in faster.';
+    }
+  }
+
   if (!window.MarfaPasskey || !window.MarfaPasskey.isSupported()) {
     hide('passkey-button');
     show('passkey-unsupported');
@@ -69,9 +82,9 @@ export function renderPasskeyEnrollPage(
   `.trim();
 
   const bodyHtml = `
+    <div class="confirm-icon">${KEY_ICON}</div>
     <h1 class="title">Add a passkey</h1>
-    <p class="sub">Sign in faster with Face ID, Touch ID, Windows Hello, or a security key.</p>
-    <p class="sub">Signed in as <strong>${safeEmail}</strong>.</p>
+    <p class="sub" data-passkey-methods>Use your device or a security key to sign in faster.</p>
 
     <div id="passkey-success" class="banner banner--success" role="status" hidden>
       Passkey added. You can sign in with it next time.
@@ -79,13 +92,14 @@ export function renderPasskeyEnrollPage(
     <div id="passkey-error" class="banner banner--error" role="alert" hidden></div>
 
     <div class="actions">
-      <button id="passkey-button" type="button" class="btn btn--primary">Add a passkey</button>
+      <button id="passkey-button" type="button" class="btn btn--primary">Create passkey</button>
     </div>
 
     <p id="passkey-unsupported" class="aux" hidden>
       Your browser doesn't support passkeys, or this connection isn't secure (HTTPS). Try a recent version of Chrome, Safari, or Firefox over HTTPS.
     </p>
 
+    <p class="aux">Signed in as <strong>${safeEmail}</strong></p>
     <p class="aux"><a href="/auth/security">Back to security</a></p>
 
     <script src="/auth/static/passkey.js"></script>
@@ -95,5 +109,9 @@ export function renderPasskeyEnrollPage(
   return renderAuthLayout({
     title: "Add a passkey",
     bodyHtml,
+    centered: true,
   });
 }
+
+/** Lucide key-round glyph, shown in the icon chip at the top of the page. */
+const KEY_ICON = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`;

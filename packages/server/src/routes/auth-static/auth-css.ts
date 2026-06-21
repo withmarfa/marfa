@@ -80,6 +80,18 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --r-input: 12px;
   --r-sm: 10px;
 
+  /* Vertical rhythm — three steps shared by every screen so the spacing reads
+     as one system rather than per-page guesses:
+       --gap-pair  binds a title to the sub beneath it (a tight pair).
+       --gap-base  the base gap: sub→content, and between form fields.
+       --gap-step  the larger step before a primary-action block, the
+                   "Or continue with" separator, and the footer link.
+     The field→button gap is --gap-step on EVERY screen; see the .actions
+     trim rule below for how the step stays constant regardless of wrapper. */
+  --gap-pair: 6px;
+  --gap-base: 16px;
+  --gap-step: 20px;
+
   --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -283,6 +295,31 @@ body {
   }
 }
 
+/* Confirmation / result screens (check your email, verified, link expired) —
+   center the heading, sub, and a leading icon chip so a content-light card
+   reads as deliberate rather than squat. Forms keep their left-aligned labels. */
+.card--confirm {
+  text-align: center;
+}
+.card--confirm .form {
+  text-align: left;
+}
+.card--confirm .sub {
+  max-width: 34ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+.confirm-icon {
+  width: 52px;
+  height: 52px;
+  margin: 2px auto 18px;
+  border-radius: 15px;
+  background: var(--tile);
+  color: var(--fg);
+  display: grid;
+  place-items: center;
+}
+
 h1 {
   margin: 0 0 6px;
   font-size: 20px;
@@ -310,7 +347,7 @@ a {
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--gap-base);
 }
 .field {
   display: flex;
@@ -326,6 +363,12 @@ a {
   margin: 0;
   font-size: 12px;
   color: var(--fg-faint);
+}
+/* When a field is in error, drop its helper hint — the error message already
+   occupies that line, and "At least 8 characters" stacked above "Password
+   must be at least 8 characters" reads as a stutter. */
+.field--error .field__hint {
+  display: none;
 }
 /* Field-level error message, rendered under the offending input. Replaces a
    top error banner so the error sits where the eye is. */
@@ -404,6 +447,57 @@ input[type="text"]:focus {
   letter-spacing: 0.18em;
 }
 
+/* Segmented one-time-code cells (device flow). JS-enhanced from the single
+   code input, which stays as the no-JS fallback. A filled cell takes the soft
+   tile fill (matching the device-approve code tile) rather than a hard outline,
+   so a typed code reads as soft chips, not boxed letters. */
+.otp {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+/* Scoped under .otp so these beat the base input[type="text"] rule (which
+   would otherwise force full width + the field padding and clip the glyph).
+   The cells flex to share the row and shrink on narrow cards (capped on wide),
+   so eight of them plus the dash always fit inside the card without widening it. */
+.otp .otp__cell {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 36px;
+  height: 46px;
+  padding: 0;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 19px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
+}
+.otp .otp__cell--filled {
+  background: var(--tile);
+  border-color: var(--border-strong);
+}
+.otp .otp__cell:focus {
+  outline: none;
+  border-color: var(--fg);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.otp__dash {
+  align-self: center;
+  color: var(--fg-faint);
+  font-size: 18px;
+}
+.field--error .otp .otp__cell {
+  border-color: var(--error-border);
+}
+
 /* Password show/hide toggle. The button is injected by
    /auth/static/password-toggle.js into a .pw-wrap around each password
    input, so a scripting-disabled client just gets a normal field (no dead
@@ -438,6 +532,12 @@ input[type="text"]:focus {
     color 0.12s var(--ease),
     background 0.12s var(--ease);
 }
+/* The toggle script hides the eye until the field has a value (nothing to
+   reveal on an empty field). The author display:inline-flex above outranks
+   the UA hidden-attribute rule, so re-assert none here for it to take. */
+.pw-toggle[hidden] {
+  display: none;
+}
 .pw-toggle:hover {
   color: var(--fg);
 }
@@ -455,6 +555,19 @@ input[type="text"]:focus {
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
+
+/* Action hierarchy — one vocabulary across every screen:
+     - .btn--primary  the single committing action (Sign in, Allow access,
+                      Resend email). Filled, near-black. One per screen.
+     - .btn--outline  a secondary BUTTON for a real choice that isn't the
+                      primary (Use a different email). Bordered, neutral.
+     - .btn--ghost    the quiet half of a decision PAIR (Deny next to Allow).
+                      Borderless but full-width, so it still reads as a button.
+     - .btn--oidc     reserved for federated-provider buttons only.
+     - .aux a         NOT a button — a navigational / escape link (Back to
+                      security, Use a password instead). Clearly lighter than
+                      any button so a "go back" never competes with a decision.
+   Rule of thumb: a decision is a button; leaving the screen is a link. */
 
 .btn {
   display: inline-flex;
@@ -617,7 +730,7 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 20px 0;
+  margin: var(--gap-step) 0;
   font-size: 12px;
   color: var(--fg-faint);
 }
@@ -634,7 +747,7 @@ input[type="text"]:focus {
    the other expands to the full row width and the layout stays balanced. */
 .alts {
   display: flex;
-  gap: 16px;
+  gap: var(--gap-base);
 }
 .alts > * {
   flex: 1;
@@ -649,7 +762,7 @@ input[type="text"]:focus {
 }
 
 .aux {
-  margin: 20px 0 0;
+  margin: var(--gap-step) 0 0;
   text-align: center;
   font-size: 13px;
   color: var(--fg-muted);
@@ -717,7 +830,7 @@ input[type="text"]:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 20px;
+  margin-top: var(--gap-step);
 }
 .actions form {
   margin: 0;
@@ -725,6 +838,18 @@ input[type="text"]:focus {
 .actions .btn,
 .actions button {
   width: 100%;
+}
+/* The primary-action block sits one --gap-step (20px) below the content above
+   it, on every screen. When it directly follows something that already
+   contributes its own trailing space — a flex .form's column-gap, or the
+   bottom margin of a .sub / .banner immediately above it — subtract that base
+   gap so the step stays a single 20px instead of stacking to 36px. This one
+   rule is what makes the field→button gap identical across sign-in, sign-up,
+   one-time-link, reset, verify-email, and the device flow. */
+.form > .actions,
+.sub + .actions,
+.banner + .actions {
+  margin-top: calc(var(--gap-step) - var(--gap-base));
 }
 
 /* ---------------------------------------------------------------- */
@@ -847,14 +972,16 @@ input[type="text"]:focus {
   gap: 8px;
   margin: 0 0 20px;
 }
+/* A quiet 3px rail — the earlier 4px near-black bars read as too heavy hard
+   against the card's top edge. The filled segment is the only dark mark. */
 .steps__seg {
-  height: 4px;
+  height: 3px;
   flex: 1;
   border-radius: 999px;
-  background: var(--border);
+  background: var(--hairline);
 }
 .steps__seg--on {
-  background: var(--primary);
+  background: var(--fg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -915,7 +1042,7 @@ details.disclosure[open] > summary .disclosure__chevron {
 /* Canonical card heading + subtitle. The reassurance line ("you can
    change this anytime in settings") lives in .sub, never a footnote. */
 .title {
-  margin: 0 0 6px;
+  margin: 0 0 var(--gap-pair);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -923,7 +1050,7 @@ details.disclosure[open] > summary .disclosure__chevron {
   color: var(--fg);
 }
 .sub {
-  margin: 0 0 16px;
+  margin: 0 0 var(--gap-base);
   font-size: 14px;
   line-height: 1.5;
   color: var(--fg-muted);
@@ -941,9 +1068,10 @@ details.disclosure[open] > summary .disclosure__chevron {
 }
 
 /* Inline section label inside a panel ("Connected apps", "New", …) —
-   sentence case, not a shouty uppercase eyebrow. */
+   sentence case, not a shouty uppercase eyebrow. The bottom gap gives the
+   grouped tiles below a little breathing room rather than sitting tight. */
 .lsec {
-  margin: 18px 0 2px;
+  margin: 18px 0 10px;
   font-size: 13px;
   font-weight: 600;
   color: var(--fg);
