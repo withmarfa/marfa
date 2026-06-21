@@ -447,6 +447,53 @@ input[type="text"]:focus {
   letter-spacing: 0.18em;
 }
 
+/* Segmented one-time-code cells (device flow). JS-enhanced from the single
+   code input, which stays as the no-JS fallback. A filled cell takes the soft
+   tile fill (matching the device-approve code tile) rather than a hard outline,
+   so a typed code reads as soft chips, not boxed letters. */
+.otp {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+/* Scoped under .otp so these beat the base input[type="text"] rule (which
+   would otherwise force full width + the field padding and clip the glyph). */
+.otp .otp__cell {
+  width: 42px;
+  height: 52px;
+  padding: 0;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
+}
+.otp .otp__cell--filled {
+  background: var(--tile);
+  border-color: var(--border-strong);
+}
+.otp .otp__cell:focus {
+  outline: none;
+  border-color: var(--fg);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.otp__dash {
+  align-self: center;
+  color: var(--fg-faint);
+  font-size: 20px;
+}
+.field--error .otp .otp__cell {
+  border-color: var(--error-border);
+}
+
 /* Password show/hide toggle. The button is injected by
    /auth/static/password-toggle.js into a .pw-wrap around each password
    input, so a scripting-disabled client just gets a normal field (no dead
@@ -921,14 +968,16 @@ input[type="text"]:focus {
   gap: 8px;
   margin: 0 0 20px;
 }
+/* A quiet 3px rail — the earlier 4px near-black bars read as too heavy hard
+   against the card's top edge. The filled segment is the only dark mark. */
 .steps__seg {
-  height: 4px;
+  height: 3px;
   flex: 1;
   border-radius: 999px;
-  background: var(--border);
+  background: var(--hairline);
 }
 .steps__seg--on {
-  background: var(--primary);
+  background: var(--fg);
 }
 
 /* ---------------------------------------------------------------- */

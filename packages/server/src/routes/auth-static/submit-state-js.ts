@@ -94,7 +94,8 @@ export const SUBMIT_STATE_JS = `(function () {
     var firstInvalid = null;
     for (var i = 0; i < inputs.length; i++) {
       var input = inputs[i];
-      if (input.type === 'hidden' || input.disabled) continue;
+      // Skip hidden controls — incl. the real code input the OTP cells replace.
+      if (input.type === 'hidden' || input.hidden || input.disabled) continue;
       if (typeof input.checkValidity !== 'function') continue;
       if (input.checkValidity()) {
         clearError(fieldOf(input));
