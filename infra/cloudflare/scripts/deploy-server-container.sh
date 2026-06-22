@@ -170,11 +170,13 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
   # Deliberate warm policy. Staging backs the Tickets responsiveness litmus
   # surface, where a cold-start boot on a ticket open is a real product
-  # failure, so warm is on by default — the resident instance re-arms its
-  # activity window instead of sleeping. COST: this keeps the container (and
-  # its Neon pool) awake continuously, so it spends against the very free Neon
-  # budget the 2m sleep above protects. If that budget lapses, set
-  # V_CONTAINER_WARM=false to revert staging to scale-to-zero.
+  # failure, so warm is on by default — the container runs with a long activity
+  # window (set in the DO code) that normal traffic keeps renewing, so the
+  # single instance stays resident instead of scaling to zero on the 2m timer
+  # above. COST: this keeps the container (and its Neon pool) awake
+  # continuously, so it spends against the very free Neon budget the 2m sleep
+  # would otherwise protect. If that budget lapses, set V_CONTAINER_WARM=false
+  # to revert staging to scale-to-zero.
   export V_CONTAINER_WARM="${V_CONTAINER_WARM:-true}"
   export V_RUNTIME_CONTROL_URL="https://runtime-staging.marfa.so"
   export V_S3_BUCKET="marfa-blobs-staging"

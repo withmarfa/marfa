@@ -1391,6 +1391,13 @@ export function itemRoutes(storage: Storage) {
     ]);
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
+    // True when the 1-hop neighbour set was capped (more neighbours exist than
+    // were hydrated). Distinct from the per-type edge-block `has_more`: several
+    // edge types can each sit below their per-type cap while their COMBINED
+    // neighbour set exceeds the bound, so this is the only signal that catches
+    // that case. Consumers must treat every neighbour-derived view as
+    // incomplete when this is set and page the per-type edge/backref endpoints.
+    let neighborsTruncated = false;
     if (includeNeighbors) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
@@ -1408,9 +1415,11 @@ export function itemRoutes(storage: Storage) {
       }
       neighborIds.delete(id);
 
-      // Bound the hydration so a pathological fan-out can't pin the worker;
-      // overflow neighbors are reachable via the per-type edge/backref
-      // endpoints (has_more on each block already signals more edges exist).
+      // Bound the hydration so a pathological fan-out can't pin the worker. When
+      // the bound bites, `neighbors_truncated` flags it — the per-block
+      // `has_more` does NOT cover this, since the cap is on the combined set
+      // across types, not any single type.
+      neighborsTruncated = neighborIds.size > MAX_NEIGHBOR_IDS;
       const ids = [...neighborIds].slice(0, MAX_NEIGHBOR_IDS);
       if (ids.length === 0) {
         neighbors = [];
@@ -1447,7 +1456,9 @@ export function itemRoutes(storage: Storage) {
         item: { ...item, edges },
         metadata: filterMetadataForCaller(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
-        ...(neighbors !== undefined ? { neighbors } : {}),
+        ...(neighbors !== undefined
+          ? { neighbors, neighbors_truncated: neighborsTruncated }
+          : {}),
         ...(includeVersions && versions ? { versions } : {}),
       },
       200,

@@ -114,6 +114,7 @@ interface DetailResponse {
     item: { id: string; type: string };
     metadata: { tags: string[] };
   }[];
+  neighbors_truncated?: boolean;
   versions?: { id: string; version: number }[];
 }
 
@@ -205,6 +206,8 @@ describe("GET /items/:id?include=neighbors", () => {
     const d = await detail(adminA, parent, "backrefs,neighbors");
     const ids = (d.neighbors ?? []).map((n) => n.item.id).sort();
     expect(ids).toEqual([child, comment].sort());
+    // A small, fully-hydrated neighbourhood is not truncated.
+    expect(d.neighbors_truncated).toBe(false);
   });
 
   it("returns an empty neighbor list (not absent) for an item with no edges", async () => {
@@ -316,5 +319,71 @@ describe("GET /items/:id?include=backrefs — per-type pagination", () => {
     expect(block?.edges.length).toBe(HYDRATE_PER_TYPE_CAP);
     expect(block?.has_more).toBe(true);
     expect(typeof block?.next_cursor).toBe("string");
+  });
+});
+
+describe("GET /items/:id?include=neighbors — combined-set truncation signal", () => {
+  it("flags neighbors_truncated when the combined set overflows even though every per-type block is below its cap", async () => {
+    // Three edge types, 40 each = 120 neighbours. Each block (40) is under the
+    // 50 per-type cap, so no block reports has_more — but the combined set
+    // exceeds the 100-neighbour bound. This is the case the per-type has_more
+    // cannot signal; only neighbors_truncated catches it.
+    const per = 40;
+    const parent = await create(adminA, "core.note", { body: "busy hub" });
+
+    // 120 neighbour items in one bulk call: [0,40) children, [40,80) comments,
+    // [80,120) attachments.
+    const bulkItems = await request(ctx.app, "POST", "/items/bulk", {
+      key: adminA,
+      body: {
+        items: Array.from({ length: per * 3 }, (_, i) => ({
+          type: "core.note",
+          properties: { body: `n${String(i)}` },
+        })),
+        mode: "create_only",
+      },
+    });
+    expect(bulkItems.status).toBe(200);
+    const { results } = (await bulkItems.json()) as {
+      results: { index: number; id: string }[];
+    };
+    const ids = results
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((r) => r.id);
+
+    const edges = [
+      // parent-of: parent is source, child is target (outbound).
+      ...ids.slice(0, per).map((cid) => ({
+        source_id: parent,
+        target_id: cid,
+        edge_type: "parent-of",
+      })),
+      // in-thread + attached-to: the item is source, parent is target (inbound).
+      ...ids.slice(per, per * 2).map((cid) => ({
+        source_id: cid,
+        target_id: parent,
+        edge_type: "in-thread",
+      })),
+      ...ids.slice(per * 2, per * 3).map((cid) => ({
+        source_id: cid,
+        target_id: parent,
+        edge_type: "attached-to",
+      })),
+    ];
+    const bulkEdges = await request(ctx.app, "POST", "/edges/bulk", {
+      key: adminA,
+      body: { edges },
+    });
+    expect(bulkEdges.status).toBe(200);
+
+    const d = await detail(adminA, parent, "backrefs,neighbors");
+    // No single type is truncated...
+    expect(d.item.edges?.["parent-of"]?.has_more).toBe(false);
+    expect(d.backrefs?.["in-thread"]?.has_more).toBe(false);
+    expect(d.backrefs?.["attached-to"]?.has_more).toBe(false);
+    // ...but the combined neighbour set is, and only this flag says so.
+    expect(d.neighbors_truncated).toBe(true);
+    expect((d.neighbors ?? []).length).toBeLessThanOrEqual(100);
   });
 });
