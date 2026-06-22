@@ -70,36 +70,42 @@ function definedEnv(
 // scripts are the source of truth for what's actually set.
 const cfEnv = env as unknown as Env;
 
+/**
+ * Deliberate warm policy (default off; enabled per env via the
+ * `MARFA_CONTAINER_WARM` wrangler var). Cold start on this single-instance
+ * container is a multi-second boot (image start + Node bring-up + port
+ * readiness) that lands on whoever issues the first request after an idle gap
+ * — a real product failure on an interactive surface, not an acceptable edge
+ * case.
+ *
+ * The warm mechanism is the container runtime's own one: a long activity
+ * window (`sleepAfter`). Every request renews the window, so under any normal
+ * traffic the single instance never reaches the deadline and stays resident;
+ * the boot is paid once at deploy, never again on an idle gap. (Renewing the
+ * window from `onActivityExpired` instead would fight the runtime's
+ * activity-expiry lifecycle and can leave the container stopped-but-unreapable
+ * — so we lengthen the window rather than intercept its expiry.)
+ *
+ * Operational cost: a resident container (and the Neon connection pool it
+ * holds open) is billed for continuous awake-time rather than only while
+ * serving traffic. That is the deliberate trade — latency floor over idle
+ * spend — and it's the reason this is a toggle, not a hardcoded default: an
+ * environment whose compute budget can't absorb always-on (e.g. a free Neon
+ * tier) sets `MARFA_CONTAINER_WARM=false` to fall back to scale-to-zero.
+ */
+const CONTAINER_WARM =
+  (cfEnv.MARFA_CONTAINER_WARM ?? "").trim().toLowerCase() === "true";
+
 export class MarfaServerContainer extends Container<Env> {
   defaultPort = 8600;
 
-  // Scale-to-zero idle timer. With the warm policy off this is a true
-  // scale-to-zero deadline; with it on it becomes the heartbeat cadence at
-  // which the resident instance re-arms its activity window.
-  sleepAfter = cfEnv.CONTAINER_SLEEP_AFTER ?? "20m";
-
-  /**
-   * Deliberate warm policy (default off; enabled per env via the
-   * `MARFA_CONTAINER_WARM` wrangler var). Cold start on this single-instance
-   * container is a multi-second boot (image start + Node bring-up + port
-   * readiness) that lands on whoever issues the first request after an idle
-   * gap — a real product failure on an interactive surface, not an acceptable
-   * edge case. When enabled, the instance is kept resident instead of scaling
-   * to zero, so a ticket open or first interaction never pays that boot.
-   *
-   * This is an explicit policy, not a reliance on background/accidental
-   * traffic to stay warm: the activity window is alarm-backed, so renewing it
-   * on expiry re-arms itself with no inbound request.
-   *
-   * Operational cost: a resident container (and the Neon connection pool it
-   * holds open) is billed for continuous awake-time rather than only while
-   * serving traffic. That is the deliberate trade — latency floor over idle
-   * spend — and it's the reason this is a toggle, not a hardcoded default:
-   * an environment whose compute budget can't absorb always-on (e.g. a free
-   * Neon tier) sets `MARFA_CONTAINER_WARM=false` to fall back to scale-to-zero.
-   */
-  private readonly keepWarm =
-    (cfEnv.MARFA_CONTAINER_WARM ?? "").trim().toLowerCase() === "true";
+  // Activity window before scale-to-zero. Warm = a week-long window: normal
+  // traffic renews it on every request, so the instance stays resident and
+  // never cold-starts in active use, while a truly abandoned deployment still
+  // releases after a week. Off = the configured short idle timer. The
+  // runtime's time-expression parser accepts only s/m/h units, so the warm
+  // window is expressed in hours.
+  sleepAfter = CONTAINER_WARM ? "168h" : (cfEnv.CONTAINER_SLEEP_AFTER ?? "20m");
 
   envVars = definedEnv({
     // Static (hosted) configuration.
@@ -144,21 +150,13 @@ export class MarfaServerContainer extends Container<Env> {
   });
 
   /**
-   * Fires when the container is running and the activity window
-   * (`sleepAfter`) has elapsed. Two policies:
-   *
-   * - Warm on: re-arm the window instead of stopping. The instance stays
-   *   resident across idle gaps, so the next request never pays a cold start.
-   * - Warm off: destroy the disposable instance. The helper's graceful idle
-   *   stop can leave a stale running state until the process exit is observed;
-   *   destroying lets the next request take a clean fresh-start +
-   *   port-readiness path.
+   * The helper's graceful idle stop can leave a stale running state until the
+   * process exit is observed. Destroying the disposable hosted server instead
+   * lets the next request take its normal fresh-start and port-readiness path.
+   * With the warm policy on, the long `sleepAfter` window means this only fires
+   * after a genuinely abandoned week, not on routine idle gaps.
    */
   override async onActivityExpired(): Promise<void> {
-    if (this.keepWarm) {
-      this.renewActivityTimeout();
-      return;
-    }
     await this.destroy();
   }
 }
