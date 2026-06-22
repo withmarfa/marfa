@@ -53,6 +53,13 @@
 #   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
 #                               host — override for a jurisdiction-restricted bucket, e.g. EU)
 #   - SERVER_SLEEP_AFTER       (container idle scale-to-zero timer; default "20m")
+#   - V_CONTAINER_WARM         (deliberate warm policy; "true" keeps the single
+#                               instance resident instead of scaling to zero so
+#                               the first request after an idle gap never pays a
+#                               cold start. Default "true" for staging + prod;
+#                               set "false" to revert to scale-to-zero when the
+#                               continuous container + Neon awake-time cost is
+#                               not affordable)
 #   - STAGING_WORKERS_SUBDOMAIN (account workers.dev subdomain, for the staging auth base URL)
 #
 # The image must already be built (linux/amd64) and pushed to the managed
@@ -161,6 +168,14 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   # Aggressive scale-to-zero on staging: idle awake-time is the dominant driver
   # of Neon compute, and staging's free budget is the one that keeps lapsing.
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
+  # Deliberate warm policy. Staging backs the Tickets responsiveness litmus
+  # surface, where a cold-start boot on a ticket open is a real product
+  # failure, so warm is on by default — the resident instance re-arms its
+  # activity window instead of sleeping. COST: this keeps the container (and
+  # its Neon pool) awake continuously, so it spends against the very free Neon
+  # budget the 2m sleep above protects. If that budget lapses, set
+  # V_CONTAINER_WARM=false to revert staging to scale-to-zero.
+  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-true}"
   export V_RUNTIME_CONTROL_URL="https://runtime-staging.marfa.so"
   export V_S3_BUCKET="marfa-blobs-staging"
   # workers.dev URL drives auth cookies. Defaults to the conventional host;
@@ -181,6 +196,11 @@ else
   # Prod has its own free Neon budget, so a longer idle window is affordable and
   # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
+  # Deliberate warm policy, on by default in production: cold start on the real
+  # product surface is a failure, not an edge case, so the instance stays
+  # resident rather than scaling to zero. COST: continuous container + Neon
+  # awake-time. Set V_CONTAINER_WARM=false to revert to scale-to-zero.
+  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-true}"
   export V_RUNTIME_CONTROL_URL="https://runtime.marfa.so"
   export V_S3_BUCKET="${PROD_R2_BUCKET:-marfa-blobs-prod}"
   export V_AUTH_BASE_URL="https://api.marfa.so"
@@ -229,7 +249,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"

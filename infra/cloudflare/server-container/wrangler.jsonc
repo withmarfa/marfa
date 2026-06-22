@@ -36,6 +36,7 @@
   "limits": { "cpu_ms": 30000 },
   "vars": {
     "CONTAINER_SLEEP_AFTER": "${SERVER_SLEEP_AFTER}",
+    "MARFA_CONTAINER_WARM": "${V_CONTAINER_WARM}",
     "BLOB_BACKEND": "${V_BLOB_BACKEND}",
     "MARFA_AUTH_BASE_URL": "${V_AUTH_BASE_URL}",
     "CORS_ORIGINS": "${V_CORS_ORIGINS}",
