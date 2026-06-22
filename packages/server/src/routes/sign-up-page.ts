@@ -31,6 +31,11 @@ interface SignUpPageParams {
   returnTo: string;
   /** Error code from a previous attempt. Renders an inline banner. */
   error?: string;
+  /** Values to repopulate after a server-side error bounce (e.g.
+   *  `handle_taken` / `email_exists`, which can't be caught client-side) so
+   *  the user doesn't re-type everything. Carried across the redirect by a
+   *  short-lived flash cookie. Never includes the password. */
+  values?: { email?: string; name?: string; username?: string };
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -150,6 +155,13 @@ const ERROR_FIELD: Record<string, "email" | "password" | "username"> = {
 export function renderSignUpPage(params: SignUpPageParams): string {
   const safeReturnTo = escapeHtml(params.returnTo);
 
+  // Repopulated field values (escaped for the `value=` attribute) after a
+  // server-side error bounce. Empty string when absent, so the inputs just
+  // render blank on a first visit.
+  const safeEmail = escapeHtml(params.values?.email ?? "");
+  const safeName = escapeHtml(params.values?.name ?? "");
+  const safeUsername = escapeHtml(params.values?.username ?? "");
+
   const errorMessage = params.error
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
     : null;
@@ -198,6 +210,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
           <span class="field__label">Email</span>
           <input type="email"
                  name="email"
+                 value="${safeEmail}"
                  required
                  autocomplete="email"
                  autofocus
@@ -208,6 +221,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
           <span class="field__label">Display name</span>
           <input type="text"
                  name="name"
+                 value="${safeName}"
                  required
                  autocomplete="name"
                  aria-required="true">
@@ -216,6 +230,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
           <span class="field__label">Username</span>
           <input type="text"
                  name="username"
+                 value="${safeUsername}"
                  required
                  pattern="[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?"
                  minlength="3"

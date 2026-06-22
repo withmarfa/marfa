@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import {
   MarfaError,
   ErrorCode,
@@ -709,8 +710,11 @@ export function authRoutes(
     const url = new URL(c.req.url);
     const returnTo = validateReturnTo(url.searchParams.get("return_to"));
     const error = url.searchParams.get("error") ?? undefined;
+    // Repopulate the fields a server-side error bounce would otherwise wipe.
+    // Single-use: read-and-clear, so a fresh visit renders an empty form.
+    const values = readAndClearSignupPrefillCookie(c);
     setNoStore(c);
-    return c.html(renderSignUpPage({ returnTo, error }));
+    return c.html(renderSignUpPage({ returnTo, error, values }));
   });
 
   router.post("/sign-up", async (c) => {
@@ -738,8 +742,20 @@ export function authRoutes(
     const passwordConfirmStr =
       typeof passwordConfirm === "string" ? passwordConfirm : "";
 
-    const errorRedirect = (errCode: string): Response =>
-      c.redirect(buildSignUpRedirect({ returnTo, error: errCode }), 302);
+    // `secure` follows the issuer scheme: https on hosted, off for local http
+    // dev, matching how the auth cookies decide it.
+    const prefillSecure = new URL(auth.baseURL).protocol === "https:";
+    const errorRedirect = (errCode: string): Response => {
+      // Carry the non-secret fields across the redirect so a bounced form
+      // doesn't wipe what the user typed. The password is deliberately left
+      // out — the user re-enters it on step 2.
+      setSignupPrefillCookie(
+        c,
+        { email: emailStr, name: nameStr, username: usernameRaw },
+        prefillSecure,
+      );
+      return c.redirect(buildSignUpRedirect({ returnTo, error: errCode }), 302);
+    };
 
     if (
       !emailStr ||
@@ -2280,6 +2296,79 @@ function normalizeUserCode(input: string): string {
 }
 
 /** Build a redirect URL back to the sign-up page with error + return_to. */
+/**
+ * Short-lived flash cookie carrying a bounced sign-up's non-secret field
+ * values across the POST-redirect-GET round-trip, so a server-side error the
+ * form can't catch client-side (a taken username, an already-registered email)
+ * doesn't wipe what the user typed. Scoped to `/auth/sign-up`, HttpOnly,
+ * single-use. Never carries the password.
+ */
+const SIGNUP_PREFILL_COOKIE = "marfa.signup_prefill";
+const SIGNUP_PREFILL_PATH = "/auth/sign-up";
+
+interface SignupPrefill {
+  email?: string;
+  name?: string;
+  username?: string;
+}
+
+/**
+ * Set the sign-up prefill cookie before an error redirect. The value is
+ * base64url(JSON) — cookie-safe and compact. It is deliberately NOT signed:
+ * the payload is the user's own non-secret form input, the cookie is HttpOnly
+ * so page scripts can't read it, and every value is HTML-escaped at render, so
+ * tampering can only change what a user sees pre-filled in their own form.
+ * `secure` follows the issuer URL (https on hosted, off for local http dev),
+ * matching the auth cookies.
+ */
+function setSignupPrefillCookie(
+  c: Context<AppEnv>,
+  fields: SignupPrefill,
+  secure: boolean,
+): void {
+  const encoded = Buffer.from(JSON.stringify(fields), "utf8").toString(
+    "base64url",
+  );
+  setCookie(c, SIGNUP_PREFILL_COOKIE, encoded, {
+    path: SIGNUP_PREFILL_PATH,
+    httpOnly: true,
+    sameSite: "Lax",
+    secure,
+    // Just long enough for the redirect round-trip — a one-shot prefill, not
+    // durable state.
+    maxAge: 300,
+  });
+}
+
+/**
+ * Read and clear the sign-up prefill cookie. Single-use: the clear runs
+ * whenever the cookie is present, so a later plain visit to `/auth/sign-up`
+ * renders an empty form. Malformed values are ignored.
+ */
+function readAndClearSignupPrefillCookie(
+  c: Context<AppEnv>,
+): SignupPrefill | undefined {
+  const raw = getCookie(c, SIGNUP_PREFILL_COOKIE);
+  if (!raw) return undefined;
+  deleteCookie(c, SIGNUP_PREFILL_COOKIE, { path: SIGNUP_PREFILL_PATH });
+  try {
+    const parsed: unknown = JSON.parse(
+      Buffer.from(raw, "base64url").toString("utf8"),
+    );
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const obj = parsed as Record<string, unknown>;
+    const str = (v: unknown): string | undefined =>
+      typeof v === "string" ? v : undefined;
+    return {
+      email: str(obj.email),
+      name: str(obj.name),
+      username: str(obj.username),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function buildSignUpRedirect(params: {
   returnTo: string;
   error?: string;

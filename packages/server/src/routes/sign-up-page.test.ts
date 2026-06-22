@@ -55,6 +55,29 @@ describe("renderSignUpPage", () => {
     );
   });
 
+  it("repopulates email, name, and username from values, escaped", () => {
+    const html = renderSignUpPage({
+      returnTo: "/",
+      error: "handle_taken",
+      values: {
+        email: "second@example.com",
+        name: "Ann & Bob <x>",
+        username: "shared",
+      },
+    });
+    expect(html).toContain('value="second@example.com"');
+    expect(html).toContain('value="shared"');
+    // The name is escaped into the value attribute, never injected raw.
+    expect(html).toContain('value="Ann &amp; Bob &lt;x&gt;"');
+    expect(html).not.toContain("Ann & Bob <x>");
+  });
+
+  it("renders empty value attributes when no values are supplied", () => {
+    const html = renderSignUpPage({ returnTo: "/" });
+    expect(html).toMatch(/name="email"\s+value=""/);
+    expect(html).toMatch(/name="username"\s+value=""/);
+  });
+
   it("preserves return_to in the form's hidden field", () => {
     const html = renderSignUpPage({
       returnTo: "/auth/authorize?client_id=abc",
@@ -592,6 +615,54 @@ describe("POST /auth/sign-up — hosted-mode invariants", () => {
     });
     expect(second.status).toBe(302);
     expect(second.headers.get("location")).toContain("error=handle_taken");
+  });
+
+  it("preserves email, name, and username across a handle_taken bounce", async () => {
+    hosted = await createHostedSignUpContext();
+    await postHostedSignUp(hosted, {
+      email: "first@example.com",
+      name: "First",
+      username: "shared",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    const bounce = await postHostedSignUp(hosted, {
+      email: "second@example.com",
+      name: "Second User",
+      username: "shared",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(bounce.status).toBe(302);
+    expect(bounce.headers.get("location")).toContain("error=handle_taken");
+    // The PII rides a cookie, never the URL (which lands in logs/history).
+    expect(bounce.headers.get("location")).not.toContain("second@example.com");
+    expect(bounce.headers.get("location")).not.toContain("Second");
+
+    const setCookie = bounce.headers.get("set-cookie");
+    expect(setCookie).toContain("marfa.signup_prefill=");
+    expect(setCookie).toContain("HttpOnly");
+    const cookie = (setCookie ?? "").split(";")[0];
+
+    // Follow the redirect carrying the cookie: the form comes back filled.
+    const page = await hosted.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-up?error=handle_taken`, {
+        headers: { origin: ORIGIN, cookie },
+      }),
+    );
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('value="second@example.com"');
+    expect(html).toContain('value="Second User"');
+    expect(html).toContain('value="shared"');
+    // The password is never echoed back into the form.
+    expect(html).not.toContain("correct horse");
+    // Single-use: rendering the prefilled form clears the cookie.
+    const cleared = page.headers.get("set-cookie") ?? "";
+    expect(cleared).toContain("marfa.signup_prefill=");
+    expect(cleared).toMatch(/Max-Age=0|Expires=/i);
   });
 
   it("provisions a `users` row + tenant + auth_user_id binding atomically", async () => {
