@@ -15,12 +15,13 @@ import {
   getSourceAllowlist,
   getSourceFilter,
 } from "@withmarfa/shared";
-import type { ItemState } from "@withmarfa/shared";
+import type { Item, ItemState, Metadata } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
   requireTenantAdmin,
   requireTypeAccess,
+  checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
 } from "../middleware/auth.js";
@@ -29,7 +30,11 @@ import type { Storage, ItemSortField } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
-import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
+import {
+  hydrateEdgesForItem,
+  hydrateEdgesForItems,
+  hydrateBackrefsForItem,
+} from "./_edges-hydrate.js";
 import { applyInlineEdges } from "./_edges-inline.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -40,6 +45,7 @@ import {
 import {
   ItemSchema,
   ItemWithMetadataSchema,
+  ItemDetailSchema,
   MetadataSchema,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
@@ -78,6 +84,16 @@ const ConflictResponseSchema = z.object({
 const IdParam = z.object({
   id: z.string().describe("Item id"),
 });
+
+/**
+ * Upper bound on neighbours hydrated by `GET /items/:id?include=neighbors`.
+ * Outbound + inbound edges are each already capped per type
+ * (`HYDRATE_PER_TYPE_CAP`), so this only bites a pathological cross-product of
+ * many edge types; overflow neighbours stay reachable through the per-type
+ * edge/backref endpoints. Matches the bulk-get id cap so one detail read can
+ * never exceed one batched hydration.
+ */
+const MAX_NEIGHBOR_IDS = 100;
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -321,17 +337,26 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.",
+    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
+    "`?include=` widens the response with the item's 1-hop neighbourhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
+    query: z.object({
+      include: z
+        .string()
+        .optional()
+        .describe(
+          "Comma-separated extras to hydrate inline: backrefs, neighbors, versions.",
+        ),
+    }),
   },
   responses: {
     200: {
       content: {
-        "application/json": { schema: ItemWithMetadataSchema },
+        "application/json": { schema: ItemDetailSchema },
       },
-      description: "Item with metadata",
+      description: "Item with metadata, and any requested neighbourhood blocks",
     },
     401: {
       content: {
@@ -1334,19 +1359,96 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const tid = c.get("apiKey")?.tenant_id;
+    const apiKey = c.get("apiKey");
+    const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
-    const metadata = await storage.metadata.get(id);
-    const edges = await hydrateEdgesForItem(storage, id);
+
+    const includeSet = new Set(
+      (c.req.query("include") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeBackrefs = includeSet.has("backrefs");
+    const includeNeighbors = includeSet.has("neighbors");
+    const includeVersions = includeSet.has("versions");
+
+    // The base shape — item (with outbound edges) + metadata — is unconditional;
+    // it's what every existing caller already depends on. The three include
+    // blocks are additive and default-off so the lean read stays lean.
+    const [metadata, edges, backrefs, versions] = await Promise.all([
+      storage.metadata.get(id),
+      hydrateEdgesForItem(storage, id),
+      includeBackrefs
+        ? hydrateBackrefsForItem(storage, id)
+        : Promise.resolve(null),
+      includeVersions ? storage.versions.list(id) : Promise.resolve(null),
+    ]);
+
+    let neighbors: { item: Item; metadata: Metadata }[] | undefined;
+    if (includeNeighbors) {
+      // The 1-hop neighbourhood: the far-end items of the edge blocks present
+      // in this response — outbound targets always, inbound sources when
+      // `backrefs` was also requested. Each neighbour is re-authorised through
+      // the same tenant fence + per-type read gate the bulk-get path uses, so a
+      // neighbour the caller cannot read is silently omitted, never leaked.
+      const neighborIds = new Set<string>();
+      for (const block of Object.values(edges)) {
+        for (const e of block.edges) neighborIds.add(e.target_id);
+      }
+      if (backrefs) {
+        for (const block of Object.values(backrefs)) {
+          for (const e of block.edges) neighborIds.add(e.source_id);
+        }
+      }
+      neighborIds.delete(id);
+
+      // Bound the hydration so a pathological fan-out can't pin the worker;
+      // overflow neighbours are reachable via the per-type edge/backref
+      // endpoints (has_more on each block already signals more edges exist).
+      const ids = [...neighborIds].slice(0, MAX_NEIGHBOR_IDS);
+      if (ids.length === 0) {
+        neighbors = [];
+      } else {
+        const found = await storage.items.getMany(ids, tid);
+        const visible: Item[] = [];
+        for (const nid of ids) {
+          const neighbor = found.get(nid);
+          if (!neighbor) continue;
+          if (neighbor.type.startsWith("system.")) continue;
+          try {
+            checkTypeAccess(apiKey, neighbor.type, "read");
+          } catch {
+            continue;
+          }
+          visible.push(neighbor);
+        }
+        const metaList = await storage.metadata.getMany(
+          visible.map((n) => n.id),
+        );
+        const metaById = new Map(metaList.map((m) => [m.item_id, m]));
+        neighbors = visible.map((n) => ({
+          item: n,
+          metadata: filterMetadataForCaller(
+            metaById.get(n.id) ?? { item_id: n.id, tags: [], extensions: {} },
+            apiKey,
+          ),
+        }));
+      }
+    }
+
     return c.json(
       {
         item: { ...item, edges },
-        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        metadata: filterMetadataForCaller(metadata, apiKey),
+        ...(includeBackrefs && backrefs ? { backrefs } : {}),
+        ...(neighbors !== undefined ? { neighbors } : {}),
+        ...(includeVersions && versions ? { versions } : {}),
       },
       200,
     );

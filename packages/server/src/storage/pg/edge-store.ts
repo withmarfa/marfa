@@ -510,4 +510,45 @@ export class PgEdgeStore implements EdgeStore {
     }
     return out;
   }
+
+  async listToTargetsBatched(
+    targetIds: string[],
+    perTypeLimit: number,
+  ): Promise<Map<string, Edge[]>> {
+    if (targetIds.length === 0) return new Map();
+    // Mirror of listFromSourcesBatched: window per (target_id, edge_type),
+    // keep up to perTypeLimit per bucket.
+    const rows = await this.db.execute<{
+      id: string;
+      tenant_id: string | null;
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+      properties: string;
+      created_at: string;
+      updated_at: string;
+    }>(
+      sql`
+        SELECT id, tenant_id, source_id, target_id, edge_type, properties,
+               created_at, updated_at
+        FROM (
+          SELECT *,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY target_id, edge_type
+                   ORDER BY created_at DESC, id DESC
+                 ) AS rn
+          FROM edges
+          WHERE target_id IN ${targetIds}
+        ) sub
+        WHERE rn <= ${perTypeLimit}
+      `,
+    );
+    const out = new Map<string, Edge[]>();
+    for (const r of rows) {
+      const list = out.get(r.target_id) ?? [];
+      list.push(rowToEdge(r));
+      out.set(r.target_id, list);
+    }
+    return out;
+  }
 }

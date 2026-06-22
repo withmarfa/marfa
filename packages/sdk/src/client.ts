@@ -1,6 +1,7 @@
 import type {
   Item,
   ItemWithMetadata,
+  ItemEdgesBlock,
   CreateItemInput,
   Metadata,
   Version,
@@ -185,6 +186,30 @@ export interface ListFilters {
 export type ItemWithExtensions = Item & {
   extensions: Record<string, Record<string, unknown>>;
 };
+
+/** Hydrated edges grouped by edge type — the shape carried on `item.edges`
+ *  (outbound) and on a detail read's `backrefs` (inbound). */
+export type HydratedEdges = Record<string, ItemEdgesBlock>;
+
+/** Opt-in blocks for {@link MarfaClient.items.getDetail}. Each widens the
+ *  single-item read with one more slice of the item's 1-hop neighbourhood,
+ *  collapsing a per-section fan-out into one request. */
+export type ItemDetailInclude = "backrefs" | "neighbors" | "versions";
+
+/**
+ * The single-item read with its 1-hop neighbourhood. The base — `item` (with
+ * outbound `edges` hydrated) plus `metadata` — is always present; the optional
+ * blocks appear only when the matching {@link ItemDetailInclude} token is
+ * requested. `neighbors` are permission-filtered server-side: an item the
+ * caller cannot read is omitted, never leaked.
+ */
+export interface ItemDetail {
+  item: Item & { edges?: HydratedEdges };
+  metadata: Metadata;
+  backrefs?: HydratedEdges;
+  neighbors?: ItemWithMetadata[];
+  versions?: Version[];
+}
 
 export interface SearchFilters {
   type?: string;
@@ -638,6 +663,36 @@ export class MarfaClient {
         `/items/${id}`,
       );
       return res.item;
+    },
+
+    /**
+     * Read a single item with its 1-hop neighbourhood in one round trip.
+     *
+     * `GET /items/:id` already returns the item's `metadata` layer and its
+     * outbound `edges` inline; this method surfaces that envelope (which the
+     * lean `get` discards) and lets the caller widen it via `include`:
+     *
+     * - `backrefs` — inbound edges grouped by type (same block shape as
+     *   `item.edges`), capped + cursored per type.
+     * - `neighbors` — the far-end items of the item's edges (outbound targets,
+     *   plus inbound sources when `backrefs` is also requested), each with its
+     *   metadata and permission-filtered.
+     * - `versions` — the item's version snapshots, newest-first.
+     *
+     * One bundled read replaces the open-a-detail fan-out (item, metadata, and
+     * a per-section edge/backref/hydration request each). Overflow edges beyond
+     * the per-type cap stay reachable via `items.edges` / `items.backrefs`.
+     */
+    getDetail: async (
+      id: string,
+      opts?: { include?: ItemDetailInclude[] },
+    ): Promise<ItemDetail> => {
+      const include = opts?.include?.length
+        ? opts.include.join(",")
+        : undefined;
+      return this.transport.request<ItemDetail>("GET", `/items/${id}`, {
+        ...(include ? { query: { include } } : {}),
+      });
     },
 
     /**

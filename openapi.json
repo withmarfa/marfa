@@ -1316,7 +1316,7 @@
           "Items"
         ],
         "summary": "Get an item",
-        "description": "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.",
+        "description": "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n`?include=` widens the response with the item's 1-hop neighbourhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
         "security": [
           {
             "bearerAuth": []
@@ -1332,11 +1332,21 @@
             "description": "Item id",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated extras to hydrate inline: backrefs, neighbors, versions."
+            },
+            "required": false,
+            "description": "Comma-separated extras to hydrate inline: backrefs, neighbors, versions.",
+            "name": "include",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Item with metadata",
+            "description": "Item with metadata, and any requested neighbourhood blocks",
             "content": {
               "application/json": {
                 "schema": {
@@ -1517,6 +1527,293 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "backrefs": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "edges": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "tenant_id": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "source_id": {
+                                  "type": "string"
+                                },
+                                "target_id": {
+                                  "type": "string"
+                                },
+                                "edge_type": {
+                                  "type": "string"
+                                },
+                                "properties": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                },
+                                "created_at": {
+                                  "type": "string"
+                                },
+                                "updated_at": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "source_id",
+                                "target_id",
+                                "edge_type",
+                                "properties",
+                                "created_at",
+                                "updated_at"
+                              ]
+                            }
+                          },
+                          "has_more": {
+                            "type": "boolean"
+                          },
+                          "next_cursor": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "edges",
+                          "has_more"
+                        ]
+                      }
+                    },
+                    "neighbors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "item": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string"
+                              },
+                              "properties": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "archived",
+                                  "trashed",
+                                  "revoked"
+                                ]
+                              },
+                              "tier": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "feed"
+                                ]
+                              },
+                              "tenant_id": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "version": {
+                                "type": "number"
+                              },
+                              "schema_version": {
+                                "type": "integer"
+                              },
+                              "source": {
+                                "type": "string"
+                              },
+                              "source_id": {
+                                "type": "string"
+                              },
+                              "device": {
+                                "type": "string"
+                              },
+                              "capture_latitude": {
+                                "type": "number"
+                              },
+                              "capture_longitude": {
+                                "type": "number"
+                              },
+                              "timestamp": {
+                                "type": "string"
+                              },
+                              "created_at": {
+                                "type": "string"
+                              },
+                              "updated_at": {
+                                "type": "string"
+                              },
+                              "edges": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "edges": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "tenant_id": {
+                                            "type": "string",
+                                            "nullable": true
+                                          },
+                                          "source_id": {
+                                            "type": "string"
+                                          },
+                                          "target_id": {
+                                            "type": "string"
+                                          },
+                                          "edge_type": {
+                                            "type": "string"
+                                          },
+                                          "properties": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                              "nullable": true
+                                            }
+                                          },
+                                          "created_at": {
+                                            "type": "string"
+                                          },
+                                          "updated_at": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "source_id",
+                                          "target_id",
+                                          "edge_type",
+                                          "properties",
+                                          "created_at",
+                                          "updated_at"
+                                        ]
+                                      }
+                                    },
+                                    "has_more": {
+                                      "type": "boolean"
+                                    },
+                                    "next_cursor": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "edges",
+                                    "has_more"
+                                  ]
+                                }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "properties",
+                              "state",
+                              "version",
+                              "schema_version",
+                              "source",
+                              "timestamp",
+                              "created_at",
+                              "updated_at"
+                            ]
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "properties": {
+                              "item_id": {
+                                "type": "string"
+                              },
+                              "tags": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
+                              }
+                            },
+                            "required": [
+                              "item_id",
+                              "tags",
+                              "extensions"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "item",
+                          "metadata"
+                        ]
+                      }
+                    },
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "number"
+                          },
+                          "properties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          },
+                          "created_at": {
+                            "type": "string"
+                          },
+                          "device": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "item_id",
+                          "version",
+                          "properties",
+                          "created_at"
+                        ]
+                      }
                     }
                   },
                   "required": [

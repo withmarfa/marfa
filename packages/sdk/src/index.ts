@@ -7,6 +7,9 @@ export type {
   SearchFilters,
   MetadataInput,
   ItemWithExtensions,
+  HydratedEdges,
+  ItemDetail,
+  ItemDetailInclude,
   BulkInput,
   BulkItemInput,
   BulkMode,
@@ -61,6 +64,8 @@ export type {
 // Re-export key types from @withmarfa/shared
 export type {
   Item,
+  ItemWithMetadata,
+  ItemEdgesBlock,
   CreateItemInput,
   Edge,
   Metadata,
