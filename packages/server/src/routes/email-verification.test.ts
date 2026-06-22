@@ -5,6 +5,11 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import type {
+  EmailMessage,
+  EmailSendResult,
+  EmailTransport,
+} from "../email/transport.js";
 
 /**
  * End-to-end smoke for the verify-on-signup flow:
@@ -16,11 +21,13 @@ import type { TestContext } from "../test-utils.js";
  *   - signing in pre-verification fails; post-verification (markEmailVerified)
  *     succeeds — proves requireEmailVerification is the gate, not just the
  *     wrapper redirect.
+ *   - the real token round-trip (clicking the emailed verify link) signs the
+ *     user in, via `autoSignInAfterVerification` — the token is captured off
+ *     a spy email transport rather than better-auth's internal signer.
  *
- * The token round-trip (clicking the verify link) requires
- * better-auth's signed token; tests exercising that flow stand in
- * via `markEmailVerified` rather than reaching into better-auth's
- * internal token signer.
+ * Most token-path tests stand in via `markEmailVerified` rather than reaching
+ * into better-auth's internal token signer; the auto-sign-in test is the one
+ * that needs a genuine signed token, so it sniffs it from the sent email.
  */
 
 let ctx: TestContext | undefined;
@@ -280,5 +287,57 @@ describe("verify-on-signup flow", () => {
     const html = await res.text();
     expect(html).toContain("That link didn't work");
     expect(html).toContain('action="/auth/verify-email/resend"');
+  });
+
+  it("clicking the real verify link signs the user in (Set-Cookie)", async () => {
+    // Capture the verification email so we can read the genuine signed token
+    // out of its link — the success page only delivers a session when
+    // better-auth mints one on verify, which it does under
+    // `autoSignInAfterVerification`.
+    const sent: EmailMessage[] = [];
+    const transport: EmailTransport = {
+      backend: "smtp",
+      send(message): Promise<EmailSendResult> {
+        sent.push(message);
+        return Promise.resolve({ ok: true, messageId: "test-verify" });
+      },
+    };
+    ctx = await createTestContext(
+      { authAllowSignup: true, authRequireEmailVerification: true },
+      transport,
+    );
+    await postSignUpForm(ctx, {
+      email: "carol@example.com",
+      name: "Carol",
+      username: "carol",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+
+    const body = sent.map((m) => `${m.html}\n${m.text ?? ""}`).join("\n");
+    const token = /verify-email\?token=([^&"'\s]+)/.exec(body)?.[1];
+    expect(token, "verification email should carry a token link").toBeTruthy();
+    if (!token) throw new Error("no verification token in captured email");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/verify-email?token=${token}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Email verified");
+    // The whole point: verify now lands a session, so the "signed in" copy is
+    // honest and the user resumes their flow without a second sign-in.
+    const cookies =
+      typeof (res.headers as Headers & { getSetCookie?: () => string[] })
+        .getSetCookie === "function"
+        ? (
+            res.headers as Headers & { getSetCookie: () => string[] }
+          ).getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 });

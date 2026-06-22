@@ -382,6 +382,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     // real backend is configured.
     emailVerification: {
       sendOnSignUp: emailVerificationEnabled,
+      // Clicking the verification link establishes a session, so a
+      // just-verified user lands straight in the app (or resumes the OAuth
+      // flow they signed up from) instead of being bounced back to sign-in
+      // to re-enter the password they set seconds earlier. Better Auth mints
+      // the session + Set-Cookie on its verify-email endpoint only when this
+      // is set; the GET /auth/verify-email wrapper already forwards that
+      // cookie onto the success page. Same trust model as the magic-link
+      // sign-in this instance already exposes — a single-use, short-TTL link
+      // sent to the address being proven.
+      autoSignInAfterVerification: true,
       // 1 hour TTL on verification tokens. Long enough for the user
       // to switch to their inbox, short enough to bound the
       // single-use-token replay window.
