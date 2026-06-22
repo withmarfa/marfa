@@ -27,6 +27,7 @@ import type { EmailTransport as MarfaEmailTransport } from "../email/transport.j
 import { renderAccountDeleteConfirmEmail } from "../auth/email-templates/account-delete-confirm.js";
 import { renderAccountPendingDeletionEmail } from "../auth/email-templates/account-pending-deletion.js";
 import { renderAuthLayout } from "./auth-layout.js";
+import { confirmIcon } from "./auth-html.js";
 import { setNoStore } from "./no-store.js";
 
 const CONFIRM_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -602,7 +603,9 @@ async function deleteVerificationsByValueAndPrefix(
 function renderBadTokenPage(): string {
   return renderAuthLayout({
     title: "Invalid or expired link",
+    centered: true,
     bodyHtml: `
+      ${confirmIcon("alert")}
       <h1 class="title">Invalid or expired link</h1>
       <p class="sub" role="alert">If you still want to delete your account, sign in and request deletion again.</p>
       <p class="aux"><a href="/auth/sign-in">Sign in</a></p>
@@ -613,7 +616,9 @@ function renderBadTokenPage(): string {
 function renderConfirmedPage(): string {
   return renderAuthLayout({
     title: "Account scheduled for deletion",
+    centered: true,
     bodyHtml: `
+      ${confirmIcon("alert")}
       <h1 class="title">Account scheduled for deletion</h1>
       <p class="sub" role="status">Your account and everything in it will be deleted after the grace period. We've emailed you a cancel link.</p>
       <p class="aux">Changed your mind? The cancel link is in your inbox.</p>
@@ -624,7 +629,9 @@ function renderConfirmedPage(): string {
 function renderCancelledPage(): string {
   return renderAuthLayout({
     title: "Account restored",
+    centered: true,
     bodyHtml: `
+      ${confirmIcon("check")}
       <h1 class="title">Account restored</h1>
       <p class="sub" role="status">Your account is no longer scheduled for deletion. You can pick up where you left off.</p>
       <div class="actions">
@@ -641,7 +648,9 @@ function renderCancelledPage(): string {
 function renderAlreadyDeletedPage(): string {
   return renderAuthLayout({
     title: "Account permanently deleted",
+    centered: true,
     bodyHtml: `
+      ${confirmIcon("alert")}
       <h1 class="title">Account permanently deleted</h1>
       <p class="sub" role="alert">Your account has already been permanently deleted, so we couldn't cancel it.</p>
       <p class="aux">Want to use Marfa again? <a href="/auth/sign-up">Create a new account</a>.</p>
