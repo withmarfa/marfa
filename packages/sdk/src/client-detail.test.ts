@@ -87,6 +87,8 @@ describe("items.getDetail", () => {
     // Both neighbors hydrated as full { item, metadata }.
     const neighborIds = (detail.neighbors ?? []).map((n) => n.item.id).sort();
     expect(neighborIds).toEqual([child.id, comment.id].sort());
+    // A small neighbourhood is complete, not truncated.
+    expect(detail.neighbors_truncated).toBe(false);
     // Versions present.
     expect((detail.versions ?? []).length).toBeGreaterThanOrEqual(1);
   });

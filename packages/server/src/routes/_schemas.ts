@@ -100,7 +100,11 @@ export const VersionSchema = z.object({
  *   capped + cursored per type. Opt in with `include=backrefs`.
  * - `neighbors` — the far-end items of the item's edges (outbound targets and,
  *   when `backrefs` is also requested, inbound sources), each with its metadata
- *   and permission-filtered. Opt in with `include=neighbors`.
+ *   and permission-filtered. Opt in with `include=neighbors`. Paired with
+ *   `neighbors_truncated`: the combined neighbor set is capped, and when the cap
+ *   bites this flag is `true` — the only signal for that case, since the
+ *   per-type edge-block `has_more` does not cover a combined-set overflow.
+ *   Consumers must page the per-type edge/backref endpoints when it is set.
  * - `versions` — the item's version snapshots, newest-first. Opt in with
  *   `include=versions`.
  */
@@ -109,5 +113,6 @@ export const ItemDetailSchema = z.object({
   metadata: MetadataSchema,
   backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
   neighbors: z.array(ItemWithMetadataSchema).optional(),
+  neighbors_truncated: z.boolean().optional(),
   versions: z.array(VersionSchema).optional(),
 });

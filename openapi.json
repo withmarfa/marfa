@@ -1779,6 +1779,9 @@
                         ]
                       }
                     },
+                    "neighbors_truncated": {
+                      "type": "boolean"
+                    },
                     "versions": {
                       "type": "array",
                       "items": {
