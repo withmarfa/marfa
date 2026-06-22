@@ -192,12 +192,12 @@ export type ItemWithExtensions = Item & {
 export type HydratedEdges = Record<string, ItemEdgesBlock>;
 
 /** Opt-in blocks for {@link MarfaClient.items.getDetail}. Each widens the
- *  single-item read with one more slice of the item's 1-hop neighbourhood,
+ *  single-item read with one more slice of the item's 1-hop neighborhood,
  *  collapsing a per-section fan-out into one request. */
 export type ItemDetailInclude = "backrefs" | "neighbors" | "versions";
 
 /**
- * The single-item read with its 1-hop neighbourhood. The base — `item` (with
+ * The single-item read with its 1-hop neighborhood. The base — `item` (with
  * outbound `edges` hydrated) plus `metadata` — is always present; the optional
  * blocks appear only when the matching {@link ItemDetailInclude} token is
  * requested. `neighbors` are permission-filtered server-side: an item the
@@ -666,7 +666,7 @@ export class MarfaClient {
     },
 
     /**
-     * Read a single item with its 1-hop neighbourhood in one round trip.
+     * Read a single item with its 1-hop neighborhood in one round trip.
      *
      * `GET /items/:id` already returns the item's `metadata` layer and its
      * outbound `edges` inline; this method surfaces that envelope (which the
