@@ -52,6 +52,22 @@ export async function hydrateEdgesForItems(
   return out;
 }
 
+/**
+ * Hydrate inbound edges (backrefs) for a single item — the mirror of
+ * `hydrateEdgesForItem`. Groups by edge_type; each type's block reports
+ * has_more when the cap is hit so callers paginate further via
+ * GET /items/:id/backrefs?edge_type=X&cursor=...
+ */
+export async function hydrateBackrefsForItem(
+  storage: Storage,
+  itemId: string,
+  cap = HYDRATE_PER_TYPE_CAP,
+): Promise<HydratedEdges> {
+  const batched = await storage.edges.listToTargetsBatched([itemId], cap + 1);
+  const edges = batched.get(itemId) ?? [];
+  return groupAndCap(edges, cap);
+}
+
 function groupAndCap(edges: Edge[], cap: number): HydratedEdges {
   const out: HydratedEdges = {};
   for (const edge of edges) {

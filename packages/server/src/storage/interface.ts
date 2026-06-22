@@ -1612,6 +1612,17 @@ export interface EdgeStore {
     sourceIds: string[],
     perTypeLimit: number,
   ): Promise<Map<string, Edge[]>>;
+  /**
+   * Batched inbound-by-types fetch for hydration on item reads — the mirror of
+   * `listFromSourcesBatched`, keyed by `target_id`. Caps each
+   * `(target_id, edge_type)` bucket at `perTypeLimit` so a hot item with many
+   * inbound edges of one type can't return an unbounded set. Used to hydrate
+   * the `backrefs` block on the single-item read.
+   */
+  listToTargetsBatched(
+    targetIds: string[],
+    perTypeLimit: number,
+  ): Promise<Map<string, Edge[]>>;
 }
 
 /**

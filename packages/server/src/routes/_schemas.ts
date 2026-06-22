@@ -80,3 +80,34 @@ export const ItemWithMetadataSchema = z.object({
   item: ItemSchema,
   metadata: MetadataSchema,
 });
+
+export const VersionSchema = z.object({
+  id: z.string(),
+  item_id: z.string(),
+  version: z.number(),
+  properties: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+  device: z.string().optional(),
+});
+
+/**
+ * The single-item read response. The base shape (`item` with outbound `edges`
+ * hydrated, plus `metadata`) is always present; the three optional blocks are
+ * opt-in via `?include=` and widen the 1-hop neighbourhood the caller gets in
+ * one round trip instead of a per-section fan-out:
+ *
+ * - `backrefs` — inbound edges grouped by type (same block shape as `edges`),
+ *   capped + cursored per type. Opt in with `include=backrefs`.
+ * - `neighbors` — the far-end items of the item's edges (outbound targets and,
+ *   when `backrefs` is also requested, inbound sources), each with its metadata
+ *   and permission-filtered. Opt in with `include=neighbors`.
+ * - `versions` — the item's version snapshots, newest-first. Opt in with
+ *   `include=versions`.
+ */
+export const ItemDetailSchema = z.object({
+  item: ItemSchema,
+  metadata: MetadataSchema,
+  backrefs: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+  neighbors: z.array(ItemWithMetadataSchema).optional(),
+  versions: z.array(VersionSchema).optional(),
+});
