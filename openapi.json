@@ -1316,7 +1316,7 @@
           "Items"
         ],
         "summary": "Get an item",
-        "description": "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n`?include=` widens the response with the item's 1-hop neighbourhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
+        "description": "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
         "security": [
           {
             "bearerAuth": []
@@ -1346,7 +1346,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Item with metadata, and any requested neighbourhood blocks",
+            "description": "Item with metadata, and any requested neighborhood blocks",
             "content": {
               "application/json": {
                 "schema": {

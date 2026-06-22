@@ -1,5 +1,5 @@
 /**
- * GET /items/:id?include=backrefs,neighbors,versions — the 1-hop neighbourhood
+ * GET /items/:id?include=backrefs,neighbors,versions — the 1-hop neighborhood
  * read that collapses an open-a-detail fan-out into one request.
  *
  * Coverage:
@@ -9,7 +9,7 @@
  *    pagination signalling;
  *  - `neighbors` hydrates the far-end items of the requested edge blocks, each
  *    with its metadata;
- *  - neighbour hydration is NOT an access-control bypass: a neighbour the
+ *  - neighbor hydration is NOT an access-control bypass: a neighbor the
  *    caller cannot read by type, or that lives in another tenant, is silently
  *    omitted, never leaked;
  *  - `versions` is opt-in.
@@ -31,7 +31,7 @@ const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
 const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
 let adminA: string;
 let adminB: string;
-// Reads core.note only — used to prove a neighbour of an unreadable type is
+// Reads core.note only — used to prove a neighbor of an unreadable type is
 // omitted rather than leaked through the bundle.
 let noteReaderA: string;
 
@@ -146,7 +146,7 @@ afterAll(async () => {
 });
 
 describe("GET /items/:id — base shape is unchanged without include", () => {
-  it("returns item (with outbound edges) + metadata, and no neighbourhood blocks", async () => {
+  it("returns item (with outbound edges) + metadata, and no neighborhood blocks", async () => {
     const parent = await create(adminA, "core.note", { body: "root" }, ["t"]);
     const child = await create(adminA, "core.note", { body: "child" });
     await edge(adminA, parent, child, "parent-of");
@@ -207,7 +207,7 @@ describe("GET /items/:id?include=neighbors", () => {
     expect(ids).toEqual([child, comment].sort());
   });
 
-  it("returns an empty neighbour list (not absent) for an item with no edges", async () => {
+  it("returns an empty neighbor list (not absent) for an item with no edges", async () => {
     const lone = await create(adminA, "core.note", { body: "lonely" });
     const d = await detail(adminA, lone, "backrefs,neighbors");
     expect(d.neighbors).toEqual([]);
@@ -216,7 +216,7 @@ describe("GET /items/:id?include=neighbors", () => {
 });
 
 describe("GET /items/:id?include=neighbors — not an access-control bypass", () => {
-  it("omits a neighbour whose type the caller cannot read", async () => {
+  it("omits a neighbor whose type the caller cannot read", async () => {
     const parent = await create(adminA, "core.note", {
       body: "visible parent",
     });
@@ -231,7 +231,7 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     expect(ids).toEqual([]);
   });
 
-  it("omits a cross-tenant neighbour even when an edge references it", async () => {
+  it("omits a cross-tenant neighbor even when an edge references it", async () => {
     const parentA = await create(adminA, "core.note", {
       body: "tenant A root",
     });
@@ -249,7 +249,7 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     const ids = (d.neighbors ?? []).map((n) => n.item.id);
     // The edge is real and shows up in the outbound block...
     expect(d.item.edges?.["parent-of"]?.edges[0]?.target_id).toBe(itemB);
-    // ...but the cross-tenant item is never hydrated into a neighbour.
+    // ...but the cross-tenant item is never hydrated into a neighbor.
     expect(ids).not.toContain(itemB);
     expect(ids).toEqual([]);
   });

@@ -86,10 +86,10 @@ const IdParam = z.object({
 });
 
 /**
- * Upper bound on neighbours hydrated by `GET /items/:id?include=neighbors`.
+ * Upper bound on neighbors hydrated by `GET /items/:id?include=neighbors`.
  * Outbound + inbound edges are each already capped per type
  * (`HYDRATE_PER_TYPE_CAP`), so this only bites a pathological cross-product of
- * many edge types; overflow neighbours stay reachable through the per-type
+ * many edge types; overflow neighbors stay reachable through the per-type
  * edge/backref endpoints. Matches the bulk-get id cap so one detail read can
  * never exceed one batched hydration.
  */
@@ -338,7 +338,7 @@ const getItemRoute = createRoute({
   summary: "Get an item",
   description:
     "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. An item the caller cannot see returns 404 rather than 403, so the server never leaks existence.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighbourhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
+    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -356,7 +356,7 @@ const getItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemDetailSchema },
       },
-      description: "Item with metadata, and any requested neighbourhood blocks",
+      description: "Item with metadata, and any requested neighborhood blocks",
     },
     401: {
       content: {
@@ -1392,11 +1392,11 @@ export function itemRoutes(storage: Storage) {
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
     if (includeNeighbors) {
-      // The 1-hop neighbourhood: the far-end items of the edge blocks present
+      // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
-      // `backrefs` was also requested. Each neighbour is re-authorised through
+      // `backrefs` was also requested. Each neighbor is re-authorised through
       // the same tenant fence + per-type read gate the bulk-get path uses, so a
-      // neighbour the caller cannot read is silently omitted, never leaked.
+      // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();
       for (const block of Object.values(edges)) {
         for (const e of block.edges) neighborIds.add(e.target_id);
@@ -1409,7 +1409,7 @@ export function itemRoutes(storage: Storage) {
       neighborIds.delete(id);
 
       // Bound the hydration so a pathological fan-out can't pin the worker;
-      // overflow neighbours are reachable via the per-type edge/backref
+      // overflow neighbors are reachable via the per-type edge/backref
       // endpoints (has_more on each block already signals more edges exist).
       const ids = [...neighborIds].slice(0, MAX_NEIGHBOR_IDS);
       if (ids.length === 0) {

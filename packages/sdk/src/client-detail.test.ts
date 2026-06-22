@@ -84,7 +84,7 @@ describe("items.getDetail", () => {
     // Outbound + inbound edges.
     expect(detail.item.edges?.["parent-of"]?.edges.length).toBe(1);
     expect(detail.backrefs?.["in-thread"]?.edges.length).toBe(1);
-    // Both neighbours hydrated as full { item, metadata }.
+    // Both neighbors hydrated as full { item, metadata }.
     const neighborIds = (detail.neighbors ?? []).map((n) => n.item.id).sort();
     expect(neighborIds).toEqual([child.id, comment.id].sort());
     // Versions present.

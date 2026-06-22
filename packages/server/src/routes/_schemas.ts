@@ -93,7 +93,7 @@ export const VersionSchema = z.object({
 /**
  * The single-item read response. The base shape (`item` with outbound `edges`
  * hydrated, plus `metadata`) is always present; the three optional blocks are
- * opt-in via `?include=` and widen the 1-hop neighbourhood the caller gets in
+ * opt-in via `?include=` and widen the 1-hop neighborhood the caller gets in
  * one round trip instead of a per-section fan-out:
  *
  * - `backrefs` — inbound edges grouped by type (same block shape as `edges`),
