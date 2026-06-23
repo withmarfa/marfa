@@ -18249,6 +18249,334 @@
         }
       }
     },
+    "/admin/tenants/{id}/keys": {
+      "post": {
+        "operationId": "adminCreateTenantKey",
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Create a tenant-bound API key",
+        "description": "Creates an API key bound to the specified tenant. Platform-admin only. The plaintext key is returned only in this response.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Tenant id."
+            },
+            "required": true,
+            "description": "Tenant id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "admin",
+                      "tenant_admin",
+                      "member"
+                    ]
+                  },
+                  "default_tier": {
+                    "type": "string",
+                    "enum": [
+                      "library",
+                      "feed"
+                    ]
+                  },
+                  "type_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write",
+                        "none"
+                      ]
+                    }
+                  },
+                  "extension_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
+                  },
+                  "edge_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
+                  },
+                  "metadata_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "label",
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tenant-bound API key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "admin",
+                        "tenant_admin",
+                        "member"
+                      ]
+                    },
+                    "default_tier": {
+                      "type": "string",
+                      "enum": [
+                        "library",
+                        "feed"
+                      ]
+                    },
+                    "is_platform": {
+                      "type": "boolean"
+                    },
+                    "type_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write",
+                          "none"
+                        ]
+                      }
+                    },
+                    "extension_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
+                      }
+                    },
+                    "edge_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
+                      }
+                    },
+                    "metadata_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
+                      }
+                    },
+                    "created_at": {
+                      "type": "string"
+                    },
+                    "last_used_at": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "key",
+                    "label",
+                    "source",
+                    "role",
+                    "default_tier",
+                    "is_platform",
+                    "type_permissions",
+                    "created_at",
+                    "last_used_at"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tenant not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/events": {
       "get": {
         "operationId": "streamEvents",

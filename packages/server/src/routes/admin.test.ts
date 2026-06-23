@@ -97,6 +97,26 @@ describe("admin auth gate", () => {
     );
     expect(res.status).toBe(403);
   });
+
+  it("POST /admin/tenants/:id/keys — 401 without credentials", async () => {
+    if (!ctx.storage.tenants) return;
+    const t = await ctx.storage.tenants.create("tenant-key-401");
+    const res = await request(ctx.app, "POST", `/admin/tenants/${t.id}/keys`, {
+      body: { label: "blocked", source: "test" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /admin/tenants/:id/keys — 403 with a tenant credential", async () => {
+    if (!ctx.storage.tenants) return;
+    const t = await ctx.storage.tenants.create("tenant-key-403");
+    const memberKey = await mintTenantKey(t.id);
+    const res = await request(ctx.app, "POST", `/admin/tenants/${t.id}/keys`, {
+      key: memberKey,
+      body: { label: "blocked", source: "test" },
+    });
+    expect(res.status).toBe(403);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -104,6 +124,47 @@ describe("admin auth gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("admin happy paths", () => {
+  it("includes the hosted space owner's email and verification status", async () => {
+    const hosted = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    try {
+      const signUp = await request(hosted.app, "POST", "/auth/sign-up/email", {
+        body: {
+          email: "owner@example.com",
+          password: "correct horse battery",
+          name: "Owner",
+        },
+        headers: { origin: "http://localhost:0" },
+      });
+      expect(signUp.status).toBe(200);
+      const authUserId = ((await signUp.json()) as { user?: { id?: string } })
+        .user?.id;
+      const owner = await hosted.storage.users?.getByAuthUserId(
+        authUserId ?? "",
+      );
+      expect(owner?.tenant_id).toBeTruthy();
+
+      const res = await request(hosted.app, "GET", "/admin/tenants", {
+        key: hosted.adminKey,
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        data: {
+          id: string;
+          owner_email: string | null;
+          owner_email_verified: boolean | null;
+        }[];
+      };
+      const tenant = body.data.find((row) => row.id === owner?.tenant_id);
+      expect(tenant?.owner_email).toBe("owner@example.com");
+      expect(tenant?.owner_email_verified).toBe(false);
+    } finally {
+      await hosted.cleanup();
+    }
+  });
+
   it("GET /admin/tenants lists every tenant with status", async () => {
     if (!ctx.storage.tenants) return;
     const t = await ctx.storage.tenants.create("happy-list");
@@ -137,6 +198,45 @@ describe("admin happy paths", () => {
     expect(body.tenant.status).toBe("active");
     expect(body.quotas?.items_limit).toBe(1234);
     expect(Array.isArray(body.recent_activity)).toBe(true);
+  });
+
+  it("platform-admin mints a key bound to the requested tenant", async () => {
+    if (!ctx.storage.tenants) return;
+    const target = await ctx.storage.tenants.create("tenant-key-target");
+    const other = await ctx.storage.tenants.create("tenant-key-other");
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/admin/tenants/${target.id}/keys`,
+      {
+        key: ctx.adminKey,
+        body: {
+          label: "Raycast fallback",
+          source: "raycast",
+          role: "tenant_admin",
+          type_permissions: { "core.note": "write" },
+          edge_permissions: { "core.related": "read" },
+          metadata_permissions: { types: "write" },
+        },
+      },
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      id: string;
+      key: string;
+      source: string;
+      role: string;
+      is_platform: boolean;
+    };
+    expect(body.key).toMatch(/^marfa_k1_/);
+    expect(body.source).toBe("raycast");
+    expect(body.role).toBe("tenant_admin");
+    expect(body.is_platform).toBe(false);
+
+    const stored = await ctx.storage.keys.get(body.id);
+    expect(stored?.tenant_id).toBe(target.id);
+    expect(stored?.tenant_id).not.toBe(other.id);
+    expect(stored?.is_platform).toBe(false);
   });
 
   it("GET /admin/tenants/:id — 404 on unknown tenant", async () => {

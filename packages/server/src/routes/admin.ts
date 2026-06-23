@@ -26,11 +26,12 @@
  * tenants reject writes at the auth middleware layer
  * (`middleware/tenant-suspension.ts`); platform admins bypass.
  */
+import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { hashApiKey, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictTenantStatus } from "../middleware/tenant-suspension.js";
@@ -45,6 +46,11 @@ const TenantSchema = z.object({
   name: z.string().nullable(),
   created_at: z.string(),
   status: z.enum(["active", "suspended"]),
+});
+
+const AdminTenantSchema = TenantSchema.extend({
+  owner_email: z.string().nullable(),
+  owner_email_verified: z.boolean().nullable(),
 });
 
 const QuotaSchema = z.object({
@@ -65,7 +71,7 @@ const ActivityEntrySchema = z.object({
 });
 
 const TenantShowSchema = z.object({
-  tenant: TenantSchema,
+  tenant: AdminTenantSchema,
   quotas: QuotaSchema.nullable(),
   recent_activity: z.array(ActivityEntrySchema),
 });
@@ -96,6 +102,43 @@ const ApiKeySummarySchema = z.object({
   last_used_at: z.string().nullable(),
 });
 
+const KeyResponseSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  label: z.string(),
+  source: z.string(),
+  role: z.enum(["admin", "tenant_admin", "member"]),
+  default_tier: z.enum(["library", "feed"]),
+  is_platform: z.boolean(),
+  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+});
+
+const CreateTenantKeyBodySchema = z.object({
+  label: z.string().min(1, "label is required"),
+  source: z.string().min(1, "source display name is required").max(200),
+  role: z.enum(["admin", "tenant_admin", "member"]).optional(),
+  default_tier: z.enum(["library", "feed"]).optional(),
+  type_permissions: z
+    .record(z.string(), z.enum(["read", "write", "none"]))
+    .optional(),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Route definitions
 // ---------------------------------------------------------------------------
@@ -113,7 +156,7 @@ const listTenantsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(TenantSchema) }),
+          schema: z.object({ data: z.array(AdminTenantSchema) }),
         },
       },
       description: "Tenant list",
@@ -353,6 +396,49 @@ const listTenantKeysRoute = createRoute({
   },
 });
 
+const createTenantKeyRoute = createRoute({
+  operationId: "adminCreateTenantKey",
+  method: "post",
+  path: "/tenants/{id}/keys",
+  tags: ["Admin"],
+  summary: "Create a tenant-bound API key",
+  description:
+    "Creates an API key bound to the specified tenant. Platform-admin only. The plaintext key is returned only in this response.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id.") }),
+    body: {
+      content: { "application/json": { schema: CreateTenantKeyBodySchema } },
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: KeyResponseSchema } },
+      description: "Tenant-bound API key created",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Forbidden",
+    },
+    404: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["not_found"]) },
+      },
+      description: "Tenant not found",
+    },
+  },
+});
+
 const PurgeNowResponseSchema = z.object({
   purged_count: z.number().int().nonnegative(),
   run_at: z.string(),
@@ -445,17 +531,39 @@ function apiKeySummary(key: ApiKey): z.infer<typeof ApiKeySummarySchema> {
  *  an ad-hoc purger with this value to keep the same eligibility math. */
 export interface AdminRoutesOptions {
   graceDays: number;
+  apiKeySalt: string;
 }
 
 export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   const router = createOpenAPIRouter<AppEnv>();
+
+  async function withOwner(tenant: z.infer<typeof TenantSchema>) {
+    if (!storage.users) {
+      return {
+        ...tenant,
+        owner_email: null,
+        owner_email_verified: null,
+      };
+    }
+    const user = await storage.users.getByTenantId(tenant.id);
+    const owner = user?.auth_user_id
+      ? await storage.users.getAuthUserEmail(user.auth_user_id)
+      : null;
+    return {
+      ...tenant,
+      owner_email: owner?.email ?? null,
+      owner_email_verified: owner?.email_verified ?? null,
+    };
+  }
 
   router.openapi(listTenantsRoute, async (c) => {
     requireAdmin(c);
     if (!storage.tenants) {
       return c.json({ data: [] }, 200);
     }
-    const data = await storage.tenants.list();
+    const data = await Promise.all(
+      (await storage.tenants.list()).map(withOwner),
+    );
     return c.json({ data }, 200);
   });
 
@@ -470,7 +578,10 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
 
-    const quota = await storage.tenantQuotas.get(id);
+    const [tenantWithOwner, quota] = await Promise.all([
+      withOwner(tenant),
+      storage.tenantQuotas.get(id),
+    ]);
     const quotas = quota
       ? {
           tenant_id: id,
@@ -484,7 +595,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       : null;
 
     const recent_activity = await loadRecentActivity(storage, id);
-    return c.json({ tenant, quotas, recent_activity }, 200);
+    return c.json({ tenant: tenantWithOwner, quotas, recent_activity }, 200);
   });
 
   router.openapi(suspendTenantRoute, async (c) => {
@@ -590,6 +701,67 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     }
     const keys = await storage.keys.listForTenant(id);
     return c.json({ data: keys.map(apiKeySummary) }, 200);
+  });
+
+  router.openapi(createTenantKeyRoute, async (c) => {
+    const actor = requireAdmin(c);
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+    if (!storage.tenants) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    }
+    const tenant = await storage.tenants.get(id);
+    if (!tenant) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    }
+
+    const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
+    const stored = await storage.keys.create(
+      {
+        label: body.label.trim(),
+        source: body.source.trim(),
+        role: body.role ?? "member",
+        default_tier: body.default_tier,
+        // This route deliberately cannot create platform credentials. Its
+        // purpose is issuing a credential whose authority is confined to id.
+        is_platform: false,
+        type_permissions: body.type_permissions ?? {},
+        extension_permissions: body.extension_permissions,
+        edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
+      },
+      hashApiKey(rawKey, opts.apiKeySalt),
+      id,
+    );
+
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      tenant_id: id,
+      key_id: actor.id,
+      action: "key.create",
+      resource_type: "key",
+      resource_id: stored.id,
+      details: { issued_by_platform_admin: true },
+    });
+
+    return c.json(
+      {
+        id: stored.id,
+        key: rawKey,
+        label: stored.label,
+        source: stored.source,
+        role: stored.role,
+        default_tier: stored.default_tier,
+        is_platform: stored.is_platform,
+        type_permissions: stored.type_permissions,
+        extension_permissions: stored.extension_permissions,
+        edge_permissions: stored.edge_permissions,
+        metadata_permissions: stored.metadata_permissions,
+        created_at: stored.created_at,
+        last_used_at: stored.last_used_at,
+      },
+      201,
+    );
   });
 
   router.openapi(accountDeletionPurgeNowRoute, async (c) => {
