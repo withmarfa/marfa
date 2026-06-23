@@ -108,7 +108,12 @@ describe("account deletion routes", () => {
       { headers: { origin: ORIGIN } },
     );
     expect(confirm.status).toBe(200);
-    expect(await confirm.text()).toContain("scheduled for deletion");
+    const confirmBody = await confirm.text();
+    expect(confirmBody).toContain("scheduled for deletion");
+    // Centered confirmation treatment, consistent with the other confirm
+    // screens (an icon chip inside the centered card).
+    expect(confirmBody).toContain("confirm-icon");
+    expect(confirmBody).toContain("card--confirm");
 
     // State should be `pending_deletion`.
     const lifecycle = ctx.storage.accountLifecycle;
