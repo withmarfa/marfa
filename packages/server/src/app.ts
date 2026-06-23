@@ -704,6 +704,7 @@ export function createApp(
     "/admin",
     adminRoutes(storage, {
       graceDays: config.accountDeletionGraceDays ?? 30,
+      apiKeySalt: config.apiKeySalt,
     }),
   );
 
