@@ -1,7 +1,3 @@
-
-> @withmarfa/server@1.0.0 generate:openapi /Users/aicayzer/aic-local/Dev/MarfaHQ/WithMarfa/Worktrees/marfa-tenant-key-minting/packages/server
-> tsx scripts/generate-openapi.ts
-
 {
   "openapi": "3.1.0",
   "info": {
