@@ -93,6 +93,11 @@ const cfEnv = env as unknown as Env;
  * environment whose compute budget can't absorb always-on (e.g. a free Neon
  * tier) sets `MARFA_CONTAINER_WARM=false` to fall back to scale-to-zero.
  */
+// CAUTION — cost: enabling warm pins the single instance awake 24/7, which
+// Cloudflare bills continuously. Floor is the managing Durable Object
+// (~$12.50/mo) plus provisioned memory + disk for the whole resident window —
+// on the order of tens of dollars/month per always-on standard-1. Keep off
+// (scale-to-zero) unless a latency floor is genuinely required.
 const CONTAINER_WARM =
   (cfEnv.MARFA_CONTAINER_WARM ?? "").trim().toLowerCase() === "true";
 

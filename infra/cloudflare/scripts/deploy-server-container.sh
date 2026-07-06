@@ -56,10 +56,11 @@
 #   - V_CONTAINER_WARM         (deliberate warm policy; "true" keeps the single
 #                               instance resident instead of scaling to zero so
 #                               the first request after an idle gap never pays a
-#                               cold start. Default "true" for staging + prod;
-#                               set "false" to revert to scale-to-zero when the
-#                               continuous container + Neon awake-time cost is
-#                               not affordable)
+#                               cold start. Default "false" (scale-to-zero) for
+#                               both envs — an always-on container bills
+#                               continuously (memory + disk + its managing
+#                               Durable Object). Set "true" to opt a genuinely
+#                               latency-sensitive env into always-on)
 #   - STAGING_WORKERS_SUBDOMAIN (account workers.dev subdomain, for the staging auth base URL)
 #
 # The image must already be built (linux/amd64) and pushed to the managed
@@ -168,16 +169,15 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   # Aggressive scale-to-zero on staging: idle awake-time is the dominant driver
   # of Neon compute, and staging's free budget is the one that keeps lapsing.
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
-  # Deliberate warm policy. Staging backs the Tickets responsiveness litmus
-  # surface, where a cold-start boot on a ticket open is a real product
-  # failure, so warm is on by default — the container runs with a long activity
-  # window (set in the DO code) that normal traffic keeps renewing, so the
-  # single instance stays resident instead of scaling to zero on the 2m timer
-  # above. COST: this keeps the container (and its Neon pool) awake
-  # continuously, so it spends against the very free Neon budget the 2m sleep
-  # would otherwise protect. If that budget lapses, set V_CONTAINER_WARM=false
-  # to revert staging to scale-to-zero.
-  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-true}"
+  # Deliberate warm policy — OFF by default (opt-in). Warm keeps the single
+  # instance resident so the first request after an idle gap never pays a cold
+  # start (staging backs the Tickets responsiveness surface). COST: an always-on
+  # container bills continuously — provisioned memory + disk for the whole
+  # resident window plus its managing Durable Object (~$12.50/mo floor), on the
+  # order of tens of dollars/month per instance. Off = scale-to-zero on the 2m
+  # timer above, so an untouched env costs ~nothing. Set V_CONTAINER_WARM=true
+  # to opt a genuinely latency-sensitive env back in.
+  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-false}"
   export V_RUNTIME_CONTROL_URL="https://runtime-staging.marfa.so"
   export V_S3_BUCKET="marfa-blobs-staging"
   # workers.dev URL drives auth cookies. Defaults to the conventional host;
@@ -198,11 +198,13 @@ else
   # Prod has its own free Neon budget, so a longer idle window is affordable and
   # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
-  # Deliberate warm policy, on by default in production: cold start on the real
-  # product surface is a failure, not an edge case, so the instance stays
-  # resident rather than scaling to zero. COST: continuous container + Neon
-  # awake-time. Set V_CONTAINER_WARM=false to revert to scale-to-zero.
-  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-true}"
+  # Deliberate warm policy — OFF by default (opt-in). Warm keeps the prod
+  # instance resident so real traffic never pays a cold start. COST: an
+  # always-on container bills continuously — provisioned memory + disk plus its
+  # managing Durable Object (~$12.50/mo floor). Off = scale-to-zero, so a
+  # low-traffic or idle deployment costs ~nothing. Set V_CONTAINER_WARM=true
+  # once sustained real traffic makes the latency floor worth the spend.
+  export V_CONTAINER_WARM="${V_CONTAINER_WARM:-false}"
   export V_RUNTIME_CONTROL_URL="https://runtime.marfa.so"
   export V_S3_BUCKET="${PROD_R2_BUCKET:-marfa-blobs-prod}"
   export V_AUTH_BASE_URL="https://api.marfa.so"
