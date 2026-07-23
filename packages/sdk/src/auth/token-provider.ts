@@ -1,5 +1,5 @@
 import type { TokenStorage } from "./storage.js";
-import { OAuthError } from "./errors.js";
+import { OAuthError, type OAuthErrorCode } from "./errors.js";
 import { discoverEndpoints, type Endpoints } from "./discovery.js";
 import { normalizeIssuer } from "./issuer.js";
 
@@ -32,6 +32,42 @@ export interface TokenProvider {
 }
 
 const PROACTIVE_WINDOW_MS = 60_000;
+
+/** Statuses safe to replay a refresh token against. Both mean the server
+ *  turned the request away before it reached the grant, so the token is
+ *  provably unrotated. A timeout or a 5xx is ambiguous — the exchange may
+ *  have succeeded with the response lost, and replaying then trips reuse
+ *  detection and ends the session, turning a recoverable blip into a forced
+ *  sign-out. */
+const RETRYABLE_REFRESH_STATUSES = new Set([429, 503]);
+const MAX_REFRESH_ATTEMPTS = 3;
+const REFRESH_BASE_DELAY_MS = 250;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A failed exchange is terminal when the grant itself is gone, so only a
+ *  fresh sign-in recovers it. Anything else leaves the session usable and
+ *  must not sign the user out. */
+function isTerminalRefreshFailure(
+  status: number,
+  code: OAuthErrorCode,
+): boolean {
+  if (code === "invalid_grant" || code === "token_reuse_detected") return true;
+  // A 400 or 401 the server didn't tag with a recognized code still means the
+  // credential was refused; asking again cannot change that answer.
+  return status === 400 || status === 401;
+}
+
+/** `Retry-After` in ms when the server sent one — it knows when its window
+ *  resets better than a client-side guess does. */
+function retryAfterMs(headers: Headers): number | null {
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
+}
 
 export interface TokenProviderConfig {
   issuer: string;
@@ -115,45 +151,68 @@ export class StoredTokenProvider implements TokenProvider {
     const previousScope = this.cache.scope;
     this.inflightRefresh = (async () => {
       try {
-        this.endpoints ??= await discoverEndpoints(this.issuer, this.fetch);
-        // OAuth 2.0 §3.2: token endpoint takes form-encoded.
-        const res = await this.fetch(this.endpoints.token, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-            client_id: this.clientId,
-          }).toString(),
-        });
-        const body = (await res.json()) as {
-          access_token?: string;
-          refresh_token?: string;
-          expires_in?: number;
-          scope?: string;
-          error?: string;
-        };
-        if (!res.ok || !body.access_token) {
-          await this.signOut();
-          throw new OAuthError(
-            (body.error as
-              | "invalid_grant"
-              | "token_reuse_detected"
-              | undefined) ?? "invalid_grant",
+        const endpoints = (this.endpoints ??= await discoverEndpoints(
+          this.issuer,
+          this.fetch,
+        ));
+        for (let attempt = 1; ; attempt++) {
+          // OAuth 2.0 §3.2: token endpoint takes form-encoded.
+          const res = await this.fetch(endpoints.token, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              grant_type: "refresh_token",
+              refresh_token: refreshToken,
+              client_id: this.clientId,
+            }).toString(),
+          });
+          // A rate-limited or unavailable response need not be JSON.
+          const body = (await res.json().catch(() => ({}))) as {
+            access_token?: string;
+            refresh_token?: string;
+            expires_in?: number;
+            scope?: string;
+            error?: string;
+          };
+
+          if (res.ok && body.access_token) {
+            const expiresInMs = (body.expires_in ?? 3600) * 1000;
+            const updated: PersistedTokens = {
+              access_token: body.access_token,
+              refresh_token: body.refresh_token ?? refreshToken,
+              id_token: this.cache?.id_token,
+              access_expires_at: Date.now() + expiresInMs,
+              scope: body.scope ?? previousScope,
+            };
+            await this.persist(updated);
+            return updated.access_token;
+          }
+
+          const code =
+            (body.error as OAuthErrorCode | undefined) ?? "invalid_grant";
+          const error = new OAuthError(
+            code,
             body.error ?? "Refresh failed",
             res.status,
           );
+
+          // Only a dead grant justifies ending the session. Signing out on a
+          // transient failure would evict a user whose credentials are fine.
+          if (isTerminalRefreshFailure(res.status, code)) {
+            await this.signOut();
+            throw error;
+          }
+          if (
+            !RETRYABLE_REFRESH_STATUSES.has(res.status) ||
+            attempt >= MAX_REFRESH_ATTEMPTS
+          ) {
+            throw error;
+          }
+          await sleep(
+            retryAfterMs(res.headers) ??
+              REFRESH_BASE_DELAY_MS * 2 ** (attempt - 1),
+          );
         }
-        const expiresInMs = (body.expires_in ?? 3600) * 1000;
-        const updated: PersistedTokens = {
-          access_token: body.access_token,
-          refresh_token: body.refresh_token ?? refreshToken,
-          id_token: this.cache?.id_token,
-          access_expires_at: Date.now() + expiresInMs,
-          scope: body.scope ?? previousScope,
-        };
-        await this.persist(updated);
-        return updated.access_token;
       } finally {
         this.inflightRefresh = null;
       }

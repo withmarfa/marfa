@@ -171,3 +171,110 @@ describe("StoredTokenProvider.refresh", () => {
     await expect(provider.refresh()).rejects.toThrow(OAuthError);
   });
 });
+
+describe("StoredTokenProvider.refresh failure taxonomy", () => {
+  beforeEach(() => {
+    __resetDiscoveryCache();
+  });
+
+  const endpoints = {
+    token: TOKEN_ENDPOINT,
+    authorize: AUTHORIZE_ENDPOINT,
+    deviceAuthorize: DEVICE_ENDPOINT,
+  };
+
+  function rateLimited(): Response {
+    return new Response(JSON.stringify({ error: "rate_limited" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "0" },
+    });
+  }
+
+  function oauthFailure(code: string): Response {
+    return new Response(JSON.stringify({ error: code }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  async function makeProvider(
+    storage: InMemoryTokenStorage,
+    fetch: typeof globalThis.fetch,
+  ): Promise<{ provider: StoredTokenProvider; signedOut: () => boolean }> {
+    let flag = false;
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch,
+      endpoints,
+    });
+    provider.onSignOut(() => {
+      flag = true;
+    });
+    await provider.hydrateFromStorage();
+    return { provider, signedOut: () => flag };
+  }
+
+  it("retries a 429 and keeps the session", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch, calls } = makeMockFetch([
+      rateLimited(),
+      refreshOkResponse(),
+    ]);
+    const { provider, signedOut } = await makeProvider(storage, fetch);
+
+    expect(await provider.refresh()).toBe("fresh_at");
+    expect(calls).toHaveLength(2);
+    // A rate limit means the server never reached the grant, so the
+    // credentials are still good and the user must stay signed in.
+    expect(signedOut()).toBe(false);
+    expect(await storage.get(STORAGE_KEY)).not.toBeNull();
+  });
+
+  it("does not sign out when 429 retries are exhausted", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch, calls } = makeMockFetch([
+      rateLimited(),
+      rateLimited(),
+      rateLimited(),
+      rateLimited(),
+    ]);
+    const { provider, signedOut } = await makeProvider(storage, fetch);
+
+    await expect(provider.refresh()).rejects.toThrow(OAuthError);
+    // Bounded by the attempt budget rather than looping.
+    expect(calls).toHaveLength(3);
+    expect(signedOut()).toBe(false);
+    expect(await storage.get(STORAGE_KEY)).not.toBeNull();
+  });
+
+  it("signs out on token_reuse_detected", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch, calls } = makeMockFetch([
+      oauthFailure("token_reuse_detected"),
+    ]);
+    const { provider, signedOut } = await makeProvider(storage, fetch);
+
+    await expect(provider.refresh()).rejects.toThrow(OAuthError);
+    // Rotation replay invalidates the whole pair, so retrying is pointless.
+    expect(calls).toHaveLength(1);
+    expect(signedOut()).toBe(true);
+    expect(await storage.get(STORAGE_KEY)).toBeNull();
+  });
+
+  it("signs out on invalid_grant", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch } = makeMockFetch([oauthFailure("invalid_grant")]);
+    const { provider, signedOut } = await makeProvider(storage, fetch);
+
+    await expect(provider.refresh()).rejects.toThrow(OAuthError);
+    expect(signedOut()).toBe(true);
+    expect(await storage.get(STORAGE_KEY)).toBeNull();
+  });
+});
