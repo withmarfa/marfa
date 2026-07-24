@@ -28,7 +28,11 @@ import {
 } from "./integrations/local-runtime/index.js";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { log } from "./middleware/logger.js";
+import {
+  log,
+  formatErrorSummary,
+  serializeError,
+} from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
 import { checkRedirectAllowlist } from "./routes/redirect-allowlist-check.js";
 import { checkCorsOrigins } from "./routes/cors-origins-check.js";
@@ -461,8 +465,14 @@ function resolveIntegrationsRoot(): string | null {
 }
 
 main().catch((err: unknown) => {
+  // A boot failure is the one log line an operator has to work from — the
+  // process is gone a millisecond later and nothing else got written. Carry
+  // the whole error, not just `.message`, which is empty for the shapes that
+  // matter most here (an unreachable database surfaces as an AggregateError
+  // whose detail lives in `errors`, a wrapped driver failure in `cause`).
   log("error", "Failed to start server", {
-    error: err instanceof Error ? err.message : String(err),
+    error: formatErrorSummary(err),
+    error_detail: serializeError(err),
   });
   process.exit(1);
 });
