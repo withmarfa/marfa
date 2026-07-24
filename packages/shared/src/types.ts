@@ -316,6 +316,26 @@ export interface CreateKeyInput {
 }
 
 /**
+ * Input for `POST /admin/tenants/{id}/keys`, the platform-admin route that
+ * mints a key into a named tenant rather than into the caller's own.
+ *
+ * Two deliberate differences from {@link CreateKeyInput}: the tenant comes
+ * from the path, not the body; and there is no `is_platform`, because the
+ * whole point of the route is a credential whose authority is confined to
+ * one tenant. `role` defaults to `member` server-side.
+ */
+export interface CreateTenantKeyInput {
+  label: string;
+  source: string;
+  role?: MarfaRole;
+  default_tier?: Tier;
+  type_permissions?: Record<string, TypePermission>;
+  extension_permissions?: Record<string, ExtensionPermission>;
+  edge_permissions?: Record<string, EdgePermission>;
+  metadata_permissions?: Record<string, MetadataPermission>;
+}
+
+/**
  * Input for in-place updating an API key (PATCH). All fields optional;
  * `source` and `role` are intentionally omitted — they are immutable after
  * creation (source is baked into item provenance, role is security-critical).
