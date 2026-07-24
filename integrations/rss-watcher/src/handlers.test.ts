@@ -56,6 +56,12 @@ interface BuildOptions {
    *  Set to `undefined` to simulate the connection record being
    *  unavailable (handler should fall back to DEFAULT_FEED_URL). */
   connectionRecord?: Partial<ItemResource>;
+  /** Mutable holder so a test can change the configured feed URL
+   *  between ticks, the way an operator would. Takes precedence over
+   *  `connectionRecord` when set. */
+  connectionRecordRef?: { current: Partial<ItemResource> | null };
+  /** When set, ctx.marfa.getItem(connection_id) rejects with this. */
+  connectionLookupError?: Error;
   /** When set, ctx.marfa.createItem rejects with this error for the
    *  first N calls before recovering. */
   createItemError?: { afterCalls?: number; error: Error };
@@ -95,6 +101,12 @@ function buildContext(opts: BuildOptions = {}): BuiltContext {
     },
     getItem: (id: string) => {
       if (id !== connectionId) return Promise.resolve(null);
+      if (opts.connectionLookupError !== undefined) {
+        return Promise.reject(opts.connectionLookupError);
+      }
+      if (opts.connectionRecordRef !== undefined) {
+        return Promise.resolve(opts.connectionRecordRef.current);
+      }
       return Promise.resolve(opts.connectionRecord ?? null);
     },
   } as unknown as ConnectionClient;
@@ -311,6 +323,127 @@ describe("RSS Watcher schedule handler", () => {
 
     await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
     expect(requestedUrl).toBe(DEFAULT_FEED_URL);
+  });
+
+  it("switches feeds when the configured feed_url changes", async () => {
+    // The connection is reconfigured between ticks. Caching the URL on
+    // the cursor and never re-reading it meant the change was silently
+    // ignored: the connector kept polling the old feed forever.
+    const ref = {
+      current: {
+        properties: { configuration: { feed_url: "https://example.com/a" } },
+      } as Partial<ItemResource>,
+    };
+    const { ctx, created, emitted } = buildContext({
+      connectionRecordRef: ref,
+    });
+    const requested: string[] = [];
+    const handler = createScheduleHandler({
+      fetch: (url: RequestInfo | URL) => {
+        requested.push(urlToString(url));
+        return Promise.resolve(
+          new Response(
+            requested.length === 1 ? FEED_TWO : FEED_THREE_NEWER_ENTRY,
+            { status: 200 },
+          ),
+        );
+      },
+    });
+
+    await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
+    expect(created).toHaveLength(2);
+
+    ref.current = {
+      properties: { configuration: { feed_url: "https://example.com/b" } },
+    };
+    await handler(ctx, SCHEDULE_MSG(1_700_000_300_000));
+
+    expect(requested).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+    const cursor = (await ctx.cursor.read("main")) as { feed_url: string };
+    expect(cursor.feed_url).toBe("https://example.com/b");
+    expect(
+      emitted.some((e) =>
+        ((e.properties?.summary as string | undefined) ?? "").includes(
+          "feed URL changed",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("resets dedupe state on a feed switch so the new feed is not suppressed", async () => {
+    // entry-2's `updated` is older than the watermark the first feed
+    // left behind. Carrying the watermark across a feed switch would
+    // filter it out and the new feed's back catalog would never appear.
+    const ref = {
+      current: {
+        properties: { configuration: { feed_url: "https://example.com/a" } },
+      } as Partial<ItemResource>,
+    };
+    const { ctx, created } = buildContext({ connectionRecordRef: ref });
+    const handler = createScheduleHandler({
+      fetch: makeFetch([{ body: FEED_THREE_NEWER_ENTRY }, { body: FEED_TWO }]),
+    });
+
+    await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
+    expect(created).toHaveLength(2);
+
+    ref.current = {
+      properties: { configuration: { feed_url: "https://example.com/b" } },
+    };
+    await handler(ctx, SCHEDULE_MSG(1_700_000_300_000));
+    expect(created).toHaveLength(4);
+    expect(
+      created.map((c) => (c.properties as { title?: string }).title),
+    ).toEqual(["Newer entry", "Even newer", "Older entry", "Newer entry"]);
+  });
+
+  it("keeps polling the same feed when the configuration is unchanged", async () => {
+    const { ctx, emitted } = buildContext({
+      connectionRecord: {
+        properties: { configuration: { feed_url: "https://example.com/a" } },
+      },
+    });
+    const handler = createScheduleHandler({
+      fetch: makeFetch([{ body: FEED_TWO }, { body: FEED_TWO }]),
+    });
+
+    await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
+    await handler(ctx, SCHEDULE_MSG(1_700_000_300_000));
+
+    expect(
+      emitted.filter((e) =>
+        ((e.properties?.summary as string | undefined) ?? "").includes(
+          "feed URL changed",
+        ),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("fails the tick when the configuration read itself fails", async () => {
+    // Resolving a failed read to the default URL would look identical to
+    // a deliberate switch away from a configured feed, wiping the dedupe
+    // state and replaying the whole feed as new bookmarks.
+    const { ctx, created, emitted } = buildContext({
+      connectionLookupError: new Error("storage unavailable"),
+    });
+    let fetched = false;
+    const handler = createScheduleHandler({
+      fetch: () => {
+        fetched = true;
+        return Promise.resolve(new Response(FEED_TWO, { status: 200 }));
+      },
+    });
+
+    const result = await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
+    expect(result).toMatchObject({ ok: false, retry: true });
+    expect(fetched).toBe(false);
+    expect(created).toHaveLength(0);
+    expect(emitted[0]!.properties?.summary).toMatch(
+      /connection configuration lookup failed/,
+    );
   });
 
   it("emits action_required and retries on fetch error", async () => {

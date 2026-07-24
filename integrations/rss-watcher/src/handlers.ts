@@ -4,7 +4,9 @@
  * Single trigger: schedule. Each tick:
  *   1. Resolve the feed URL from the connection's
  *      `properties.configuration.feed_url` (falls back to the
- *      compiled-in default if absent).
+ *      compiled-in default if absent). Re-read every tick, so a
+ *      reconfigured connection switches feeds; when the URL changes,
+ *      the dedupe state is reset alongside it.
  *   2. Fetch and parse the feed (Atom 1.0 or RSS 2.0).
  *   3. Filter entries already seen — by id (recent-id ring) or by
  *      `updated` timestamp (cursor). Cap the recent-id ring at
@@ -31,7 +33,9 @@ export const RECENT_ID_RING_SIZE = 200;
 const CURSOR_KEY = "main";
 
 interface RssCursor {
-  /** Resolved feed URL (cached after first connection-record read). */
+  /** Feed URL this cursor's dedupe state belongs to. Compared against
+   *  the configured URL every tick; a mismatch means the connection was
+   *  pointed at a different feed and the state below no longer applies. */
   feed_url: string;
   /** ISO timestamp of the most recently seen entry's `updated` field. */
   last_seen_updated: string | null;
@@ -56,14 +60,43 @@ export function createScheduleHandler(
   const fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
 
   return async (ctx, message) => {
+    const resolution = await resolveFeedUrl(ctx);
+    if (!resolution.ok) {
+      return reportFailure(
+        ctx,
+        "connection configuration lookup failed",
+        resolution.error,
+      );
+    }
+    const feedUrl = resolution.url;
+
     let cursor = (await ctx.cursor.read(CURSOR_KEY)) as RssCursor | null;
-    const feedUrl = cursor?.feed_url ?? (await resolveFeedUrl(ctx));
-    cursor ??= {
-      feed_url: feedUrl,
-      last_seen_updated: null,
-      recent_entry_ids: [],
-      last_run_at: new Date(message.scheduled_for_ms).toISOString(),
-    };
+    if (cursor === null) {
+      cursor = {
+        feed_url: feedUrl,
+        last_seen_updated: null,
+        recent_entry_ids: [],
+        last_run_at: new Date(message.scheduled_for_ms).toISOString(),
+      };
+    } else if (cursor.feed_url !== feedUrl) {
+      // The connection now names a different feed. Entry ids and the
+      // `updated` watermark describe the old one, so carrying them over
+      // would silently suppress the new feed's back catalog — every
+      // entry older than the previous feed's high-water mark would be
+      // filtered out and never appear. Reset the dedupe state with the
+      // URL, and leave a trail so the switch isn't invisible.
+      await ctx.activity.emit({
+        severity: "info",
+        summary: "RSS Watcher: configured feed URL changed, dedupe state reset",
+        detail: { previous_feed_url: cursor.feed_url, feed_url: feedUrl },
+      });
+      cursor = {
+        feed_url: feedUrl,
+        last_seen_updated: null,
+        recent_entry_ids: [],
+        last_run_at: cursor.last_run_at,
+      };
+    }
 
     let response: Response;
     try {
@@ -134,26 +167,41 @@ export function registerHandlers(opts: RssHandlerOptions = {}): void {
   registerScheduleHandler(createScheduleHandler(opts));
 }
 
-async function resolveFeedUrl(ctx: ConnectionContext): Promise<string> {
+/**
+ * A connection carrying no `feed_url` is a legitimate default install
+ * and resolves to the compiled-in feed. A read that *fails* is not the
+ * same thing and must not resolve to it: since the URL is now compared
+ * against the cursor every tick, answering "default" on a blip would
+ * read as a deliberate feed switch and wipe the dedupe state, replaying
+ * the whole feed as new bookmarks.
+ */
+type FeedUrlResolution =
+  | { ok: true; url: string }
+  | { ok: false; error: unknown };
+
+async function resolveFeedUrl(
+  ctx: ConnectionContext,
+): Promise<FeedUrlResolution> {
+  let connection: ItemResource | null;
   try {
-    const connection = await ctx.marfa.getItem(ctx.connection_id);
-    const props = connection?.properties as
-      | { configuration?: unknown }
-      | undefined;
-    const config = props?.configuration;
-    if (
-      typeof config === "object" &&
-      config !== null &&
-      "feed_url" in config &&
-      typeof (config as { feed_url?: unknown }).feed_url === "string"
-    ) {
-      return (config as { feed_url: string }).feed_url;
-    }
-  } catch {
-    // Fall through to default. We don't fail the tick on configuration
-    // resolution — the default is always usable.
+    connection = await ctx.marfa.getItem(ctx.connection_id);
+  } catch (err) {
+    return { ok: false, error: err };
   }
-  return DEFAULT_FEED_URL;
+  const props = connection?.properties as
+    | { configuration?: unknown }
+    | undefined;
+  const config = props?.configuration;
+  if (
+    typeof config === "object" &&
+    config !== null &&
+    "feed_url" in config &&
+    typeof (config as { feed_url?: unknown }).feed_url === "string" &&
+    (config as { feed_url: string }).feed_url.length > 0
+  ) {
+    return { ok: true, url: (config as { feed_url: string }).feed_url };
+  }
+  return { ok: true, url: DEFAULT_FEED_URL };
 }
 
 function filterNewEntries(
