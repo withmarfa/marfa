@@ -641,11 +641,36 @@ export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
 }
 
 /**
- * Wire shape returned by `POST /connections/install`. The JSON install
+ * Wire shape accepted by `POST /connections/install`. The JSON install
  * sibling of the HTML consent flow — skips the human-consent step (no
- * browser approval) and is admin-only. Returns the connection id, the seed
- * runtime credential id, and the system.activity row id from the install
- * pipeline.
+ * browser approval) and is admin-only.
+ */
+export interface ConnectionInstallInput {
+  /** id of the `system.integration` item (a manifest registered via
+   *  `POST /integrations`) the new connection binds to. */
+  integration_id: string;
+  /** Display label for the connection and seed credential. Defaults
+   *  server-side to `${manifest_name} ${manifest_version}` when omitted. */
+  label?: string;
+  /** Optional id of an existing `system.credential` (kind `oauth_token` or
+   *  `api_token`) to reference instead of provisioning a fresh provider
+   *  credential. Lets multiple integrations of the same upstream (e.g.
+   *  `google.calendar` + `google.tasks`) share one credential instead of
+   *  duplicating per-integration. Create such credentials via
+   *  `POST /credentials/oauth-provider` or `POST /credentials/api-token`. */
+  credential_ref?: string;
+  /** Optional seed for the new connection's `properties.configuration`
+   *  bag. Free-form per-integration knobs (e.g. `upstream_base_url_override`
+   *  for connections sharing one credential across different upstream
+   *  hosts). Merged over the empty default at install time so callers
+   *  don't need a follow-on `PATCH /items/:id` round-trip. */
+  configuration?: Record<string, unknown>;
+}
+
+/**
+ * Wire shape returned by `POST /connections/install`. Returns the
+ * connection id, the seed runtime credential id, and the system.activity
+ * row id from the install pipeline.
  */
 export interface ConnectionInstallResult {
   connection_id: string;
