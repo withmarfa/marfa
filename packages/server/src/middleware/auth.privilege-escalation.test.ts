@@ -186,7 +186,7 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     }
   });
 
-  it("a platform admin may still mint any role", async () => {
+  it("the lattice never refuses a platform admin", async () => {
     ctx = await createTestContext();
     const platform = await mintKey(ctx, {
       label: "platform-admin",
@@ -194,7 +194,7 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
       is_platform: true,
     });
 
-    for (const role of ["admin", "tenant_admin", "member"] as const) {
+    for (const role of ["admin", "member"] as const) {
       const res = await request(ctx.app, "POST", "/keys", {
         key: platform,
         body: {
@@ -207,6 +207,22 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
       expect(res.status).toBe(201);
       expect(((await res.json()) as { role: string }).role).toBe(role);
     }
+
+    // `tenant_admin` is the one role a tenant-less caller cannot mint here,
+    // and the refusal comes from the tenant axis, not this one: the new key
+    // would inherit no tenant, so its authority would not stop where its
+    // name says. A 400 rather than the lattice's 403 is what distinguishes
+    // the two guards.
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: platform,
+      body: {
+        label: "minted-tenant-admin",
+        source: "minted-tenant-admin",
+        role: "tenant_admin",
+        default_tier: "library",
+      },
+    });
+    expect(res.status).toBe(400);
   });
 
   it("a tenant-bound admin cannot mint above tenant scope either", async () => {
