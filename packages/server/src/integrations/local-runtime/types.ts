@@ -144,9 +144,13 @@ export interface LocalRuntime {
   /**
    * Test-only synchronous dispatch path that hands a message to the
    * executor with cursor / lock plumbing applied. Bypasses pg-boss
-   * entirely so tests don't need a queue worker tick.
+   * entirely so tests don't need a queue worker tick. `attempt` stands
+   * in for the queue's redelivery count.
    */
-  dispatchForTest(envelope: SchedulerEnvelope): Promise<HandlerResult>;
+  dispatchForTest(
+    envelope: SchedulerEnvelope,
+    attempt?: number,
+  ): Promise<HandlerResult>;
   /**
    * Look up an integration by name. Used by the webhook receipt route to
    * resolve `integration_name` → registration before enqueueing.

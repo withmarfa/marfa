@@ -88,9 +88,13 @@ export function createSupervisor(
   /** Dispatch a single message through the per-Connection lock + the
    *  executor; apply the side effects. Returns the HandlerResult for
    *  tests; the queue consumer ignores the result (translation is
-   *  inside this function). */
+   *  inside this function).
+   *
+   *  `attempt` is the zero-based redelivery count, used to decide
+   *  whether a handler throw still earns a retry. */
   async function dispatchOne(
     envelope: SchedulerEnvelope,
+    attempt = 0,
   ): Promise<HandlerResult> {
     const registration = byName.get(envelope.integration_name);
     if (!registration) {
@@ -143,8 +147,9 @@ export function createSupervisor(
             response.cursorDeletes,
           );
         }
-        await postProcess(message, response);
-        return response.result;
+        const result = effectiveResult(response, attempt);
+        await postProcess(message, response, result);
+        return result;
       },
     );
     // withJobLock returns undefined when another instance holds the lock —
@@ -152,18 +157,38 @@ export function createSupervisor(
     return result ?? { ok: true };
   }
 
+  /**
+   * A handler throw on the first delivery is treated as transient and
+   * earns one retry; a throw on a redelivery is a persistent programming
+   * error and goes terminal rather than burning the whole retry ladder.
+   * Mirrors `consumeBatch`'s first-attempt-throw rule on the hosted
+   * substrate, which is the semantic `WorkerDispatchResponse.threw`
+   * exists to carry.
+   */
+  function effectiveResult(
+    response: WorkerDispatchResponse,
+    attempt: number,
+  ): HandlerResult {
+    const result = response.result;
+    if (result.ok || result.retry || !response.threw || attempt > 0) {
+      return result;
+    }
+    return { ok: false, retry: true, reason: result.reason };
+  }
+
   async function postProcess(
     message: QueueMessage,
     response: WorkerDispatchResponse,
+    result: HandlerResult,
   ): Promise<void> {
-    if (response.result.ok) return;
+    if (result.ok) return;
     // { ok: false, retry: true } propagates back as a throw so pg-boss applies
     // its retry policy and dead-letters after the limit (see the dead-letter
     // worker in start()). Non-retryable failures are terminal now — record them.
-    if (!response.result.retry) {
+    if (!result.retry) {
       await recordTerminalFailure(
         message,
-        response.thrownMessage ?? response.result.reason,
+        response.thrownMessage ?? result.reason,
         response.thrownClassName ?? "HandlerResult",
       );
     }
@@ -209,8 +234,11 @@ export function createSupervisor(
   }
 
   /** Throws so pg-boss applies its retry policy on `{ retry: true }`. */
-  async function dispatchForQueue(envelope: SchedulerEnvelope): Promise<void> {
-    const result = await dispatchOne(envelope);
+  async function dispatchForQueue(
+    envelope: SchedulerEnvelope,
+    attempt = 0,
+  ): Promise<void> {
+    const result = await dispatchOne(envelope, attempt);
     if (!result.ok && result.retry) {
       throw new Error(`retryable: ${result.reason}`);
     }
@@ -263,12 +291,14 @@ export function createSupervisor(
         deadLetter: DEAD_LETTER_QUEUE,
       });
       const batchSize = config.workerBatchSize ?? 4;
+      // `includeMetadata` carries `retryCount`, which the throw-retry rule
+      // needs to tell a first delivery from a redelivery.
       await boss.work<SchedulerEnvelope>(
         QUEUE_NAME,
-        { batchSize, pollingIntervalSeconds: 2 },
+        { batchSize, pollingIntervalSeconds: 2, includeMetadata: true },
         async (jobs) => {
           for (const job of jobs) {
-            await dispatchForQueue(job.data);
+            await dispatchForQueue(job.data, job.retryCount);
           }
         },
       );
@@ -323,8 +353,8 @@ export function createSupervisor(
       }
       await config.boss.send(QUEUE_NAME, envelope);
     },
-    async dispatchForTest(envelope) {
-      return dispatchOne(envelope);
+    async dispatchForTest(envelope, attempt = 0) {
+      return dispatchOne(envelope, attempt);
     },
     getRegistration(name) {
       return byName.get(name);

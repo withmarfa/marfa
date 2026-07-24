@@ -12,8 +12,12 @@
  *      Node).
  *   3. Look up the integration name from the connection's
  *      `integration_ref` → `system.integration` manifest.
- *   4. Idempotency check against the per-Connection `connection.runtime`
- *      idempotency window.
+ *   4. Idempotency check against the per-Connection
+ *      `connection.runtime.idempotency` window. That window is a
+ *      separate extension namespace from the dispatch-owned
+ *      `connection.runtime` state, and is mutated atomically, because
+ *      this route runs on the HTTP thread without the per-Connection
+ *      dispatch lock — see `pg-cursor-store.ts`.
  *   5. Enqueue a `WebhookMessage` onto the local runtime's queue.
  *
  * Responses match the Cloudflare side exactly:

@@ -88,7 +88,7 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 
 ## Reserved extension namespaces
 
-The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. `packages/server/AGENTS.md` carries the full list.
+The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, recent error tail, retry counters. Inbound-delivery idempotency sits alongside it in **`connection.runtime.idempotency`**, split out because it has a different writer. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. `packages/server/AGENTS.md` carries the full list.
 
 ## Connections runtime substrate
 

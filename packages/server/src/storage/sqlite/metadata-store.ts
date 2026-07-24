@@ -235,6 +235,36 @@ export class SqliteMetadataStore implements MetadataStore {
     });
   }
 
+  /**
+   * SQLite has no row-level lock to take; the write transaction is the
+   * serialization point, since SQLite admits one writer at a time. The
+   * Postgres implementation adds `FOR UPDATE` for the same guarantee.
+   */
+  async mutateExtension(
+    itemId: string,
+    namespace: string,
+    mutate: (current: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      const current: Metadata = row
+        ? rowToMetadata(row)
+        : { item_id: itemId, tags: [], extensions: {} };
+      const next = mutate(current.extensions[namespace] ?? {});
+      const extensions = { ...current.extensions, [namespace]: next };
+      await tx
+        .update(metadata)
+        .set({ extensions: JSON.stringify(extensions) })
+        .where(eq(metadata.item_id, itemId))
+        .run();
+      return next;
+    });
+  }
+
   async deleteExtension(
     itemId: string,
     namespace: string,

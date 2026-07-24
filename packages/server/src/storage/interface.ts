@@ -345,6 +345,23 @@ export interface MetadataStore {
     namespace: string,
     data: Record<string, unknown>,
   ): Promise<Record<string, Record<string, unknown>>>;
+  /**
+   * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
+   * namespace's current contents (an empty record when unset) exactly
+   * once and returns the replacement; the whole cycle runs inside a
+   * single row-locked transaction. Returns the persisted contents.
+   *
+   * `setExtension` is the unconditional-replace variant: it commits a
+   * value the caller computed from a snapshot taken earlier, so two
+   * writers on one item can each overwrite the other's namespace from
+   * stale state. Any write whose new value is derived from the old one
+   * must go through this method instead.
+   */
+  mutateExtension(
+    itemId: string,
+    namespace: string,
+    mutate: (current: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<Record<string, unknown>>;
   deleteExtension(
     itemId: string,
     namespace: string,
