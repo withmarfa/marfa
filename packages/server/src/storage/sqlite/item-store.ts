@@ -44,7 +44,7 @@ import {
 } from "../interface.js";
 import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
 import { detectConflict } from "../conflict.js";
-import { items, metadata, versions } from "./schema.js";
+import { edges, items, metadata, versions } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -848,6 +848,14 @@ export class SqliteItemStore implements ItemStore {
       for (const id of ids) {
         await this.searchStore.remove(id);
       }
+      // Edges carry no FK to items, so nothing else ever collects them —
+      // without this the background sweep leaves a dangling edge row for
+      // every relationship a purged item had. Deleted by id membership
+      // rather than by tenant: `ids` is already tenant-resolved above, and
+      // an edge pointing at a purged item is garbage whatever its tenant
+      // stamp. Same statement shape as the bulk-action purge worker.
+      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
+      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
       await tx.delete(items).where(inArray(items.id, ids)).run();
       return ids.length;
     });
