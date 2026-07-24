@@ -7,6 +7,7 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
+  CreateTenantKeyInput,
   UpdateKeyInput,
   PaginatedResult,
   SearchResult,
@@ -1845,6 +1846,28 @@ export class MarfaClient {
           data: TenantApiKeySummary[];
         }>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}/keys`);
         return res.data;
+      },
+
+      /**
+       * Mint a key bound to the named tenant. The raw key value is returned
+       * exactly once, same as `client.keys.create`.
+       *
+       * This is the route to reach for when a platform admin needs to issue
+       * a credential for someone else's space. `client.keys.create` always
+       * binds the new key to the *caller's* tenant, so a platform admin
+       * (which has none) cannot produce a tenant-bound key through it at
+       * all. `role` defaults to `member`; the route cannot mint a platform
+       * credential.
+       */
+      create: async (
+        tenantId: string,
+        input: CreateTenantKeyInput,
+      ): Promise<ApiKey & { key: string }> => {
+        return this.transport.request<ApiKey & { key: string }>(
+          "POST",
+          `/admin/tenants/${encodeURIComponent(tenantId)}/keys`,
+          { body: input },
+        );
       },
     },
 

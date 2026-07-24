@@ -34,7 +34,7 @@ interface ErrorResponse {
  * Create a real `system.connection` item the mint endpoint can resolve.
  * The mint endpoint requires the Connection to exist and be `state: active`.
  */
-async function createActiveConnection(): Promise<string> {
+async function createActiveConnection(tenantId?: string): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -44,7 +44,7 @@ async function createActiveConnection(): Promise<string> {
         granted_at: new Date().toISOString(),
       },
     },
-    undefined,
+    tenantId,
   );
   return item.id;
 }
@@ -172,6 +172,33 @@ describe("POST /system/runtime-credentials", () => {
     expect(stored?.connection_id).toBe(connectionId);
     expect(stored?.is_platform).toBe(false);
     expect(stored?.role).toBe("member");
+  });
+
+  it("binds the credential to the connection's tenant, not the broker's", async () => {
+    // The broker authenticates with a platform credential that carries no
+    // tenant. Stamping the caller's tenant would leave the credential
+    // tenant-less, which reads as "platform tier" to the RLS policies and
+    // to the storage layer's tenant predicate — an integration for one
+    // space would reach every space.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const tenantId = `tenant-rc-${suffix}`;
+    const connectionId = await createActiveConnection(tenantId);
+
+    // `ctx.adminKey` is a platform credential with no tenant, matching the
+    // broker key the hosted control plane presents.
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: connectionId,
+        label: `tenant-bound ${suffix}`,
+        source: `tenant-bound-${suffix}`,
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as RuntimeCredentialResponse;
+
+    const stored = await ctx.storage.keys.get(body.id);
+    expect(stored?.tenant_id).toBe(tenantId);
   });
 });
 

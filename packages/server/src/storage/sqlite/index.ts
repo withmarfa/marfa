@@ -138,10 +138,10 @@ export async function createSqliteStorage(
     // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
     // Tenant store is wired unconditionally so the per-tenant cleanup
-    // fan-out works on any deployment, including keys-mode self-hosts
-    // that have explicitly created tenant rows. In single-tenant
-    // deployments it simply lists zero tenants and the cleanup falls
-    // through to the NULL-bucket sweep.
+    // fan-out has one code path on every deployment. Tenant rows are only
+    // ever created by the hosted sign-up flow, so on a single-tenant
+    // deployment this lists zero tenants and the cleanup falls through to
+    // the NULL-bucket sweep.
     tenants: new SqliteTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),

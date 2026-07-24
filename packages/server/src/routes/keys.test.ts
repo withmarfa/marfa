@@ -270,6 +270,33 @@ describe("bootstrap sentinel", () => {
     }
   });
 
+  it("a rejected body does not burn the one-shot bootstrap claim", async () => {
+    // The sentinel claim is irreversible. If a request that can never
+    // mint consumed it, a single stray field would lock a brand-new
+    // instance out of bootstrap permanently.
+    const { app, storage } = await freshApp();
+    try {
+      const rejected = await request(app, "POST", "/keys", {
+        body: {
+          label: "stray-field",
+          source: "stray-field",
+          tenant_id: "some-tenant",
+        },
+      });
+      expect(rejected.status).toBe(400);
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+
+      // Bootstrap still available to the corrected request.
+      const retry = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(retry.status).toBe(201);
+      expect(await storage.settings.get("bootstrapped")).toBe("true");
+    } finally {
+      await storage.close();
+    }
+  });
+
   it("admin-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
     // Self-contained — bootstrap a fresh app, then use the bootstrap
     // admin to mint a second key on the now-closed (non-bootstrap)
@@ -497,7 +524,7 @@ describe("bootstrap sentinel", () => {
   );
 });
 
-describe("POST /keys — OAuth caller block (T-344)", () => {
+describe("POST /keys — OAuth caller block", () => {
   // An OAuth app granted only `openid` but whose user is a tenant_admin
   // must NOT be able to mint a full, non-scope-enforced API key — that
   // would escalate a narrow grant past the consent/scope model. Read and
@@ -574,5 +601,240 @@ describe("POST /keys — OAuth caller block (T-344)", () => {
       body: { label: "minted", source: "minted", role: "member" },
     });
     expect(res.status).toBe(201);
+  });
+});
+
+describe("POST /keys — tenant binding", () => {
+  // `POST /keys` mints into the caller's tenant. A platform admin has no
+  // tenant, so a `tenant_admin` key minted from one lands tenant-less:
+  // NULL tenant is the universal "platform tier / all tenants" signal to
+  // the RLS policies and to the storage layer's tenant predicate, while
+  // the role itself skips the permission maps. Composed, the credential
+  // reads and writes across every tenant behind a name that promises a
+  // boundary, so the mint refuses.
+  //
+  // `member` is not refused: it is this route's default role, the only
+  // way to express "platform reach, narrowed by type_permissions", and a
+  // caller denied it can ask for `role: "admin"` here for strictly more
+  // authority. The tests below pin both halves of that split.
+  let hostedCtx: TestContext;
+  let tenantId: string;
+
+  beforeAll(async () => {
+    hostedCtx = await createTestContext({ authMode: "hosted" });
+    const tenant = await hostedCtx.storage.tenants!.create("tenant-binding");
+    tenantId = tenant.id;
+  });
+
+  afterAll(async () => {
+    await hostedCtx.cleanup();
+  });
+
+  it("rejects a tenant_admin mint from a platform admin with no tenant", async () => {
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: "null-tenant-admin",
+        source: "null-tenant-admin",
+        role: "tenant_admin",
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("validation_error");
+    // The message must name the route that does the tenant-scoped mint,
+    // otherwise the caller's only recourse is to guess.
+    expect(err.error.message).toMatch(/POST \/admin\/tenants\/\{id\}\/keys/);
+  });
+
+  it("still lets a platform admin mint a tenant-less member key", async () => {
+    // Refusing this would push the caller to `role: "admin"`, the only
+    // other thing a tenant-less credential can mint here, which reads
+    // everything a member key would and ignores `type_permissions` on top.
+    // A guard that trades a narrow credential for a wide one is not a
+    // guard, so the mint stands and the audit row carries the tier.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `null-tenant-member-${suffix}`,
+        source: `null-tenant-member-${suffix}`,
+        role: "member",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.role).toBe("member");
+    expect(stored?.tenant_id ?? null).toBeNull();
+
+    const audits = await waitForAudit(
+      () => hostedCtx.storage.audit.list({ action: "key.create" }),
+      (r) => r.data.some((row) => row.resource_id === minted.id),
+    );
+    const row = audits.data.find((r) => r.resource_id === minted.id);
+    expect(row?.details).toMatchObject({ platform_tier: true });
+  });
+
+  it("mints the two-hop credential chain a black-box client relies on", async () => {
+    // The conformance suite authenticates as a tenant-less platform admin,
+    // mints a per-file `admin` key from it, then mints scoped `member`
+    // keys from that. Both hops land tenant-less. Pinned here because the
+    // suite runs against a deployed server, so a regression would only
+    // surface after release.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const firstHop = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `harness-${suffix}`,
+        source: `harness-${suffix}`,
+        role: "admin",
+        is_platform: true,
+        type_permissions: { "*": "write" },
+      },
+    });
+    expect(firstHop.status).toBe(201);
+    const harness = (await firstHop.json()) as { key: string };
+
+    const secondHop = await request(hostedCtx.app, "POST", "/keys", {
+      key: harness.key,
+      body: {
+        label: `scoped-${suffix}`,
+        source: `scoped-${suffix}`,
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(secondHop.status).toBe(201);
+    const scoped = (await secondHop.json()) as { id: string; role: string };
+    // No `role` in the body, so the server default applies.
+    expect(scoped.role).toBe("member");
+    const stored = await hostedCtx.storage.keys.get(scoped.id);
+    expect(stored?.tenant_id ?? null).toBeNull();
+  });
+
+  it("still lets a platform admin mint a platform-tier admin key", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `platform-${suffix}`,
+        source: `platform-${suffix}`,
+        role: "admin",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.role).toBe("admin");
+    expect(stored?.tenant_id ?? null).toBeNull();
+  });
+
+  it("still lets a tenant-bound admin mint into its own tenant", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = `marfa_k1_bound_admin_${suffix}`;
+    await hostedCtx.storage.keys.create(
+      {
+        label: `bound-admin-${suffix}`,
+        source: `bound-admin-${suffix}`,
+        role: "tenant_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      tenantId,
+    );
+
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: raw,
+      body: {
+        label: `child-${suffix}`,
+        source: `child-${suffix}`,
+        role: "member",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.tenant_id).toBe(tenantId);
+  });
+
+  it("rejects a body `tenant_id` instead of silently dropping it", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `body-tenant-${suffix}`,
+        source: `body-tenant-${suffix}`,
+        role: "admin",
+        tenant_id: tenantId,
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("validation_error");
+    expect(err.error.message).toMatch(/tenant_id/);
+  });
+});
+
+describe("POST /keys — single-tenant deployments keep minting tenant-less keys", () => {
+  // A single-tenant self-host has no tenant rows at all (they are only
+  // ever created by the hosted sign-up flow), so every key it mints is
+  // legitimately tenant-less. The `tenant_admin` refusal still applies:
+  // the role has no coherent meaning where no tenant can exist, and
+  // keying a security rule on the deployment's auth mode would leave it
+  // one env-var typo away from off.
+  it("mints a tenant-less member key in keys mode", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `self-host-${suffix}`,
+        source: `self-host-${suffix}`,
+        role: "member",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await ctx.storage.keys.get(minted.id);
+    expect(stored?.tenant_id ?? null).toBeNull();
+  });
+
+  it("refuses a tenant_admin mint here too, where no tenant can exist", async () => {
+    // Not conditioned on the deployment's auth mode: the rule holds
+    // everywhere so it cannot be switched off by an env var going stale.
+    // On a single-tenant instance `tenant_admin` names a boundary that
+    // cannot be created in the first place.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `self-host-ta-${suffix}`,
+        source: `self-host-ta-${suffix}`,
+        role: "tenant_admin",
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("validation_error");
+  });
+
+  it("still rejects a body `tenant_id` in keys mode", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `self-host-body-${suffix}`,
+        source: `self-host-body-${suffix}`,
+        role: "member",
+        tenant_id: "some-tenant",
+      },
+    });
+    expect(res.status).toBe(400);
   });
 });
