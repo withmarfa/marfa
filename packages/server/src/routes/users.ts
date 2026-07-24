@@ -43,6 +43,7 @@ const TenantSchema = z.object({
 const setHandleRoute = createRoute({
   method: "put",
   path: "/me/handle",
+  operationId: "setUserHandle",
   tags: ["Auth"],
   summary: "Update the current user's handle",
   description:
@@ -98,6 +99,7 @@ const setHandleRoute = createRoute({
 const meRoute = createRoute({
   method: "get",
   path: "/me",
+  operationId: "getCurrentUser",
   tags: ["Auth"],
   summary: "Get the current user",
   description:

@@ -1,5 +1,8 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { finalizeOpenAPISpec } from "./openapi-finalize.js";
+import {
+  finalizeOpenAPISpec,
+  OPENAPI_DOCUMENT_INFO,
+} from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import { bodyLimit } from "hono/body-limit";
@@ -716,24 +719,18 @@ export function createApp(
     description:
       "Authenticate with an API key (`marfa_k1_…`) or an OAuth access token (`marfa_at_…`).",
   });
-  // §3.15 note: `info.version` here is the API-contract version (the wire
-  // shape exposed under /openapi.json), distinct from the deployed-build
-  // `version` reported on `GET /`. Bump on contract changes, not on every
-  // deploy. Bumped to 5.1.0 in the docs API-surface rework: the path renames
-  // (bulk-actions, tenants/me/config, edge-types, lease-tokens) are breaking,
-  // but the API is pre-release and nothing pins the contract version yet, so
-  // the change deliberately rides a minor rather than a major.
   // `finalizeOpenAPISpec` shapes the public reference (ordered tags, internal
   // operations stripped, plain-Hono routes injected) — shared with the
-  // committed spec in `scripts/generate-openapi.ts` so the two never drift.
+  // committed spec in `src/openapi-published.ts` so the two never drift.
+  //
+  // This document deliberately describes THIS deployment: routes mounted only
+  // under another auth mode are absent, because they are absent from the
+  // running server. The committed spec is the wider contract across every
+  // mode, and marks which operations a given mode serves.
   const openapiDocument = finalizeOpenAPISpec(
     app.getOpenAPIDocument({
       openapi: "3.1.0",
-      info: {
-        title: "Marfa API",
-        version: "5.1.0",
-        description: "Typed data layer for structured personal data",
-      },
+      info: OPENAPI_DOCUMENT_INFO,
     }),
   );
   app.get("/openapi.json", (c) => c.json(openapiDocument));

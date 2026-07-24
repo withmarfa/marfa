@@ -28,6 +28,26 @@ interface OpenAPIDoc {
   tags?: unknown[];
 }
 
+/**
+ * `info` block for the generated document.
+ *
+ * `version` is the API-contract version (the wire shape exposed under
+ * `/openapi.json`), distinct from the deployed-build `version` reported on
+ * `GET /` — bump it on contract changes, not on every deploy. It reached 5.1.0
+ * in the docs API-surface rework: the path renames (bulk-actions,
+ * tenants/me/config, edge-types, lease-tokens) are breaking, but the API is
+ * pre-release and nothing pins the contract version yet, so the change
+ * deliberately rode a minor rather than a major.
+ *
+ * Lives here so the live `/openapi.json` endpoint and the committed spec read
+ * one literal instead of keeping two in lockstep by hand.
+ */
+export const OPENAPI_DOCUMENT_INFO = {
+  title: "Marfa API",
+  version: "5.1.0",
+  description: "Typed data layer for structured personal data",
+} as const;
+
 /** Ordered, described public tag list. Resources first; auth/realtime last. */
 const PUBLIC_TAGS = [
   {
@@ -98,7 +118,11 @@ const PUBLIC_TAGS = [
     name: "Events",
     description: "The server-sent events stream of item and edge changes.",
   },
-  { name: "Auth", description: "OAuth dynamic client registration." },
+  {
+    name: "Auth",
+    description:
+      "The signed-in user's account and OAuth dynamic client registration.",
+  },
 ];
 
 /**
