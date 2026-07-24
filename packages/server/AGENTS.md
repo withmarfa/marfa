@@ -28,6 +28,8 @@ Every new route under `src/routes/` ships with a sibling `*.test.ts` covering at
 
 The OpenAPI spec is generated from `createRoute` definitions, never hand-edited. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` after route changes; the freshness CI job checks for drift.
 
+`src/openapi-published.ts` assembles that spec: it reflects `createApp` once per `AUTH_MODE` and unions the documents, because a route group mounted under one mode only (`userAuthRoutes` today) is invisible to a single-mode reflection. Mode-exclusive operations are marked with `x-marfa-auth-modes` and a matching description note, so a reader can tell whether their own deployment serves the endpoint. Adding a mode to `AppConfig["authMode"]` fails to compile until it is listed in `AUTH_MODE_COVERAGE` there. `src/openapi-published.test.ts` is the guard: it boots every mode and asserts the published spec covers and marks each one.
+
 ## Auth helpers
 
 Three tiers, picked by intent:

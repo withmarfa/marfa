@@ -198,7 +198,9 @@ The server does **not** migrate on boot. The hosted Cloudflare Containers deploy
 
 Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from route definitions, not maintained manually. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` to update the committed spec. The spec is served at `GET /openapi.json` on a running server.
 
-When adding or modifying routes, use `createRoute()` with Zod schemas for request params, body, and responses. Streaming endpoints (SSE, NDJSON export) and HTML endpoints (OAuth consent) stay as plain Hono routes.
+When adding or modifying routes, use `createRoute()` with Zod schemas for request params, body, and responses. Give every route an `operationId` — the internal-operation filter and the reference renderer both key on it. Streaming endpoints (SSE, NDJSON export) and HTML endpoints (OAuth consent) stay as plain Hono routes.
+
+`AUTH_MODE` decides which route groups `createApp` mounts, so the committed spec is built by reflecting the app once per auth mode and unioning the results (`packages/server/src/openapi-published.ts`). Operations that only some modes serve carry `x-marfa-auth-modes` plus a note in their description; the rest are unmarked. Generating from a single mode would silently drop that mode's exclusive routes from the published reference. The live `/openapi.json` on a running server stays a single-mode document by design: it describes that deployment.
 
 The `openapi-freshness` CI job regenerates and diffs `openapi.json` on every PR; spec drift fails the build with a regen instruction.
 
