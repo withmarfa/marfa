@@ -1458,6 +1458,11 @@ ALTER TABLE public.tenant_quotas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_quotas_tenant_isolation ON public.tenant_quotas;
 CREATE POLICY tenant_quotas_tenant_isolation ON public.tenant_quotas TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
+ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenants_self_isolation ON public.tenants;
+CREATE POLICY tenants_self_isolation ON public.tenants TO marfa_app USING ((id = current_setting('marfa.tenant_id'::text, true)));
+
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS users_tenant_isolation ON public.users;

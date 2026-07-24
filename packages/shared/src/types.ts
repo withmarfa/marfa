@@ -41,12 +41,45 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
  */
 export type MarfaRole = "admin" | "tenant_admin" | "member";
 
-/** Valid role values as a readonly array, useful for validation. */
+/** Valid role values as a readonly array, in descending authority order. */
 export const MARFA_ROLES: readonly MarfaRole[] = [
   "admin",
   "tenant_admin",
   "member",
 ] as const;
+
+/**
+ * Authority ranking of the roles. Higher outranks lower.
+ *
+ * The ordering was always implicit in the prose above and in the order
+ * `MARFA_ROLES` is declared; naming it makes "is this role above that one"
+ * a decidable question instead of a judgement call at each callsite.
+ *
+ * Rank is the ONLY axis this encodes. Two capabilities sit orthogonal to
+ * it and are gated separately: `is_platform` (writes to the reserved
+ * `system.*` / `marfa.*` namespaces) and tenant binding (a credential
+ * carrying a `tenant_id` is confined to that tenant whatever its rank).
+ */
+export const ROLE_RANK: Readonly<Record<MarfaRole, number>> = {
+  admin: 3,
+  tenant_admin: 2,
+  member: 1,
+};
+
+/**
+ * Whether a principal holding `granter` may mint a credential carrying
+ * `granted`.
+ *
+ * Privilege can be passed sideways or downwards, never upwards: a
+ * credential must not be able to manufacture more authority than the
+ * caller presenting it already holds. Callers combine this with the
+ * orthogonal gates — granting `is_platform` additionally requires the
+ * caller to be platform itself, and a minted credential inherits the
+ * caller's tenant binding.
+ */
+export function canGrantRole(granter: MarfaRole, granted: MarfaRole): boolean {
+  return ROLE_RANK[granted] <= ROLE_RANK[granter];
+}
 
 /** Per-type permission levels. */
 export type TypePermission = "read" | "write" | "none";

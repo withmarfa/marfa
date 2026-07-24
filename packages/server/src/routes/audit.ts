@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -31,7 +31,7 @@ const listAuditRoute = createRoute({
   tags: ["Audit"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged.",
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or tenant_admin: a tenant-scoped caller sees only its own tenant's entries, a platform admin sees every entry.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -87,6 +87,14 @@ const listAuditRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Caller is not an admin or tenant_admin",
+    },
   },
 });
 
@@ -94,13 +102,16 @@ export function auditRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listAuditRoute, async (c) => {
-    requireAdmin(c);
+    // Tenant-bounded, not platform-only: the single storage call below is
+    // filtered by the caller's own tenant, so a tenant admin reading its
+    // own space's trail stays inside its own data.
+    requireTenantAdmin(c);
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
-    // Bootstrap-admin keys (no `tenant_id`) read every row — preserves
-    // the self-hosted single-tenant operator view. Tenant-scoped admin
-    // keys read only their own tenant. Mirrors the `ItemStore.list`
+    // Platform-admin keys (no `tenant_id`) read every row — preserves
+    // the self-hosted single-tenant operator view. Tenant-scoped keys
+    // read only their own tenant. Mirrors the `ItemStore.list`
     // admit-all-when-tenantless pattern.
     const callerTenantId = c.get("apiKey")?.tenant_id ?? null;
 

@@ -477,6 +477,13 @@
       "when": 1780790403000,
       "tag": "0067_rls_ungated_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1780790404000,
+      "tag": "0068_rls_tenants_table",
+      "breakpoints": true
     }
   ]
 }

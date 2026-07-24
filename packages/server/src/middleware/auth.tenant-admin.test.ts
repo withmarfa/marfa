@@ -169,14 +169,17 @@ describe("tenant_admin integration — widened routes", () => {
       tenantId: tenantA.id,
     });
 
+    // Role stays at the caller's own tier so this exercises the
+    // `is_platform` axis in isolation; the role axis is refused outright
+    // and is covered in `auth.privilege-escalation.test.ts`.
     const res = await request(ctx.app, "POST", "/keys", {
       key: wsAdmin,
       body: {
         label: "would-be-platform",
         source: "would-be-platform",
-        role: "admin",
+        role: "tenant_admin",
         default_tier: "library",
-        is_platform: true, // SHOULD be silently coerced to false
+        is_platform: true, // silently coerced to false
       },
     });
 

@@ -441,10 +441,29 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   return apiKey;
 }
 
+/**
+ * Platform-admin gate. Guards the surfaces whose authority is instance-wide
+ * rather than tenant-bounded: tenant CRUD, cross-tenant quota writes,
+ * instance metrics, the audit log, archive restore, blob reconciliation.
+ *
+ * Platform authority is authority that is NOT confined to a tenant, so the
+ * gate tests two things: the `admin` role AND the absence of a tenant
+ * binding. Role alone is not sufficient. A credential can legitimately
+ * carry `role: "admin"` while bound to a single tenant — `POST
+ * /admin/tenants/{id}/keys` mints exactly that, and describes the result as
+ * a credential "whose authority is confined to id". Admitting it here would
+ * hand a tenant-scoped principal the cross-tenant surface, contradicting
+ * the route that issued it.
+ *
+ * Consequence for callers: a key that passes this gate always has
+ * `tenant_id === undefined`. Routes needing a tenant-bounded admin want
+ * `checkTenantAdmin` instead, and must thread `key.tenant_id` per its
+ * contract.
+ */
 export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (key.role !== "admin") {
-    throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
+  if (key.role !== "admin" || key.tenant_id) {
+    throw new MarfaError(ErrorCode.FORBIDDEN, "Platform admin access required");
   }
   return key;
 }

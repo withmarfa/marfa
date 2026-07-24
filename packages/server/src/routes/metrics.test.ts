@@ -79,63 +79,26 @@ describe("GET /metrics", () => {
     expect(body.items.total).toBe(sum);
   });
 
-  it("does not leak one tenant's cached metrics to another tenant", async () => {
-    // Create two admin credentials scoped to distinct tenants and seed a
-    // different number of items under each. The cache is supposed to be
-    // per-tenant, so tenant A's counts must never appear in tenant B's
-    // response within the cache TTL.
-    const rawA = `marfa_k1_tenant_a_${Math.random().toString(36).slice(2, 10)}`;
-    const rawB = `marfa_k1_tenant_b_${Math.random().toString(36).slice(2, 10)}`;
+  it("refuses a tenant-bound credential", async () => {
+    // Four of the five counters this route reports (blobs, keys, webhooks,
+    // custom types) are instance-wide; only `items` is tenant-scoped. That
+    // makes the whole response platform-operator data, so the gate is
+    // platform-only and a credential confined to a tenant is refused
+    // whatever its role — closing the read rather than partially scoping it.
+    const raw = `marfa_k1_tenant_a_${Math.random().toString(36).slice(2, 10)}`;
     await ctx.storage.keys.create(
       {
         label: "tenant-a-admin",
-        source: `tenant-a-${rawA.slice(-8)}`,
+        source: `tenant-a-${raw.slice(-8)}`,
         role: "admin",
         type_permissions: {},
         default_tier: "feed",
       },
-      hashApiKey(rawA, "test-salt"),
+      hashApiKey(raw, "test-salt"),
       "tenant-a",
     );
-    await ctx.storage.keys.create(
-      {
-        label: "tenant-b-admin",
-        source: `tenant-b-${rawB.slice(-8)}`,
-        role: "admin",
-        type_permissions: {},
-        default_tier: "feed",
-      },
-      hashApiKey(rawB, "test-salt"),
-      "tenant-b",
-    );
 
-    // Seed 3 items under tenant A, 0 under tenant B (beyond any existing).
-    for (let i = 0; i < 3; i++) {
-      const res = await request(ctx.app, "POST", "/items", {
-        key: rawA,
-        body: {
-          type: "core.note",
-          properties: { body: `a-${String(i)}` },
-        },
-      });
-      expect(res.status).toBe(201);
-    }
-
-    // Hit tenant A first to populate its cache entry.
-    const aRes = await request(ctx.app, "GET", "/metrics", { key: rawA });
-    expect(aRes.status).toBe(200);
-    const aBody = (await aRes.json()) as {
-      items: { total: number };
-    };
-    expect(aBody.items.total).toBeGreaterThanOrEqual(3);
-
-    // Tenant B's response must NOT be served from tenant A's cache.
-    const bRes = await request(ctx.app, "GET", "/metrics", { key: rawB });
-    expect(bRes.status).toBe(200);
-    const bBody = (await bRes.json()) as {
-      items: { total: number };
-    };
-    // Tenant B has no items of its own.
-    expect(bBody.items.total).toBe(0);
+    const res = await request(ctx.app, "GET", "/metrics", { key: raw });
+    expect(res.status).toBe(403);
   });
 });

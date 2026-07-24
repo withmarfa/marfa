@@ -24,6 +24,37 @@ import {
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { publish } from "../pubsub.js";
 
+/**
+ * Poll `read` until `settled` accepts its result, or the budget expires;
+ * returns the last value read either way, so the caller's own assertion
+ * produces the failure message.
+ *
+ * The bridge persists connection state and activity rows from the catch
+ * handler that runs after a dispatch attempt resolves, not inside the
+ * awaited publish. A fixed sleep therefore races those writes whenever the
+ * machine is busy — the wait has to track actual latency, not a guess.
+ */
+async function waitFor<T>(
+  read: () => Promise<T>,
+  settled: (value: T) => boolean,
+  { timeoutMs = 5_000, intervalMs = 25 } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let value = await read();
+  while (!settled(value) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    value = await read();
+  }
+  return value;
+}
+
+function runtimeStatusOf(
+  item: { properties: unknown } | null,
+): string | undefined {
+  return (item?.properties as { runtime_status?: string } | undefined)
+    ?.runtime_status;
+}
+
 let ctx: TestContext;
 
 beforeAll(async () => {
@@ -792,24 +823,32 @@ describe("bridge failure-tracking", () => {
       expect(rig.deadAttempts.count).toBe(3);
 
       // Connection's runtime_status flipped to "failing".
-      const updated = await ctx.storage.items.get(rig.deadConnId);
-      const props = updated?.properties as { runtime_status?: string };
-      expect(props.runtime_status).toBe("failing");
+      const updated = await waitFor(
+        () => ctx.storage.items.get(rig.deadConnId),
+        (item) => runtimeStatusOf(item) === "failing",
+      );
+      expect(runtimeStatusOf(updated)).toBe("failing");
 
       // Action_required system.activity emitted for the subscriber.
-      const activity = await ctx.storage.items.list({
-        type: "system.activity",
-        limit: 100,
-      });
-      const escalation = activity.data.find((row) => {
-        const p = row.properties as {
-          connection_id?: string;
-          severity?: string;
-        };
-        return (
-          p.connection_id === rig.deadConnId && p.severity === "action_required"
-        );
-      });
+      const escalation = await waitFor(
+        async () => {
+          const activity = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activity.data.find((row) => {
+            const p = row.properties as {
+              connection_id?: string;
+              severity?: string;
+            };
+            return (
+              p.connection_id === rig.deadConnId &&
+              p.severity === "action_required"
+            );
+          });
+        },
+        (row) => row !== undefined,
+      );
       expect(escalation).toBeTruthy();
     } finally {
       await rig.bridge.stop();
@@ -864,9 +903,11 @@ describe("bridge failure-tracking", () => {
     try {
       await publishOne("op-recovery-fail-1");
       await publishOne("op-recovery-fail-2");
-      const escalated = await ctx.storage.items.get(rig.deadConnId);
-      const props = escalated?.properties as { runtime_status?: string };
-      expect(props.runtime_status).toBe("failing");
+      const escalated = await waitFor(
+        () => ctx.storage.items.get(rig.deadConnId),
+        (item) => runtimeStatusOf(item) === "failing",
+      );
+      expect(runtimeStatusOf(escalated)).toBe("failing");
 
       // Now the dead subscriber is gated out — additional publishes
       // should NOT increment deadAttempts.
@@ -952,22 +993,24 @@ describe("bridge — unmapped integration handling", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Activity row for the unmapped integration was emitted.
-    const activityAfterFirst = await ctx.storage.items.list({
-      type: "system.activity",
-      limit: 100,
-    });
-    const unmappedRows = activityAfterFirst.data.filter((row) => {
-      const props = row.properties as {
-        summary?: string;
-        connection_id?: string;
-      };
-      return (
-        props.connection_id === connUnmapped &&
-        typeof props.summary === "string" &&
-        props.summary.includes("acme.unmapped-integration")
-      );
-    });
-    expect(unmappedRows.length).toBe(1);
+    const countUnmappedRows = async (): Promise<number> => {
+      const activity = await ctx.storage.items.list({
+        type: "system.activity",
+        limit: 100,
+      });
+      return activity.data.filter((row) => {
+        const props = row.properties as {
+          summary?: string;
+          connection_id?: string;
+        };
+        return (
+          props.connection_id === connUnmapped &&
+          typeof props.summary === "string" &&
+          props.summary.includes("acme.unmapped-integration")
+        );
+      }).length;
+    };
+    expect(await waitFor(countUnmappedRows, (n) => n === 1)).toBe(1);
 
     // Publish a SECOND event for the same unmapped integration.
     const note2 = await ctx.storage.items.create(
@@ -984,22 +1027,10 @@ describe("bridge — unmapped integration handling", () => {
     // Dedup: still only ONE row for this integration after the second
     // event (other integrations on this context might have written their
     // own rows, but acme.unmapped-integration's count is unchanged).
-    const activityAfterSecond = await ctx.storage.items.list({
-      type: "system.activity",
-      limit: 100,
-    });
-    const unmappedRowsAfter = activityAfterSecond.data.filter((row) => {
-      const props = row.properties as {
-        summary?: string;
-        connection_id?: string;
-      };
-      return (
-        props.connection_id === connUnmapped &&
-        typeof props.summary === "string" &&
-        props.summary.includes("acme.unmapped-integration")
-      );
-    });
-    expect(unmappedRowsAfter.length).toBe(1);
+    // No poll here — a second row appearing late would be the bug, so the
+    // assertion must read after the settle window rather than race to a
+    // passing value.
+    expect(await countUnmappedRows()).toBe(1);
 
     // Fanout never invoked the producer fetch for this integration.
     // Other integrations created by sibling tests on the same context

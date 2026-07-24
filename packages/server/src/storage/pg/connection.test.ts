@@ -16,10 +16,13 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
   // and inbound_webhook_events. Each carries a `_tenant_isolation` policy +
   // CRUD grants for the `marfa_app` role.
   //
-  // auth_user also has RLS enabled (a `auth_user_self` self-policy so
-  // /profile/me can read its email mirror under marfa_app), but its policy
-  // is NOT a `_tenant_isolation` policy — the tenant-isolation count stays
-  // 19 while the number of RLS-enabled tables is 20.
+  // Two more tables carry RLS without a `_tenant_isolation` policy, so the
+  // tenant-isolation count stays 19 while the number of RLS-enabled tables
+  // is 21:
+  //   - auth_user — an `auth_user_self` self-policy so /profile/me can read
+  //     its email mirror under marfa_app.
+  //   - tenants — a `tenants_self_isolation` policy keyed on the primary
+  //     key rather than a `tenant_id` column, since the row IS the tenant.
   it("creates the RLS scaffold on tenant tables (19 policies)", async () => {
     const { close } = await createConnection(url);
     const client = postgres(url, { max: 1 });
@@ -39,8 +42,8 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
           AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
           AND relrowsecurity = true
       `;
-      // 19 tenant-scoped tables + auth_user = 20.
-      expect(enabled[0]?.count).toBe("20");
+      // 19 tenant-scoped tables + auth_user + tenants = 21.
+      expect(enabled[0]?.count).toBe("21");
     } finally {
       await client.end();
       await close();
