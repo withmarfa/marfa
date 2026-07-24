@@ -21,7 +21,18 @@
  *     consent form can POST it back to `/auth/oauth2/consent` unchanged
  *     (the plugin's before-hook re-verifies the sig)
  *   - looks up the user's prior consent for the re-consent diff
- *   - renders via the existing `renderConsentScreen`
+ *   - **skips the consent screen** when that prior consent already covers
+ *     every requested scope (and the request doesn't carry
+ *     `prompt=consent`): the accept is performed server-side against the
+ *     plugin's `/oauth2/consent` and the browser 302s straight back to
+ *     the client with a code. Without this, every fresh sign-in
+ *     re-renders consent — the plugin's own already-consented check only
+ *     runs at `/oauth2/authorize`, and the post-sign-in `return_to`
+ *     lands here without passing back through it.
+ *   - handles `prompt=none` per OIDC: silent code when the grant covers
+ *     the request, otherwise a redirect back to the client with
+ *     `error=consent_required` — never a rendered page
+ *   - renders via the existing `renderConsentScreen` otherwise
  *
  * The decision handler (`POST /auth/authorize/decision`) projects the
  * `system.connection { kind: "app" }` row + emits `auth.grant.created`,
@@ -177,6 +188,76 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       clientId,
       session.user.id,
     );
+
+    // ----- Consent skip (already-granted → silent re-authorization) -----
+    // The plugin's own already-consented check runs only at
+    // /oauth2/authorize; the post-sign-in return_to lands here without
+    // passing back through it, so without this branch every fresh
+    // sign-in re-renders the consent screen. When the prior grant
+    // already covers every requested scope, perform the accept
+    // server-side (the plugin's before-hook still verifies the signed
+    // query, so a tampered request cannot silently mint a code) and
+    // send the browser straight back to the app.
+    //
+    // OIDC `prompt` rides the signed query verbatim:
+    //   - `consent` → always render, even when covered
+    //   - `none`    → silent code when covered, else an
+    //     `error=consent_required` redirect; never a rendered page
+    //   - absent    → skip when covered, else render
+    //
+    // A requested set that WIDENS the prior grant falls through to the
+    // re-consent diff render, and a revoked grant has no consent row
+    // (revocation deletes it), so it falls through too.
+    const promptSet = new Set(
+      (url.searchParams.get("prompt") ?? "").split(/\s+/).filter(Boolean),
+    );
+    const promptNone = promptSet.has("none");
+    const priorSet =
+      priorScopes !== undefined ? new Set(priorScopes) : undefined;
+    const alreadyGranted =
+      priorSet !== undefined &&
+      scopeLiterals.every((literal) => priorSet.has(literal));
+
+    if (!promptSet.has("consent") && alreadyGranted) {
+      const proxyResp = await proxyConsentDecision(
+        deps.auth,
+        c.req.url,
+        c.req.raw.headers,
+        {
+          accept: true,
+          scope: scopeLiterals.join(" ") || undefined,
+          oauthQuery,
+        },
+      );
+      if (proxyResp.status === 302) {
+        // The grant record is deliberately untouched on reuse: no
+        // re-projection, no scope rewrite, no granted_at bump.
+        // `last_used_at` is stamped by the bearer middleware when the
+        // minted token is actually used.
+        void auditGrantReused(deps.storage, {
+          authUserId: session.user.id,
+          clientId,
+          scopes: scopeLiterals,
+          clientIp: c.var.clientIp ?? null,
+        });
+        return proxyResp;
+      }
+      // The plugin refused the silent accept (expired or tampered
+      // signature, session mismatch, ...). prompt=none must never
+      // render UI; everything else falls through to the consent
+      // screen, which surfaces the same failure on submit.
+      if (promptNone) {
+        return (
+          buildPromptNoneErrorRedirect(client.redirectUris, url) ??
+          c.text("prompt=none requires a registered redirect_uri", 400)
+        );
+      }
+    } else if (promptNone) {
+      return (
+        buildPromptNoneErrorRedirect(client.redirectUris, url) ??
+        c.text("prompt=none requires a registered redirect_uri", 400)
+      );
+    }
 
     // Build the type-pattern → plain-English description map.
     // F11: covers item types (TYPE_REGISTRY), edge types (EDGE_TYPE_REGISTRY),
@@ -335,66 +416,197 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       }
     }
 
-    // Forward to the plugin's /oauth2/consent endpoint. JSON body
-    // (plugin's default media type for this endpoint). Cookies pass
-    // through via the original headers — the session cookie is what
-    // the plugin uses to authenticate the consent decision.
-    const proxyUrl = new URL("/auth/oauth2/consent", c.req.url);
-    const proxyHeaders = new Headers(c.req.raw.headers);
-    proxyHeaders.set("content-type", "application/json");
-    proxyHeaders.delete("content-length");
-
-    const proxyBody: Record<string, unknown> = {
+    // Forward to the plugin's /oauth2/consent endpoint and hand the
+    // (normalized) result to the browser. Shared with the GET handler's
+    // consent-skip path.
+    return proxyConsentDecision(deps.auth, c.req.url, c.req.raw.headers, {
       accept,
-      oauth_query: oauthQuery,
-    };
-    if (accept && scopeStr) {
       // Forward the user's narrowed scope set so the plugin issues a
       // token matching what they actually approved (not the full
       // originally-requested set).
-      proxyBody.scope = scopeStr;
-    }
-
-    const proxyReq = new Request(proxyUrl.toString(), {
-      method: "POST",
-      headers: proxyHeaders,
-      body: JSON.stringify(proxyBody),
-      redirect: "manual",
+      scope: accept && scopeStr ? scopeStr : undefined,
+      oauthQuery,
     });
-
-    const proxyResp = await deps.auth.handler(proxyReq);
-    // The plugin returns either a 302 (browser-native redirect) OR a 200
-    // with JSON body `{ redirect: true, url: "..." }`. The latter is the
-    // default when better-auth doesn't see Accept: text/html. Normalize
-    // to a 302 either way so the browser navigates correctly.
-    if (proxyResp.status === 302) {
-      return proxyResp;
-    }
-    if (proxyResp.status === 200) {
-      try {
-        const cloned = proxyResp.clone();
-        const body = (await cloned.json()) as {
-          redirect?: boolean;
-          url?: string;
-        };
-        if (body.redirect && typeof body.url === "string") {
-          // Preserve plugin response headers on the 302 normalization —
-          // the plugin may set `Set-Cookie` (session refresh) or other
-          // security headers; a bare `c.redirect(url)` would discard them.
-          const headers = new Headers(proxyResp.headers);
-          headers.delete("content-type");
-          headers.delete("content-length");
-          headers.set("location", body.url);
-          return new Response(null, { status: 302, headers });
-        }
-      } catch {
-        // Fall through — return the plugin response verbatim.
-      }
-    }
-    return proxyResp;
   });
 
   return app;
+}
+
+/**
+ * POST a consent decision to the plugin's `/auth/oauth2/consent`
+ * endpoint and normalize the outcome for a browser.
+ *
+ * JSON body (the plugin's default media type for this endpoint):
+ * `{ accept, scope?, oauth_query }`. Cookies pass through via the
+ * original request headers — the session cookie is what the plugin uses
+ * to authenticate the decision, and its before-hook re-verifies the
+ * signed `oauth_query` before minting anything.
+ *
+ * The plugin returns either a 302 (browser-native redirect) OR a 200
+ * with JSON body `{ redirect: true, url: "..." }` — the latter is the
+ * default when better-auth doesn't see `Accept: text/html`. Both are
+ * normalized to a real 302 so the browser navigates correctly. Any
+ * other response (signature failure, expired query, plugin rejection)
+ * is returned verbatim for the caller to handle.
+ */
+async function proxyConsentDecision(
+  auth: MarfaAuth,
+  requestUrl: string,
+  requestHeaders: Headers,
+  decision: { accept: boolean; scope?: string; oauthQuery: string },
+): Promise<Response> {
+  const proxyUrl = new URL("/auth/oauth2/consent", requestUrl);
+  const proxyHeaders = new Headers(requestHeaders);
+  proxyHeaders.set("content-type", "application/json");
+  proxyHeaders.delete("content-length");
+
+  const proxyBody: Record<string, unknown> = {
+    accept: decision.accept,
+    oauth_query: decision.oauthQuery,
+  };
+  if (decision.accept && decision.scope) {
+    proxyBody.scope = decision.scope;
+  }
+
+  const proxyReq = new Request(proxyUrl.toString(), {
+    method: "POST",
+    headers: proxyHeaders,
+    body: JSON.stringify(proxyBody),
+    redirect: "manual",
+  });
+
+  const proxyResp = await auth.handler(proxyReq);
+  if (proxyResp.status === 302) {
+    return proxyResp;
+  }
+  if (proxyResp.status === 200) {
+    try {
+      const cloned = proxyResp.clone();
+      const body = (await cloned.json()) as {
+        redirect?: boolean;
+        url?: string;
+      };
+      if (body.redirect && typeof body.url === "string") {
+        // Preserve plugin response headers on the 302 normalization —
+        // the plugin may set `Set-Cookie` (session refresh) or other
+        // security headers; a bare redirect would discard them.
+        const headers = new Headers(proxyResp.headers);
+        headers.delete("content-type");
+        headers.delete("content-length");
+        headers.set("location", body.url);
+        return new Response(null, { status: 302, headers });
+      }
+    } catch {
+      // Fall through — return the plugin response verbatim.
+    }
+  }
+  return proxyResp;
+}
+
+/**
+ * Build the OIDC error redirect for a `prompt=none` request that cannot
+ * be silently approved: `redirect_uri?error=consent_required&...`, with
+ * `state` echoed when present (mirroring the plugin's own
+ * `redirectWithPromptNoneError` shape).
+ *
+ * Returns `null` when the request's `redirect_uri` isn't registered for
+ * the client — this handler doesn't verify the query signature before
+ * redirecting, so an unvalidated target would be an open redirect.
+ * Exact match, plus the loopback-IP allowance the plugin applies at
+ * `/oauth2/authorize` (RFC 8252 §7.3: native apps bind an ephemeral
+ * port, so the port is ignored for loopback hosts).
+ */
+function buildPromptNoneErrorRedirect(
+  registeredRedirectUris: readonly string[],
+  url: URL,
+): Response | null {
+  const redirectUri = url.searchParams.get("redirect_uri");
+  if (!redirectUri) return null;
+  const registered = registeredRedirectUris.some((entry) => {
+    if (entry === redirectUri) return true;
+    try {
+      const a = new URL(entry);
+      const b = new URL(redirectUri);
+      const loopback =
+        a.hostname === "127.0.0.1" ||
+        a.hostname === "::1" ||
+        a.hostname === "[::1]";
+      return (
+        loopback &&
+        a.hostname === b.hostname &&
+        a.pathname === b.pathname &&
+        a.protocol === b.protocol &&
+        a.search === b.search
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (!registered) return null;
+
+  const params = new URLSearchParams({
+    error: "consent_required",
+    error_description: "End-User consent is required",
+  });
+  const state = url.searchParams.get("state");
+  if (state) params.append("state", state);
+  const separator = redirectUri.includes("?") ? "&" : "?";
+  return new Response(null, {
+    status: 302,
+    headers: { location: `${redirectUri}${separator}${params.toString()}` },
+  });
+}
+
+/**
+ * Emit the `auth.grant.reused` audit row for a silent re-authorization
+ * (consent skipped because the prior grant already covers the request).
+ * Distinct from `auth.grant.created` so the operator trail separates
+ * "user clicked Approve" from "server reused an existing grant". The
+ * lookups here are read-only — reuse never rewrites the projection.
+ * Best-effort: a failure logs and never blocks the redirect.
+ */
+async function auditGrantReused(
+  storage: Storage,
+  opts: {
+    authUserId: string;
+    clientId: string;
+    scopes: string[];
+    clientIp: string | null;
+  },
+): Promise<void> {
+  try {
+    let tenantId: string | undefined;
+    if (storage.users) {
+      const userRow = await storage.users.getByAuthUserId(opts.authUserId);
+      tenantId = userRow?.tenant_id ?? undefined;
+    }
+    let grantItemId: string | null = null;
+    if (typeof storage.oauthProvider?.findGrantItemId === "function") {
+      grantItemId = await storage.oauthProvider.findGrantItemId({
+        tenantId: tenantId ?? null,
+        clientId: opts.clientId,
+        authUserId: opts.authUserId,
+      });
+    }
+    await storage.audit.log({
+      tenant_id: tenantId ?? null,
+      action: "auth.grant.reused",
+      resource_type: "oauth_grant",
+      resource_id: opts.clientId,
+      client_ip: opts.clientIp,
+      details: {
+        client_id: opts.clientId,
+        user_id: opts.authUserId,
+        scopes: opts.scopes,
+        grant_item_id: grantItemId,
+      },
+    });
+  } catch (err) {
+    log("warn", "consent skip: auth.grant.reused audit emit failed", {
+      client_id: opts.clientId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -557,11 +769,21 @@ async function projectGrantOnConsent(
 async function resolveClient(
   storage: Storage,
   clientId: string,
-): Promise<{ name: string | null; isPublic: boolean } | null> {
+): Promise<{
+  name: string | null;
+  isPublic: boolean;
+  redirectUris: readonly string[];
+} | null> {
   try {
     if (typeof storage.oauthProvider?.getClient === "function") {
       const row = await storage.oauthProvider.getClient(clientId);
-      return row ? { name: row.name, isPublic: row.isPublic } : null;
+      return row
+        ? {
+            name: row.name,
+            isPublic: row.isPublic,
+            redirectUris: row.redirectUris,
+          }
+        : null;
     }
     return null;
   } catch (err) {
