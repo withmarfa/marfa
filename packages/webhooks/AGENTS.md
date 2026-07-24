@@ -4,12 +4,14 @@ Cross-runtime inbound-webhook signature verification. Web Crypto only — no `no
 
 ## Layout
 
-- `src/index.ts` — public exports: the four verifier functions, the `ADAPTERS` dispatch table, the `Verifier` / `VerifyResult` / `VerificationMethod` types.
-- `src/types.ts` — `VerificationMethod` enum (`hmac-sha256`, `slack`, `stripe`, `github`) and the shared result shape.
+- `src/index.ts` — public exports: the six verifier functions, the `ADAPTERS` dispatch table, the `Verifier` / `VerifyResult` / `VerificationMethod` types.
+- `src/types.ts` — `VerificationMethod` enum (`hmac-sha256`, `slack`, `stripe`, `github`, `google-channel`, `cloudflare-email`) and the shared result shape.
 - `src/hmac-sha256.ts` — generic HMAC-SHA256 verifier (raw body + secret + signature header). The "no provider-specific quirks" baseline.
 - `src/slack.ts` — Slack v0 verifier (`X-Slack-Signature` over `v0:<timestamp>:<body>`, with timestamp-skew check).
 - `src/stripe.ts` — Stripe verifier (`Stripe-Signature` over `<timestamp>.<body>`, with timestamp-skew check).
 - `src/github.ts` — GitHub webhook verifier (`X-Hub-Signature-256` over raw body).
+- `src/google-channel.ts` — Google push-notification channel verifier (`X-Goog-Channel-Token` against the per-channel token).
+- `src/cloudflare-email.ts` — Cloudflare Email Worker verifier. Shares the `hmac-sha256` wire shape; split out so the body schema is declarable at manifest time.
 - `src/dispatch.ts` — `ADAPTERS` map; consumers pick a verifier by `VerificationMethod` string.
 - `src/crypto.ts` — Web-Crypto helpers (HMAC import / sign / constant-time compare). Single source for the cross-runtime crypto path.
 
@@ -25,4 +27,4 @@ Cross-runtime inbound-webhook signature verification. Web Crypto only — no `no
 
 ## Testing
 
-`pnpm test` runs `verify.test.ts` against the four adapters with known-good fixtures and a sweep of tamper cases (modified body, swapped signature, future / past timestamp where applicable). No live network calls.
+`pnpm test` runs `verify.test.ts` against the adapters with known-good fixtures and a sweep of tamper cases (modified body, swapped signature, future / past timestamp where applicable), plus `google-channel.test.ts` for the header-echo adapter. No live network calls.

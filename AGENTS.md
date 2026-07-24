@@ -1,6 +1,6 @@
 # Marfa
 
-Typed data layer. This monorepo holds eight active workspace packages, six in-tree Integrations, and the Cloudflare infra package.
+Typed data layer. This monorepo holds eight active workspace packages, fourteen in-tree Integrations, and the Cloudflare infra package.
 
 **Docs MCP convention.** When working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or `marfa docs search "<query>"` from the CLI) before re-deriving from source.
 
@@ -17,7 +17,11 @@ Typed data layer. This monorepo holds eight active workspace packages, six in-tr
 - **@withmarfa/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
 - **@withmarfa/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface, so Integrations can unit-test in a `miniflare`-style fixture without booting a real Workers runtime.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync` (the file-to-Marfa bridge re-presented as a Connection; the agent itself lives in `withmarfa/sync`), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus thirteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
+
+- **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`.
+- **Inbound** — `google-drive`, `google-youtube`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `withmarfa-inbox` (email capture via Cloudflare Email Routing).
+- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-to-Marfa bridge re-presented as a Connection; the agent itself lives in `withmarfa/sync`).
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` plus deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
 
@@ -216,7 +220,7 @@ The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs d
 - `packages/types/scripts/**` — type-registry generator
 - `packages/shared/src/**` — wire schemas, error codes, ID utilities
 - `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
-- `packages/server/src/openapi/**` — OpenAPI generator
+- `packages/server/src/openapi.ts`, `packages/server/src/openapi-finalize.ts` — OpenAPI generator
 - `packages/server/drizzle/{pg,sqlite}/**` — Drizzle migrations (drive `SCHEMA_SQL`)
 - `packages/server/scripts/generate-schema-sql.ts` — the `SCHEMA_SQL` generator
 - Any file touched by `pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi`, or `pnpm --filter @withmarfa/server schema-sql:generate`
