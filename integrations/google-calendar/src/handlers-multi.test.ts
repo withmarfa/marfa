@@ -20,6 +20,8 @@
  *     `dateTime`.
  *   - Outbound: timezone on the item writes `start.timeZone`.
  *   - Inbound: each calendar paginates to its own sync token.
+ *   - A failed connection-config read surfaces rather than degrading the
+ *     connection to single-"primary" mode.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -72,6 +74,9 @@ interface CapturedActivity {
 interface BuildOpts {
   /** ctx.marfa.getItem(connection_id) returns this. */
   connectionRecord: Partial<ItemResource>;
+  /** When set, ctx.marfa.getItem(connection_id) rejects with this —
+   *  simulating a storage blip on the connection-config read. */
+  connectionLookupError?: Error;
   /** ctx.marfa.getItem(item_id) for any non-connection id. */
   itemForEvent?: ItemResource | null;
   proxyResponses: (() => Response)[];
@@ -114,6 +119,9 @@ function buildContext(opts: BuildOpts): BuiltContext {
     },
     getItem: (id: string) => {
       if (id === connectionId) {
+        if (opts.connectionLookupError !== undefined) {
+          return Promise.reject(opts.connectionLookupError);
+        }
         return Promise.resolve(opts.connectionRecord);
       }
       return Promise.resolve(opts.itemForEvent ?? null);
@@ -509,5 +517,61 @@ describe("handleSchedule — multi-calendar pagination", () => {
     expect(cursor.per_calendar["team@example.com"]?.syncToken).toBe(
       "sync_team_after",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connection-config lookup failure
+// ---------------------------------------------------------------------------
+
+describe("connection-config lookup failure", () => {
+  it("surfaces a failed inbound config read instead of sweeping as single/primary", async () => {
+    const { ctx, proxyCalls, emitted } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      connectionLookupError: new Error("storage unavailable"),
+      proxyResponses: [],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toMatchObject({ ok: false, retry: true });
+    // No upstream call at all — the handler must not guess at "primary".
+    expect(proxyCalls).toHaveLength(0);
+    const required = emitted.filter(
+      (e) => e.properties?.severity === "action_required",
+    );
+    expect(required).toHaveLength(1);
+    expect(required[0]!.properties?.summary).toMatch(
+      /connection configuration lookup failed/,
+    );
+  });
+
+  it("surfaces a failed outbound config read instead of writing to primary", async () => {
+    // The silent-degradation shape this guards against: a multi-calendar
+    // connection whose config read blips writes the event to "primary"
+    // rather than its nominated default-write calendar, with nothing in
+    // the activity feed to say so.
+    const item: ItemResource = {
+      id: "mit_cfg",
+      type: "google.calendar.event",
+      state: "active",
+      properties: { title: "Should not reach primary" },
+    };
+    const { ctx, proxyCalls, emitted } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      connectionLookupError: new Error("storage unavailable"),
+      itemForEvent: item,
+      proxyResponses: [() => jsonResponse({ id: "gevt_x", etag: "e" }, 201)],
+    });
+
+    const result = await handleItemEvent(ctx, ITEM_EVENT("mit_cfg", "created"));
+    expect(result).toMatchObject({ ok: false, retry: true });
+    expect(proxyCalls).toHaveLength(0);
+    expect(
+      emitted.some((e) =>
+        ((e.properties?.summary as string | undefined) ?? "").includes(
+          "connection configuration lookup failed",
+        ),
+      ),
+    ).toBe(true);
   });
 });

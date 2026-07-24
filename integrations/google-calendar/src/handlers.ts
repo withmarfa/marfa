@@ -118,59 +118,92 @@ interface ConnectionConfig {
   target_type: string;
 }
 
+/**
+ * Outcome of a config read. A connection record that simply carries no
+ * calendar configuration is a legitimate single-"primary" install and
+ * resolves `ok`. A lookup that *fails* is a different thing entirely and
+ * must not be flattened into the same answer: silently answering
+ * "single, primary" for a multi-calendar connection sends outbound
+ * writes to the wrong calendar and skips the other selected calendars
+ * on the way in, with nothing in the activity feed to distinguish the
+ * degraded run from a healthy one.
+ */
+type ConfigResolution =
+  | { ok: true; config: ConnectionConfig }
+  | { ok: false; error: unknown };
+
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
-): Promise<ConnectionConfig> {
+): Promise<ConfigResolution> {
+  let connection: ItemResource | null;
   try {
-    const connection = await ctx.marfa.getItem(ctx.connection_id);
-    const props = connection?.properties as
-      | { configuration?: Record<string, unknown> }
-      | undefined;
-    const cfg = props?.configuration ?? {};
-    const rawSelected = cfg.selected_calendar_ids;
-    const selected: string[] = Array.isArray(rawSelected)
-      ? rawSelected.filter((v): v is string => typeof v === "string")
-      : [];
-    const defaultWrite =
-      typeof cfg.default_write_calendar_id === "string" &&
-      cfg.default_write_calendar_id.length > 0
-        ? cfg.default_write_calendar_id
-        : null;
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : null;
+    connection = await ctx.marfa.getItem(ctx.connection_id);
+  } catch (err) {
+    return { ok: false, error: err };
+  }
 
-    if (selected.length > 0 && defaultWrite !== null) {
-      return {
+  const props = connection?.properties as
+    | { configuration?: Record<string, unknown> }
+    | undefined;
+  const cfg = props?.configuration ?? {};
+  const rawSelected = cfg.selected_calendar_ids;
+  const selected: string[] = Array.isArray(rawSelected)
+    ? rawSelected.filter((v): v is string => typeof v === "string")
+    : [];
+  const defaultWrite =
+    typeof cfg.default_write_calendar_id === "string" &&
+    cfg.default_write_calendar_id.length > 0
+      ? cfg.default_write_calendar_id
+      : null;
+  const targetType =
+    typeof cfg.target_type === "string" && cfg.target_type.length > 0
+      ? cfg.target_type
+      : null;
+
+  if (selected.length > 0 && defaultWrite !== null) {
+    return {
+      ok: true,
+      config: {
         mode: "multi",
         selected_calendar_ids: selected,
         default_write_calendar_id: defaultWrite,
         target_type: targetType ?? "google.calendar.event",
-      };
-    }
+      },
+    };
+  }
 
-    // Single-calendar fallback: bare `calendar_id` on configuration names the
-    // one calendar to sync; default to `primary` when absent.
-    const singleCalendarId =
-      typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
-        ? cfg.calendar_id
-        : DEFAULT_CALENDAR_ID;
-    return {
+  // Single-calendar fallback: bare `calendar_id` on configuration names the
+  // one calendar to sync; default to `primary` when absent.
+  const singleCalendarId =
+    typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
+      ? cfg.calendar_id
+      : DEFAULT_CALENDAR_ID;
+  return {
+    ok: true,
+    config: {
       mode: "single",
       selected_calendar_ids: [singleCalendarId],
       default_write_calendar_id: singleCalendarId,
       target_type: targetType ?? "core.event",
-    };
-  } catch {
-    // Connection lookup failed — fall back to safe defaults.
-    return {
-      mode: "single",
-      selected_calendar_ids: [DEFAULT_CALENDAR_ID],
-      default_write_calendar_id: DEFAULT_CALENDAR_ID,
-      target_type: "core.event",
-    };
-  }
+    },
+  };
+}
+
+/**
+ * Shared entry-point guard: surface a failed config read instead of
+ * guessing at the connection's shape. `retry: true` because the failure
+ * is a storage-layer blip, not an operator-resolvable misconfiguration.
+ */
+async function reportConfigFailure(
+  ctx: ConnectionContext,
+  error: unknown,
+): Promise<HandlerResult> {
+  return reportFailure(
+    ctx,
+    "connection configuration lookup failed",
+    error,
+    true,
+  );
 }
 
 interface CalendarEvent {
@@ -310,7 +343,9 @@ export async function handleSchedule(
   ctx: ConnectionContext,
   message: ScheduleMessage,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode === "multi") {
     return handleScheduleMulti(ctx, message, config);
   }
@@ -459,7 +494,9 @@ export async function handleItemEvent(
   ctx: ConnectionContext,
   message: ItemEventMessage,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode === "multi") {
     return handleItemEventMulti(ctx, message, config);
   }
@@ -822,7 +859,9 @@ export async function handleWebhook(
   ctx: ConnectionContext,
   input: WebhookHandlerInput,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode !== "multi") {
     return { ok: true };
   }
