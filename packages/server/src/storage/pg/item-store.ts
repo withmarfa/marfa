@@ -111,7 +111,7 @@ import { detectConflict } from "../conflict.js";
 // through the same tx. Same mechanic as the RLS middleware uses for inbound
 // requests.
 import { pgRequestContext } from "./request-context.js";
-import { items, metadata } from "./schema.js";
+import { edges, items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import type { PgVersionStore } from "./version-store.js";
 import type { PgSearchStore } from "./search-store.js";
@@ -844,6 +844,14 @@ export class PgItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
+      // Edges carry no FK to items, so nothing else ever collects them —
+      // without this the background sweep leaves a dangling edge row for
+      // every relationship a purged item had. Deleted by id membership
+      // rather than by tenant: `ids` is already tenant-resolved above, and
+      // an edge pointing at a purged item is garbage whatever its tenant
+      // stamp. Same statement shape as the bulk-action purge worker.
+      await tx.delete(edges).where(inArray(edges.source_id, ids));
+      await tx.delete(edges).where(inArray(edges.target_id, ids));
       // search_vector cascades — see bulkPurge.
       await tx.delete(items).where(inArray(items.id, ids));
       return ids.length;

@@ -121,6 +121,98 @@ describe("ItemStore purge methods — FTS coverage", () => {
   });
 });
 
+describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
+  it("drops edges on both sides of a purged item and leaves unrelated edges", async () => {
+    const doomed = id("ccc1");
+    const neighbor = id("ccc2");
+    const bystander = id("ccc3");
+
+    for (const itemId of [doomed, neighbor, bystander]) {
+      await ctx.storage.items.create(
+        {
+          id: itemId,
+          type: "core.note",
+          properties: { body: `note ${itemId}` },
+          tier: "library",
+        },
+        undefined,
+      );
+    }
+
+    // createRaw bypasses cardinality / cycle enforcement — this exercises the
+    // storage layer, not the constraint layer above it.
+    const outbound = await ctx.storage.edges.createRaw({
+      source_id: doomed,
+      target_id: neighbor,
+      edge_type: "references",
+    });
+    const inbound = await ctx.storage.edges.createRaw({
+      source_id: bystander,
+      target_id: doomed,
+      edge_type: "references",
+    });
+    const unrelated = await ctx.storage.edges.createRaw({
+      source_id: bystander,
+      target_id: neighbor,
+      edge_type: "references",
+    });
+
+    await ctx.storage.items.transition(doomed, "trashed", undefined);
+    await setUpdatedAt(
+      doomed,
+      new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
+    );
+
+    const deleted = await ctx.storage.items.purgeTrashedOlderThan(
+      FIXED_NOW.toISOString(),
+    );
+    expect(deleted).toBe(1);
+
+    // Both directions must be gone — edges carry no FK to items, so nothing
+    // else would ever collect them.
+    expect(await ctx.storage.edges.get(outbound.id)).toBeNull();
+    expect(await ctx.storage.edges.get(inbound.id)).toBeNull();
+    const fromDoomed = await ctx.storage.edges.listFromSource(doomed);
+    const toDoomed = await ctx.storage.edges.listToTarget(doomed);
+    expect(fromDoomed.data).toHaveLength(0);
+    expect(toDoomed.data).toHaveLength(0);
+
+    // An edge between two surviving items is untouched.
+    expect(await ctx.storage.edges.get(unrelated.id)).not.toBeNull();
+  });
+
+  it("leaves edges alone when the retention sweep purges nothing", async () => {
+    const a = id("ddd1");
+    const b = id("ddd2");
+    for (const itemId of [a, b]) {
+      await ctx.storage.items.create(
+        {
+          id: itemId,
+          type: "core.note",
+          properties: { body: `note ${itemId}` },
+          tier: "library",
+        },
+        undefined,
+      );
+    }
+    const edge = await ctx.storage.edges.createRaw({
+      source_id: a,
+      target_id: b,
+      edge_type: "references",
+    });
+
+    // `a` is trashed but still inside the retention window.
+    await ctx.storage.items.transition(a, "trashed", undefined);
+    await setUpdatedAt(a, FIXED_NOW.toISOString());
+
+    const deleted = await ctx.storage.items.purgeTrashedOlderThan(
+      new Date(FIXED_NOW.getTime() - MS_PER_DAY).toISOString(),
+    );
+    expect(deleted).toBe(0);
+    expect(await ctx.storage.edges.get(edge.id)).not.toBeNull();
+  });
+});
+
 describe("ItemStore.bulkPurge — atomicity", () => {
   // SQLite is the only dialect with a real FTS desync risk: the items_fts
   // virtual table is mutated separately from the items table, so without a

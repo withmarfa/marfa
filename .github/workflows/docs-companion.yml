@@ -48,9 +48,12 @@ jobs:
 
             // Documented surfaces — mirrors the freshness trigger set in
             // packages/server/CLAUDE.md plus the SDK and integration manifests.
+            // No trailing slash on the openapi entry: the generator is a pair
+            // of files (`openapi.ts`, `openapi-finalize.ts`), not a directory,
+            // so a `openapi/` prefix could never match anything.
             const SURFACE_PREFIXES = [
               'packages/server/src/routes/',
-              'packages/server/src/openapi/',
+              'packages/server/src/openapi',
               'packages/shared/src/',
               'packages/types/core/',
               'packages/sdk/src/',

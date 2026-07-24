@@ -4,7 +4,8 @@
  *
  * Public surface:
  *   - `ADAPTERS` — dispatch table keyed by `VerificationMethod`
- *   - `verifyHmacSha256`, `verifySlack`, `verifyStripe`, `verifyGitHub`
+ *   - `verifyHmacSha256`, `verifySlack`, `verifyStripe`, `verifyGitHub`,
+ *     `verifyGoogleChannel`, `verifyCloudflareEmail`
  *   - `VERIFICATION_METHODS`, `isVerificationMethod`
  *   - `Verifier`, `VerifyResult`, `VerificationMethod` types
  */

@@ -292,6 +292,11 @@ export interface ItemStore {
    * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
    * for each row. Returns the number of rows deleted.
    *
+   * Unlike `bulkPurge`, this drops the purged items' edges itself (both
+   * directions, inside the same transaction). It is the terminal step of
+   * the automatic trash lifecycle with no route layer above it to do the
+   * cleanup, and edges have no FK to items to fall back on.
+   *
    * `tenantId` semantics:
    * - `undefined` — every row older than the cutoff.
    * - `string` — only rows where `tenant_id` matches.
