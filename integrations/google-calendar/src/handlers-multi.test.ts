@@ -19,6 +19,7 @@
  *   - Outbound: all_day=true on the item writes `start.date` instead of
  *     `dateTime`.
  *   - Outbound: timezone on the item writes `start.timeZone`.
+ *   - Inbound: each calendar paginates to its own sync token.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -170,6 +171,18 @@ const ITEM_EVENT = (
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
+}
+
+/** Minimal confirmed event — enough for the ingest path to upsert it. */
+function multiEvent(id: string): Record<string, unknown> {
+  return {
+    id,
+    etag: `etag_${id}`,
+    summary: `Event ${id}`,
+    start: { dateTime: "2026-05-01T09:00:00Z" },
+    end: { dateTime: "2026-05-01T10:00:00Z" },
+    status: "confirmed",
+  };
 }
 
 function multiCalendarConnection(): Partial<ItemResource> {
@@ -444,5 +457,57 @@ describe("handleItemEvent — multi-calendar outbound", () => {
     expect(postBody.start?.timeZone).toBe("America/New_York");
     expect(postBody.start?.dateTime).toBe("2026-09-12T09:00:00");
     expect(postBody.end?.timeZone).toBe("America/New_York");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination across a multi-calendar sweep
+// ---------------------------------------------------------------------------
+
+describe("handleSchedule — multi-calendar pagination", () => {
+  it("paginates each calendar independently to its own sync token", async () => {
+    const { ctx, created, proxyCalls } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      proxyResponses: [
+        // primary, page 1 of 2
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_primary_1")],
+            nextPageToken: "tok_primary_2",
+          }),
+        // primary, page 2 of 2
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_primary_2")],
+            nextSyncToken: "sync_primary_after",
+          }),
+        // team, single page
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_team_1")],
+            nextSyncToken: "sync_team_after",
+          }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result.ok).toBe(true);
+    expect(proxyCalls).toHaveLength(3);
+    expect(proxyCalls[1]!.path).toContain("pageToken=tok_primary_2");
+    expect(proxyCalls[2]!.path).toContain("/calendars/team%40example.com/");
+    expect(proxyCalls[2]!.path).not.toContain("pageToken");
+    expect(created).toHaveLength(3);
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      per_calendar: Record<
+        string,
+        { syncToken: string | null; pageToken: string | null }
+      >;
+    };
+    expect(cursor.per_calendar.primary?.syncToken).toBe("sync_primary_after");
+    expect(cursor.per_calendar.primary?.pageToken).toBeNull();
+    expect(cursor.per_calendar["team@example.com"]?.syncToken).toBe(
+      "sync_team_after",
+    );
   });
 });

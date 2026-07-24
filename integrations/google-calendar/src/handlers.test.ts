@@ -4,6 +4,8 @@
  * Builds ConnectionContext inline. Mocks ctx.marfa entirely (no
  * real HTTP). Tests cover:
  *   - Inbound: events.list response → core.event upsert + cursor advance
+ *   - Inbound: multi-page response → every page ingested, sync token stored
+ *   - Inbound: sweep past the page brake parks and resumes a page token
  *   - Inbound: cancelled event → trashed transition on the mapped Marfa item
  *   - Inbound: echo-suppressed event → no upsert, counted as skipped
  *   - Inbound: 410 syncToken invalidation → cursor reset
@@ -27,7 +29,11 @@ import {
   type ItemEventMessage,
   type ScheduleMessage,
 } from "@withmarfa/runtime-sdk";
-import { handleSchedule, handleItemEvent } from "./handlers.js";
+import {
+  handleSchedule,
+  handleItemEvent,
+  MAX_PAGES_PER_SWEEP,
+} from "./handlers.js";
 
 interface InMemoryStorage {
   get(key: string): Promise<unknown>;
@@ -175,6 +181,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+/** Minimal confirmed event — enough for the ingest path to upsert it. */
+function pageEvent(id: string): Record<string, unknown> {
+  return {
+    id,
+    etag: `etag_${id}`,
+    summary: `Event ${id}`,
+    start: { dateTime: "2026-04-29T13:00:00Z" },
+    end: { dateTime: "2026-04-29T14:00:00Z" },
+    status: "confirmed",
+  };
+}
+
 const SAMPLE_INBOUND = {
   items: [
     {
@@ -276,6 +294,164 @@ describe("Google Calendar handlers — inbound (schedule)", () => {
     expect(emitted.at(-1)?.properties?.summary).toMatch(
       /syncToken invalidated/,
     );
+  });
+
+  it("follows nextPageToken to the last page and stores the sync token it carries", async () => {
+    // Calendar returns `nextSyncToken` only on the final page of a
+    // result set. A sweep that reads page one and stops never receives
+    // a token, so the cursor never advances and every subsequent tick
+    // refetches the same first page — a silent, permanent stall on any
+    // calendar with more changed events than fit in one page.
+    const { ctx, created, proxyCalls } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_p1a"), pageEvent("gevt_p1b")],
+            nextPageToken: "tok_page_2",
+          }),
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_p2a")],
+            nextPageToken: "tok_page_3",
+          }),
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_p3a")],
+            nextSyncToken: "sync_after_last_page",
+          }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+
+    expect(proxyCalls).toHaveLength(3);
+    expect(proxyCalls[0]!.path).toMatch(/maxResults=250/);
+    expect(proxyCalls[0]!.path).not.toMatch(/pageToken/);
+    expect(proxyCalls[1]!.path).toMatch(/pageToken=tok_page_2/);
+    expect(proxyCalls[2]!.path).toMatch(/pageToken=tok_page_3/);
+
+    // Every page's events are ingested, not just the first page's.
+    expect(created).toHaveLength(4);
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      syncToken: string | null;
+      mappings: Record<string, string>;
+    };
+    expect(cursor.syncToken).toBe("sync_after_last_page");
+    expect(Object.keys(cursor.mappings).sort()).toEqual([
+      "gevt_p1a",
+      "gevt_p1b",
+      "gevt_p2a",
+      "gevt_p3a",
+    ]);
+  });
+
+  it("sends the stored sync token on the tick after a paginated sweep", async () => {
+    // The stall this guards against is observable one tick later: with
+    // no token stored, the follow-up request reissues the untokened
+    // first-page query instead of asking for what changed since.
+    const { ctx, proxyCalls } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_a")],
+            nextPageToken: "tok_page_2",
+          }),
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_b")],
+            nextSyncToken: "sync_paginated",
+          }),
+        () => jsonResponse({ items: [], nextSyncToken: "sync_paginated_2" }),
+      ],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(proxyCalls).toHaveLength(3);
+    expect(proxyCalls[2]!.path).toMatch(/syncToken=sync_paginated/);
+    expect(proxyCalls[2]!.path).not.toMatch(/pageToken/);
+  });
+
+  it("parks the next page token when a sweep exceeds the per-run page brake", async () => {
+    // A backfill larger than one invocation's budget stops at the brake.
+    // Parking the page token is what keeps that from becoming the same
+    // stall by another name: the next tick resumes mid-sweep rather than
+    // restarting at page one.
+    const { ctx, created, proxyCalls } = buildContext({
+      proxyResponses: Array.from(
+        { length: MAX_PAGES_PER_SWEEP + 1 },
+        (_, i) => () =>
+          jsonResponse({
+            items: [pageEvent(`gevt_brake_${String(i)}`)],
+            nextPageToken: `tok_${String(i + 1)}`,
+          }),
+      ),
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(proxyCalls).toHaveLength(MAX_PAGES_PER_SWEEP);
+    expect(created).toHaveLength(MAX_PAGES_PER_SWEEP);
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      syncToken: string | null;
+      pageToken: string | null;
+    };
+    expect(cursor.syncToken).toBeNull();
+    expect(cursor.pageToken).toBe(`tok_${String(MAX_PAGES_PER_SWEEP)}`);
+  });
+
+  it("resumes from the parked page token on the following tick", async () => {
+    const { ctx, proxyCalls } = buildContext({
+      proxyResponses: [
+        () => jsonResponse({ items: [], nextSyncToken: "sync_resumed" }),
+      ],
+    });
+    await ctx.cursor.write("main", {
+      syncToken: null,
+      pageToken: "tok_parked",
+      last_inbound_at: null,
+      mappings: {},
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(proxyCalls[0]!.path).toMatch(/pageToken=tok_parked/);
+    const cursor = (await ctx.cursor.read("main")) as {
+      syncToken: string | null;
+      pageToken: string | null;
+    };
+    expect(cursor.syncToken).toBe("sync_resumed");
+    expect(cursor.pageToken).toBeNull();
+  });
+
+  it("keeps mappings from pages already ingested when a later page fails", async () => {
+    // Without persisting mid-sweep progress, the retry sees no mapping
+    // for the events page one already created and makes duplicates.
+    const { ctx, created } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [pageEvent("gevt_kept")],
+            nextPageToken: "tok_page_2",
+          }),
+        () => new Response("boom", { status: 503 }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toMatchObject({ ok: false, retry: true });
+    expect(created).toHaveLength(1);
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      syncToken: string | null;
+      mappings: Record<string, string>;
+    };
+    expect(cursor.mappings.gevt_kept).toBe("mit_1");
+    expect(cursor.syncToken).toBeNull();
   });
 
   it("skips events whose hash matches a recent outbound (echo suppression)", async () => {
