@@ -93,6 +93,62 @@ describe("client.connections.install", () => {
     await client.connections.install({ integration_id: "itm_int_43" });
   });
 
+  it("forwards credential_ref and configuration when provided", async () => {
+    const mockFetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(init?.body as string) as Record<
+          string,
+          unknown
+        >;
+        expect(body).toEqual({
+          integration_id: "itm_int_44",
+          credential_ref: "itm_cred_shared",
+          configuration: {
+            upstream_base_url_override: "people.googleapis.com",
+          },
+        });
+        return Promise.resolve(
+          makeJsonResponse(201, {
+            connection_id: "x",
+            credential_id: "y",
+            activity_id: "z",
+          }),
+        );
+      },
+    );
+
+    const client = makeClient(mockFetch);
+    await client.connections.install({
+      integration_id: "itm_int_44",
+      credential_ref: "itm_cred_shared",
+      configuration: { upstream_base_url_override: "people.googleapis.com" },
+    });
+  });
+
+  it("omits credential_ref and configuration from the body when not provided", async () => {
+    const mockFetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(init?.body as string) as Record<
+          string,
+          unknown
+        >;
+        expect(body).toEqual({ integration_id: "itm_int_45" });
+        expect("credential_ref" in body).toBe(false);
+        expect("configuration" in body).toBe(false);
+        return Promise.resolve(
+          makeJsonResponse(201, {
+            connection_id: "x",
+            credential_id: "y",
+            activity_id: "z",
+          }),
+        );
+      },
+    );
+
+    const client = makeClient(mockFetch);
+    await client.connections.install({ integration_id: "itm_int_45" });
+  });
+
   it("propagates 404 / 400 errors through the typed-error mapping", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       makeJsonResponse(404, {

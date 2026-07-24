@@ -30,6 +30,7 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
+  ConnectionInstallInput,
   ConnectionInstallResult,
   ConnectionUninstallResult,
   PreviewEventRequest,
@@ -1635,13 +1636,16 @@ export class MarfaClient {
      * `integration_id` references a `system.integration` item (registered
      * via `POST /integrations`). `label` is optional — the server
      * defaults to `${manifest_name} ${manifest_version}` when omitted.
-     * Returns the new connection id, the seed runtime credential id,
-     * and the `system.activity` row id from the install pipeline.
+     * `credential_ref` lets multiple integrations of the same upstream
+     * share one existing `system.credential` instead of provisioning a
+     * fresh one per install; `configuration` seeds the new connection's
+     * `properties.configuration` bag. Returns the new connection id, the
+     * seed runtime credential id, and the `system.activity` row id from
+     * the install pipeline.
      */
-    install: async (input: {
-      integration_id: string;
-      label?: string;
-    }): Promise<ConnectionInstallResult> => {
+    install: async (
+      input: ConnectionInstallInput,
+    ): Promise<ConnectionInstallResult> => {
       return this.transport.request<ConnectionInstallResult>(
         "POST",
         "/connections/install",
