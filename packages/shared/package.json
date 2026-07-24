@@ -1,6 +1,7 @@
 {
   "name": "@withmarfa/shared",
   "version": "1.2.0",
+  "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
