@@ -294,6 +294,81 @@ describe("local-runtime supervisor", () => {
     expect(state.recent_errors[0]?.message_kind).toBe("schedule");
   });
 
+  it("retries a handler throw on the first delivery, terminal on a redelivery", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    // Shaped like the worker-entry response for a handler that threw:
+    // a non-retryable result plus the `threw` flag. The supervisor is what
+    // turns the first of those into a retry, matching the hosted consumer.
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: () =>
+        Promise.resolve({
+          result: {
+            ok: false,
+            retry: false,
+            reason: "dispatch_threw: upstream blip",
+          },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: true,
+          thrownMessage: "upstream blip",
+          thrownClassName: "TypeError",
+        } satisfies WorkerDispatchResponse),
+      scheduleCron: "*/5 * * * *",
+      echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
+      triggerKinds: new Set(["schedule"]),
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const envelope = {
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule" as const,
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    };
+
+    const first = await runtime.dispatchForTest(envelope, 0);
+    expect(first).toEqual({
+      ok: false,
+      retry: true,
+      reason: "dispatch_threw: upstream blip",
+    });
+    const afterFirst = await readConnectionRuntimeState(
+      ctx.storage,
+      connectionId,
+    );
+    expect(afterFirst.recent_errors).toHaveLength(0);
+
+    const second = await runtime.dispatchForTest(envelope, 1);
+    expect(second).toEqual({
+      ok: false,
+      retry: false,
+      reason: "dispatch_threw: upstream blip",
+    });
+    const afterSecond = await readConnectionRuntimeState(
+      ctx.storage,
+      connectionId,
+    );
+    expect(afterSecond.recent_errors).toHaveLength(1);
+    expect(afterSecond.recent_errors[0]?.reason).toBe("upstream blip");
+  });
+
   it("acks item-event messages that meet the hop budget without dispatching the handler", async () => {
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);

@@ -4,6 +4,7 @@ import type { TestContext } from "../../test-utils.js";
 import {
   applyCursorDelta,
   checkAndRecordIdempotency,
+  CONNECTION_IDEMPOTENCY_NAMESPACE,
   CONNECTION_RUNTIME_NAMESPACE,
   readConnectionRuntimeState,
   recordRuntimeError,
@@ -40,7 +41,6 @@ describe("local-runtime per-connection state (connection.runtime)", () => {
     const state = await readConnectionRuntimeState(ctx.storage, connectionId);
     expect(state).toEqual({
       cursors: {},
-      idempotency: {},
       recent_errors: [],
       next_run_at_ms: null,
     });
@@ -131,6 +131,44 @@ describe("local-runtime per-connection state (connection.runtime)", () => {
     expect(extensions[CONNECTION_RUNTIME_NAMESPACE]).toBeDefined();
     expect(extensions[CONNECTION_RUNTIME_NAMESPACE]?.cursors).toEqual({
       k: "v",
+    });
+  });
+
+  it("keeps the idempotency window in its own namespace", async () => {
+    const connectionId = await createConnection();
+    await applyCursorDelta(ctx.storage, connectionId, { k: "v" }, []);
+    await checkAndRecordIdempotency(
+      ctx.storage,
+      connectionId,
+      "sub_a:delivery_ns",
+      60_000,
+      1_700_000_000_000,
+    );
+    const extensions = await ctx.storage.metadata.getExtensions(connectionId);
+    expect(extensions[CONNECTION_IDEMPOTENCY_NAMESPACE]).toEqual({
+      "sub_a:delivery_ns": 1_700_000_000_000,
+    });
+    // The dispatch-owned namespace carries no delivery state at all —
+    // the split is what keeps the two writers off one another's values.
+    expect(extensions[CONNECTION_RUNTIME_NAMESPACE]).toEqual({
+      cursors: { k: "v" },
+    });
+  });
+
+  it("drops an idempotency window left in the legacy blob on the next write", async () => {
+    const connectionId = await createConnection();
+    await ctx.storage.metadata.setExtension(
+      connectionId,
+      CONNECTION_RUNTIME_NAMESPACE,
+      {
+        cursors: { k: "v" },
+        idempotency: { "sub_a:legacy": 1_700_000_000_000 },
+      },
+    );
+    await applyCursorDelta(ctx.storage, connectionId, { k2: "v2" }, []);
+    const extensions = await ctx.storage.metadata.getExtensions(connectionId);
+    expect(extensions[CONNECTION_RUNTIME_NAMESPACE]).toEqual({
+      cursors: { k: "v", k2: "v2" },
     });
   });
 });

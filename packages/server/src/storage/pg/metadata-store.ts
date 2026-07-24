@@ -200,6 +200,36 @@ export class PgMetadataStore implements MetadataStore {
     });
   }
 
+  /**
+   * `SELECT … FOR UPDATE` is load-bearing: the extensions map is one JSON
+   * column, so a plain read-then-write lets a concurrent writer on a
+   * different namespace of the same item commit in between and lose one
+   * of the two updates. The row lock makes the cycle serializable.
+   */
+  async mutateExtension(
+    itemId: string,
+    namespace: string,
+    mutate: (current: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .for("update");
+      const current: Metadata = row
+        ? rowToMetadata(row)
+        : { item_id: itemId, tags: [], extensions: {} };
+      const next = mutate(current.extensions[namespace] ?? {});
+      const extensions = { ...current.extensions, [namespace]: next };
+      await tx
+        .update(metadata)
+        .set({ extensions: JSON.stringify(extensions) })
+        .where(eq(metadata.item_id, itemId));
+      return next;
+    });
+  }
+
   async deleteExtension(
     itemId: string,
     namespace: string,

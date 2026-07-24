@@ -45,11 +45,11 @@ export { registerWebhookReceiptRoute } from "./webhook-receipt.js";
 export { mintLocalRuntimeCredential } from "./credentials.js";
 export {
   readConnectionRuntimeState,
-  writeConnectionRuntimeState,
   applyCursorDelta,
   recordRuntimeError,
   checkAndRecordIdempotency,
   CONNECTION_RUNTIME_NAMESPACE,
+  CONNECTION_IDEMPOTENCY_NAMESPACE,
 } from "./pg-cursor-store.js";
 export { fanOutSchedule } from "./walker.js";
 export { loadInTreeRegistrations } from "./registrations.js";
