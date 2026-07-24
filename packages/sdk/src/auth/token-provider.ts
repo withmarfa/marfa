@@ -25,9 +25,10 @@ export interface TokenProvider {
   /** Force a sign-out — clears local storage, fires onSignOut handlers. */
   signOut(): Promise<void>;
   /** Force a token refresh and return the new access token. Same single-flight
-   *  semantics as `getAccessToken()`. Consumers calling on a 401 response
-   *  should use this rather than waiting for the next `getAccessToken()` to
-   *  hit the proactive window. */
+   *  semantics as `getAccessToken()`. `HttpTransport` calls this itself when a
+   *  request comes back 401 on a token the clock still considers valid, so a
+   *  server-side revocation recovers without waiting for the proactive
+   *  window. */
   refresh(): Promise<string>;
 }
 

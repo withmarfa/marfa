@@ -10,22 +10,47 @@ import {
 /** Minimal TokenProvider shape — keeps this transport file independent
  *  of the @withmarfa/sdk/auth subpath so the data root doesn't drag the
  *  auth bundle into headless consumers. */
-interface TokenProviderLike {
+export interface TokenProviderLike {
   getAccessToken(): Promise<string>;
+  /** Forces a renewal and returns the new access token, single-flighted so
+   *  concurrent callers share one exchange. Optional: a provider with no way
+   *  to renew leaves it off and a 401 surfaces without a retry. */
+  refresh?: () => Promise<string>;
 }
 
 export interface TransportConfig {
   baseUrl: string;
   /** Static API key (marfa_k1_*). Mutually exclusive with `tokenProvider`. */
   apiKey?: string;
-  /** OAuth token provider (marfa_at_* with refresh-on-401 retry).
-   *  Mutually exclusive with `apiKey`. */
+  /** OAuth token provider (marfa_at_*). When it exposes `refresh()`, a 401
+   *  forces one renewal and one retry. Mutually exclusive with `apiKey`. */
   tokenProvider?: TokenProviderLike;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 }
 
+export interface RawRequestOptions {
+  body?: unknown;
+  rawBody?: ArrayBuffer | Uint8Array | string | FormData | Blob;
+  query?:
+    | Record<string, string | number | boolean | string[] | undefined>
+    | object;
+  headers?: Record<string, string>;
+  /** Per-call timeout override (ms). Falls back to transport default. */
+  timeoutMs?: number;
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Release an unread body so the runtime doesn't keep the connection pinned
+ *  by a stream nobody will consume. */
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Already closed, or a Response shape without a cancelable body.
+  }
+}
 
 export class HttpTransport {
   private readonly baseUrl: string;
@@ -33,6 +58,9 @@ export class HttpTransport {
   private readonly tokenProvider: TokenProviderLike | undefined;
   private readonly fetch: typeof globalThis.fetch;
   private readonly timeoutMs: number;
+  /** Set when a forced renewal failed to clear a 401, cleared by the next
+   *  response that isn't one. See `reauthorize`. */
+  private forcedRefreshSuppressed = false;
 
   constructor(config: TransportConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -47,10 +75,17 @@ export class HttpTransport {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  /** Resolves the current Authorization header value. For tokenProvider
+  /** Resolves the Authorization header for the next attempt, along with the
+   *  bearer behind it (null for API keys) so the 401 path can tell whether
+   *  the credential it sent is still the current one. For tokenProvider
    *  callers this may trigger a proactive refresh under the hood. */
-  private async getAuthHeader(): Promise<string> {
-    if (this.apiKey) return `Bearer ${this.apiKey}`;
+  private async resolveCredential(): Promise<{
+    header: string;
+    accessToken: string | null;
+  }> {
+    if (this.apiKey) {
+      return { header: `Bearer ${this.apiKey}`, accessToken: null };
+    }
     if (!this.tokenProvider) {
       throw new MarfaError(
         "configuration_error",
@@ -58,8 +93,43 @@ export class HttpTransport {
         0,
       );
     }
-    const token = await this.tokenProvider.getAccessToken();
-    return `Bearer ${token}`;
+    const accessToken = await this.tokenProvider.getAccessToken();
+    return { header: `Bearer ${accessToken}`, accessToken };
+  }
+
+  /**
+   * Decides how to answer a 401. Returns the Authorization header to retry
+   * with, or null to let the 401 stand.
+   *
+   * The proactive-refresh window only covers a token that is about to expire
+   * by the clock. A token revoked, rotated out, or invalidated server-side
+   * ahead of that window still reads as valid locally, so without this path a
+   * recoverable session ends in a forced sign-in.
+   *
+   * Three guards keep the recovery from becoming its own request storm:
+   * concurrent 401s share the provider's single-flight exchange; a credential
+   * another caller already rotated in is retried as-is rather than spending
+   * the refresh token again; and a renewal that fails to clear the 401 stands
+   * the whole mechanism down until something succeeds, so a request loop
+   * failing for some other reason can never become a token-endpoint loop.
+   */
+  private async reauthorize(sentToken: string): Promise<string | null> {
+    const provider = this.tokenProvider;
+    if (!provider?.refresh || this.forcedRefreshSuppressed) return null;
+    try {
+      // A concurrent caller may have rotated the credential while this
+      // request was in flight. The server has never rejected that one, so
+      // try it before spending the refresh token.
+      const current = await provider.getAccessToken();
+      if (current !== sentToken) return `Bearer ${current}`;
+      return `Bearer ${await provider.refresh()}`;
+    } catch {
+      // A dead grant is reported through the provider's own sign-out channel
+      // and latches there — every later call throws before reaching the
+      // network. Swallow it here so the caller still sees the auth failure
+      // the request itself earned rather than a substituted OAuth error.
+      return null;
+    }
   }
 
   async request<T>(
@@ -157,23 +227,51 @@ export class HttpTransport {
     return body;
   }
 
+  /**
+   * Issues a request, retrying exactly once against a renewed credential when
+   * the server answers 401. Every body shape the signature admits is
+   * replayable, so the retry re-sends the original payload verbatim.
+   */
   async rawRequest(
     method: string,
     path: string,
-    options?: {
-      body?: unknown;
-      rawBody?: ArrayBuffer | Uint8Array | string | FormData | Blob;
-      query?:
-        | Record<string, string | number | boolean | string[] | undefined>
-        | object;
-      headers?: Record<string, string>;
-      /** Per-call timeout override (ms). Falls back to transport default. */
-      timeoutMs?: number;
-    },
+    options?: RawRequestOptions,
+  ): Promise<Response> {
+    const credential = await this.resolveCredential();
+    const response = await this.dispatch(
+      method,
+      path,
+      credential.header,
+      options,
+    );
+
+    if (response.status !== 401) {
+      this.forcedRefreshSuppressed = false;
+      return response;
+    }
+    if (credential.accessToken === null) return response;
+
+    const retryHeader = await this.reauthorize(credential.accessToken);
+    if (retryHeader === null) return response;
+
+    await discardBody(response);
+    const retried = await this.dispatch(method, path, retryHeader, options);
+    // A 401 that survives a credential the server has never seen isn't a
+    // staleness problem, so renewing again would only add token-endpoint
+    // traffic to a request that is failing for another reason.
+    this.forcedRefreshSuppressed = retried.status === 401;
+    return retried;
+  }
+
+  private async dispatch(
+    method: string,
+    path: string,
+    authHeader: string,
+    options?: RawRequestOptions,
   ): Promise<Response> {
     const url = this.buildUrl(path, options?.query);
     const headers: Record<string, string> = {
-      Authorization: await this.getAuthHeader(),
+      Authorization: authHeader,
       ...options?.headers,
     };
 

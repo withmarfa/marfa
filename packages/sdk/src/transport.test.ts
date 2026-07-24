@@ -7,6 +7,9 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "./errors.js";
+import { StoredTokenProvider } from "./auth/token-provider.js";
+import { InMemoryTokenStorage } from "./auth/storage.js";
+import { OAuthError } from "./auth/errors.js";
 
 // ---------------------------------------------------------------------------
 // Adversarial coverage for HttpTransport — transport-layer edge cases that
@@ -391,5 +394,278 @@ describe("HttpTransport — no silent retry", () => {
       MarfaError,
     );
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a 401 on the static API key path", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(401, {
+        error: { code: "invalid_token", message: "nope" },
+      }),
+    );
+    const transport = makeTransport(mockFetch);
+
+    // An API key has nothing to renew, so a retry would just resend the
+    // rejected credential.
+    await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refresh on 401 — exercised through the real StoredTokenProvider.
+//
+// A stub provider that mints a new token on every call would make a broken
+// transport look correct: the retry picks up a fresh credential whether or not
+// anything forced a renewal. Everything below drives the shipping provider
+// against a mock OAuth token endpoint, seeded with an access token whose clock
+// expiry is an hour out, so the proactive-refresh window never fires and
+// reacting to the 401 is the only route to recovery.
+// ---------------------------------------------------------------------------
+
+const ISSUER = "http://auth.test";
+const TOKEN_ENDPOINT = `${ISSUER}/auth/oauth2/token`;
+const AUTH_ENDPOINTS = {
+  token: TOKEN_ENDPOINT,
+  authorize: `${ISSUER}/auth/oauth2/authorize`,
+  deviceAuthorize: `${ISSUER}/auth/device`,
+};
+const STORAGE_KEY = "marfa.auth.tokens:transport-test";
+const SEEDED_ACCESS_TOKEN = "seeded_at";
+const SEEDED_REFRESH_TOKEN = "seeded_rt";
+
+function tokenEndpointSuccess(access: string, refresh: string): Response {
+  return makeJsonResponse(200, {
+    access_token: access,
+    refresh_token: refresh,
+    expires_in: 3600,
+    scope: "core.note:read",
+  });
+}
+
+function tokenEndpointFailure(error: string, status: number): Response {
+  return makeJsonResponse(status, { error });
+}
+
+function sentBearer(init?: RequestInit): string | undefined {
+  const headers = init?.headers as Record<string, string> | undefined;
+  return headers?.Authorization;
+}
+
+interface AuthFixture {
+  transport: HttpTransport;
+  storage: InMemoryTokenStorage;
+  /** Bearer header seen on each API call, in order. */
+  apiCalls: (string | undefined)[];
+  /** Refresh token presented on each token-endpoint exchange, in order. */
+  tokenExchanges: string[];
+  signOuts: number[];
+}
+
+async function makeAuthFixture(options: {
+  /** Whether the API accepts a given access token; anything else gets 401. */
+  accepts: (accessToken: string) => boolean;
+  /** Token-endpoint response for each exchange. */
+  tokenResponse: () => Response;
+}): Promise<AuthFixture> {
+  const apiCalls: (string | undefined)[] = [];
+  const tokenExchanges: string[] = [];
+  const signOuts: number[] = [];
+  const storage = new InMemoryTokenStorage();
+
+  const fetchImpl: typeof globalThis.fetch = (input, init) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+
+    if (url === TOKEN_ENDPOINT) {
+      // The provider form-encodes the grant into a string body.
+      const form = new URLSearchParams(
+        typeof init?.body === "string" ? init.body : "",
+      );
+      tokenExchanges.push(form.get("refresh_token") ?? "");
+      return Promise.resolve(options.tokenResponse());
+    }
+
+    const header = sentBearer(init);
+    apiCalls.push(header);
+    const token = header?.replace(/^Bearer /, "") ?? "";
+    return Promise.resolve(
+      options.accepts(token)
+        ? makeJsonResponse(200, { ok: true })
+        : makeJsonResponse(401, {
+            error: { code: "invalid_token", message: "token revoked" },
+          }),
+    );
+  };
+
+  await storage.set(
+    STORAGE_KEY,
+    JSON.stringify({
+      access_token: SEEDED_ACCESS_TOKEN,
+      refresh_token: SEEDED_REFRESH_TOKEN,
+      access_expires_at: Date.now() + 3_600_000,
+      scope: "core.note:read",
+    }),
+  );
+
+  const provider = new StoredTokenProvider({
+    issuer: ISSUER,
+    clientId: "test-client",
+    storage,
+    storageKey: STORAGE_KEY,
+    fetch: fetchImpl,
+    endpoints: AUTH_ENDPOINTS,
+  });
+  provider.onSignOut(() => signOuts.push(1));
+
+  const transport = new HttpTransport({
+    baseUrl: "http://example.test",
+    tokenProvider: provider,
+    fetch: fetchImpl,
+  });
+
+  return { transport, storage, apiCalls, tokenExchanges, signOuts };
+}
+
+describe("HttpTransport — refresh on 401", () => {
+  it("recovers a clock-valid but server-revoked token with one refresh and one retry", async () => {
+    const fixture = await makeAuthFixture({
+      accepts: (token) => token === "fresh_at",
+      tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
+    });
+
+    await expect(
+      fixture.transport.request("GET", "/items"),
+    ).resolves.toStrictEqual({ ok: true });
+
+    expect(fixture.apiCalls).toStrictEqual([
+      `Bearer ${SEEDED_ACCESS_TOKEN}`,
+      "Bearer fresh_at",
+    ]);
+    expect(fixture.tokenExchanges).toStrictEqual([SEEDED_REFRESH_TOKEN]);
+    // The grant was alive the whole time; nothing justified ending the session.
+    expect(fixture.signOuts).toHaveLength(0);
+  });
+
+  it("persists the rotated tokens so the next request starts from the new pair", async () => {
+    const fixture = await makeAuthFixture({
+      accepts: (token) => token === "fresh_at",
+      tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
+    });
+
+    await fixture.transport.request("GET", "/items");
+    await fixture.transport.request("GET", "/items");
+
+    expect(fixture.apiCalls).toStrictEqual([
+      `Bearer ${SEEDED_ACCESS_TOKEN}`,
+      "Bearer fresh_at",
+      "Bearer fresh_at",
+    ]);
+    expect(fixture.tokenExchanges).toStrictEqual([SEEDED_REFRESH_TOKEN]);
+  });
+
+  it("collapses concurrent 401s onto a single token exchange", async () => {
+    const fixture = await makeAuthFixture({
+      accepts: (token) => token === "fresh_at",
+      tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        fixture.transport.request("GET", "/items"),
+      ),
+    );
+
+    expect(results).toHaveLength(8);
+    // Eight attempts, eight retries — but one exchange. Refresh tokens rotate,
+    // so eight exchanges would replay a spent token and read as reuse, which
+    // revokes the whole grant.
+    expect(fixture.apiCalls).toHaveLength(16);
+    expect(fixture.tokenExchanges).toStrictEqual([SEEDED_REFRESH_TOKEN]);
+  });
+
+  it("fails fast on a dead refresh token — one exchange, then no traffic at all", async () => {
+    const fixture = await makeAuthFixture({
+      accepts: () => false,
+      tokenResponse: () => tokenEndpointFailure("invalid_grant", 400),
+    });
+
+    await expect(
+      fixture.transport.request("GET", "/items"),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
+
+    for (let i = 0; i < 4; i++) {
+      // The provider has latched: it refuses to hand out a bearer at all, so
+      // these never reach the network.
+      await expect(
+        fixture.transport.request("GET", "/items"),
+      ).rejects.toBeInstanceOf(OAuthError);
+    }
+
+    expect(fixture.apiCalls).toHaveLength(1);
+    expect(fixture.tokenExchanges).toStrictEqual([SEEDED_REFRESH_TOKEN]);
+    expect(fixture.signOuts).toHaveLength(1);
+    expect(await fixture.storage.get(STORAGE_KEY)).toBeNull();
+  });
+
+  it("stops forcing exchanges once a refresh has failed to clear the 401", async () => {
+    let issued = 0;
+    const fixture = await makeAuthFixture({
+      accepts: () => false,
+      tokenResponse: () => {
+        issued += 1;
+        return tokenEndpointSuccess(`rotated_at_${String(issued)}`, "next_rt");
+      },
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        fixture.transport.request("GET", "/items"),
+      ).rejects.toBeInstanceOf(UnauthorizedError);
+    }
+
+    // First call: attempt, exchange, retry. The retry's 401 proves a stale
+    // credential is not what the server is objecting to, so the two later
+    // calls make one attempt each and no exchange. A 401 loop must not become
+    // a token-endpoint loop.
+    expect(fixture.apiCalls).toHaveLength(4);
+    expect(fixture.tokenExchanges).toHaveLength(1);
+    // Nothing here says the grant is gone, so the session survives.
+    expect(fixture.signOuts).toHaveLength(0);
+  });
+
+  it("resumes refreshing on 401 once a request has succeeded again", async () => {
+    let accepted = "nothing-yet";
+    let issued = 0;
+    const fixture = await makeAuthFixture({
+      accepts: (token) => token === accepted,
+      tokenResponse: () => {
+        issued += 1;
+        return tokenEndpointSuccess(`rotated_at_${String(issued)}`, "next_rt");
+      },
+    });
+
+    await expect(
+      fixture.transport.request("GET", "/items"),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(fixture.tokenExchanges).toHaveLength(1);
+
+    // A healthy response is the signal that the credential works again.
+    accepted = "rotated_at_1";
+    await expect(
+      fixture.transport.request("GET", "/items"),
+    ).resolves.toStrictEqual({ ok: true });
+
+    // So a later revocation is recoverable rather than suppressed forever.
+    accepted = "rotated_at_2";
+    await expect(
+      fixture.transport.request("GET", "/items"),
+    ).resolves.toStrictEqual({ ok: true });
+    expect(fixture.tokenExchanges).toHaveLength(2);
   });
 });
