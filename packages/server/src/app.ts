@@ -562,7 +562,7 @@ export function createApp(
     "/profile",
     profileRoutes(storage, blobBackend, config.maxBlobSize),
   );
-  app.route("/keys", keyRoutes(storage, config.apiKeySalt, config.authMode));
+  app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/credentials", credentialRoutes(storage));
   app.route("/system", runtimeCredentialRoutes(storage, config.apiKeySalt));
   app.route(

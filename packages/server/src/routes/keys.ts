@@ -74,7 +74,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's; a `tenant_id` in the body is rejected, and on a multi-tenant deployment a caller with no tenant cannot mint the tenant-scoped `tenant_admin` / `member` roles — use `POST /admin/tenants/{id}/keys` for that. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+    "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,7 +132,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Body carried a `tenant_id`, or the mint would produce a tenant-scoped role with no tenant",
+        "Body carried a `tenant_id`, or the mint would produce a `tenant_admin` key with no tenant",
     },
     401: {
       content: {
@@ -316,22 +316,8 @@ const updateKeyRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-/** Roles whose authority is meant to stop at a tenant boundary. A key
- *  carrying one of these with no tenant is a contradiction the rest of
- *  the stack silently resolves in the caller's favor — see the mint
- *  guard below. */
-const TENANT_SCOPED_ROLES = new Set(["tenant_admin", "member"]);
-
-export function keyRoutes(
-  storage: Storage,
-  salt: string,
-  authMode: "hosted" | "keys",
-) {
+export function keyRoutes(storage: Storage, salt: string) {
   const router = createOpenAPIRouter<AppEnv>();
-  // Only a multi-tenant deployment has a boundary to defend. A
-  // single-tenant self-host has no tenant rows at all, so every key it
-  // mints is legitimately tenant-less.
-  const multiTenant = authMode === "hosted";
 
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
@@ -366,7 +352,7 @@ export function keyRoutes(
     if ("tenant_id" in body) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "`tenant_id` is not accepted here — a key minted through this route is always bound to the caller's tenant. Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant.",
+        "`tenant_id` is not accepted here. A key minted through this route is always bound to the caller's tenant; use `POST /admin/tenants/{id}/keys` to mint into a specific tenant.",
       );
     }
 
@@ -401,17 +387,38 @@ export function keyRoutes(
 
     const newKeyTenantId = c.get("apiKey")?.tenant_id;
 
-    // A tenant-scoped role with no tenant collapses every fence at once.
-    // NULL tenant is the platform-tier signal: the RLS middleware skips
-    // the role-switch wrapper and the storage layer drops its tenant
-    // predicate, so reads and writes span every tenant. Meanwhile
-    // tenant_admin skips the permission maps entirely. The result looks
-    // like a scoped credential and behaves like an unbadged platform one,
-    // which is exactly the key an operator would hand to a tenant.
-    if (multiTenant && !newKeyTenantId && TENANT_SCOPED_ROLES.has(role)) {
+    // `tenant_admin` means "admin inside a tenant", but the new key inherits
+    // the caller's tenant and a tenant-less caller hands it none. NULL tenant
+    // is the platform-tier signal everywhere below: the RLS middleware skips
+    // its role-switch wrapper and the storage layer drops its
+    // `WHERE tenant_id = ?` predicate, while the role itself bypasses the
+    // permission maps. The result reads and writes across every tenant behind
+    // a label that promises a boundary, so the mint refuses.
+    //
+    // Unconditional rather than scoped to multi-tenant deployments. Gating on
+    // the auth mode would put a security rule behind an env var that fails
+    // open when unset or misspelled, and there is no independent signal to
+    // lean on: the hosted-only wiring (`storage.users`) is built from that
+    // same variable, and asking whether tenant rows exist costs an unbounded
+    // scan on the mint path. Refusing outright needs no signal and buys an
+    // invariant worth stating plainly: every `tenant_admin` key has a tenant.
+    //
+    // `member` is deliberately not caught, despite inheriting the same NULL
+    // tenant. It is this route's default role and the only shape expressing
+    // "platform reach, narrowed by `type_permissions`" (`admin` ignores those
+    // outright), and a caller refused it can ask for `role: "admin"` here
+    // instead, for strictly more authority. Blocking it would move callers to
+    // a wider credential, not a narrower one; the audit row below marks the
+    // tier instead.
+    //
+    // Safe under bootstrap only because `role` is hard-forced to "admin"
+    // above. Were bootstrap ever to honor `body.role`, the first
+    // unauthenticated request to a fresh instance could ask for
+    // `tenant_admin`, and this check would be all that stood in front of it.
+    if (!newKeyTenantId && role === "tenant_admin") {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `Cannot mint a \`${role}\` key from a credential that has no tenant: the key would be tenant-less and read across every tenant. Use \`POST /admin/tenants/{id}/keys\` to mint a key bound to a specific tenant, or request \`role: "admin"\` if a platform-tier key is what you want.`,
+        'Cannot mint a `tenant_admin` key from a credential that has no tenant: the new key would inherit no tenant either, so its authority would not stop at the boundary its role names. Use `POST /admin/tenants/{id}/keys` to bind the key to a specific tenant, or ask for `role: "admin"` if a platform-tier key is what you want.',
       );
     }
 
@@ -431,6 +438,15 @@ export function keyRoutes(
       newKeyTenantId,
     );
 
+    // A key with no tenant is platform tier: the RLS middleware skips its
+    // wrapper for it and the storage layer drops its tenant predicate. That
+    // is a legitimate thing to mint, but it is not what `role: "member"`
+    // looks like at a glance, so the audit row records the tier and an
+    // operator can enumerate every such credential later. Derived from the
+    // stored tenant alone rather than from how the instance is configured,
+    // so the trail stays accurate whatever the deployment shape.
+    const platformTierMint = !newKeyTenantId;
+
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -438,6 +454,7 @@ export function keyRoutes(
       action: isBootstrap ? "key.bootstrap" : "key.create",
       resource_type: "key",
       resource_id: stored.id,
+      details: platformTierMint ? { platform_tier: true } : undefined,
     });
 
     return c.json(

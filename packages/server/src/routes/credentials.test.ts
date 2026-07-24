@@ -10,8 +10,14 @@
  *   - Audit trail: `credential.oauth_provider.create` row written.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  waitForAudit,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 
 let ctx: TestContext;
@@ -44,19 +50,27 @@ async function mintMemberKey(): Promise<string> {
   return body.key;
 }
 
+// Built through the storage layer rather than `POST /keys`, which refuses
+// to mint a `tenant_admin` key from a caller that has no tenant to pass on
+// (the resulting credential would not stop at the boundary its role names).
+// These tests only need a credential that carries the role, so the fixture
+// stamps a tenant directly instead of routing around the rule.
 async function mintTenantAdminKey(): Promise<string> {
   const suffix = uniqueSuffix();
-  const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
-    body: {
+  const raw = `marfa_k1_tenant_admin_${suffix}`;
+  await ctx.storage.keys.create(
+    {
       label: `tenant-admin-test-${suffix}`,
       source: `tenant-admin-test-${suffix}`,
       role: "tenant_admin",
+      type_permissions: {},
+      default_tier: "library",
+      is_platform: false,
     },
-  });
-  expect(res.status).toBe(201);
-  const body = (await res.json()) as { key: string };
-  return body.key;
+    hashApiKey(raw, TEST_API_KEY_SALT),
+    `tenant-credentials-${suffix}`,
+  );
+  return raw;
 }
 
 const VALID_BODY = {

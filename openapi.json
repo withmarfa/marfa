@@ -11736,7 +11736,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's; a `tenant_id` in the body is rejected, and on a multi-tenant deployment a caller with no tenant cannot mint the tenant-scoped `tenant_admin` / `member` roles — use `POST /admin/tenants/{id}/keys` for that. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+        "description": "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
         "security": [
           {
             "bearerAuth": []
@@ -11933,7 +11933,7 @@
             }
           },
           "400": {
-            "description": "Body carried a `tenant_id`, or the mint would produce a tenant-scoped role with no tenant",
+            "description": "Body carried a `tenant_id`, or the mint would produce a `tenant_admin` key with no tenant",
             "content": {
               "application/json": {
                 "schema": {
