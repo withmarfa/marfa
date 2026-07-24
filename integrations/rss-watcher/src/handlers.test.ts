@@ -155,6 +155,27 @@ const FEED_THREE_NEWER_ENTRY = `<?xml version="1.0" encoding="utf-8"?>
   </entry>
 </feed>`;
 
+const RSS_TWO = `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Newsroom</title>
+    <link>https://example.com/</link>
+    <item>
+      <title>Newer story</title>
+      <link>https://example.com/2</link>
+      <pubDate>Thu, 30 Apr 2026 10:00:00 +0000</pubDate>
+      <dc:creator>Ada Lovelace</dc:creator>
+      <description>Second summary</description>
+    </item>
+    <item>
+      <title>Older story</title>
+      <link>https://example.com/1</link>
+      <pubDate>Wed, 29 Apr 2026 10:00:00 +0000</pubDate>
+      <description>First summary</description>
+    </item>
+  </channel>
+</rss>`;
+
 function makeFetch(
   responses: { url?: string; status?: number; body: string }[],
 ): typeof fetch {
@@ -327,12 +348,40 @@ describe("RSS Watcher schedule handler", () => {
   it("emits action_required and retries on parse error", async () => {
     const { ctx, emitted } = buildContext();
     const handler = createScheduleHandler({
-      fetch: makeFetch([{ body: "<rss><channel/></rss>" }]),
+      fetch: makeFetch([{ body: "<html><body>Not a feed</body></html>" }]),
     });
 
     const result = await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
     expect(result.ok).toBe(false);
-    expect(emitted[0]!.properties?.summary).toMatch(/atom parse failed/);
+    expect(emitted[0]!.properties?.summary).toMatch(/feed parse failed/);
+  });
+
+  it("creates bookmarks from an RSS 2.0 feed", async () => {
+    const { ctx, created } = buildContext();
+    const handler = createScheduleHandler({
+      fetch: makeFetch([{ body: RSS_TWO }]),
+    });
+
+    const result = await handler(ctx, SCHEDULE_MSG(1_700_000_000_000));
+    expect(result).toEqual({ ok: true });
+    expect(created).toHaveLength(2);
+    // Oldest first, same ordering contract as the Atom path.
+    expect(created[0]!.properties).toMatchObject({
+      title: "Older story",
+      url: "https://example.com/1",
+      source_title: "Example Newsroom",
+    });
+    expect(created[0]!.source_id).toBe("https://example.com/1");
+    expect(created[1]!.properties).toMatchObject({
+      title: "Newer story",
+      author: "Ada Lovelace",
+      published_at: "2026-04-30T10:00:00.000Z",
+    });
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      last_seen_updated: string;
+    };
+    expect(cursor.last_seen_updated).toBe("2026-04-30T10:00:00.000Z");
   });
 
   it("continues past per-entry createItem failures and reports each", async () => {

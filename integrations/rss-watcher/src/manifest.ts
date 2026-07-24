@@ -14,7 +14,7 @@ export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",
   description:
-    "Polls an Atom or RSS feed on a schedule and creates a core.bookmark per new entry. Read-only.",
+    "Polls an Atom 1.0 or RSS 2.0 feed on a schedule and creates a core.bookmark per new entry. Read-only.",
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
   target_types: ["core.bookmark"],

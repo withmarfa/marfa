@@ -5,7 +5,7 @@
  *   1. Resolve the feed URL from the connection's
  *      `properties.configuration.feed_url` (falls back to the
  *      compiled-in default if absent).
- *   2. Fetch and parse the feed.
+ *   2. Fetch and parse the feed (Atom 1.0 or RSS 2.0).
  *   3. Filter entries already seen — by id (recent-id ring) or by
  *      `updated` timestamp (cursor). Cap the recent-id ring at
  *      RECENT_ID_RING_SIZE so storage stays bounded.
@@ -24,7 +24,7 @@ import {
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
-import { parseAtomFeed, type AtomEntry } from "./atom-parser.js";
+import { parseFeed, type FeedEntry } from "./feed-parser.js";
 
 export const DEFAULT_FEED_URL = "https://simonwillison.net/atom/everything/";
 export const RECENT_ID_RING_SIZE = 200;
@@ -68,7 +68,10 @@ export function createScheduleHandler(
     let response: Response;
     try {
       response = await fetchImpl(feedUrl, {
-        headers: { Accept: "application/atom+xml, application/xml, text/xml" },
+        headers: {
+          Accept:
+            "application/atom+xml, application/rss+xml, application/xml, text/xml",
+        },
       });
     } catch (err) {
       return reportFailure(ctx, "fetch failed", err);
@@ -81,11 +84,11 @@ export function createScheduleHandler(
       );
     }
     const xml = await response.text();
-    let parsed: ReturnType<typeof parseAtomFeed>;
+    let parsed: ReturnType<typeof parseFeed>;
     try {
-      parsed = parseAtomFeed(xml);
+      parsed = parseFeed(xml);
     } catch (err) {
-      return reportFailure(ctx, "atom parse failed", err);
+      return reportFailure(ctx, "feed parse failed", err);
     }
 
     const newEntries = filterNewEntries(parsed.entries, cursor);
@@ -154,15 +157,15 @@ async function resolveFeedUrl(ctx: ConnectionContext): Promise<string> {
 }
 
 function filterNewEntries(
-  entries: AtomEntry[],
+  entries: FeedEntry[],
   cursor: RssCursor,
-): AtomEntry[] {
+): FeedEntry[] {
   const seen = new Set(cursor.recent_entry_ids);
   const lastSeen = cursor.last_seen_updated
     ? Date.parse(cursor.last_seen_updated)
     : null;
 
-  const fresh: AtomEntry[] = [];
+  const fresh: FeedEntry[] = [];
   for (const entry of entries) {
     if (seen.has(entry.id)) continue;
     if (lastSeen !== null && entry.updated !== null) {
@@ -177,7 +180,7 @@ function filterNewEntries(
   return fresh;
 }
 
-function recordSeen(cursor: RssCursor, entry: AtomEntry): void {
+function recordSeen(cursor: RssCursor, entry: FeedEntry): void {
   cursor.recent_entry_ids.push(entry.id);
   if (cursor.recent_entry_ids.length > RECENT_ID_RING_SIZE) {
     cursor.recent_entry_ids.splice(
@@ -197,8 +200,8 @@ function recordSeen(cursor: RssCursor, entry: AtomEntry): void {
 }
 
 function buildBookmarkInput(
-  entry: AtomEntry,
-  feed: ReturnType<typeof parseAtomFeed>,
+  entry: FeedEntry,
+  feed: ReturnType<typeof parseFeed>,
 ): CreateItemInput {
   const properties: Record<string, unknown> = {
     title: entry.title,
