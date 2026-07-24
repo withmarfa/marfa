@@ -36,7 +36,7 @@ import type {
   PreviewEventResult,
 } from "@withmarfa/shared";
 import { generateId } from "@withmarfa/shared";
-import { HttpTransport } from "./transport.js";
+import { HttpTransport, type TokenProviderLike } from "./transport.js";
 import {
   BulkJobCancelledError,
   BulkJobFailedError,
@@ -57,13 +57,6 @@ import { pollUntilTerminal } from "./poll.js";
 // ---------------------------------------------------------------------------
 // Config and option types
 // ---------------------------------------------------------------------------
-
-/** Minimal token provider shape — full interface lives in
- *  @withmarfa/sdk/auth. Kept loose here so the data root doesn't depend
- *  on the auth subpath. */
-interface TokenProviderLike {
-  getAccessToken(): Promise<string>;
-}
 
 /**
  * Credentials are mutually exclusive at the type level: pass either a
