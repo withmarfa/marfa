@@ -13,7 +13,8 @@
  *         ourselves recently).
  *       - Else upsert as `core.event`. Record the mapping in
  *         the cursor.
- *     Update the syncToken on success.
+ *     Follow `nextPageToken` through every page of the sweep and
+ *     store the `nextSyncToken` the final page carries.
  *
  * - ITEM-EVENT (outbound, fires on Marfa `core.event` mutations):
  *     - The reactive bridge already filters self-events; double-check
@@ -69,6 +70,10 @@ interface CalendarCursor {
    *  is configured). Multi-calendar mode uses `per_calendar[].syncToken`
    *  below. */
   syncToken: string | null;
+  /** Opaque page token parking a sweep that hit the per-run page brake
+   *  before reaching the page carrying `nextSyncToken` (single-calendar
+   *  mode). Null whenever a sweep completed. */
+  pageToken?: string | null;
   /** ISO timestamp of the last successful schedule run (single-calendar mode). */
   last_inbound_at: string | null;
   /** Map of Calendar event id → Marfa item id. Used to look up
@@ -86,10 +91,14 @@ interface CalendarCursor {
   mapping_calendars?: Record<string, string>;
   /** Multi-calendar mode only: per-calendar sync cursor. Top-level
    *  `syncToken` is unused when this is populated. */
-  per_calendar?: Record<
-    string,
-    { syncToken: string | null; last_inbound_at: string | null }
-  >;
+  per_calendar?: Record<string, PerCalendarCursor>;
+}
+
+interface PerCalendarCursor {
+  syncToken: string | null;
+  /** Parked page token — see `CalendarCursor.pageToken`. */
+  pageToken?: string | null;
+  last_inbound_at: string | null;
 }
 
 /**
@@ -109,59 +118,92 @@ interface ConnectionConfig {
   target_type: string;
 }
 
+/**
+ * Outcome of a config read. A connection record that simply carries no
+ * calendar configuration is a legitimate single-"primary" install and
+ * resolves `ok`. A lookup that *fails* is a different thing entirely and
+ * must not be flattened into the same answer: silently answering
+ * "single, primary" for a multi-calendar connection sends outbound
+ * writes to the wrong calendar and skips the other selected calendars
+ * on the way in, with nothing in the activity feed to distinguish the
+ * degraded run from a healthy one.
+ */
+type ConfigResolution =
+  | { ok: true; config: ConnectionConfig }
+  | { ok: false; error: unknown };
+
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
-): Promise<ConnectionConfig> {
+): Promise<ConfigResolution> {
+  let connection: ItemResource | null;
   try {
-    const connection = await ctx.marfa.getItem(ctx.connection_id);
-    const props = connection?.properties as
-      | { configuration?: Record<string, unknown> }
-      | undefined;
-    const cfg = props?.configuration ?? {};
-    const rawSelected = cfg.selected_calendar_ids;
-    const selected: string[] = Array.isArray(rawSelected)
-      ? rawSelected.filter((v): v is string => typeof v === "string")
-      : [];
-    const defaultWrite =
-      typeof cfg.default_write_calendar_id === "string" &&
-      cfg.default_write_calendar_id.length > 0
-        ? cfg.default_write_calendar_id
-        : null;
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : null;
+    connection = await ctx.marfa.getItem(ctx.connection_id);
+  } catch (err) {
+    return { ok: false, error: err };
+  }
 
-    if (selected.length > 0 && defaultWrite !== null) {
-      return {
+  const props = connection?.properties as
+    | { configuration?: Record<string, unknown> }
+    | undefined;
+  const cfg = props?.configuration ?? {};
+  const rawSelected = cfg.selected_calendar_ids;
+  const selected: string[] = Array.isArray(rawSelected)
+    ? rawSelected.filter((v): v is string => typeof v === "string")
+    : [];
+  const defaultWrite =
+    typeof cfg.default_write_calendar_id === "string" &&
+    cfg.default_write_calendar_id.length > 0
+      ? cfg.default_write_calendar_id
+      : null;
+  const targetType =
+    typeof cfg.target_type === "string" && cfg.target_type.length > 0
+      ? cfg.target_type
+      : null;
+
+  if (selected.length > 0 && defaultWrite !== null) {
+    return {
+      ok: true,
+      config: {
         mode: "multi",
         selected_calendar_ids: selected,
         default_write_calendar_id: defaultWrite,
         target_type: targetType ?? "google.calendar.event",
-      };
-    }
+      },
+    };
+  }
 
-    // Single-calendar fallback: bare `calendar_id` on configuration names the
-    // one calendar to sync; default to `primary` when absent.
-    const singleCalendarId =
-      typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
-        ? cfg.calendar_id
-        : DEFAULT_CALENDAR_ID;
-    return {
+  // Single-calendar fallback: bare `calendar_id` on configuration names the
+  // one calendar to sync; default to `primary` when absent.
+  const singleCalendarId =
+    typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
+      ? cfg.calendar_id
+      : DEFAULT_CALENDAR_ID;
+  return {
+    ok: true,
+    config: {
       mode: "single",
       selected_calendar_ids: [singleCalendarId],
       default_write_calendar_id: singleCalendarId,
       target_type: targetType ?? "core.event",
-    };
-  } catch {
-    // Connection lookup failed — fall back to safe defaults.
-    return {
-      mode: "single",
-      selected_calendar_ids: [DEFAULT_CALENDAR_ID],
-      default_write_calendar_id: DEFAULT_CALENDAR_ID,
-      target_type: "core.event",
-    };
-  }
+    },
+  };
+}
+
+/**
+ * Shared entry-point guard: surface a failed config read instead of
+ * guessing at the connection's shape. `retry: true` because the failure
+ * is a storage-layer blip, not an operator-resolvable misconfiguration.
+ */
+async function reportConfigFailure(
+  ctx: ConnectionContext,
+  error: unknown,
+): Promise<HandlerResult> {
+  return reportFailure(
+    ctx,
+    "connection configuration lookup failed",
+    error,
+    true,
+  );
 }
 
 interface CalendarEvent {
@@ -191,11 +233,119 @@ interface EventsListResponse {
   nextPageToken?: string;
 }
 
+/** Calendar's per-page ceiling for `events.list`. */
+const EVENTS_PAGE_SIZE = 250;
+
+/**
+ * Pages one invocation will fetch before parking the sweep. Bounds a
+ * single run at `EVENTS_PAGE_SIZE * MAX_PAGES_PER_SWEEP` events so a
+ * first-time backfill of a busy calendar can't exhaust the Worker's
+ * time budget; the parked page token resumes the same sweep next tick.
+ */
+export const MAX_PAGES_PER_SWEEP = 20;
+
+type ListEventsOutcome =
+  | {
+      kind: "ok";
+      /** Set only on the page that carries it — i.e. the last page of a
+       *  completed sweep. Null while a sweep is parked mid-pages. */
+      syncToken: string | null;
+      /** Set when the page brake stopped the sweep early. */
+      resumePageToken: string | null;
+      eventsSeen: number;
+    }
+  | { kind: "sync_token_invalid" }
+  | { kind: "fetch_failed"; error: unknown }
+  | { kind: "http_error"; status: number }
+  | { kind: "parse_failed"; error: unknown };
+
+/**
+ * Walk `events.list` for one calendar across every page of the current
+ * sweep, handing each page's events to `onPage` as it arrives.
+ *
+ * Calendar returns `nextSyncToken` only on the final page of a result
+ * set. A sweep that reads the first page and stops therefore never
+ * receives a token: the cursor stays unset and the next tick reissues
+ * the identical first-page request forever, with no error to show for
+ * it. Following `nextPageToken` to the end is what lets incremental
+ * sync make progress on a calendar with more changed events than fit in
+ * one page. The sync token (or the backfill page size) rides along on
+ * every request — `pageToken` only selects which slice of that same
+ * query to return.
+ */
+async function listEventsPaged(
+  ctx: ConnectionContext,
+  calendarId: string,
+  state: { syncToken: string | null; pageToken: string | null },
+  onPage: (events: CalendarEvent[]) => Promise<void>,
+): Promise<ListEventsOutcome> {
+  let pageToken = state.pageToken;
+  let pagesFetched = 0;
+  let eventsSeen = 0;
+
+  for (;;) {
+    const params = new URLSearchParams();
+    if (state.syncToken !== null) params.set("syncToken", state.syncToken);
+    else params.set("maxResults", String(EVENTS_PAGE_SIZE));
+    if (pageToken !== null) params.set("pageToken", pageToken);
+    const path = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
+
+    let response: Response;
+    try {
+      response = await ctx.marfa.proxyRequest("GET", path);
+    } catch (err) {
+      return { kind: "fetch_failed", error: err };
+    }
+    if (response.status === 410) return { kind: "sync_token_invalid" };
+    if (!response.ok) return { kind: "http_error", status: response.status };
+
+    let payload: EventsListResponse;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      return { kind: "parse_failed", error: err };
+    }
+
+    const events = payload.items ?? [];
+    eventsSeen += events.length;
+    await onPage(events);
+    pagesFetched += 1;
+
+    const nextPageToken =
+      typeof payload.nextPageToken === "string" &&
+      payload.nextPageToken.length > 0
+        ? payload.nextPageToken
+        : null;
+    if (nextPageToken === null) {
+      return {
+        kind: "ok",
+        syncToken:
+          typeof payload.nextSyncToken === "string"
+            ? payload.nextSyncToken
+            : null,
+        resumePageToken: null,
+        eventsSeen,
+      };
+    }
+    if (pagesFetched >= MAX_PAGES_PER_SWEEP) {
+      return {
+        kind: "ok",
+        syncToken: null,
+        resumePageToken: nextPageToken,
+        eventsSeen,
+      };
+    }
+    pageToken = nextPageToken;
+  }
+}
+
 export async function handleSchedule(
   ctx: ConnectionContext,
   message: ScheduleMessage,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode === "multi") {
     return handleScheduleMulti(ctx, message, config);
   }
@@ -217,21 +367,67 @@ async function handleScheduleSingle(
   };
 
   const calendarId = config.default_write_calendar_id;
-  const params = new URLSearchParams();
-  if (cursor.syncToken !== null) params.set("syncToken", cursor.syncToken);
-  else params.set("maxResults", "250"); // initial backfill cap
-  const path = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
+  let upserted = 0;
+  let skippedEcho = 0;
+  let trashed = 0;
 
-  let response: Response;
-  try {
-    response = await ctx.marfa.proxyRequest("GET", path);
-  } catch (err) {
-    return reportFailure(ctx, "events.list fetch failed", err, true);
-  }
+  const outcome = await listEventsPaged(
+    ctx,
+    calendarId,
+    { syncToken: cursor.syncToken, pageToken: cursor.pageToken ?? null },
+    async (events) => {
+      for (const event of events) {
+        const marfa_id = cursor.mappings[event.id];
+        if (event.status === "cancelled") {
+          if (marfa_id !== undefined) {
+            try {
+              await ctx.marfa.transitionItem(marfa_id, "trashed");
+              trashed += 1;
+              Reflect.deleteProperty(cursor.mappings, event.id);
+            } catch (err) {
+              await ctx.activity.emit({
+                severity: "action_required",
+                summary: `google-calendar: failed to trash marfa item for cancelled event ${event.id}`,
+                detail: { error: errorMessage(err) },
+              });
+            }
+          }
+          continue;
+        }
 
-  if (response.status === 410) {
+        const hash = contentHashForEvent(event);
+        if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
+          skippedEcho += 1;
+          continue;
+        }
+
+        const input = buildEventInput(event, config.target_type, calendarId);
+        try {
+          if (marfa_id !== undefined) {
+            await ctx.marfa.updateItem(marfa_id, input);
+          } else {
+            const created = await ctx.marfa.createItem({
+              ...input,
+              source_id: event.id,
+            });
+            cursor.mappings[event.id] = created.id;
+          }
+          upserted += 1;
+        } catch (err) {
+          await ctx.activity.emit({
+            severity: "action_required",
+            summary: `google-calendar: failed to upsert marfa item for event ${event.id}`,
+            detail: { error: errorMessage(err) },
+          });
+        }
+      }
+    },
+  );
+
+  if (outcome.kind === "sync_token_invalid") {
     // Sync token invalidated — drop it and re-bootstrap on next tick.
     cursor.syncToken = null;
+    cursor.pageToken = null;
     await ctx.cursor.write(CURSOR_KEY, cursor);
     await ctx.activity.emit({
       severity: "info",
@@ -239,74 +435,16 @@ async function handleScheduleSingle(
     });
     return { ok: true };
   }
-  if (!response.ok) {
-    return reportFailure(
-      ctx,
-      `events.list returned ${String(response.status)}`,
-      null,
-      response.status >= 500,
-    );
+  if (outcome.kind !== "ok") {
+    // Pages already ingested left mappings on the cursor. Persisting
+    // before surfacing the failure is what stops the retry re-creating
+    // those same events as fresh Marfa items.
+    await ctx.cursor.write(CURSOR_KEY, cursor);
+    return reportListFailure(ctx, outcome, "events.list");
   }
 
-  let payload: EventsListResponse;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    return reportFailure(ctx, "events.list parse failed", err, true);
-  }
-
-  let upserted = 0;
-  let skippedEcho = 0;
-  let trashed = 0;
-  for (const event of payload.items ?? []) {
-    const marfa_id = cursor.mappings[event.id];
-    if (event.status === "cancelled") {
-      if (marfa_id !== undefined) {
-        try {
-          await ctx.marfa.transitionItem(marfa_id, "trashed");
-          trashed += 1;
-          Reflect.deleteProperty(cursor.mappings, event.id);
-        } catch (err) {
-          await ctx.activity.emit({
-            severity: "action_required",
-            summary: `google-calendar: failed to trash marfa item for cancelled event ${event.id}`,
-            detail: { error: errorMessage(err) },
-          });
-        }
-      }
-      continue;
-    }
-
-    const hash = contentHashForEvent(event);
-    if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
-      skippedEcho += 1;
-      continue;
-    }
-
-    const input = buildEventInput(event, config.target_type, calendarId);
-    try {
-      if (marfa_id !== undefined) {
-        await ctx.marfa.updateItem(marfa_id, input);
-      } else {
-        const created = await ctx.marfa.createItem({
-          ...input,
-          source_id: event.id,
-        });
-        cursor.mappings[event.id] = created.id;
-      }
-      upserted += 1;
-    } catch (err) {
-      await ctx.activity.emit({
-        severity: "action_required",
-        summary: `google-calendar: failed to upsert marfa item for event ${event.id}`,
-        detail: { error: errorMessage(err) },
-      });
-    }
-  }
-
-  if (typeof payload.nextSyncToken === "string") {
-    cursor.syncToken = payload.nextSyncToken;
-  }
+  cursor.syncToken = outcome.syncToken ?? cursor.syncToken;
+  cursor.pageToken = outcome.resumePageToken;
   cursor.last_inbound_at = new Date().toISOString();
   await ctx.cursor.write(CURSOR_KEY, cursor);
 
@@ -314,21 +452,51 @@ async function handleScheduleSingle(
     severity: "info",
     summary: `google-calendar inbound: upserted=${String(upserted)} echo_skipped=${String(skippedEcho)} trashed=${String(trashed)}`,
     detail: {
-      events_seen: payload.items?.length ?? 0,
+      events_seen: outcome.eventsSeen,
       upserted,
       skipped_echo: skippedEcho,
       trashed,
+      sweep_parked: outcome.resumePageToken !== null,
     },
   });
 
   return { ok: true };
 }
 
+/**
+ * Map a non-ok list outcome onto the handler's failure contract. `label`
+ * prefixes the operator-facing summary so the schedule and webhook paths
+ * stay distinguishable in the activity feed.
+ */
+async function reportListFailure(
+  ctx: ConnectionContext,
+  outcome: Exclude<
+    ListEventsOutcome,
+    { kind: "ok" } | { kind: "sync_token_invalid" }
+  >,
+  label: string,
+): Promise<HandlerResult> {
+  if (outcome.kind === "fetch_failed") {
+    return reportFailure(ctx, `${label} fetch failed`, outcome.error, true);
+  }
+  if (outcome.kind === "parse_failed") {
+    return reportFailure(ctx, `${label} parse failed`, outcome.error, true);
+  }
+  return reportFailure(
+    ctx,
+    `${label} returned ${String(outcome.status)}`,
+    null,
+    outcome.status >= 500,
+  );
+}
+
 export async function handleItemEvent(
   ctx: ConnectionContext,
   message: ItemEventMessage,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode === "multi") {
     return handleItemEventMulti(ctx, message, config);
   }
@@ -691,7 +859,9 @@ export async function handleWebhook(
   ctx: ConnectionContext,
   input: WebhookHandlerInput,
 ): Promise<HandlerResult> {
-  const config = await resolveConnectionConfig(ctx);
+  const resolved = await resolveConnectionConfig(ctx);
+  if (!resolved.ok) return reportConfigFailure(ctx, resolved.error);
+  const config = resolved.config;
   if (config.mode !== "multi") {
     return { ok: true };
   }
@@ -742,30 +912,77 @@ async function syncOneCalendar(
   };
   cursor.per_calendar = cursor.per_calendar ?? {};
   cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+  // Bound locally so the per-page ingest closure keeps the non-optional
+  // narrowing the two assignments above establish.
+  const mappingCalendars = cursor.mapping_calendars;
 
   const perCal = cursor.per_calendar[calendarId] ?? {
     syncToken: null,
     last_inbound_at: null,
   };
-  const params = new URLSearchParams();
-  if (perCal.syncToken !== null) params.set("syncToken", perCal.syncToken);
-  else params.set("maxResults", "250");
-  const listPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
 
-  let response: Response;
-  try {
-    response = await ctx.marfa.proxyRequest("GET", listPath);
-  } catch (err) {
-    return reportFailure(
-      ctx,
-      `webhook re-poll events.list failed for ${calendarId}`,
-      err,
-      true,
-    );
-  }
+  let upserted = 0;
+  let skippedEcho = 0;
+  let trashed = 0;
 
-  if (response.status === 410) {
+  const outcome = await listEventsPaged(
+    ctx,
+    calendarId,
+    { syncToken: perCal.syncToken, pageToken: perCal.pageToken ?? null },
+    async (events) => {
+      for (const event of events) {
+        const marfa_id = cursor.mappings[event.id];
+        if (event.status === "cancelled") {
+          if (marfa_id !== undefined) {
+            try {
+              await ctx.marfa.transitionItem(marfa_id, "trashed");
+              trashed += 1;
+              Reflect.deleteProperty(cursor.mappings, event.id);
+              Reflect.deleteProperty(mappingCalendars, event.id);
+            } catch (err) {
+              await ctx.activity.emit({
+                severity: "action_required",
+                summary: `google-calendar webhook: trash failed for ${event.id}`,
+                detail: { error: errorMessage(err) },
+              });
+            }
+          }
+          continue;
+        }
+
+        const hash = contentHashForEvent(event);
+        if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
+          skippedEcho += 1;
+          continue;
+        }
+
+        const input = buildEventInput(event, config.target_type, calendarId);
+        try {
+          if (marfa_id !== undefined) {
+            await ctx.marfa.updateItem(marfa_id, input);
+          } else {
+            const created = await ctx.marfa.createItem({
+              ...input,
+              source_id: event.id,
+            });
+            cursor.mappings[event.id] = created.id;
+            mappingCalendars[event.id] = calendarId;
+          }
+          upserted += 1;
+        } catch (err) {
+          await ctx.activity.emit({
+            severity: "action_required",
+            summary: `google-calendar webhook: upsert failed for event ${event.id}`,
+            detail: { error: errorMessage(err) },
+          });
+        }
+      }
+    },
+  );
+
+  if (outcome.kind === "sync_token_invalid") {
     perCal.syncToken = null;
+    perCal.pageToken = null;
     cursor.per_calendar[calendarId] = perCal;
     await ctx.cursor.write(CURSOR_KEY, cursor);
     await ctx.activity.emit({
@@ -774,81 +991,18 @@ async function syncOneCalendar(
     });
     return { ok: true };
   }
-  if (!response.ok) {
-    return reportFailure(
+  if (outcome.kind !== "ok") {
+    cursor.per_calendar[calendarId] = perCal;
+    await ctx.cursor.write(CURSOR_KEY, cursor);
+    return reportListFailure(
       ctx,
-      `webhook re-poll events.list returned ${String(response.status)} for ${calendarId}`,
-      null,
-      response.status >= 500,
+      outcome,
+      `webhook re-poll events.list for ${calendarId}`,
     );
   }
 
-  let payload: EventsListResponse;
-  try {
-    payload = await response.json();
-  } catch (err) {
-    return reportFailure(
-      ctx,
-      `webhook re-poll parse failed for ${calendarId}`,
-      err,
-      true,
-    );
-  }
-
-  let upserted = 0;
-  let skippedEcho = 0;
-  let trashed = 0;
-  for (const event of payload.items ?? []) {
-    const marfa_id = cursor.mappings[event.id];
-    if (event.status === "cancelled") {
-      if (marfa_id !== undefined) {
-        try {
-          await ctx.marfa.transitionItem(marfa_id, "trashed");
-          trashed += 1;
-          Reflect.deleteProperty(cursor.mappings, event.id);
-          Reflect.deleteProperty(cursor.mapping_calendars, event.id);
-        } catch (err) {
-          await ctx.activity.emit({
-            severity: "action_required",
-            summary: `google-calendar webhook: trash failed for ${event.id}`,
-            detail: { error: errorMessage(err) },
-          });
-        }
-      }
-      continue;
-    }
-
-    const hash = contentHashForEvent(event);
-    if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
-      skippedEcho += 1;
-      continue;
-    }
-
-    const input = buildEventInput(event, config.target_type, calendarId);
-    try {
-      if (marfa_id !== undefined) {
-        await ctx.marfa.updateItem(marfa_id, input);
-      } else {
-        const created = await ctx.marfa.createItem({
-          ...input,
-          source_id: event.id,
-        });
-        cursor.mappings[event.id] = created.id;
-        cursor.mapping_calendars[event.id] = calendarId;
-      }
-      upserted += 1;
-    } catch (err) {
-      await ctx.activity.emit({
-        severity: "action_required",
-        summary: `google-calendar webhook: upsert failed for event ${event.id}`,
-        detail: { error: errorMessage(err) },
-      });
-    }
-  }
-
-  if (typeof payload.nextSyncToken === "string") {
-    perCal.syncToken = payload.nextSyncToken;
-  }
+  perCal.syncToken = outcome.syncToken ?? perCal.syncToken;
+  perCal.pageToken = outcome.resumePageToken;
   perCal.last_inbound_at = new Date().toISOString();
   cursor.per_calendar[calendarId] = perCal;
   await ctx.cursor.write(CURSOR_KEY, cursor);
@@ -874,11 +1028,6 @@ async function syncOneCalendar(
 // Without that configuration, the single-calendar path above runs.
 // ---------------------------------------------------------------------------
 
-interface PerCalendarCursor {
-  syncToken: string | null;
-  last_inbound_at: string | null;
-}
-
 /**
  * Inbound sweep across every selected calendar. Each calendar carries
  * its own `syncToken` so incremental sync state doesn't bleed between
@@ -901,6 +1050,9 @@ async function handleScheduleMulti(
   };
   cursor.per_calendar = cursor.per_calendar ?? {};
   cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+  // Bound locally so the per-page ingest closure keeps the non-optional
+  // narrowing the two assignments above establish.
+  const mappingCalendars = cursor.mapping_calendars;
 
   // Push notifications: ensure every selected calendar has a live
   // (and not expiring-soon) watch channel pointed at the connection's
@@ -925,30 +1077,73 @@ async function handleScheduleMulti(
       syncToken: null,
       last_inbound_at: null,
     };
-    const params = new URLSearchParams();
-    if (perCal.syncToken !== null) params.set("syncToken", perCal.syncToken);
-    else params.set("maxResults", "250");
-    const listPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
+    let upserted = 0;
+    let skippedEcho = 0;
+    let trashed = 0;
 
-    let response: Response;
-    try {
-      response = await ctx.marfa.proxyRequest("GET", listPath);
-    } catch (err) {
-      await ctx.activity.emit({
-        severity: "action_required",
-        summary: `google-calendar: events.list fetch failed for ${calendarId}`,
-        detail: { error: errorMessage(err) },
-      });
-      continue;
-    }
+    const outcome = await listEventsPaged(
+      ctx,
+      calendarId,
+      { syncToken: perCal.syncToken, pageToken: perCal.pageToken ?? null },
+      async (events) => {
+        for (const event of events) {
+          const marfa_id = cursor.mappings[event.id];
+          if (event.status === "cancelled") {
+            if (marfa_id !== undefined) {
+              try {
+                await ctx.marfa.transitionItem(marfa_id, "trashed");
+                trashed += 1;
+                Reflect.deleteProperty(cursor.mappings, event.id);
+                Reflect.deleteProperty(mappingCalendars, event.id);
+              } catch (err) {
+                await ctx.activity.emit({
+                  severity: "action_required",
+                  summary: `google-calendar: failed to trash marfa item for cancelled event ${event.id}`,
+                  detail: { error: errorMessage(err) },
+                });
+              }
+            }
+            continue;
+          }
 
-    if (response.status === 410) {
+          const hash = contentHashForEvent(event);
+          if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
+            skippedEcho += 1;
+            continue;
+          }
+
+          const input = buildEventInput(event, config.target_type, calendarId);
+          try {
+            if (marfa_id !== undefined) {
+              await ctx.marfa.updateItem(marfa_id, input);
+            } else {
+              const created = await ctx.marfa.createItem({
+                ...input,
+                source_id: event.id,
+              });
+              cursor.mappings[event.id] = created.id;
+              mappingCalendars[event.id] = calendarId;
+            }
+            upserted += 1;
+          } catch (err) {
+            await ctx.activity.emit({
+              severity: "action_required",
+              summary: `google-calendar: failed to upsert marfa item for event ${event.id}`,
+              detail: { error: errorMessage(err) },
+            });
+          }
+        }
+      },
+    );
+
+    if (outcome.kind === "sync_token_invalid") {
       perCal.syncToken = null;
+      perCal.pageToken = null;
       cursor.per_calendar[calendarId] = perCal;
       perCalendarOutcomes[calendarId] = {
-        upserted: 0,
-        skipped: 0,
-        trashed: 0,
+        upserted,
+        skipped: skippedEcho,
+        trashed,
         reset: true,
       };
       await ctx.activity.emit({
@@ -957,81 +1152,30 @@ async function handleScheduleMulti(
       });
       continue;
     }
-    if (!response.ok) {
+    if (outcome.kind !== "ok") {
+      // One calendar's failure isolates; the sweep carries on. Whatever
+      // this calendar already ingested stays on the cursor so the next
+      // tick updates those items rather than duplicating them.
+      cursor.per_calendar[calendarId] = perCal;
       await ctx.activity.emit({
         severity: "action_required",
-        summary: `google-calendar: events.list returned ${String(response.status)} for ${calendarId}`,
-        detail: { status: response.status },
+        summary:
+          outcome.kind === "http_error"
+            ? `google-calendar: events.list returned ${String(outcome.status)} for ${calendarId}`
+            : `google-calendar: events.list ${outcome.kind === "fetch_failed" ? "fetch" : "parse"} failed for ${calendarId}`,
+        detail:
+          outcome.kind === "http_error"
+            ? { status: outcome.status }
+            : { error: errorMessage(outcome.error) },
       });
+      totalUpserted += upserted;
+      totalSkippedEcho += skippedEcho;
+      totalTrashed += trashed;
       continue;
     }
 
-    let payload: EventsListResponse;
-    try {
-      payload = await response.json();
-    } catch (err) {
-      await ctx.activity.emit({
-        severity: "action_required",
-        summary: `google-calendar: events.list parse failed for ${calendarId}`,
-        detail: { error: errorMessage(err) },
-      });
-      continue;
-    }
-
-    let upserted = 0;
-    let skippedEcho = 0;
-    let trashed = 0;
-    for (const event of payload.items ?? []) {
-      const marfa_id = cursor.mappings[event.id];
-      if (event.status === "cancelled") {
-        if (marfa_id !== undefined) {
-          try {
-            await ctx.marfa.transitionItem(marfa_id, "trashed");
-            trashed += 1;
-            Reflect.deleteProperty(cursor.mappings, event.id);
-            Reflect.deleteProperty(cursor.mapping_calendars, event.id);
-          } catch (err) {
-            await ctx.activity.emit({
-              severity: "action_required",
-              summary: `google-calendar: failed to trash marfa item for cancelled event ${event.id}`,
-              detail: { error: errorMessage(err) },
-            });
-          }
-        }
-        continue;
-      }
-
-      const hash = contentHashForEvent(event);
-      if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
-        skippedEcho += 1;
-        continue;
-      }
-
-      const input = buildEventInput(event, config.target_type, calendarId);
-      try {
-        if (marfa_id !== undefined) {
-          await ctx.marfa.updateItem(marfa_id, input);
-        } else {
-          const created = await ctx.marfa.createItem({
-            ...input,
-            source_id: event.id,
-          });
-          cursor.mappings[event.id] = created.id;
-          cursor.mapping_calendars[event.id] = calendarId;
-        }
-        upserted += 1;
-      } catch (err) {
-        await ctx.activity.emit({
-          severity: "action_required",
-          summary: `google-calendar: failed to upsert marfa item for event ${event.id}`,
-          detail: { error: errorMessage(err) },
-        });
-      }
-    }
-
-    if (typeof payload.nextSyncToken === "string") {
-      perCal.syncToken = payload.nextSyncToken;
-    }
+    perCal.syncToken = outcome.syncToken ?? perCal.syncToken;
+    perCal.pageToken = outcome.resumePageToken;
     perCal.last_inbound_at = new Date().toISOString();
     cursor.per_calendar[calendarId] = perCal;
     perCalendarOutcomes[calendarId] = {

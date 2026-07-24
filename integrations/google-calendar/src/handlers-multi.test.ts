@@ -19,6 +19,9 @@
  *   - Outbound: all_day=true on the item writes `start.date` instead of
  *     `dateTime`.
  *   - Outbound: timezone on the item writes `start.timeZone`.
+ *   - Inbound: each calendar paginates to its own sync token.
+ *   - A failed connection-config read surfaces rather than degrading the
+ *     connection to single-"primary" mode.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -71,6 +74,9 @@ interface CapturedActivity {
 interface BuildOpts {
   /** ctx.marfa.getItem(connection_id) returns this. */
   connectionRecord: Partial<ItemResource>;
+  /** When set, ctx.marfa.getItem(connection_id) rejects with this —
+   *  simulating a storage blip on the connection-config read. */
+  connectionLookupError?: Error;
   /** ctx.marfa.getItem(item_id) for any non-connection id. */
   itemForEvent?: ItemResource | null;
   proxyResponses: (() => Response)[];
@@ -113,6 +119,9 @@ function buildContext(opts: BuildOpts): BuiltContext {
     },
     getItem: (id: string) => {
       if (id === connectionId) {
+        if (opts.connectionLookupError !== undefined) {
+          return Promise.reject(opts.connectionLookupError);
+        }
         return Promise.resolve(opts.connectionRecord);
       }
       return Promise.resolve(opts.itemForEvent ?? null);
@@ -170,6 +179,18 @@ const ITEM_EVENT = (
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
+}
+
+/** Minimal confirmed event — enough for the ingest path to upsert it. */
+function multiEvent(id: string): Record<string, unknown> {
+  return {
+    id,
+    etag: `etag_${id}`,
+    summary: `Event ${id}`,
+    start: { dateTime: "2026-05-01T09:00:00Z" },
+    end: { dateTime: "2026-05-01T10:00:00Z" },
+    status: "confirmed",
+  };
 }
 
 function multiCalendarConnection(): Partial<ItemResource> {
@@ -444,5 +465,113 @@ describe("handleItemEvent — multi-calendar outbound", () => {
     expect(postBody.start?.timeZone).toBe("America/New_York");
     expect(postBody.start?.dateTime).toBe("2026-09-12T09:00:00");
     expect(postBody.end?.timeZone).toBe("America/New_York");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination across a multi-calendar sweep
+// ---------------------------------------------------------------------------
+
+describe("handleSchedule — multi-calendar pagination", () => {
+  it("paginates each calendar independently to its own sync token", async () => {
+    const { ctx, created, proxyCalls } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      proxyResponses: [
+        // primary, page 1 of 2
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_primary_1")],
+            nextPageToken: "tok_primary_2",
+          }),
+        // primary, page 2 of 2
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_primary_2")],
+            nextSyncToken: "sync_primary_after",
+          }),
+        // team, single page
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_team_1")],
+            nextSyncToken: "sync_team_after",
+          }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result.ok).toBe(true);
+    expect(proxyCalls).toHaveLength(3);
+    expect(proxyCalls[1]!.path).toContain("pageToken=tok_primary_2");
+    expect(proxyCalls[2]!.path).toContain("/calendars/team%40example.com/");
+    expect(proxyCalls[2]!.path).not.toContain("pageToken");
+    expect(created).toHaveLength(3);
+
+    const cursor = (await ctx.cursor.read("main")) as {
+      per_calendar: Record<
+        string,
+        { syncToken: string | null; pageToken: string | null }
+      >;
+    };
+    expect(cursor.per_calendar.primary?.syncToken).toBe("sync_primary_after");
+    expect(cursor.per_calendar.primary?.pageToken).toBeNull();
+    expect(cursor.per_calendar["team@example.com"]?.syncToken).toBe(
+      "sync_team_after",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connection-config lookup failure
+// ---------------------------------------------------------------------------
+
+describe("connection-config lookup failure", () => {
+  it("surfaces a failed inbound config read instead of sweeping as single/primary", async () => {
+    const { ctx, proxyCalls, emitted } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      connectionLookupError: new Error("storage unavailable"),
+      proxyResponses: [],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toMatchObject({ ok: false, retry: true });
+    // No upstream call at all — the handler must not guess at "primary".
+    expect(proxyCalls).toHaveLength(0);
+    const required = emitted.filter(
+      (e) => e.properties?.severity === "action_required",
+    );
+    expect(required).toHaveLength(1);
+    expect(required[0]!.properties?.summary).toMatch(
+      /connection configuration lookup failed/,
+    );
+  });
+
+  it("surfaces a failed outbound config read instead of writing to primary", async () => {
+    // The silent-degradation shape this guards against: a multi-calendar
+    // connection whose config read blips writes the event to "primary"
+    // rather than its nominated default-write calendar, with nothing in
+    // the activity feed to say so.
+    const item: ItemResource = {
+      id: "mit_cfg",
+      type: "google.calendar.event",
+      state: "active",
+      properties: { title: "Should not reach primary" },
+    };
+    const { ctx, proxyCalls, emitted } = buildContext({
+      connectionRecord: multiCalendarConnection(),
+      connectionLookupError: new Error("storage unavailable"),
+      itemForEvent: item,
+      proxyResponses: [() => jsonResponse({ id: "gevt_x", etag: "e" }, 201)],
+    });
+
+    const result = await handleItemEvent(ctx, ITEM_EVENT("mit_cfg", "created"));
+    expect(result).toMatchObject({ ok: false, retry: true });
+    expect(proxyCalls).toHaveLength(0);
+    expect(
+      emitted.some((e) =>
+        ((e.properties?.summary as string | undefined) ?? "").includes(
+          "connection configuration lookup failed",
+        ),
+      ),
+    ).toBe(true);
   });
 });
