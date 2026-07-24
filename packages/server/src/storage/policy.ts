@@ -84,7 +84,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * - `display_hints` — nearest-ancestor-wins. The first ancestor with a
  *   non-undefined block (starting from the leaf) supplies the whole block.
  * - `version_policy` — merged root→leaf, per-key. Documented as
- *   "merges field-by-field" (see `docs/concepts/versions.mdx`); matches
+ *   "merges field-by-field" (see `docs/guides/schema/versions.mdx`); matches
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
  * - `id`, `parent`, `version`, `label`, `description` — kept as-is on the leaf

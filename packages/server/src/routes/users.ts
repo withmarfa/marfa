@@ -47,7 +47,7 @@ const setHandleRoute = createRoute({
   tags: ["Auth"],
   summary: "Update the current user's handle",
   description:
-    "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `marfa`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/concepts/handles-and-publishers).",
+    "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `marfa`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/guides/identity/handles-and-publishers).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -103,7 +103,7 @@ const meRoute = createRoute({
   tags: ["Auth"],
   summary: "Get the current user",
   description:
-    "Returns the user record and the tenant the calling API key belongs to. Use to render account state (handle, name, tenant id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/concepts/profile).",
+    "Returns the user record and the tenant the calling API key belongs to. Use to render account state (handle, name, tenant id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/guides/identity/profile).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

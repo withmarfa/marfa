@@ -99,4 +99,31 @@ describe("published OpenAPI spec", () => {
       ).toBeUndefined();
     }
   });
+  it("links only into documentation sections that exist", () => {
+    // Route descriptions carry markdown links into the docs site, and the docs
+    // build prerenders by crawling them, so a link to a section that does not
+    // exist fails that build rather than degrading quietly. These are the
+    // top-level sections the site actually publishes; a link outside them is a
+    // typo or a section that was renamed without updating the routes.
+    const sections = [
+      "/guides/",
+      "/api-reference/",
+      "/sdks/",
+      "/self-hosting/",
+      "/introduction",
+    ];
+
+    const offenders: string[] = [];
+    for (const [key, operation] of published.entries()) {
+      const text = JSON.stringify(operation);
+      for (const match of text.matchAll(/\]\((\/[a-z0-9\-/#]*)\)/g)) {
+        const href = match[1];
+        if (href && !sections.some((section) => href.startsWith(section))) {
+          offenders.push(`${key} -> ${href}`);
+        }
+      }
+    }
+
+    expect(offenders.sort()).toEqual([]);
+  });
 });
