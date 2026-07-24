@@ -14,6 +14,9 @@
  *   - `connection_id: <stamped>` — the extension gate compares this
  *     against the path `:id` for cross-tenant denial when writing the
  *     `connection.runtime` namespace.
+ *   - `tenant_id` copied from the Connection, not from the caller. The
+ *     broker is tenant-less by construction, so inheriting the caller
+ *     would strand the credential outside every tenant fence.
  *
  * Permissions translated from the manifest at mint time:
  *   - `type_permissions` from manifest.permissions (caller supplies;
@@ -408,12 +411,18 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
         connection_id: body.connection_id,
       },
       keyHash,
-      apiKey.tenant_id,
+      // The connection's tenant, never the caller's. The broker
+      // authenticates with a platform credential that carries no tenant,
+      // so stamping the caller would leave the credential tenant-less —
+      // which reads as "platform tier" to the RLS policies and to the
+      // storage layer's tenant predicate, handing an integration built
+      // for one tenant reach into all of them.
+      connection.tenant_id ?? undefined,
     );
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      tenant_id: connection.tenant_id ?? null,
       key_id: apiKey.id,
       action: "runtime_credential.create",
       resource_type: "api_key",

@@ -270,6 +270,33 @@ describe("bootstrap sentinel", () => {
     }
   });
 
+  it("a rejected body does not burn the one-shot bootstrap claim", async () => {
+    // The sentinel claim is irreversible. If a request that can never
+    // mint consumed it, a single stray field would lock a brand-new
+    // instance out of bootstrap permanently.
+    const { app, storage } = await freshApp();
+    try {
+      const rejected = await request(app, "POST", "/keys", {
+        body: {
+          label: "stray-field",
+          source: "stray-field",
+          tenant_id: "some-tenant",
+        },
+      });
+      expect(rejected.status).toBe(400);
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+
+      // Bootstrap still available to the corrected request.
+      const retry = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(retry.status).toBe(201);
+      expect(await storage.settings.get("bootstrapped")).toBe("true");
+    } finally {
+      await storage.close();
+    }
+  });
+
   it("admin-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
     // Self-contained — bootstrap a fresh app, then use the bootstrap
     // admin to mint a second key on the now-closed (non-bootstrap)
@@ -574,5 +601,161 @@ describe("POST /keys — OAuth caller block (T-344)", () => {
       body: { label: "minted", source: "minted", role: "member" },
     });
     expect(res.status).toBe(201);
+  });
+});
+
+describe("POST /keys — tenant binding", () => {
+  // `POST /keys` mints into the caller's tenant. A platform admin has no
+  // tenant, so a `tenant_admin` / `member` key minted from one lands
+  // tenant-less: NULL tenant is the universal "platform tier / all
+  // tenants" signal to the RLS policies and to the storage layer's tenant
+  // predicate, while those two roles skip or narrow the permission maps.
+  // Composed, the credential reads and writes across every tenant while
+  // looking tenant-scoped. The mint has to refuse.
+  let hostedCtx: TestContext;
+  let tenantId: string;
+
+  beforeAll(async () => {
+    hostedCtx = await createTestContext({ authMode: "hosted" });
+    const tenant = await hostedCtx.storage.tenants!.create("tenant-binding");
+    tenantId = tenant.id;
+  });
+
+  afterAll(async () => {
+    await hostedCtx.cleanup();
+  });
+
+  it("rejects a tenant_admin mint from a platform admin with no tenant", async () => {
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: "null-tenant-admin",
+        source: "null-tenant-admin",
+        role: "tenant_admin",
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("validation_error");
+    // The message must name the route that does the tenant-scoped mint,
+    // otherwise the caller's only recourse is to guess.
+    expect(err.error.message).toMatch(/POST \/admin\/tenants\/\{id\}\/keys/);
+  });
+
+  it("rejects a member mint from a platform admin with no tenant", async () => {
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: "null-tenant-member",
+        source: "null-tenant-member",
+        role: "member",
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("validation_error");
+  });
+
+  it("still lets a platform admin mint a platform-tier admin key", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `platform-${suffix}`,
+        source: `platform-${suffix}`,
+        role: "admin",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.role).toBe("admin");
+    expect(stored?.tenant_id ?? null).toBeNull();
+  });
+
+  it("still lets a tenant-bound admin mint into its own tenant", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = `marfa_k1_bound_admin_${suffix}`;
+    await hostedCtx.storage.keys.create(
+      {
+        label: `bound-admin-${suffix}`,
+        source: `bound-admin-${suffix}`,
+        role: "tenant_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      tenantId,
+    );
+
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: raw,
+      body: {
+        label: `child-${suffix}`,
+        source: `child-${suffix}`,
+        role: "member",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.tenant_id).toBe(tenantId);
+  });
+
+  it("rejects a body `tenant_id` instead of silently dropping it", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `body-tenant-${suffix}`,
+        source: `body-tenant-${suffix}`,
+        role: "admin",
+        tenant_id: tenantId,
+      },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("validation_error");
+    expect(err.error.message).toMatch(/tenant_id/);
+  });
+});
+
+describe("POST /keys — single-tenant deployments keep minting tenant-less keys", () => {
+  // The tenant-binding guard is scoped to multi-tenant deployments. A
+  // single-tenant self-host has no tenant rows at all, so every key it
+  // mints is legitimately tenant-less and there is no boundary to cross.
+  it("mints a tenant-less member key in keys mode", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `self-host-${suffix}`,
+        source: `self-host-${suffix}`,
+        role: "member",
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await ctx.storage.keys.get(minted.id);
+    expect(stored?.tenant_id ?? null).toBeNull();
+  });
+
+  it("still rejects a body `tenant_id` in keys mode", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `self-host-body-${suffix}`,
+        source: `self-host-body-${suffix}`,
+        role: "member",
+        tenant_id: "some-tenant",
+      },
+    });
+    expect(res.status).toBe(400);
   });
 });
