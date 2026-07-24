@@ -49,6 +49,8 @@ const getMetricsRoute = createRoute({
   path: "/",
   tags: ["Admin"],
   summary: "Get server metrics",
+  description:
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. Platform-admin only: most counters are instance-wide rather than tenant-scoped, so a credential bound to a tenant is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -66,6 +68,14 @@ const getMetricsRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Caller is not a platform admin",
     },
   },
 });

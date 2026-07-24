@@ -11736,7 +11736,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+        "description": "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. `role` may not exceed the caller's own role (admin > tenant_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
         "security": [
           {
             "bearerAuth": []
@@ -11985,6 +11985,45 @@
                           "type": "string",
                           "enum": [
                             "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin or tenant_admin, is an OAuth access token, or requested a role above its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
                           ]
                         },
                         "message": {
@@ -18091,7 +18130,7 @@
           "Audit"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged.",
+        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or tenant_admin: a tenant-scoped caller sees only its own tenant's entries, a platform admin sees every entry.",
         "security": [
           {
             "bearerAuth": []
@@ -18264,6 +18303,45 @@
                           "type": "string",
                           "enum": [
                             "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin or tenant_admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
                           ]
                         },
                         "message": {

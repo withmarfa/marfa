@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  isValidId,
+  canGrantRole,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -74,7 +79,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+    "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. `role` may not exceed the caller's own role (admin > tenant_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -141,6 +146,15 @@ const createKeyRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description:
+        "Caller is not an admin or tenant_admin, is an OAuth access token, or requested a role above its own.",
     },
   },
 });
@@ -368,7 +382,22 @@ export function keyRoutes(storage: Storage, salt: string) {
       }
     }
 
+    // Role is a privilege axis, so a mint may travel sideways or downwards
+    // from the caller's own rank but never upwards — otherwise any principal
+    // allowed to mint at all could manufacture a credential outranking the
+    // one it presented, and the role gates guarding every other route would
+    // be decorative. Bootstrap is exempted: it seeds the first admin on a
+    // server that has no credential to compare against.
     const role = isBootstrap ? "admin" : (body.role ?? "member");
+    if (!isBootstrap) {
+      const callerRole = c.get("apiKey")?.role;
+      if (!callerRole || !canGrantRole(callerRole, role)) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `A ${callerRole ?? "unknown"} credential cannot create a key with role "${role}".`,
+        );
+      }
+    }
 
     const typePermissions = body.type_permissions ?? {};
 

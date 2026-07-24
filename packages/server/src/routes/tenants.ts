@@ -276,8 +276,13 @@ const putQuotasRoute = createRoute({
 export function tenantRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
+  // `/me/config` addresses the caller's OWN tenant and reads nothing else,
+  // so the tenant-bounded gate is the right one: the tenant admins that
+  // hosted sign-up provisions are the intended operators of their own
+  // space's config. Every storage call below is keyed on `key.tenant_id`,
+  // which satisfies the widening rule for a tenant-scoped callsite.
   router.openapi(getConfigRoute, async (c) => {
-    const key = requireAdmin(c);
+    const key = requireTenantAdmin(c);
     if (!key.tenant_id || !storage.tenants) {
       return c.json({}, 200);
     }
@@ -286,7 +291,7 @@ export function tenantRoutes(storage: Storage) {
   });
 
   router.openapi(putConfigRoute, async (c) => {
-    const key = requireAdmin(c);
+    const key = requireTenantAdmin(c);
     const body = c.req.valid("json") as TenantConfig;
 
     if (!key.tenant_id || !storage.tenants) {
