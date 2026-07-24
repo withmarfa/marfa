@@ -29,10 +29,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout marfa (source of truth)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Checkout withmarfa/docs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: withmarfa/docs
           token: ${{ secrets.DOCS_SYNC_TOKEN }}
