@@ -428,6 +428,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (
 
 CREATE INDEX IF NOT EXISTS \`idx_api_keys_connection_id\` ON \`api_keys\` (\`connection_id\`) WHERE \`connection_id\` IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS \`idx_api_keys_runtime_credential\`
+  ON \`api_keys\` (\`is_runtime_credential\`)
+  WHERE \`is_runtime_credential\`;
+
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_api_keys_source_per_tenant\`
   ON \`api_keys\` (\`tenant_id\`, \`source\`) WHERE revoked_at IS NULL;
 

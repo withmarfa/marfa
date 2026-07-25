@@ -1043,6 +1043,8 @@ $$;
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id ON public.api_keys USING btree (connection_id) WHERE (connection_id IS NOT NULL);
 
+CREATE INDEX IF NOT EXISTS idx_api_keys_runtime_credential ON public.api_keys USING btree (is_runtime_credential) WHERE is_runtime_credential;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant ON public.api_keys USING btree (tenant_id, source) WHERE (revoked_at IS NULL);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON public.audit_log USING btree (action);

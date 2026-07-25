@@ -444,9 +444,14 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
       "connection.runtime": "write",
       "acme.cursor": "write",
     });
+    // `write`, not `read`, despite the manifest declaring `direction: "read"`.
+    // `direction` describes flow relative to the upstream service: `read` is an
+    // INBOUND integration that pulls from upstream and writes the result into
+    // Marfa. The narrowing that matters is the type set — this credential
+    // reaches core.note and core.task and nothing else.
     expect(cred.type_permissions).toMatchObject({
-      "core.note": "read",
-      "core.task": "read",
+      "core.note": "write",
+      "core.task": "write",
     });
 
     // Activity row exists, references connection + credential

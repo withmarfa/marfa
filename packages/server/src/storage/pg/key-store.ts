@@ -1,5 +1,16 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  gt,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   ApiKey,
@@ -57,6 +68,17 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     expires_at: row.expires_at ?? null,
     last_used_at: row.last_used_at ?? null,
   };
+}
+
+/** Rows that are neither revoked nor past their expiry. `expires_at` is
+ *  NULL for human-minted keys, so the NULL branch keeps them live. Without
+ *  the expiry arm, an expired-but-not-yet-reaped runtime credential reads
+ *  as active for up to a full reaper interval. */
+function notRevokedOrExpired(nowIso: string) {
+  return and(
+    isNull(apiKeys.revoked_at),
+    or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, nowIso)),
+  );
 }
 
 export class PgKeyStore implements KeyStore {
@@ -190,7 +212,7 @@ export class PgKeyStore implements KeyStore {
     const rows = await this.db
       .select()
       .from(apiKeys)
-      .where(isNull(apiKeys.revoked_at));
+      .where(notRevokedOrExpired(new Date().toISOString()));
     return rows.map(mapRow);
   }
 
@@ -328,11 +350,11 @@ export class PgKeyStore implements KeyStore {
   }
 
   async count(): Promise<number> {
-    const rows = await this.db
-      .select()
+    const [row] = await this.db
+      .select({ total: count() })
       .from(apiKeys)
-      .where(isNull(apiKeys.revoked_at));
-    return rows.length;
+      .where(notRevokedOrExpired(new Date().toISOString()));
+    return row?.total ?? 0;
   }
 
   async revokeExpiredRuntimeCredentials(nowIso: string): Promise<number> {
@@ -353,10 +375,11 @@ export class PgKeyStore implements KeyStore {
 
   async revokeRuntimeCredentialsWithoutExpiryOlderThan(
     cutoffIso: string,
+    nowIso: string,
   ): Promise<number> {
     const rows = await this.db
       .update(apiKeys)
-      .set({ revoked_at: new Date().toISOString() })
+      .set({ revoked_at: nowIso })
       .where(
         and(
           eq(apiKeys.is_runtime_credential, true),
@@ -388,17 +411,20 @@ export class PgKeyStore implements KeyStore {
   async countRuntimeCredentials(
     nowIso: string,
   ): Promise<{ total: number; active: number }> {
-    const rows = await this.db
+    // Aggregate in SQL. The table is bounded by the reaper's seven-day
+    // window but that is still every dispatch in a week, far too many rows
+    // to drag into JS for a counter on an operator dashboard.
+    const [row] = await this.db
       .select({
-        id: apiKeys.id,
-        revoked_at: apiKeys.revoked_at,
-        expires_at: apiKeys.expires_at,
+        total: count(),
+        active: sum(
+          sql`CASE WHEN ${apiKeys.revoked_at} IS NULL AND (${apiKeys.expires_at} IS NULL OR ${apiKeys.expires_at} > ${nowIso}) THEN 1 ELSE 0 END`,
+        ),
       })
       .from(apiKeys)
       .where(eq(apiKeys.is_runtime_credential, true));
-    const active = rows.filter(
-      (r) => !r.revoked_at && (!r.expires_at || r.expires_at > nowIso),
-    ).length;
-    return { total: rows.length, active };
+    // `count()` maps to a number in drizzle; `sum()` comes back as a
+    // string on Postgres, so only the latter needs converting.
+    return { total: row?.total ?? 0, active: Number(row?.active ?? 0) };
   }
 }

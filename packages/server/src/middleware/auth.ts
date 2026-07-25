@@ -625,6 +625,32 @@ export function requireTypeAccess(
 }
 
 /**
+ * True when the caller is a runtime credential reading the one Connection
+ * it is bound to.
+ *
+ * A handler resolves its own `properties.configuration` with a plain
+ * `GET /items/:connection_id`, so it needs read access to a
+ * `system.connection` row. Granting `system.connection: read` in
+ * `type_permissions` would be tenant-wide — `type_permissions` keys on
+ * type, with no per-item axis — handing every connector read access to
+ * every other Connection's configuration in the tenant. This carve-out is
+ * the per-item form: the credential's `connection_id` stamp must equal
+ * the item being read, so a connector sees its own Connection and no
+ * other. Mirrors the identity check the connection-proxy and extension
+ * routes already apply.
+ */
+export function isOwnConnectionRead(
+  key: ApiKey | undefined,
+  item: { id: string; type: string },
+): boolean {
+  return (
+    key?.is_runtime_credential === true &&
+    item.type === "system.connection" &&
+    key.connection_id === item.id
+  );
+}
+
+/**
  * Enforces a per-edge-type permission check. Admin and tenant_admin
  * keys always pass (tenant_admin is admin-shaped within its tenant —
  * see `checkTypeAccess` for the layered-helper rationale). Non-admin

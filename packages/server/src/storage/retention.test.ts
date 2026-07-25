@@ -1021,3 +1021,140 @@ describe("KeyStore.countRuntimeCredentials — operator visibility", () => {
     expect(counts.active).toBe(2);
   });
 });
+
+describe("RuntimeCredentialReaper — scheduling and coordination", () => {
+  /** Records every lock name it is asked for, and can refuse the lock the way
+   *  a real `withJobLock` does when another instance already holds it. */
+  function trackingCoordination(opts: { granted: boolean }) {
+    const names: string[] = [];
+    return {
+      names,
+      store: {
+        withJobLock: async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T | undefined> => {
+          names.push(name);
+          return opts.granted ? await fn() : undefined;
+        },
+      },
+    };
+  }
+
+  it("runs the sweep under the cluster-wide lock", async () => {
+    await seedRuntimeCredential({
+      id: "cred_poll_locked",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    const coordination = trackingCoordination({ granted: true });
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+      coordination.store,
+    );
+
+    await reaper.pollForTest();
+
+    expect(coordination.names).toEqual(["runtime-credential-reap"]);
+    expect((await readCredentialRow("cred_poll_locked")).revoked).toBe(true);
+  });
+
+  it("does nothing when another instance holds the lock", async () => {
+    await seedRuntimeCredential({
+      id: "cred_poll_unlocked",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    const coordination = trackingCoordination({ granted: false });
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+      coordination.store,
+    );
+
+    await reaper.pollForTest();
+
+    // Lock refused means the other instance is sweeping; this one must not
+    // duplicate the work, and must not treat `undefined` counts as an error.
+    expect((await readCredentialRow("cred_poll_unlocked")).revoked).toBe(false);
+  });
+
+  it("swallows a sweep failure so the interval survives", async () => {
+    const exploding = {
+      ...ctx.storage,
+      keys: {
+        ...ctx.storage.keys,
+        revokeExpiredRuntimeCredentials: () =>
+          Promise.reject(new Error("db gone")),
+      },
+    } as unknown as typeof ctx.storage;
+    const reaper = new RuntimeCredentialReaper(
+      exploding,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    // A throw escaping poll() would land as an unhandled rejection on the
+    // timer and take the process down on a transient DB blip.
+    await expect(reaper.pollForTest()).resolves.toBeUndefined();
+  });
+
+  it("start() schedules a sweep and stop() cancels it", () => {
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    reaper.start();
+    expect(reaper.scheduledForTest()).toBe(true);
+    reaper.stop();
+    expect(reaper.scheduledForTest()).toBe(false);
+  });
+});
+
+describe("KeyStore.list / count — expired credentials are not live", () => {
+  it("omits an expired-but-unreaped runtime credential", async () => {
+    await seedRuntimeCredential({
+      id: "cred_list_live",
+      createdAt: FIXED_NOW,
+      expiresAt: new Date(Date.now() + RUNTIME_TTL_MS),
+    });
+    await seedRuntimeCredential({
+      id: "cred_list_expired",
+      createdAt: new Date(Date.now() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(Date.now() - RUNTIME_TTL_MS),
+    });
+
+    // The reaper runs hourly, so between expiry and the next tick these rows
+    // are dead but unrevoked. Counting them as live is what let an operator
+    // read "N active keys" while the fleet was already retired.
+    const listed = await ctx.storage.keys.list();
+    const ids = listed.map((k) => k.id);
+    expect(ids).toContain("cred_list_live");
+    expect(ids).not.toContain("cred_list_expired");
+    expect(await ctx.storage.keys.count()).toBe(listed.length);
+  });
+
+  it("keeps NULL-expiry human keys in both surfaces", async () => {
+    const human = await ctx.storage.keys.create(
+      {
+        label: "human-live",
+        source: "human-live",
+        role: "admin",
+        type_permissions: { "*": "write" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey("marfa_k1_human_live_list", TEST_API_KEY_SALT),
+    );
+    const listed = await ctx.storage.keys.list();
+    expect(listed.map((k) => k.id)).toContain(human.id);
+  });
+});

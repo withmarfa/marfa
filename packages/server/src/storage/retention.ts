@@ -535,12 +535,24 @@ export class RuntimeCredentialReaper {
     const legacy =
       await this.storage.keys.revokeRuntimeCredentialsWithoutExpiryOlderThan(
         legacyCutoff,
+        nowIso,
       );
     const deleted =
       await this.storage.keys.deleteRevokedRuntimeCredentialsOlderThan(
         deleteCutoff,
       );
     return { expired, legacy, deleted };
+  }
+
+  /** Test entry point for the scheduled path — the lock handshake and the
+   *  error swallowing only exist here, not in `runOnce`. */
+  async pollForTest(): Promise<void> {
+    return this.poll();
+  }
+
+  /** Test seam: whether `start()` has live timers pending. */
+  scheduledForTest(): boolean {
+    return this.interval !== null || this.startupTimeout !== null;
   }
 
   private async poll(): Promise<void> {

@@ -7,19 +7,21 @@
  *
  * Permissions are translated from the Integration manifest via the same
  * builders the hosted install pipeline uses (`manifest-permissions.ts`),
- * so a credential can only touch the types, edges, and extension
- * namespaces its manifest declares, plus the two substrate-contract
- * grants every connector needs (`connection.runtime` write for its own
- * state subtree, `system.activity` write for status reporting). A
- * connection whose manifest cannot be resolved mints fail-closed: those
- * two grants only, no type or edge reach beyond them.
+ * so a credential can only touch the types its manifest declares plus
+ * the edge and extension namespaces it asked for. Two substrate-contract
+ * grants ride along because no connector can run without them:
+ * `connection.runtime` write (its own state subtree) and
+ * `system.activity` write (status reporting). Reading its own Connection
+ * needs no grant — `isOwnConnectionRead` in `middleware/auth.ts` admits
+ * exactly that one row. A connection whose manifest cannot be resolved
+ * mints fail-closed with those two grants and no type or edge reach.
  *
- * The credential is short-TTL by design — the SDK refreshes via the
- * same callback on every dispatch, so a 10-minute window is fine even
- * if the integration runs every minute. The TTL is stamped onto the row
- * as `expires_at` (enforced at the bearer gate), and each mint retires
- * the connection's older credentials once they are past TTL plus a
- * one-TTL grace, so per-dispatch minting cannot accumulate live keys.
+ * The credential is per-dispatch and carries an `expires_at` enforced at
+ * the bearer gate. Its TTL is deliberately longer than the dispatch bound
+ * (see `DEFAULT_RUNTIME_CREDENTIAL_TTL_MS`): the local substrate cannot
+ * refresh mid-run, so a credential must outlive any dispatch that holds
+ * it. Each mint retires the connection's already-expired credentials, so
+ * per-dispatch minting cannot accumulate live keys.
  */
 import { randomBytes } from "node:crypto";
 import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
@@ -36,12 +38,40 @@ import {
 const KEY_PREFIX = "marfa_k1_";
 
 /**
- * Default runtime-credential lifetime. Shared with the retention reaper's
- * legacy sweep so "older than TTL + grace" means the same thing whether a
- * row was stamped with an expiry or predates expiry stamping. The hosted
- * mint route's default (`ttl_seconds: 600`) matches deliberately.
+ * Longest a single dispatch can run before pg-boss reclaims the job. The
+ * supervisor pins its dispatch queue to this value rather than inheriting
+ * pg-boss's default, so the number below is the real bound rather than a
+ * library default that could move under us.
  */
-export const DEFAULT_RUNTIME_CREDENTIAL_TTL_MS = 600 * 1000;
+export const DISPATCH_JOB_EXPIRY_SECONDS = 900;
+
+/**
+ * Margin between the dispatch bound and the credential lifetime. Covers
+ * the gap between minting the credential and the job actually starting
+ * (queue latency, lock acquisition, worker-thread spawn).
+ */
+const CREDENTIAL_TTL_MARGIN_SECONDS = 300;
+
+/**
+ * Default runtime-credential lifetime.
+ *
+ * This MUST exceed the longest possible dispatch. The local substrate has
+ * no working credential refresh: `worker-entry.ts` builds its
+ * `ConnectionClient` with `refreshCredential: () => Promise.resolve(credential)`
+ * — the same object — because the handler runs in a `worker_thread` with no
+ * storage access and therefore nothing to mint from. On a 401 the client
+ * re-presents the identical key and fails again. A credential that expires
+ * mid-dispatch is unrecoverable: the run dies partway, and for a long
+ * backfill (initial history sync, manual re-run) that is silent data loss
+ * rather than a retry.
+ *
+ * Bounding TTL by the job expiry makes expiry structurally unable to bite a
+ * live dispatch, which is what buys the right to enforce it at all. The
+ * hosted substrate has a real refresh path (`env.mintCredential` through the
+ * lease broker) and so is not subject to this constraint.
+ */
+export const DEFAULT_RUNTIME_CREDENTIAL_TTL_MS =
+  (DISPATCH_JOB_EXPIRY_SECONDS + CREDENTIAL_TTL_MARGIN_SECONDS) * 1000;
 const DEFAULT_TTL_MS = DEFAULT_RUNTIME_CREDENTIAL_TTL_MS;
 
 interface ConnectionProperties {
@@ -124,18 +154,32 @@ export async function mintLocalRuntimeCredential(
     tenantId,
   );
 
-  // Retire this connection's older runtime credentials. The cutoff is
-  // TTL + one-TTL grace: anything past it has been expired for at least
-  // a full TTL, so no in-flight dispatch can still be holding it.
+  // Retire this connection's runtime credentials that are already past
+  // their own expiry. Expired is the right cutoff: the bearer gate
+  // already refuses those keys, so revoking one cannot break a dispatch
+  // that is still running — it would have been failing anyway. Rows
+  // predating expiry stamping carry no `expires_at`, so fall back to
+  // their age against the same TTL.
+  //
+  // An earlier revision waited a further TTL as a "grace for in-flight
+  // dispatches". That was decorative: expiry bites a full TTL before
+  // such a cutoff, so the window only ever spared credentials that were
+  // already dead. Since the TTL now exceeds the longest dispatch, an
+  // unexpired credential is by construction still usable and is spared.
+  //
   // Best-effort — a supersede failure must not fail the dispatch that
   // triggered the mint; the retention reaper is the backstop.
-  const cutoff = new Date(Date.now() - 2 * ttlMs).toISOString();
+  const nowIso = new Date().toISOString();
+  const legacyCutoff = new Date(Date.now() - ttlMs).toISOString();
   try {
     const stale = await storage.keys.listByConnectionId(connectionId, tenantId);
     for (const key of stale) {
       if (key.id === minted.id) continue;
       if (!key.is_runtime_credential) continue;
-      if (key.created_at >= cutoff) continue;
+      const expired = key.expires_at
+        ? key.expires_at <= nowIso
+        : key.created_at < legacyCutoff;
+      if (!expired) continue;
       await storage.keys.revoke(key.id);
     }
   } catch (err) {

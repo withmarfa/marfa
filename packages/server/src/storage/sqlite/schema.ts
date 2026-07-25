@@ -174,6 +174,13 @@ export const apiKeys = sqliteTable(
     uniqueIndex("idx_api_keys_source_per_tenant")
       .on(table.tenant_id, table.source)
       .where(sql`revoked_at IS NULL`),
+    // Every reaper pass and the metrics counter filter on
+    // `is_runtime_credential` first. Partial on true: the runtime-credential
+    // slice is the only one anything scans by this column, and human keys are
+    // a rounding error beside a week of dispatch volume.
+    index("idx_api_keys_runtime_credential")
+      .on(table.is_runtime_credential)
+      .where(sql`is_runtime_credential`),
   ],
 );
 

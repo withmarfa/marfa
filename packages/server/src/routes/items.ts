@@ -21,6 +21,7 @@ import {
   requireAuth,
   requireTenantAdmin,
   requireTypeAccess,
+  isOwnConnectionRead,
   checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
@@ -1366,7 +1367,12 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
-    requireTypeAccess(c, item.type, "read");
+    // A runtime credential reads its own Connection to resolve its
+    // configuration; that one row is admitted without a tenant-wide
+    // `system.connection` grant. See `isOwnConnectionRead`.
+    if (!isOwnConnectionRead(apiKey, item)) {
+      requireTypeAccess(c, item.type, "read");
+    }
 
     const includeSet = new Set(
       (c.req.query("include") ?? "")

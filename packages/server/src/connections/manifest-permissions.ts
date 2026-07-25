@@ -11,36 +11,45 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
-/** Translate manifest.target_types + direction into a `type_permissions`
- *  map. Read-only Integrations get `read` on each target type;
- *  write/both get `write`. The runtime's per-Connection
- *  ConnectionClient enforces these at the server boundary.
+/** Translate manifest.target_types into a `type_permissions` map: `write`
+ *  on each declared target type. The narrowing that matters is the set of
+ *  types — a credential reaches what its manifest declared instead of the
+ *  whole tenant — not the level.
  *
- *  Two grants are unconditional because they are substrate contract
- *  rather than manifest-declared surface, and a connector cannot run
- *  without them:
+ *  `direction` deliberately plays no part. It describes flow relative to
+ *  the UPSTREAM service, not access to Marfa, and it does not reduce to a
+ *  Marfa-side level in either direction:
  *
- *    - `system.activity` write — the status-reporting channel. The
- *      runtime SDK's activity sink calls `POST /items` with it on every
- *      run; the reserved-namespace gate in `middleware/auth.ts` carries
- *      the matching carve-out for runtime credentials.
- *    - `system.connection` read — a handler reads its own Connection to
- *      resolve `properties.configuration`. `type_permissions` has no
- *      per-item axis, so this is tenant-wide read on connection rows;
- *      it is the tightest the permission model expresses, and reads of
- *      `system.*` were never platform-gated in the first place. */
+ *    - `read` is an inbound integration: it pulls from upstream and
+ *      WRITES the result into Marfa. Every inbound connector in-tree
+ *      calls `createItem` on its target types, so mapping `read` to a
+ *      read grant would break ingestion outright.
+ *    - `write` is outbound, but the one in-tree example (`task-auto-archive`)
+ *      transitions Marfa items, which is also a Marfa-side write.
+ *
+ *  Deriving a level from `direction` therefore encodes a relationship that
+ *  does not exist. If a per-integration read-only ceiling is wanted later,
+ *  it needs its own manifest field that says so.
+ *
+ *  `system.activity` write is granted unconditionally: it is the
+ *  substrate's status-reporting channel rather than manifest-declared
+ *  surface, and the runtime SDK's activity sink calls `POST /items` with
+ *  it on every run. The reserved-namespace gate in `middleware/auth.ts`
+ *  carries the matching carve-out for runtime credentials. A handler also
+ *  reads its own Connection to resolve `properties.configuration`; that
+ *  is NOT granted here, because `type_permissions` has no per-item axis
+ *  and a `system.connection` grant would be tenant-wide read over every
+ *  Connection row. `requireOwnConnectionRead` in `middleware/auth.ts`
+ *  admits exactly the credential's own Connection instead. */
 export function buildTypePermissions(
   manifest: IntegrationManifest | undefined,
 ): Record<string, "read" | "write"> {
   const out: Record<string, "read" | "write"> = {
     "system.activity": "write",
-    "system.connection": "read",
   };
   if (!manifest) return out;
-  const level: "read" | "write" =
-    manifest.direction === "read" ? "read" : "write";
   for (const t of manifest.target_types) {
-    out[t] = level;
+    out[t] = "write";
   }
   return out;
 }

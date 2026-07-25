@@ -519,6 +519,7 @@ export interface KeyStore {
    */
   revokeRuntimeCredentialsWithoutExpiryOlderThan(
     cutoffIso: string,
+    nowIso: string,
   ): Promise<number>;
   /**
    * Hard-delete revoked runtime-credential rows whose `revoked_at` is
