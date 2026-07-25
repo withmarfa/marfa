@@ -21,8 +21,8 @@
  *
  * Usage:
  *   pnpm --filter @withmarfa/server migrate:oauth-to-credential
- *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=sqlite
- *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=pg
+ *   pnpm --filter @withmarfa/server exec tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=sqlite
+ *   pnpm --filter @withmarfa/server exec tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=pg
  *
  * Environment:
  *   - SQLITE_PATH (sqlite default ./data/marfa.db)
