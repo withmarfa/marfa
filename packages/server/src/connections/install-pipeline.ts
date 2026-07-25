@@ -43,6 +43,11 @@ import {
 } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import {
+  buildEdgePermissions,
+  buildExtensionPermissions,
+  buildTypePermissions,
+} from "./manifest-permissions.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -131,51 +136,6 @@ export interface InstallResult {
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
-}
-
-/** Translate manifest.permissions into a runtime-credential
- *  `extension_permissions` map. The `connection.runtime` namespace is
- *  always granted write — the runtime needs it to hydrate its own
- *  cursor state — and any manifest-declared extension grants merge on
- *  top. Same shape the broker uses at refresh time, kept in sync here
- *  so the seed credential and refreshed credentials carry identical
- *  permissions. */
-function buildExtensionPermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const out: Record<string, "read" | "write"> = {
-    "connection.runtime": "write",
-  };
-  const declared = manifest.permissions?.extension;
-  if (declared) {
-    for (const [ns, level] of Object.entries(declared)) {
-      out[ns] = level;
-    }
-  }
-  return out;
-}
-
-function buildEdgePermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const declared = manifest.permissions?.edge;
-  return declared ? { ...declared } : {};
-}
-
-/** Translate manifest.target_types + direction into a `type_permissions`
- *  map. Read-only Integrations get `read` on each target type;
- *  write/both get `write`. The runtime's per-Connection
- *  ConnectionClient enforces these at the server boundary. */
-function buildTypePermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const level: "read" | "write" =
-    manifest.direction === "read" ? "read" : "write";
-  const out: Record<string, "read" | "write"> = {};
-  for (const t of manifest.target_types) {
-    out[t] = level;
-  }
-  return out;
 }
 
 export async function performInstall(
@@ -282,6 +242,9 @@ export async function performInstall(
   const keyHash = hashApiKey(rawKey, salt);
   const credentialLabel = input.label.slice(0, 200);
   const credentialSource = `integration:${connection.id}`;
+  const credentialExpiresAt = new Date(
+    Date.now() + INSTALL_CREDENTIAL_TTL_SECONDS * 1000,
+  ).toISOString();
 
   let credential;
   try {
@@ -294,6 +257,7 @@ export async function performInstall(
         extension_permissions: buildExtensionPermissions(manifest),
         edge_permissions: buildEdgePermissions(manifest),
         connection_id: connection.id,
+        expires_at: credentialExpiresAt,
       },
       keyHash,
       input.tenantId,

@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   ApiKey,
@@ -54,6 +54,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       "key metadata_permissions",
     ),
     created_at: row.created_at,
+    expires_at: row.expires_at ?? null,
     last_used_at: row.last_used_at ?? null,
   };
 }
@@ -122,7 +123,7 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   async createRuntimeCredential(
-    input: CreateKeyInput & { connection_id: string },
+    input: CreateKeyInput & { connection_id: string; expires_at: string },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey> {
@@ -164,6 +165,7 @@ export class SqliteKeyStore implements KeyStore {
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       created_at: now,
+      expires_at: input.expires_at,
     };
     await this.db.insert(apiKeys).values(row).run();
     return {
@@ -181,6 +183,7 @@ export class SqliteKeyStore implements KeyStore {
       edge_permissions: input.edge_permissions ?? {},
       metadata_permissions: input.metadata_permissions ?? {},
       created_at: now,
+      expires_at: input.expires_at,
       last_used_at: null,
     };
   }
@@ -286,6 +289,12 @@ export class SqliteKeyStore implements KeyStore {
       .get();
     if (!row) return null;
     if (row.revoked_at) return null;
+    // A key past its hard lifetime bound is as dead as a revoked one —
+    // same null so the middleware surfaces the same 401. ISO-8601 strings
+    // compare correctly as strings.
+    if (row.expires_at && row.expires_at <= new Date().toISOString()) {
+      return null;
+    }
     return {
       ...mapRow(row),
       key_hash: row.key_hash,
@@ -331,5 +340,73 @@ export class SqliteKeyStore implements KeyStore {
       .where(isNull(apiKeys.revoked_at))
       .all();
     return rows.length;
+  }
+
+  async revokeExpiredRuntimeCredentials(nowIso: string): Promise<number> {
+    const result = await this.db
+      .update(apiKeys)
+      .set({ revoked_at: nowIso })
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNull(apiKeys.revoked_at),
+          isNotNull(apiKeys.expires_at),
+          lt(apiKeys.expires_at, nowIso),
+        ),
+      )
+      .run();
+    return result.rowsAffected;
+  }
+
+  async revokeRuntimeCredentialsWithoutExpiryOlderThan(
+    cutoffIso: string,
+  ): Promise<number> {
+    const result = await this.db
+      .update(apiKeys)
+      .set({ revoked_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNull(apiKeys.revoked_at),
+          isNull(apiKeys.expires_at),
+          lt(apiKeys.created_at, cutoffIso),
+        ),
+      )
+      .run();
+    return result.rowsAffected;
+  }
+
+  async deleteRevokedRuntimeCredentialsOlderThan(
+    cutoffIso: string,
+  ): Promise<number> {
+    const result = await this.db
+      .delete(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNotNull(apiKeys.revoked_at),
+          lt(apiKeys.revoked_at, cutoffIso),
+        ),
+      )
+      .run();
+    return result.rowsAffected;
+  }
+
+  async countRuntimeCredentials(
+    nowIso: string,
+  ): Promise<{ total: number; active: number }> {
+    const rows = await this.db
+      .select({
+        id: apiKeys.id,
+        revoked_at: apiKeys.revoked_at,
+        expires_at: apiKeys.expires_at,
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.is_runtime_credential, true))
+      .all();
+    const active = rows.filter(
+      (r) => !r.revoked_at && (!r.expires_at || r.expires_at > nowIso),
+    ).length;
+    return { total: rows.length, active };
   }
 }

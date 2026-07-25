@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     is_platform boolean DEFAULT false NOT NULL,
     metadata_permissions text DEFAULT '{}'::text NOT NULL,
     is_runtime_credential boolean DEFAULT false NOT NULL,
-    connection_id text
+    connection_id text,
+    expires_at text
 );
 
 CREATE TABLE IF NOT EXISTS public.audit_log (

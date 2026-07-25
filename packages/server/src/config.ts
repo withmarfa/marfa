@@ -139,6 +139,12 @@ export interface AppConfig {
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
+  /** Cadence (ms) for the runtime-credential reaper: revokes runtime
+   *  credentials past `expires_at`, drains legacy rows minted before
+   *  expiry stamping, and hard-deletes revoked rows older than seven
+   *  days. `0` disables the job. Default 3_600_000 (1h); env override
+   *  `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS`. */
+  runtimeCredentialReaperIntervalMs?: number;
   /** How long a terminal `bulk_action_jobs` row survives before the GC
    *  sweep drops it. Counted against `finished_at`. Default 7 days; env
    *  override `MARFA_BULK_ACTION_JOB_RETENTION_MS`. Set to `0` to
@@ -642,6 +648,10 @@ export function loadConfig(): AppConfig {
     ),
     rateLimitCleanupIntervalMs: envNumber(
       process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      3_600_000,
+    ),
+    runtimeCredentialReaperIntervalMs: envNumber(
+      process.env.MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS,
       3_600_000,
     ),
     bulkActionJobRetentionMs: envNumber(

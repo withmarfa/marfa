@@ -409,6 +409,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
         extension_permissions: extensionPermissions,
         edge_permissions: body.edge_permissions ?? {},
         connection_id: body.connection_id,
+        expires_at: expiresAt,
       },
       keyHash,
       // The connection's tenant, never the caller's. The broker

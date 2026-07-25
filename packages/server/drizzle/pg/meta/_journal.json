@@ -484,6 +484,13 @@
       "when": 1780790404000,
       "tag": "0068_rls_tenants_table",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1784934453991,
+      "tag": "0069_api_keys_expires_at",
+      "breakpoints": true
     }
   ]
 }

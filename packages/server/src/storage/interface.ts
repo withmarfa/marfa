@@ -464,12 +464,15 @@ export interface KeyStore {
    * Mint a runtime credential. Distinct from `create` because runtime
    * credentials carry the load-bearing `is_runtime_credential` and
    * `connection_id` stamps that the extension gate keys off of —
-   * neither field is settable through `CreateKeyInput`. Only the
-   * `POST /system/runtime-credentials` route calls this; that route is
-   * itself gated on platform credentials.
+   * neither field is settable through `CreateKeyInput`. `expires_at` is
+   * required: every runtime credential carries a hard lifetime bound so
+   * the bearer gate refuses it after expiry and the reaper can retire
+   * the row. Callers are the platform-gated
+   * `POST /system/runtime-credentials` route, the install pipeline, and
+   * the local substrate's in-process mint.
    */
   createRuntimeCredential(
-    input: CreateKeyInput & { connection_id: string },
+    input: CreateKeyInput & { connection_id: string; expires_at: string },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey>;
@@ -499,6 +502,42 @@ export interface KeyStore {
   revoke(id: string): Promise<void>;
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
+  /**
+   * Revoke every runtime credential whose `expires_at` is strictly before
+   * `nowIso`. Belt-and-braces alongside the bearer gate's own expiry
+   * check: the gate refuses expired rows immediately, this sweep marks
+   * them revoked so the 7-day hard-delete window can start counting.
+   * Returns the number of rows revoked.
+   */
+  revokeExpiredRuntimeCredentials(nowIso: string): Promise<number>;
+  /**
+   * Revoke runtime credentials that carry no `expires_at` (rows minted
+   * before expiry stamping existed) whose `created_at` is strictly before
+   * `cutoffIso`. This is the drain for legacy accumulation: pre-expiry
+   * rows never age out on their own, so the reaper retires any of them
+   * older than the default TTL + grace. Returns the number revoked.
+   */
+  revokeRuntimeCredentialsWithoutExpiryOlderThan(
+    cutoffIso: string,
+  ): Promise<number>;
+  /**
+   * Hard-delete revoked runtime-credential rows whose `revoked_at` is
+   * strictly before `cutoffIso`. Runtime credentials are per-dispatch
+   * machine artifacts — unlike human keys, keeping revoked rows around
+   * indefinitely is pure table growth with no audit value beyond the
+   * short window operators might inspect. Returns the number deleted.
+   */
+  deleteRevokedRuntimeCredentialsOlderThan(cutoffIso: string): Promise<number>;
+  /**
+   * Instance-wide runtime-credential counters for operator surfaces.
+   * `total` counts every runtime-credential row still in the table
+   * (revoked included — visibility into accumulation is the point);
+   * `active` counts rows that are neither revoked nor past `expires_at`
+   * as of `nowIso`.
+   */
+  countRuntimeCredentials(
+    nowIso: string,
+  ): Promise<{ total: number; active: number }>;
 }
 
 /**

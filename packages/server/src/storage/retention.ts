@@ -458,6 +458,112 @@ export class DcrClientCleaner {
   }
 }
 
+/**
+ * Retires runtime credentials. The runtime substrates mint one short-TTL
+ * credential per dispatch; the mint path revokes superseded siblings and
+ * the bearer gate refuses expired rows, but neither touches credentials
+ * for connections that stop dispatching, nor rows minted before expiry
+ * stamping existed. This sweep is the backstop that keeps `api_keys`
+ * bounded. Three passes per tick:
+ *
+ *   1. Revoke runtime credentials past their `expires_at` — the bearer
+ *      gate already refuses them, this makes the state visible and
+ *      starts the hard-delete clock.
+ *   2. Revoke legacy runtime credentials with no `expires_at` whose
+ *      `created_at` is older than the default TTL + one-TTL grace. Rows
+ *      minted before expiry stamping never age out on their own; any of
+ *      them older than the grace window is long dead operationally.
+ *   3. Hard-delete revoked runtime-credential rows whose `revoked_at` is
+ *      older than seven days. Per-dispatch machine artifacts, not human
+ *      credentials — a week of post-revocation visibility is plenty.
+ *
+ * Instance-wide, not tenant-scoped — expiry is a property of the row, not
+ * of tenant policy. Cluster-wide coordination lock keyed
+ * `"runtime-credential-reap"`. Disabled by wiring (interval `0` skips
+ * construction in `index.ts`), matching the other cleaners.
+ */
+export class RuntimeCredentialReaper {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  /** Post-revocation retention before hard delete. Fixed rather than
+   *  env-tunable: the window exists for operator inspection, not policy. */
+  static readonly REVOKED_RETENTION_MS = 7 * MS_PER_DAY;
+
+  constructor(
+    private storage: Storage,
+    /** Default runtime-credential TTL — drives the legacy (NULL
+     *  `expires_at`) cutoff of TTL + one-TTL grace. */
+    private defaultTtlMs: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.startupTimeout = setTimeout(() => void this.poll(), 30_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point — runs the three passes once and reports counts. */
+  async runOnce(): Promise<{
+    expired: number;
+    legacy: number;
+    deleted: number;
+  }> {
+    const now = this.nowFn();
+    const nowIso = now.toISOString();
+    const legacyCutoff = new Date(
+      now.getTime() - 2 * this.defaultTtlMs,
+    ).toISOString();
+    const deleteCutoff = new Date(
+      now.getTime() - RuntimeCredentialReaper.REVOKED_RETENTION_MS,
+    ).toISOString();
+    const expired =
+      await this.storage.keys.revokeExpiredRuntimeCredentials(nowIso);
+    const legacy =
+      await this.storage.keys.revokeRuntimeCredentialsWithoutExpiryOlderThan(
+        legacyCutoff,
+      );
+    const deleted =
+      await this.storage.keys.deleteRevokedRuntimeCredentialsOlderThan(
+        deleteCutoff,
+      );
+    return { expired, legacy, deleted };
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const counts = this.coordination
+        ? await this.coordination.withJobLock("runtime-credential-reap", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (
+        counts !== undefined &&
+        counts.expired + counts.legacy + counts.deleted > 0
+      ) {
+        log("info", "Runtime credential reap", counts);
+      }
+    } catch (err) {
+      log("error", "Runtime credential reap error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-tenant fan-out helper
 // ---------------------------------------------------------------------------

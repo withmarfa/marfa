@@ -203,6 +203,10 @@ export const apiKeys = pgTable(
     edge_permissions: text("edge_permissions").notNull().default("{}"),
     metadata_permissions: text("metadata_permissions").notNull().default("{}"),
     created_at: text("created_at").notNull(),
+    // Hard lifetime bound. NULL means the key never expires (human-minted
+    // keys); runtime credentials are always stamped so the bearer gate and
+    // the reaper can retire them without an explicit revoke.
+    expires_at: text("expires_at"),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),
   },

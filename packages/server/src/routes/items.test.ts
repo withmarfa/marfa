@@ -626,6 +626,7 @@ describe("POST /items — platform-credential gate", () => {
         role: "member",
         type_permissions: { "system.activity": "write" },
         connection_id: "conn_test_carve_out",
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
       },
       hashApiKey(runtimeKey, TEST_API_KEY_SALT),
       "tenant-x",

@@ -245,6 +245,7 @@ describe("performUninstall — partial-state semantics", () => {
         role: "member",
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
       },
       hashApiKey("marfa_k1_" + "0".repeat(64), "test-salt"),
       undefined,

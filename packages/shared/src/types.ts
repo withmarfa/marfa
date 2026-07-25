@@ -327,6 +327,14 @@ export interface ApiKey {
    */
   oidc_scopes?: readonly ("openid" | "profile" | "email" | "offline_access")[];
   created_at: string;
+  /**
+   * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is
+   * refused at the bearer gate exactly like a revoked key. `null` (or
+   * absent) means the key never expires — the shape of every human-minted
+   * key. Runtime credentials are always stamped at mint so the retention
+   * reaper can retire them without an explicit revoke.
+   */
+  expires_at?: string | null;
   last_used_at: string | null;
 }
 
