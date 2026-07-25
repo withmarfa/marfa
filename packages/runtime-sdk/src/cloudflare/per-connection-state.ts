@@ -60,6 +60,7 @@ export class PerConnectionState implements DurableObject {
 
   /** Default fetch handler. Routes:
    *   - POST /arm-schedule  → arm or re-arm the schedule alarm
+   *   - POST /disarm-schedule → cancel the schedule alarm
    *   - POST /storage?op=...&key=... → KV proxy for the queue-consumer
    *     isolate (the consumer runs in the Worker, not the DO; it
    *     proxies cursor / idempotency / echo storage through this
@@ -74,6 +75,11 @@ export class PerConnectionState implements DurableObject {
     if (url.pathname === "/arm-schedule" && request.method === "POST") {
       const next_run_at_ms = await this.armSchedule();
       return Response.json({ ok: true, next_run_at_ms });
+    }
+    if (url.pathname === "/disarm-schedule" && request.method === "POST") {
+      const reason = url.searchParams.get("reason") ?? "unspecified";
+      const result = await this.disarmSchedule(reason);
+      return Response.json({ ok: true, ...result });
     }
     if (url.pathname === "/storage" && request.method === "POST") {
       return this.handleStorage(request, url);
@@ -119,13 +125,41 @@ export class PerConnectionState implements DurableObject {
    * Idempotent — re-arming an already-armed alarm just updates the
    * target. Returns the next-run timestamp (or null if the integration
    * has no schedule trigger).
+   *
+   * Arming clears any disarm tombstone: an explicit arm is a deliberate
+   * operator or install-time action, and it would be surprising for a
+   * previous teardown to keep vetoing it.
    */
   async armSchedule(): Promise<number | null> {
     if (!this.env.MANIFEST_CRON) return null;
+    await this.core.clearScheduleDisarmed();
     const next = computeNextRunAt(this.env.MANIFEST_CRON, Date.now());
     await this.state.storage.setAlarm(next);
     await this.core.setNextRunAt(next);
     return next;
+  }
+
+  /**
+   * Cancel this Connection's schedule alarm and record why.
+   *
+   * Idempotent by contract: disarming a never-armed or already-disarmed
+   * schedule succeeds. `deleteAlarm()` on a Durable Object with no alarm
+   * set is itself a no-op, and the tombstone write is a plain put.
+   *
+   * The tombstone matters as much as the cancellation. `deleteAlarm()`
+   * does not interrupt an `alarm()` invocation that is already running,
+   * so without a persisted marker that in-flight handler would re-arm
+   * and undo the teardown. `alarm()` reads the tombstone before doing
+   * anything, which closes the window.
+   */
+  async disarmSchedule(
+    reason: string,
+  ): Promise<{ disarmed: true; previous_next_run_at_ms: number | null }> {
+    const previous = await this.core.getNextRunAt();
+    await this.state.storage.deleteAlarm();
+    await this.core.setScheduleDisarmed(reason);
+    await this.core.clearNextRunAt();
+    return { disarmed: true, previous_next_run_at_ms: previous };
   }
 
   /**
@@ -136,9 +170,16 @@ export class PerConnectionState implements DurableObject {
    * Webhook-only integrations (no MANIFEST_CRON or no queue binding)
    * no-op safely — the alarm shouldn't have fired in that case, but
    * defensive behavior costs nothing.
+   *
+   * A disarmed schedule neither enqueues nor re-arms. Because the alarm
+   * re-arms itself, the tombstone check is the only thing standing
+   * between a torn-down Connection and a schedule that runs forever.
    */
   async alarm(): Promise<void> {
     if (!this.env.MANIFEST_CRON || !this.env.SCHEDULED_POLL_QUEUE) {
+      return;
+    }
+    if (await this.core.getScheduleDisarmed()) {
       return;
     }
     const connectionId = this.state.id.name ?? this.state.id.toString();

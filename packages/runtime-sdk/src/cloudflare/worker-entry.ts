@@ -6,8 +6,9 @@
  *      queues, this helper builds `ConsumerEnvironment` and calls
  *      `consumeBatch`.
  *   2. The fetch handler — routes `POST /arm-schedule?connection_id=X`
- *      to the per-Connection DO so the install pipeline (via the
- *      control plane) can arm the first alarm.
+ *      and `POST /disarm-schedule?connection_id=X` to the per-Connection
+ *      DO so the install and uninstall pipelines (via the control plane)
+ *      can arm and cancel the alarm.
  *
  * Per-integration `worker.ts` files become a 5-line file: register
  * handlers, call `createIntegrationWorker(...)`, re-export
@@ -20,6 +21,7 @@ import {
 } from "../queue-consumer.js";
 import type { PerConnectionAlarmEnv } from "./per-connection-state.js";
 import type { QueueMessage, RuntimeCredential } from "../types.js";
+import { ConnectionGoneError } from "../errors.js";
 import { verifyHandler } from "../verify-handler.js";
 
 /**
@@ -78,6 +80,12 @@ export interface IntegrationWorkerExport<E> {
  * Mint a runtime credential by calling the control plane's lease
  * broker. Cached on the per-Connection DO for ≤ 5 min by the SDK
  * caller — this function unconditionally hits the broker.
+ *
+ * 404 and 403 from the broker mean the Connection is gone or no longer
+ * active. Those are surfaced as `ConnectionGoneError` so the consumer
+ * can tell "this will never work again" apart from "the broker is
+ * having a bad minute", which is the difference between tearing the
+ * schedule down and backing off.
  */
 async function mintCredentialViaBroker(
   env: IntegrationWorkerEnv,
@@ -93,12 +101,28 @@ async function mintCredentialViaBroker(
   });
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 404 || res.status === 403) {
+      throw new ConnectionGoneError(
+        `lease broker reports connection ${connectionId} unusable (${String(res.status)}): ${body.slice(0, 256)}`,
+        res.status,
+      );
+    }
     throw new Error(
       `lease broker returned ${String(res.status)}: ${body.slice(0, 256)}`,
     );
   }
   const parsed: RuntimeCredential = await res.json();
   return parsed;
+}
+
+/** Send a control message to a Connection's Durable Object. */
+function perConnectionStub(
+  env: IntegrationWorkerEnv,
+  connectionId: string,
+): DurableObjectStub {
+  return env.PER_CONNECTION_STATE.get(
+    env.PER_CONNECTION_STATE.idFromName(connectionId),
+  );
 }
 
 /**
@@ -120,15 +144,24 @@ export function buildConsumerEnv(
     integrationName: config.integrationName,
     echo: config.echo,
     storageFor(connectionId: string) {
-      const stub = env.PER_CONNECTION_STATE.get(
-        env.PER_CONNECTION_STATE.idFromName(connectionId),
-      );
       // The consumer isolate can't access DO storage directly; proxy
       // each KV call via the DO's fetch handler instead.
-      return makeStorageProxy(stub);
+      return makeStorageProxy(perConnectionStub(env, connectionId));
     },
     mintCredential: (connectionId: string) =>
       mintCredentialViaBroker(env, connectionId),
+    async disarmSchedule(connectionId: string, reason: string) {
+      const url = new URL("https://do.invalid/disarm-schedule");
+      url.searchParams.set("reason", reason);
+      const res = await perConnectionStub(env, connectionId).fetch(
+        new Request(url.toString(), { method: "POST" }),
+      );
+      if (!res.ok) {
+        throw new Error(
+          `DO disarm-schedule returned ${String(res.status)} for connection ${connectionId}`,
+        );
+      }
+    },
     dlqProducerFor: (kind) => {
       switch (kind) {
         case "webhook":
@@ -155,9 +188,13 @@ export function createIntegrationWorker<
     async fetch(request: Request, env: E, ctx: ExecutionContext) {
       void ctx;
       const url = new URL(request.url);
-      // The control plane hits this from a service binding to arm the
-      // schedule alarm on a specific connection at install time.
-      if (url.pathname === "/arm-schedule" && request.method === "POST") {
+      // The control plane hits these from a service binding to arm the
+      // schedule alarm at install time and cancel it at uninstall.
+      if (
+        (url.pathname === "/arm-schedule" ||
+          url.pathname === "/disarm-schedule") &&
+        request.method === "POST"
+      ) {
         const connectionId = url.searchParams.get("connection_id");
         if (!connectionId) {
           return Response.json(
@@ -165,13 +202,17 @@ export function createIntegrationWorker<
             { status: 400 },
           );
         }
-        const stub = env.PER_CONNECTION_STATE.get(
-          env.PER_CONNECTION_STATE.idFromName(connectionId),
-        );
         const innerUrl = new URL(request.url);
-        innerUrl.pathname = "/arm-schedule";
         innerUrl.search = "";
-        return stub.fetch(new Request(innerUrl.toString(), { method: "POST" }));
+        if (url.pathname === "/disarm-schedule") {
+          innerUrl.searchParams.set(
+            "reason",
+            url.searchParams.get("reason") ?? "control_plane",
+          );
+        }
+        return perConnectionStub(env, connectionId).fetch(
+          new Request(innerUrl.toString(), { method: "POST" }),
+        );
       }
       // Synchronous one-shot dispatch from the runtime-control verify
       // route. Reuses the same ConsumerEnvironment the queue consumer
@@ -186,7 +227,7 @@ export function createIntegrationWorker<
         ok: true,
         integration: config.integrationName,
         message:
-          "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule and /verify.",
+          "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule, /disarm-schedule and /verify.",
       });
     },
     async queue(batch: MessageBatch<QueueMessage>, env: E) {

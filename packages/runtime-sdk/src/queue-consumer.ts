@@ -22,6 +22,7 @@
  */
 import { dispatchMessage } from "./handlers.js";
 import { ConnectionClient } from "./connection-client.js";
+import { ConnectionGoneError } from "./errors.js";
 import {
   createCursorStore,
   type CursorStorageAdapter,
@@ -59,8 +60,18 @@ export interface ConsumerEnvironment {
    *  `env.PER_CONNECTION_STATE.idFromName(connection_id).storage`. */
   storageFor: (connectionId: string) => CursorStorageAdapter;
   /** Mints (or refreshes) the per-Connection runtime credential via
-   *  the control-plane lease broker. */
+   *  the control-plane lease broker. Throws `ConnectionGoneError` when
+   *  the broker reports the Connection missing or inactive. */
   mintCredential: (connectionId: string) => Promise<RuntimeCredential>;
+  /**
+   * Cancel the Connection's schedule alarm. Called when the consumer
+   * learns the Connection is gone, so an orphaned schedule stops
+   * re-arming itself instead of ticking forever.
+   *
+   * Optional: substrates whose scheduler already gates on Connection
+   * state (the local runtime's walker does) have nothing to cancel.
+   */
+  disarmSchedule?: (connectionId: string, reason: string) => Promise<void>;
   /** Manifest's bidirectional_handling block — drives echo TTL. */
   echo: { echo_ttl_seconds: number; lag_window_seconds?: number };
   /** Integration name from the manifest (envelope filter). */
@@ -188,6 +199,11 @@ function backoffSecondsFor(attempts: number): number {
  *   - Envelope-filter / tenant-mismatch / hop-budget overflow →
  *     `msg.ack()` (acked counter). These messages aren't ours to
  *     process; acking lets Cloudflare drop them from the queue.
+ *   - **`ConnectionGoneError`** → `msg.ack()` + `disarmSchedule()`.
+ *     The Connection no longer exists (or is no longer active), so no
+ *     amount of retrying helps. Cancel the per-Connection alarm too:
+ *     it re-arms itself on every fire, so leaving it running means an
+ *     orphaned schedule ticks forever against nothing.
  *
  * `outcome` counters are for telemetry. The function never throws; per-message
  * `retry()` informs Cloudflare directly.
@@ -264,6 +280,28 @@ export async function consumeBatch(
       ctx = await buildConnectionContext(env, message);
       result = await dispatchMessage(ctx, message);
     } catch (err) {
+      // A gone Connection short-circuits the whole ladder. Retrying and
+      // dead-lettering both assume the work might one day succeed; this
+      // one cannot. Tear down the schedule alarm so the Connection stops
+      // manufacturing new messages, then drop this one.
+      if (err instanceof ConnectionGoneError) {
+        msg.ack();
+        outcome.acked++;
+        console.error(
+          `[runtime-sdk:consumeBatch] connection ${message.connection_id} is gone (${String(err.status)}); disarming schedule and dropping ${message.kind} message`,
+        );
+        try {
+          await env.disarmSchedule?.(
+            message.connection_id,
+            `connection_gone_${String(err.status)}`,
+          );
+        } catch (disarmErr) {
+          console.error(
+            `[runtime-sdk:consumeBatch] disarm failed for connection ${message.connection_id}: ${disarmErr instanceof Error ? disarmErr.message : String(disarmErr)}`,
+          );
+        }
+        continue;
+      }
       dispatchThrew = true;
       thrownClassName =
         err instanceof Error ? err.constructor.name || "Error" : "unknown";

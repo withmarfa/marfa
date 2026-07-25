@@ -157,6 +157,17 @@ const UninstallResultSchema = z.object({
   oauth_tokens_deleted: z.boolean(),
   leased_tokens_revoked: z.number().int().nonnegative(),
   inbound_webhooks_disabled: z.number().int().nonnegative(),
+  schedules_disarmed: z
+    .boolean()
+    .describe(
+      "Whether the connection's hosted-substrate schedule alarm was cancelled. False on deployments with no runtime control plane, and on a failed disarm — check `schedule_disarm_error` to tell them apart.",
+    ),
+  schedule_disarm_error: z
+    .string()
+    .optional()
+    .describe(
+      "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm.",
+    ),
   activity_id: z.string(),
 });
 
@@ -569,11 +580,17 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const clientIp = c.var.clientIp;
 
     try {
+      // Hosted-substrate coordinates for the schedule-disarm step. Unset
+      // on local-substrate deployments, where the pipeline skips it.
+      const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
+      const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
         tenantId,
         connectionId,
         clientIp,
+        ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
+        ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
       });
       return c.json(result, 200);
     } catch (err) {

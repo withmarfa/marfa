@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
-import { MarfaServerClient } from "../marfa-client.js";
+import {
+  MarfaServerClient,
+  RuntimeCredentialMintError,
+} from "../marfa-client.js";
 
 /**
  * Lease broker.
@@ -77,13 +80,35 @@ export function registerLeaseRoutes(
         ttl_seconds: ttl,
       });
     } catch (err) {
-      return c.json(
-        {
-          error: "mint_failed",
-          message: err instanceof Error ? err.message : String(err),
-        },
-        502,
-      );
+      const message = err instanceof Error ? err.message : String(err);
+      // Pass a permanent verdict through with its own status instead of
+      // flattening everything to 502. The Worker branches on this: 404
+      // and 403 mean the Connection can never run again, so it tears the
+      // schedule down; anything else it retries. Collapsing them made a
+      // deleted Connection indistinguishable from a cold server.
+      if (err instanceof RuntimeCredentialMintError) {
+        if (err.status === 404) {
+          return c.json(
+            {
+              error: "connection_not_found",
+              message,
+              connection_id: connectionId,
+            },
+            404,
+          );
+        }
+        if (err.status === 403) {
+          return c.json(
+            {
+              error: "connection_not_active",
+              message,
+              connection_id: connectionId,
+            },
+            403,
+          );
+        }
+      }
+      return c.json({ error: "mint_failed", message }, 502);
     }
 
     return c.json(

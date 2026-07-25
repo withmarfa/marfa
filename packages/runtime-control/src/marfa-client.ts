@@ -26,6 +26,24 @@ export interface InboundSubscription {
   disabled: boolean;
 }
 
+/**
+ * A runtime-credential mint that failed, carrying the server's status.
+ *
+ * The status is the whole point: 404 (no such Connection) and 403
+ * (Connection revoked or otherwise inactive) are permanent, while 5xx
+ * and transport errors are worth retrying. Callers that collapse the
+ * two treat a cold container the same as a deleted Connection.
+ */
+export class RuntimeCredentialMintError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "RuntimeCredentialMintError";
+  }
+}
+
 export interface MintedRuntimeCredential {
   id: string;
   api_key: string;
@@ -208,8 +226,9 @@ export class MarfaServerClient {
     );
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(
+      throw new RuntimeCredentialMintError(
         `Runtime credential mint failed: ${String(res.status)} ${res.statusText} ${text}`,
+        res.status,
       );
     }
     return res.json<MintedRuntimeCredential>();

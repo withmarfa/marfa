@@ -13,7 +13,7 @@ The Cloudflare Worker control plane for the hosted integrations substrate. Route
   - `webhooks.ts` — `POST /webhooks/inbound/:connection_id`: verifies the signature via `@withmarfa/webhooks`, looks up the subscription, **routes to the per-integration webhook-receipt producer** (`WEBHOOK_RECEIPT_QUEUE_<INTEGRATION>` bindings keyed by `integration_name`, with the shared `WEBHOOK_RECEIPT_QUEUE` as fallback for `withmarfa.github-webhooks`). Returns 202 on accept; the response body's `routed_via` field surfaces whether the dispatch hit a dedicated or shared producer.
   - `lease.ts` — `POST /connections/:id/leased-tokens`: mints short-TTL bearers via the broker.
   - `verify.ts` — `GET /verify`: signature-verification probe surface (admin only).
-  - `arm-schedule.ts` — `POST /schedules/arm`: enqueues a schedule message for a cron tick (used by the hosted-side scheduler).
+  - `arm-schedule.ts` — `POST /connections/:id/arm-schedule` and `POST /connections/:id/disarm-schedule`: dispatch to the connection's per-Integration Worker over its service binding so the per-Connection Durable Object sets or cancels its schedule alarm. Broker-key gated. Disarm is idempotent, and an integration that ships no Worker reports success without dispatching.
   - `dlq.ts` — `GET /dlq/peek` and `POST /dlq/replay`: gated on `CLOUDFLARE_QUEUES_API_TOKEN`.
   - `health.ts` — `GET /health`.
 
