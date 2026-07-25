@@ -60,7 +60,7 @@
     "hono": "^4.12.27",
     "ipaddr.js": "^2.4.0",
     "jose": "^6.2.3",
-    "nodemailer": "^8.0.10",
+    "nodemailer": "^9.0.1",
     "pg-boss": "^12.18.2",
     "postgres": "^3.4.9",
     "tar-stream": "^3.2.0",
