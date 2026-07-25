@@ -77,6 +77,11 @@ export default [
       "**/node_modules/",
       "**/seed/",
       "packages/*/scripts/*.mjs",
+      // The scheduled health check runs standalone on a CI runner with no
+      // install step, so it is plain ESM outside every tsconfig project and
+      // the type-aware rules have nothing to resolve it against. Same reason
+      // the package scripts above are ignored.
+      ".github/observability/*.mjs",
       // Git worktrees created under .claude/worktrees/<name>/ are
       // separate checkouts with their own lint runs; the main
       // checkout's lint must not descend into them or it'll surface
