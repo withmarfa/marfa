@@ -9,7 +9,6 @@ import {
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
-  scopesToOidcScopes,
   edgePermissionCovers,
   metadataPermissionCovers,
 } from "@withmarfa/shared";
@@ -348,10 +347,6 @@ export function authMiddleware(storage: Storage, salt: string) {
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
-      // OIDC literals (openid / profile / email) project onto a separate
-      // field consumed only by /oauth/userinfo. They never bleed into
-      // type / edge / metadata permission maps.
-      const oidcScopes = Array.from(scopesToOidcScopes(oauthToken.scopes));
       // Tenant id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's tenant_id at consent time).
       const oauthTenantId = oauthToken.referenceId ?? undefined;
@@ -392,7 +387,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         extension_permissions: {},
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
-        oidc_scopes: oidcScopes,
         created_at: createdAtIso,
         last_used_at: null,
       });

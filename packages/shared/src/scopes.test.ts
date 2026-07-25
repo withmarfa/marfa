@@ -7,7 +7,6 @@ import {
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
-  scopesToOidcScopes,
   scopeCovers,
 } from "./scopes.js";
 import type { PermissionBundle } from "./scopes.js";
@@ -211,13 +210,13 @@ describe("scopeCovers", () => {
 // ---------------------------------------------------------------------------
 // OIDC scope literals (openid / profile / email).
 //
-// These don't carry a verb suffix — they're the standard OIDC scopes
-// consumed only by `/oauth/userinfo` to gate field visibility. The
-// guarantees this section locks down:
+// These don't carry a verb suffix — they're the standard OIDC scopes the
+// OAuth provider reads directly off the grant when building userinfo and
+// id_token claims. The guarantees this section locks down:
 //
-//   1. parseScope returns kind="oidc", operation="none" for each.
-//   2. scopesToOidcScopes is the only projection that surfaces them.
-//   3. They MUST NOT bleed into type / edge / metadata permission maps —
+//   1. parseScope returns kind="oidc", operation="none" for each, so the
+//      consent route accepts them as valid scopes.
+//   2. They MUST NOT bleed into type / edge / metadata permission maps —
 //      a sloppy projection elsewhere could give an OAuth bearer
 //      unintended write access.
 // ---------------------------------------------------------------------------
@@ -234,26 +233,6 @@ describe("OIDC scope literals", () => {
       expect(isValidScope(literal)).toBe(true);
     });
   }
-
-  it("scopesToOidcScopes returns the granted set", () => {
-    const out = scopesToOidcScopes([
-      "openid",
-      "profile",
-      "email",
-      "core.note:read", // ignored
-      "metadata:write", // ignored
-      "edge.parent-of:read", // ignored
-    ]);
-    expect(out.has("openid")).toBe(true);
-    expect(out.has("profile")).toBe(true);
-    expect(out.has("email")).toBe(true);
-    expect(out.size).toBe(3);
-  });
-
-  it("scopesToOidcScopes ignores unknown literals", () => {
-    const out = scopesToOidcScopes(["address", "phone", "openid"]);
-    expect(Array.from(out)).toEqual(["openid"]);
-  });
 
   it("OIDC scopes do not project into type_permissions", () => {
     const perms = scopesToTypePermissions([
