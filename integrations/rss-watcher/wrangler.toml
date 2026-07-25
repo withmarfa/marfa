@@ -58,7 +58,40 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "marfa-scheduled-poll-rss-watcher-staging-dlq"
 
-# Secrets (`wrangler secret put --env staging`):
+# ---- Production -----------------------------------------------------------
+# Mirrors staging. Keep in sync if you change queue topology.
+[env.prod]
+name = "marfa-integration-rss-watcher-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "withmarfa.rss-watcher"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "marfa-scheduled-poll-rss-watcher-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "marfa-scheduled-poll-rss-watcher-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "marfa-scheduled-poll-rss-watcher-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "marfa-scheduled-poll-rss-watcher-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
 #   - MARFA_API_URL
 #   - MARFA_RUNTIME_CONTROL_URL
 #   - MARFA_RUNTIME_BROKER_KEY
