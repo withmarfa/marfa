@@ -12,7 +12,11 @@ import { SURFACES, UNREACHABLE_SURFACES } from "./surfaces.mjs";
 import { checkLiveness } from "./probes.mjs";
 import { checkDeployDrift } from "./drift.mjs";
 import { checkTelemetry } from "./posthog.mjs";
-import { emitHeartbeat, checkHeartbeatGap } from "./heartbeat.mjs";
+import {
+  emitHeartbeat,
+  checkHeartbeatGap,
+  checkFleetOscillation,
+} from "./heartbeat.mjs";
 import { reconcileAlert } from "./alert.mjs";
 
 const env = process.env;
@@ -64,9 +68,11 @@ async function main() {
     now,
   });
   const telemetry = await checkTelemetry(env);
+  const oscillation = await checkFleetOscillation({ env });
 
   const allFindings = [
     ...heartbeat.findings,
+    ...oscillation.findings,
     ...liveness.findings,
     ...drift.findings,
     ...telemetry.findings,
@@ -94,16 +100,22 @@ async function main() {
     lines.push("");
   }
 
+  // Every surface is sampled several times per run. Showing the pass/fail
+  // split rather than a single verdict is the point: "2/3 ok" and "3/3 ok"
+  // mean very different things, and collapsing them is what let an
+  // intermittent surface read as healthy.
   lines.push(
     "## Liveness",
     "",
-    "| Surface | Result | Time | Attempts |",
-    "|---|---|---|---|",
+    "| Surface | State | Samples ok | Slowest | Detail |",
+    "|---|---|---|---|---|",
   );
   for (const r of liveness.results) {
+    const passed = r.samples - r.failed;
     lines.push(
-      `| ${r.surface.label} | ${r.ok ? "ok" : `FAILED — ${r.detail}`} | ` +
-        `${r.durationMs === null ? "—" : `${String(r.durationMs)} ms`} | ${String(r.attempts)} |`,
+      `| ${r.surface.label} | ${r.state} | ${String(passed)}/${String(r.samples)} | ` +
+        `${r.durationMs === null ? "—" : `${String(r.durationMs)} ms`} | ` +
+        `${r.ok ? "—" : r.detail} |`,
     );
   }
   lines.push("");
@@ -136,18 +148,42 @@ async function main() {
       "",
     );
   } else {
+    // Startups and shutdowns are shown side by side because their difference
+    // is the signal, not either count alone: matched pairs are a container
+    // waking on demand, unpaired startups are a process that died.
     lines.push(
       `Window: last ${String(telemetry.windowMinutes)} minutes.`,
       "",
-      "| Project | Service | Errors | Startups | Records |",
-      "|---|---|---|---|---|",
+      "| Project | Service | Errors | Startups | Clean stops | Records |",
+      "|---|---|---|---|---|---|",
     );
     for (const s of telemetry.services) {
       lines.push(
-        `| ${s.project} | ${s.service} | ${String(s.errors)} | ${String(s.boots)} | ${String(s.total)} |`,
+        `| ${s.project} | ${s.service} | ${String(s.errors)} | ${String(s.boots)} | ` +
+          `${String(s.shutdowns)} | ${String(s.total)} |`,
       );
     }
     lines.push("");
+  }
+
+  // Spell out the blind spot when it is actually biting. A surface with no
+  // running instance emits nothing, so every telemetry check above goes quiet
+  // — which looks exactly like health. Saying so on the run that it matters
+  // stops the empty rows being read as reassurance.
+  const noInstance = liveness.results.filter(
+    (r) =>
+      !r.ok &&
+      (r.kind === "instance-not-running" ||
+        r.kind === "instance-will-not-start"),
+  );
+  if (noInstance.length > 0) {
+    lines.push(
+      `> ${noInstance.map((r) => r.surface.label).join(", ")} had no running instance ` +
+        "during this run. A service that is not running emits no telemetry, so the " +
+        "error-rate and restart checks above are structurally blind to this outage — " +
+        "their silence is a consequence of it, not evidence against it.",
+      "",
+    );
   }
 
   lines.push("## Not covered by this check", "");

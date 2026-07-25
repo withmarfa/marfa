@@ -31,6 +31,21 @@
 # convention here would quietly reintroduce the bug. Do not "fix" this to
 # match the other workflows.
 #
+# ## Every surface is sampled several times per run
+#
+# A single point-in-time probe cannot see an intermittent surface. One that
+# answers when you look and fails between looks reads as healthy forever, and
+# the gaps leave no trace. This is not theoretical: an earlier version sampled
+# once, landed inside an up window during a real outage, and recorded "ok"
+# while the same surface was returning 500s either side of that moment.
+#
+# Each surface is therefore probed three times across the run, and samples
+# that disagree are reported as "intermittent" rather than rounded to up or
+# down. Two further layers cover what within-run sampling still cannot see:
+# the run verdict recorded on each heartbeat reveals a fleet flipping between
+# runs, and telemetry startup counts are compared against clean-shutdown
+# counts, because a process that dies does not get to log a shutdown.
+#
 # ## Noticing that this check itself has stopped
 #
 # A monitor that stops running raises no alarms, because a monitor that finds
@@ -111,6 +126,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+
+      # Runs on every execution, not just pull requests. It takes about a
+      # second, and a watcher whose own decision logic is broken fails silently
+      # in exactly the way this workflow exists to prevent.
+      - name: Test the check's decision logic
+        run: node --test '.github/observability/*.test.mjs'
 
       - name: Check fleet health
         env:
