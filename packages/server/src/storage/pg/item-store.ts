@@ -25,6 +25,7 @@ import {
   MarfaError,
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
+  typePatternToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
 import { filterToSqlConditions } from "../filter-sql.js";
@@ -363,13 +364,14 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.type) {
-      if (filters.type.endsWith(".*")) {
-        conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
-      } else {
-        // Include subtypes: `core.entity` also matches `core.entity.person`, etc.
+      // `core.entity` and `core.entity.*` mean the same thing: the type and
+      // everything under it. A bare identifier has always included its
+      // subtypes here, so the explicit wildcard must too.
+      const { global, exact } = typePatternToSql(filters.type);
+      if (!global && exact) {
         const typeClause = or(
-          eq(items.type, filters.type),
-          like(items.type, filters.type + ".%"),
+          eq(items.type, exact),
+          like(items.type, exact + ".%"),
         );
         if (typeClause) conditions.push(typeClause);
       }
@@ -434,11 +436,14 @@ export class PgItemStore implements ItemStore {
         conditions.push(sql`1=0`);
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return sql`1=1`;
-          if (pattern.endsWith(".*")) {
-            return like(items.type, pattern.slice(0, -1) + "%");
-          }
-          return eq(items.type, pattern);
+          const { global, exact, descendantPrefix } = typePatternToSql(pattern);
+          if (global) return sql`1=1`;
+          if (!exact) return sql`1=0`;
+          if (!descendantPrefix) return eq(items.type, exact);
+          return or(
+            eq(items.type, exact),
+            like(items.type, descendantPrefix + "%"),
+          );
         });
         const clause = or(...typeClauses);
         if (clause) conditions.push(clause);

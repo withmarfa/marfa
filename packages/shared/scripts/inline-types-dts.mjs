@@ -23,7 +23,11 @@ const typesContent = readFileSync(typesDts, "utf8");
 
 const EXTERNAL = "@withmarfa/types";
 
-if (!sharedContent.includes(EXTERNAL)) {
+// Only module specifiers matter — a doc comment naming the package resolves to
+// nothing and must not trip the guard.
+const specifierRe = /from ['"]@withmarfa\/types['"]/;
+
+if (!specifierRe.test(sharedContent)) {
   console.log(`[inline-types-dts] ${sharedDts} already inlined, nothing to do`);
   process.exit(0);
 }
@@ -59,7 +63,7 @@ let rewritten = sharedContent
 
 rewritten = `${typesDeclarations}\n\n${rewritten.replace(/^\s*\n/, "")}`;
 
-if (rewritten.includes(EXTERNAL)) {
+if (specifierRe.test(rewritten)) {
   console.error(
     `[inline-types-dts] ${sharedDts} still references '${EXTERNAL}' after rewrite; aborting`,
   );

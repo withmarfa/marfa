@@ -1,5 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import type { Metadata } from "@withmarfa/shared";
+import { typePatternToSql, type Metadata } from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -28,10 +28,16 @@ export class PgMetadataStore implements MetadataStore {
         // includes "*" — no restriction
         typesClause = sql``;
       } else {
-        const exact = typed.filter((p) => !p.endsWith(".*"));
-        const wildcards = typed
-          .filter((p) => p.endsWith(".*"))
-          .map((p) => p.slice(0, -1) + "%");
+        const decomposed = typed.map(typePatternToSql);
+        // A subtree wildcard contributes its own root to the equality list as
+        // well as a prefix match, so `core.media.*` covers `core.media`.
+        const exact = decomposed
+          .map((d) => d.exact)
+          .filter((v): v is string => v !== null);
+        const wildcards = decomposed
+          .map((d) => d.descendantPrefix)
+          .filter((v): v is string => v !== null)
+          .map((prefix) => prefix + "%");
         const parts: ReturnType<typeof sql>[] = [];
         if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
         for (const w of wildcards) parts.push(sql`i.type LIKE ${w}`);

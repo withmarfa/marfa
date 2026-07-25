@@ -8,7 +8,7 @@ Typed data layer. This monorepo holds eight active workspace packages, fourteen 
 
 **Core packages (`packages/`):**
 
-- **@withmarfa/types** — JSON schemas for the core type set plus validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`, `ALL_SYSTEM_TYPES`). Consumed by `@withmarfa/shared`; private (bundled into shared's dist, not published).
+- **@withmarfa/types** — JSON schemas for the platform-shipped type set, the validator both authoring paths share, plus the generate script that emits the TypeScript registries (`ALL_TYPES`, `ALL_CONNECTOR_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES`). Consumed by `@withmarfa/shared`; private (bundled into shared's dist, not published).
 - **@withmarfa/shared** — Wire types, Zod validation schemas, error codes, type-registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation every other package imports.
 - **@withmarfa/server** — Hono HTTP server exposing the Marfa API (private). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
 - **@withmarfa/sdk** — TypeScript HTTP client. The `@withmarfa/sdk/auth` subpath holds the OAuth helpers (`MarfaAuth`, PKCE helpers, token storages, `startDeviceFlow`).
@@ -218,7 +218,9 @@ The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs d
 
 **Trigger files** — any change under these paths means you owe a freshness run before merge:
 
-- `packages/types/core/**` — core type and edge-type JSON
+- `packages/types/core/**` — core type, system type and edge-type JSON
+- `packages/types/connectors/**` — connector type JSON
+- `packages/types/src/**` — schema shape contract and the shared schema validator
 - `packages/types/scripts/**` — type-registry generator
 - `packages/shared/src/**` — wire schemas, error codes, ID utilities
 - `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
@@ -268,9 +270,17 @@ The base error class is `MarfaError` (in `@withmarfa/shared`). All structured er
 
 ## Type registration
 
-Core types live in `packages/types/core/*.json`. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry — useful for parking a stub between iterations. Custom types register at runtime via `POST /types` (admin only) and persist in the `custom_types` table. Core types cannot be modified or deleted via the API.
+Three families of type ship with the platform, all registering into the same runtime registry and all resolving identically:
 
-Inheritance rule: child types may add new fields but cannot redefine fields declared by any ancestor in their parent chain. Enforced on `POST /types`.
+- **Core** (`packages/types/core/*.json`, 22 types) — the shared vocabulary: life-nouns any app can agree on.
+- **Connector** (`packages/types/connectors/*.json`, 13 types) — one vendor's payload shape, so a connector has somewhere faithful to write. `google.*`, `raindrop.*`, `readwise.*`, `todoist.task`, `withmarfa.captured_email`.
+- **System** (`packages/types/core/system/*.json`, 7 types) — platform-internal records, with the restrictions described under System types below.
+
+The split is provenance, not behavior: it exists so a catalog can tell a tenant which types are the common vocabulary and which exist because a specific upstream service does. The codegen in `packages/types/scripts/generate.ts` emits one array per family into `generated/type-registry.ts`; shared bundles them at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry. Custom types register at runtime via `POST /types` and persist in the `custom_types` table. Platform-shipped types — all three families — cannot be modified or deleted via the API.
+
+**One validator across both authoring paths.** `validateTypeSchema` lives in `@withmarfa/types` and is called by the in-tree codegen and by `POST /types` alike, so an in-tree JSON schema is a valid runtime submission verbatim. Every error it raises carries `field`, `expected`, `actual` and `hint`. See `packages/types/AGENTS.md`.
+
+Inheritance rule: child types may add new fields, and may re-state an inherited field only to sharpen its description or tighten it to required. Changing an inherited field's shape, or loosening a required field, is rejected with `inheritance_violation`.
 
 Types may declare an optional `display_hints: { title_field?, body_field? }` block pointing generic readers at the canonical title/body fields; hints are inherited from the nearest ancestor when a subtype omits them.
 

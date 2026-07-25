@@ -6,34 +6,83 @@ import type { TypeSchema, FieldDefinition } from "@withmarfa/types";
  * - `noop` — schemas are structurally identical; submitting again is rejected.
  * - `patch` — descriptive-only change (label, description, field
  *   descriptions). Same version permitted on re-submission.
- * - `minor` — additive change (optional field added). Requires a version bump.
- * - `major` — breaking change (field removed, type changed, or required-
- *   tightened). Requires a version bump.
+ * - `minor` — additive or widening change (optional field added, a cap raised,
+ *   a compatibility claim gained). Requires a version bump.
+ * - `major` — breaking change (field removed, shape changed, a cap lowered, a
+ *   compatibility claim withdrawn, or required tightened). Requires a bump.
  *
  * Integer versions collapse minor and major into "must bump", but the
  * classifier still returns the granular class so error messages and SDK
  * telemetry can surface it.
+ *
+ * Every attribute the field model carries is compared. An attribute the diff
+ * ignores is an attribute a caller can change without a version bump, which
+ * leaves consumers pinned to a version that no longer describes the data.
  */
 export type DiffClass = "noop" | "patch" | "minor" | "major";
 
-function fieldDefinitionsEquivalent(
-  a: FieldDefinition,
-  b: FieldDefinition,
-): boolean {
-  if (a.type !== b.type) return false;
-  if ((a.required ?? false) !== (b.required ?? false)) return false;
-  if (a.items_type !== b.items_type) return false;
-  const aEnum = a.enum_values?.join("|") ?? "";
-  const bEnum = b.enum_values?.join("|") ?? "";
-  return aEnum === bEnum;
+/** How a single field changed, ignoring its description. */
+type FieldDiff = "same" | "widened" | "breaking";
+
+/**
+ * Attributes that define what a field *is*. Any change to one of these
+ * reshapes data that already exists, so it is breaking regardless of
+ * direction.
+ */
+const SHAPE_ATTRIBUTES = ["type", "items_type", "format"] as const;
+
+function diffField(a: FieldDefinition, b: FieldDefinition): FieldDiff {
+  for (const attribute of SHAPE_ATTRIBUTES) {
+    if (a[attribute] !== b[attribute]) return "breaking";
+  }
+  if ((a.enum_values?.join("|") ?? "") !== (b.enum_values?.join("|") ?? "")) {
+    return "breaking";
+  }
+  if ((a.required ?? false) !== (b.required ?? false)) {
+    // Tightening rejects existing rows; loosening changes the contract every
+    // reader was compiled against. Both earn a bump, and neither is a widening
+    // a consumer can ignore.
+    return "breaking";
+  }
+  // The FTS opt-out changes which rows a search returns without changing what
+  // validates, so it is a behavior change rather than a breaking one.
+  if ((a.searchable ?? true) !== (b.searchable ?? true)) return "widened";
+
+  const capDiff = diffCaps(a, b);
+  if (capDiff !== "same") return capDiff;
+
+  return "same";
 }
 
-function fieldsAreDescriptiveOnlyDiff(
-  a: FieldDefinition,
-  b: FieldDefinition,
-): boolean {
-  if (!fieldDefinitionsEquivalent(a, b)) return false;
-  return a.description !== b.description;
+/**
+ * Per-field size caps move in two directions with different consequences:
+ * raising one accepts strictly more than before, lowering one starts rejecting
+ * writes that used to succeed.
+ */
+function diffCaps(a: FieldDefinition, b: FieldDefinition): FieldDiff {
+  let widened = false;
+  for (const cap of ["maxLength", "maxItems"] as const) {
+    const before = a[cap];
+    const after = b[cap];
+    if (before === after) continue;
+    // An omitted cap means "the instance default", whose value is not
+    // knowable from the schema alone. Treat adding or removing one as
+    // breaking rather than guess which side is more permissive.
+    if (before === undefined || after === undefined) return "breaking";
+    if (after < before) return "breaking";
+    widened = true;
+  }
+  return widened ? "widened" : "same";
+}
+
+function compatibleWithDiff(prev: TypeSchema, next: TypeSchema): FieldDiff {
+  const before = new Set(prev.compatible_with ?? []);
+  const after = new Set(next.compatible_with ?? []);
+  // Withdrawing a claim breaks every reader that relied on this type being
+  // readable as the target; adding one only offers more.
+  for (const target of before) if (!after.has(target)) return "breaking";
+  for (const target of after) if (!before.has(target)) return "widened";
+  return "same";
 }
 
 /**
@@ -54,13 +103,13 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
       major = true;
       continue;
     }
-    if (!fieldDefinitionsEquivalent(prevField, nextField)) {
+    const diff = diffField(prevField, nextField);
+    if (diff === "breaking") {
       major = true;
       continue;
     }
-    if (fieldsAreDescriptiveOnlyDiff(prevField, nextField)) {
-      descriptive = true;
-    }
+    if (diff === "widened") minor = true;
+    if (prevField.description !== nextField.description) descriptive = true;
   }
 
   // Required additions are major — they tighten validation for existing items.
@@ -71,6 +120,19 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
     } else {
       minor = true;
     }
+  }
+
+  const compatibility = compatibleWithDiff(prev, next);
+  if (compatibility === "breaking") major = true;
+  else if (compatibility === "widened") minor = true;
+
+  if (prev.parent !== next.parent) major = true;
+
+  if (
+    prev.display_hints?.title_field !== next.display_hints?.title_field ||
+    prev.display_hints?.body_field !== next.display_hints?.body_field
+  ) {
+    descriptive = true;
   }
 
   if (prev.label !== next.label || prev.description !== next.description) {

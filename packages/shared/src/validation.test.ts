@@ -241,7 +241,13 @@ describe("matchesTypePattern", () => {
   });
 
   it("wildcard prefix matches parent type too", () => {
-    expect(matchesTypePattern("core.media", ["core.media.*"])).toBe(false);
+    expect(matchesTypePattern("core.media", ["core.media.*"])).toBe(true);
+  });
+
+  it("wildcard prefix does not match a sibling sharing the text prefix", () => {
+    // `core.media.*` covers `core.media` and its descendants — not
+    // `core.mediation`, which merely starts with the same characters.
+    expect(matchesTypePattern("core.mediation", ["core.media.*"])).toBe(false);
   });
 });
 

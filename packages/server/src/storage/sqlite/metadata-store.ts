@@ -1,5 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import type { Metadata } from "@withmarfa/shared";
+import { typePatternToSql, type Metadata } from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -27,12 +27,14 @@ export class SqliteMetadataStore implements MetadataStore {
       const includesStar = filters.allowedTypes.includes("*");
       if (!includesStar) {
         const typeClauses = filters.allowedTypes.map((pattern) => {
-          if (pattern.endsWith(".*")) {
-            params.push(pattern.slice(0, -1) + "%");
-            return "i.type LIKE ?";
+          const { exact, descendantPrefix } = typePatternToSql(pattern);
+          if (!exact) return "1=0";
+          if (!descendantPrefix) {
+            params.push(exact);
+            return "i.type = ?";
           }
-          params.push(pattern);
-          return "i.type = ?";
+          params.push(exact, descendantPrefix + "%");
+          return "(i.type = ? OR i.type LIKE ?)";
         });
         if (typeClauses.length > 0) {
           conditions.push(`(${typeClauses.join(" OR ")})`);

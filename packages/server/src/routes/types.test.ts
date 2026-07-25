@@ -140,9 +140,10 @@ describe("GET /types", () => {
 });
 
 describe("inheritance rule enforcement", () => {
-  it("rejects a child type that redefines an ancestor field with INHERITANCE_VIOLATION", async () => {
-    // core.bookmark declares `body` (the user's annotation on the bookmark).
-    // A child that re-declares `body` violates the inheritance rule.
+  it("rejects a child type that reshapes an ancestor field with INHERITANCE_VIOLATION", async () => {
+    // core.bookmark declares `body` as a string. A child that redeclares it
+    // as something else leaves two incompatible readings of one property
+    // name on items a bookmark-aware reader expects to understand.
     const res = await request(ctx.app, "POST", "/types", {
       key: ctx.adminKey,
       body: {
@@ -151,7 +152,7 @@ describe("inheritance rule enforcement", () => {
         version: 1,
         parent: "core.bookmark",
         fields: {
-          body: { type: "string" },
+          body: { type: "integer" },
         },
       },
     });
@@ -160,14 +161,43 @@ describe("inheritance rule enforcement", () => {
       error: {
         code: string;
         message: string;
-        details?: { errors?: { field: string; message: string }[] };
+        details?: {
+          errors?: {
+            field: string;
+            message: string;
+            expected?: string;
+            actual?: string;
+            hint?: string;
+          }[];
+        };
       };
     };
     expect(payload.error.code).toBe("inheritance_violation");
     const errors = payload.error.details?.errors ?? [];
-    const collision = errors.find((e) => e.field === "fields.body");
+    const collision = errors.find((e) => e.field === "fields.body.type");
     expect(collision).toBeTruthy();
     expect(collision?.message).toContain("core.bookmark");
+    // The API surfaces the structured halves too, so a client can render the
+    // failure without parsing prose.
+    expect(collision?.expected).toBeTruthy();
+    expect(collision?.actual).toBeTruthy();
+    expect(collision?.hint).toBeTruthy();
+  });
+
+  it("allows a child type that sharpens an inherited field's description", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.bookmark_refine",
+        label: "Bookmark Refine",
+        version: 1,
+        parent: "core.bookmark",
+        fields: {
+          body: { type: "string", description: "Why this link was saved" },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
   });
 
   it("allows a child type that adds a new field on top of the parent", async () => {

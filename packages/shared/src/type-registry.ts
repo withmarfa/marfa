@@ -1,36 +1,43 @@
 import { z } from "zod";
-import { ALL_TYPES, ALL_SYSTEM_TYPES } from "@withmarfa/types";
+import {
+  ALL_TYPES,
+  ALL_CONNECTOR_TYPES,
+  ALL_SYSTEM_TYPES,
+  RESERVED_ITEM_FIELDS,
+  validateTypeSchema as validateTypeSchemaShape,
+} from "@withmarfa/types";
 import type {
   DisplayHints,
   FieldDefinition,
+  FieldFormat,
   FieldType,
   ItemState,
   MergePolicy,
   MergeStrategy,
+  SchemaValidationIssue,
   TypeSchema,
+  TypeSchemaValidationResult,
   VersionPolicy,
 } from "@withmarfa/types";
 import type { EnforcementSettings, TenantConfig } from "./types.js";
 import { isValidTypeIdentifier } from "./validation.js";
 
-// Re-export schema-shape types and ALL_TYPES so consumers of @withmarfa/shared
-// don't need to reach into @withmarfa/types directly.
+// Re-export schema-shape types and the shipped registries so consumers of
+// @withmarfa/shared don't need to reach into @withmarfa/types directly.
 export type {
   DisplayHints,
   FieldDefinition,
+  FieldFormat,
   FieldType,
   ItemState,
   MergePolicy,
   MergeStrategy,
+  SchemaValidationIssue,
   TypeSchema,
+  TypeSchemaValidationResult,
   VersionPolicy,
 };
-export { ALL_TYPES, ALL_SYSTEM_TYPES };
-
-const MERGE_STRATEGIES: ReadonlySet<MergeStrategy> = new Set([
-  "last_writer_wins",
-  "keep_both_copies",
-]);
+export { ALL_TYPES, ALL_CONNECTOR_TYPES, ALL_SYSTEM_TYPES };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -41,12 +48,18 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   links: { type: "array", items_type: "string" },
 };
 
-// Core and system types are global — shipped with @withmarfa/types and shared
-// by every tenant. This map is read-only after construction. System types are
-// tracked separately via SYSTEM_TYPE_IDS so consumers (search exclude,
-// lifecycle override) can recognize them without re-classifying namespaces.
+// The platform-shipped types are global — bundled with @withmarfa/types and
+// resolvable by every tenant. This map is read-only after construction. Three
+// families feed it and each stays identifiable afterwards: `ALL_TYPES` is the
+// core set, `ALL_CONNECTOR_TYPES` is the vendor-shaped set a connector writes
+// into, and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
+// identically — the split describes provenance so a catalog can say what a
+// tenant is actually looking at, not a difference in how lookups behave.
 const _coreRegistry = new Map<string, TypeSchema>(
-  [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
+  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [
+    schema.id,
+    schema,
+  ]),
 );
 
 /**
@@ -93,35 +106,26 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
 );
 
 /**
- * First-class field names on the `Item` wire shape. Custom-type schemas may
- * not declare `fields.<name>` for any name in this set — doing so would let a
- * row carry two values under the same key (the first-class field and the
- * shadowing property), with no way to tell which is authoritative. Enforced
- * at `validateTypeSchema` time so type authors rename before any data is
- * written; mirrored at build time by the in-tree types generator.
- *
- * Source of truth: the `Item` interface in `types.ts`. A freshness test
- * (`type-registry.test.ts`) derives the set from a typed `Item` literal and
- * fails loudly if this constant drifts.
+ * The set of type IDs shipped as connector types: one vendor's payload shape,
+ * present so a connector has somewhere faithful to write. They carry no
+ * behavioral restrictions — the split from the core set is a provenance
+ * distinction, so a catalog can tell a tenant which types are the shared
+ * vocabulary and which exist because a specific upstream service does.
  */
-export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
-  "id",
-  "type",
-  "state",
-  "tier",
-  "tenant_id",
-  "properties",
-  "created_at",
-  "updated_at",
-  "timestamp",
-  "source",
-  "source_id",
-  "version",
-  "schema_version",
-  "device",
-  "capture_latitude",
-  "capture_longitude",
-]);
+export const CONNECTOR_TYPE_IDS: ReadonlySet<string> = new Set(
+  ALL_CONNECTOR_TYPES.map((schema) => schema.id),
+);
+
+/**
+ * First-class field names on the `Item` wire shape. Re-exported from
+ * `@withmarfa/types`, where the canonical list lives so the build-time and
+ * runtime checks read one constant rather than two copies that drift.
+ *
+ * Source of truth for the *contents* is still the `Item` interface in
+ * `types.ts`: a freshness test (`type-registry.test.ts`) derives the set from
+ * a typed `Item` literal and fails loudly if the constant falls behind.
+ */
+export { RESERVED_ITEM_FIELDS };
 
 // ---------------------------------------------------------------------------
 // Schema-enforcement levers
@@ -721,432 +725,28 @@ export function validateTransition(
 }
 
 // ---------------------------------------------------------------------------
-// Type schema validation — validates the shape of a TypeSchema object
+// Type schema validation
 // ---------------------------------------------------------------------------
 
 /**
- * Validates whether an input object is a valid TypeSchema.
- * Returns a ValidationResult with either the parsed schema or field errors.
- */
-/** Result of validating a type schema.
+ * Validates and normalizes a type schema submitted at runtime.
  *
- * Each error optionally carries a `code` discriminator. The most specific
- * code today is `"inheritance_violation"`, used when a child type
- * redeclares a field already defined by an ancestor (the inheritance
- * rule). Route handlers consult this to surface the specific
- * `INHERITANCE_VIOLATION` error code in the API response rather than the
- * generic `INVALID_SCHEMA`.
+ * The rules live in `@withmarfa/types`, which the in-tree codegen also calls,
+ * so a schema is judged by one implementation whichever path it arrived on.
+ * This wrapper only supplies the two things the validator can't reach on its
+ * own: tenant-scoped registry resolution for the inheritance and
+ * `compatible_with` checks, and the namespace grammar.
+ *
+ * Errors carry `field`, `expected`, `actual` and `hint`; the subset that maps
+ * to a dedicated HTTP error code also carries `code` — `property_shadows_field`,
+ * `inheritance_violation`, `compatible_with_violation`.
  */
-export type TypeSchemaValidationResult =
-  | { success: true; data: TypeSchema }
-  | {
-      success: false;
-      errors: { field: string; message: string; code?: string }[];
-    };
-
 export function validateTypeSchema(
   input: unknown,
   tenantId?: string | null,
 ): TypeSchemaValidationResult {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return {
-      success: false,
-      errors: [{ field: "_root", message: "Expected an object" }],
-    };
-  }
-
-  const obj = input as Record<string, unknown>;
-  const errors: { field: string; message: string; code?: string }[] = [];
-
-  // id
-  if (typeof obj.id !== "string" || !isValidTypeIdentifier(obj.id)) {
-    errors.push({
-      field: "id",
-      message: "Required valid type identifier (dot-notation, e.g. acme.deal)",
-    });
-  }
-
-  // label (optional — defaults to type id)
-  if (obj.label !== undefined && typeof obj.label !== "string") {
-    errors.push({ field: "label", message: "Must be a string" });
-  }
-
-  // version (optional — defaults to 1)
-  if (obj.version !== undefined) {
-    if (
-      typeof obj.version !== "number" ||
-      !Number.isInteger(obj.version) ||
-      obj.version < 1
-    ) {
-      errors.push({ field: "version", message: "Must be a positive integer" });
-    }
-  }
-
-  // fields
-  if (typeof obj.fields !== "object" || obj.fields === null) {
-    errors.push({ field: "fields", message: "Required object" });
-  } else {
-    const fields = obj.fields as Record<string, unknown>;
-
-    // Shadow rule — custom-type fields may not collide with first-class
-    // `Item` wire fields. Letting `properties.<name>` reuse a top-level
-    // name means two values coexist under one key (the first-class column
-    // and the shadowing property), with nothing telling downstream
-    // consumers which is authoritative. Reject at registration so the
-    // type author renames before any data is written. Runs regardless of
-    // whether a parent is declared.
-    for (const fieldName of Object.keys(fields)) {
-      if (RESERVED_ITEM_FIELDS.has(fieldName)) {
-        errors.push({
-          field: `fields.${fieldName}`,
-          message: `Field "${fieldName}" shadows a first-class Item field. Custom-type schemas may not redefine first-class field names — set the corresponding Item field directly, or pick a more specific name for this property.`,
-          code: "property_shadows_field",
-        });
-      }
-    }
-
-    // Inheritance rule — a child type may not redefine a field declared by
-    // any ancestor in its parent chain. New-field addition remains allowed.
-    if (typeof obj.parent === "string" && obj.parent.length > 0) {
-      const ancestorFieldOwners = new Map<string, string>();
-      let cursor: string | undefined = obj.parent;
-      const seen = new Set<string>();
-      while (cursor && !seen.has(cursor)) {
-        seen.add(cursor);
-        const ancestor = resolveSchema(cursor, tenantId);
-        if (!ancestor) break;
-        for (const ancestorFieldName of Object.keys(ancestor.fields)) {
-          if (!ancestorFieldOwners.has(ancestorFieldName)) {
-            ancestorFieldOwners.set(ancestorFieldName, cursor);
-          }
-        }
-        cursor = ancestor.parent;
-      }
-      for (const fieldName of Object.keys(fields)) {
-        const owner = ancestorFieldOwners.get(fieldName);
-        if (owner) {
-          errors.push({
-            field: `fields.${fieldName}`,
-            message: `Field "${fieldName}" is already declared by ancestor "${owner}"; child types may not redefine ancestor fields.`,
-            code: "inheritance_violation",
-          });
-        }
-      }
-    }
-
-    for (const [name, def] of Object.entries(fields)) {
-      if (typeof def !== "object" || def === null) {
-        errors.push({
-          field: `fields.${name}`,
-          message: "Field definition must be an object",
-        });
-        continue;
-      }
-      const fd = def as Record<string, unknown>;
-      if (typeof fd.type !== "string" || fd.type.length === 0) {
-        errors.push({
-          field: `fields.${name}.type`,
-          message: "Field type is required and must be a non-empty string",
-        });
-      }
-      if (fd.type === "enum") {
-        if (!Array.isArray(fd.enum_values)) {
-          errors.push({
-            field: `fields.${name}.enum_values`,
-            message: "Enum fields require an enum_values array",
-          });
-        } else if (
-          !fd.enum_values.every((v: unknown) => typeof v === "string")
-        ) {
-          errors.push({
-            field: `fields.${name}.enum_values`,
-            message: "Enum values must be strings",
-          });
-        }
-      }
-    }
-  }
-
-  // Lifecycle is universal — reject state-machine declarations.
-  for (const forbiddenKey of ["states", "default_state", "transitions"]) {
-    if (forbiddenKey in obj) {
-      errors.push({
-        field: forbiddenKey,
-        message: `Schemas must not declare \`${forbiddenKey}\`; lifecycle is universal (metadata-layer).`,
-      });
-    }
-  }
-
-  // display_hints (optional)
-  if (obj.display_hints !== undefined) {
-    if (
-      typeof obj.display_hints !== "object" ||
-      obj.display_hints === null ||
-      Array.isArray(obj.display_hints)
-    ) {
-      errors.push({ field: "display_hints", message: "Must be an object" });
-    } else {
-      const hints = obj.display_hints as Record<string, unknown>;
-      const fieldMap =
-        typeof obj.fields === "object" && obj.fields !== null
-          ? (obj.fields as Record<string, unknown>)
-          : {};
-      // display_hints.{title_field,body_field} may point at fields declared on
-      // any ancestor — a child of core.note that wants to surface the inherited
-      // `title` field as its title hint is a legitimate use case. Collect the
-      // full visible field set by walking the parent chain via the registry.
-      const visibleFields = new Set(Object.keys(fieldMap));
-      if (typeof obj.parent === "string" && obj.parent.length > 0) {
-        const seen = new Set<string>();
-        let cursor: string | undefined = obj.parent;
-        while (cursor && !seen.has(cursor)) {
-          seen.add(cursor);
-          const ancestor = resolveSchema(cursor, tenantId);
-          if (!ancestor) break;
-          for (const fieldName of Object.keys(ancestor.fields)) {
-            visibleFields.add(fieldName);
-          }
-          cursor = ancestor.parent;
-        }
-      }
-      for (const hintKey of ["title_field", "body_field"]) {
-        const value = hints[hintKey];
-        if (value === undefined) continue;
-        if (typeof value !== "string") {
-          errors.push({
-            field: `display_hints.${hintKey}`,
-            message: "Must be a string naming an existing field",
-          });
-          continue;
-        }
-        if (!visibleFields.has(value)) {
-          errors.push({
-            field: `display_hints.${hintKey}`,
-            message: `References field "${value}" that does not exist on this type`,
-          });
-        }
-      }
-    }
-  }
-
-  // version_policy (optional)
-  if (obj.version_policy !== undefined) {
-    if (
-      typeof obj.version_policy !== "object" ||
-      obj.version_policy === null ||
-      Array.isArray(obj.version_policy)
-    ) {
-      errors.push({
-        field: "version_policy",
-        message: "Must be an object",
-      });
-    } else {
-      const vp = obj.version_policy as Record<string, unknown>;
-      const vpFields = [
-        "recent_days",
-        "daily_snapshot_days",
-        "weekly_snapshot_days",
-        "max_versions",
-      ];
-      for (const f of vpFields) {
-        if (
-          vp[f] !== undefined &&
-          (typeof vp[f] !== "number" || !Number.isInteger(vp[f]) || vp[f] < 1)
-        ) {
-          errors.push({
-            field: `version_policy.${f}`,
-            message: "Must be a positive integer",
-          });
-        }
-      }
-    }
-  }
-
-  // merge_policy (optional)
-  if (obj.merge_policy !== undefined) {
-    if (
-      typeof obj.merge_policy !== "object" ||
-      obj.merge_policy === null ||
-      Array.isArray(obj.merge_policy)
-    ) {
-      errors.push({
-        field: "merge_policy",
-        message: "Must be an object",
-      });
-    } else {
-      const mp = obj.merge_policy as Record<string, unknown>;
-      const fieldMap =
-        typeof obj.fields === "object" && obj.fields !== null
-          ? (obj.fields as Record<string, unknown>)
-          : {};
-      // merge_policy.fields may reference fields declared on any ancestor —
-      // overriding an inherited field's strategy is a legitimate use case
-      // (e.g. a child of core.note that wants body to be last-writer-wins
-      // instead of the parent's keep-both). Collect the full visible field
-      // set by walking the parent chain via the registry.
-      const visibleFields = new Set(Object.keys(fieldMap));
-      if (typeof obj.parent === "string" && obj.parent.length > 0) {
-        const seen = new Set<string>();
-        let cursor: string | undefined = obj.parent;
-        while (cursor && !seen.has(cursor)) {
-          seen.add(cursor);
-          const ancestor = resolveSchema(cursor, tenantId);
-          if (!ancestor) break;
-          for (const fieldName of Object.keys(ancestor.fields)) {
-            visibleFields.add(fieldName);
-          }
-          cursor = ancestor.parent;
-        }
-      }
-      if (mp.fields !== undefined) {
-        if (
-          typeof mp.fields !== "object" ||
-          mp.fields === null ||
-          Array.isArray(mp.fields)
-        ) {
-          errors.push({
-            field: "merge_policy.fields",
-            message:
-              "Must be an object mapping field names to merge strategies",
-          });
-        } else {
-          for (const [fieldName, strategy] of Object.entries(
-            mp.fields as Record<string, unknown>,
-          )) {
-            if (typeof strategy !== "string") {
-              errors.push({
-                field: `merge_policy.fields.${fieldName}`,
-                message: "Strategy must be a string",
-              });
-              continue;
-            }
-            if (!MERGE_STRATEGIES.has(strategy as MergeStrategy)) {
-              errors.push({
-                field: `merge_policy.fields.${fieldName}`,
-                message: `Strategy must be one of: ${Array.from(MERGE_STRATEGIES).join(", ")}`,
-              });
-              continue;
-            }
-            if (!visibleFields.has(fieldName)) {
-              errors.push({
-                field: `merge_policy.fields.${fieldName}`,
-                message: `References field "${fieldName}" that does not exist on this type`,
-              });
-            }
-          }
-        }
-      }
-      if (mp.default !== undefined) {
-        if (
-          typeof mp.default !== "string" ||
-          !MERGE_STRATEGIES.has(mp.default as MergeStrategy)
-        ) {
-          errors.push({
-            field: "merge_policy.default",
-            message: `Must be one of: ${Array.from(MERGE_STRATEGIES).join(", ")}`,
-          });
-        }
-      }
-    }
-  }
-
-  // compatible_with — structural-superset check at registration. Every
-  // required field on the target type must be present here with a matching
-  // shape. Only enforced after the rest of the schema is well-formed; errors
-  // are emitted as `compatible_with_violation` so callers can disambiguate.
-  if (obj.compatible_with !== undefined) {
-    if (typeof obj.compatible_with !== "string") {
-      errors.push({
-        field: "compatible_with",
-        message: "Must be a type identifier string",
-      });
-    } else {
-      const target = resolveSchema(obj.compatible_with, tenantId);
-      if (!target) {
-        errors.push({
-          field: "compatible_with",
-          message: `Target type "${obj.compatible_with}" does not exist`,
-          code: "compatible_with_violation",
-        });
-      } else if (
-        typeof obj.fields === "object" &&
-        obj.fields !== null &&
-        !Array.isArray(obj.fields)
-      ) {
-        const declaredFields = obj.fields as Record<string, unknown>;
-        for (const [fieldName, targetField] of Object.entries(target.fields)) {
-          const required = targetField.required === true;
-          if (!required) continue;
-          const own = declaredFields[fieldName];
-          if (own === undefined) {
-            errors.push({
-              field: `compatible_with.${fieldName}`,
-              message: `Missing required field "${fieldName}" from compatible target "${obj.compatible_with}"`,
-              code: "compatible_with_violation",
-            });
-            continue;
-          }
-          if (typeof own !== "object" || own === null) continue;
-          const ownDef = own as Record<string, unknown>;
-          if (ownDef.type !== targetField.type) {
-            errors.push({
-              field: `compatible_with.${fieldName}`,
-              message: `Field "${fieldName}" type "${String(ownDef.type)}" does not match target "${targetField.type}"`,
-              code: "compatible_with_violation",
-            });
-          }
-        }
-      }
-    }
-  }
-
-  if (errors.length > 0) {
-    return { success: false, errors };
-  }
-
-  const schema: TypeSchema = {
-    id: obj.id as string,
-    label: typeof obj.label === "string" ? obj.label : undefined,
-    version: typeof obj.version === "number" ? obj.version : 1,
-    fields: obj.fields as Record<string, FieldDefinition>,
-  };
-  if (typeof obj.description === "string") {
-    schema.description = obj.description;
-  }
-  if (typeof obj.parent === "string") {
-    schema.parent = obj.parent;
-  }
-  if (typeof obj.compatible_with === "string") {
-    schema.compatible_with = obj.compatible_with;
-  }
-  if (
-    typeof obj.display_hints === "object" &&
-    obj.display_hints !== null &&
-    !Array.isArray(obj.display_hints)
-  ) {
-    const hints = obj.display_hints as Record<string, unknown>;
-    const dh: { title_field?: string; body_field?: string } = {};
-    if (typeof hints.title_field === "string")
-      dh.title_field = hints.title_field;
-    if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
-    if (Object.keys(dh).length > 0) {
-      schema.display_hints = dh;
-    }
-  }
-  if (
-    typeof obj.version_policy === "object" &&
-    obj.version_policy !== null &&
-    !Array.isArray(obj.version_policy)
-  ) {
-    schema.version_policy = obj.version_policy;
-  }
-  if (
-    typeof obj.merge_policy === "object" &&
-    obj.merge_policy !== null &&
-    !Array.isArray(obj.merge_policy)
-  ) {
-    schema.merge_policy = obj.merge_policy;
-  }
-
-  return { success: true, data: schema };
+  return validateTypeSchemaShape(input, {
+    resolveSchema: (typeId) => resolveSchema(typeId, tenantId),
+    isValidTypeIdentifier,
+  });
 }

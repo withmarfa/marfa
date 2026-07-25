@@ -271,7 +271,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         body: {
           id: "demo.test_t045",
           version: 1,
-          fields: [{ name: "name", type: "string" }],
+          fields: { name: { type: "string" } },
         },
       });
       expect(res.status).toBe(403);
@@ -288,7 +288,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         body: {
           id: "demo.t045_accepted",
           version: 1,
-          fields: [{ name: "name", type: "string" }],
+          fields: { name: { type: "string" } },
         },
       });
       expect(res.status).toBe(201);
@@ -348,7 +348,7 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
       body: {
         id: typeId,
         version: 1,
-        fields: [{ name: "title", type: "string" }],
+        fields: { title: { type: "string" } },
       },
     });
     expect(reg.status).toBe(201);

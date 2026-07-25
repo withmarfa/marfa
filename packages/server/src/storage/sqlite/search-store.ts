@@ -1,5 +1,9 @@
 import { sql } from "drizzle-orm";
-import { parseFilter, type SearchResult } from "@withmarfa/shared";
+import {
+  parseFilter,
+  typePatternToSql,
+  type SearchResult,
+} from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
@@ -106,13 +110,15 @@ export class SqliteSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return "1=1";
-          if (pattern.endsWith(".*")) {
-            params.push(pattern.slice(0, -1) + "%");
-            return "i.type LIKE ?";
+          const { global, exact, descendantPrefix } = typePatternToSql(pattern);
+          if (global) return "1=1";
+          if (!exact) return "1=0";
+          if (!descendantPrefix) {
+            params.push(exact);
+            return "i.type = ?";
           }
-          params.push(pattern);
-          return "i.type = ?";
+          params.push(exact, descendantPrefix + "%");
+          return "(i.type = ? OR i.type LIKE ?)";
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }

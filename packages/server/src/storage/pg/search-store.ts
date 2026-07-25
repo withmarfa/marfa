@@ -1,5 +1,9 @@
 import { safeJsonParse } from "../json-utils.js";
-import { parseFilter, type SearchResult } from "@withmarfa/shared";
+import {
+  parseFilter,
+  typePatternToSql,
+  type SearchResult,
+} from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
@@ -163,13 +167,15 @@ export class PgSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return "1=1";
-          if (pattern.endsWith(".*")) {
-            params.push(pattern.slice(0, -1) + "%");
-            return `i.type LIKE $${String(paramIdx++)}`;
+          const { global, exact, descendantPrefix } = typePatternToSql(pattern);
+          if (global) return "1=1";
+          if (!exact) return "1=0";
+          if (!descendantPrefix) {
+            params.push(exact);
+            return `i.type = $${String(paramIdx++)}`;
           }
-          params.push(pattern);
-          return `i.type = $${String(paramIdx++)}`;
+          params.push(exact, descendantPrefix + "%");
+          return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)})`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
