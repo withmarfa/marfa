@@ -171,6 +171,10 @@ function buildCapturedEmail(
   const properties: Record<string, unknown> = {
     from_address: fromAddress,
     to_address: toAddress,
+    // `body` is required by the declared `core.note` compatibility contract.
+    // Empty messages still carry an empty string so generic note readers never
+    // encounter a structurally incomplete item.
+    body: typeof envelope.text_body === "string" ? envelope.text_body : "",
   };
   if (envelope.from?.name !== undefined) {
     properties.from_name = envelope.from.name;
@@ -180,8 +184,6 @@ function buildCapturedEmail(
   }
   if (typeof envelope.text_body === "string" && envelope.text_body.length > 0) {
     properties.text_body = envelope.text_body;
-    // body mirrors text_body for the `compatible_with: core.note` contract.
-    properties.body = envelope.text_body;
   }
   if (typeof envelope.html_body === "string" && envelope.html_body.length > 0) {
     properties.html_body = envelope.html_body;

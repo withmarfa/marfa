@@ -60,7 +60,7 @@
       "items_type": "object"
     }
   },
-  "required": ["from_address", "to_address"],
+  "required": ["from_address", "to_address", "body"],
   "display_hints": {
     "title_field": "subject",
     "body_field": "text_body"

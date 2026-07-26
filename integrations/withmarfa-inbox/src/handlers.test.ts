@@ -293,7 +293,7 @@ describe("withmarfa.inbox handler", () => {
     );
     expect(created).toHaveLength(1);
     expect(created[0]!.properties?.text_body).toBeUndefined();
-    expect(created[0]!.properties?.body).toBeUndefined();
+    expect(created[0]!.properties?.body).toBe("");
     expect(created[0]!.properties?.subject).toBe("Empty body case");
   });
 

@@ -719,7 +719,14 @@ export function validateTypeSchema(
   validateDisplayHints(obj, visibleFields, errors);
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
-  validateCompatibleWith(obj, fields, requiredNames, ctx, errors);
+  validateCompatibleWith(
+    obj,
+    fields,
+    requiredNames,
+    ancestorFields,
+    ctx,
+    errors,
+  );
 
   if (errors.length > 0) return { success: false, errors };
 
@@ -729,6 +736,17 @@ export function validateTypeSchema(
       asRecord(def) ?? { type: "string" },
       { required: requiredNames.has(name) },
     );
+  }
+  // A child may tighten an inherited optional field through the top-level
+  // `required` array without restating its full definition. Materialize that
+  // refinement so it survives registration instead of disappearing when the
+  // normalized schema replaces the submitted shape.
+  for (const name of requiredNames) {
+    if (normalizedFields[name]) continue;
+    const inherited = ancestorFields.get(name)?.definition;
+    if (inherited) {
+      normalizedFields[name] = { ...inherited, required: true };
+    }
   }
 
   const schema: TypeSchema = {
@@ -928,6 +946,10 @@ function validateCompatibleWith(
   obj: Record<string, unknown>,
   fields: Record<string, unknown> | undefined,
   requiredNames: ReadonlySet<string>,
+  ancestorFields: ReadonlyMap<
+    string,
+    { owner: string; definition: FieldDefinition }
+  >,
   ctx: SchemaValidationContext,
   errors: SchemaValidationIssue[],
 ): void {
@@ -967,9 +989,27 @@ function validateCompatibleWith(
     return;
   }
 
+  const candidateFields = new Map<string, FieldDefinition>();
+  for (const [name, inherited] of ancestorFields) {
+    candidateFields.set(name, {
+      ...inherited.definition,
+      required:
+        inherited.definition.required === true || requiredNames.has(name),
+    });
+  }
+  for (const [name, raw] of Object.entries(fields ?? {})) {
+    const record = asRecord(raw);
+    if (!record) continue;
+    candidateFields.set(
+      name,
+      normalizeFieldDefinition(record, {
+        required: requiredNames.has(name),
+      }),
+    );
+  }
+
   for (const target of targets) {
-    const resolved = ctx.resolveSchema(target);
-    if (!resolved) {
+    if (!ctx.resolveSchema(target)) {
       errors.push(
         issue({
           field: `compatible_with.${target}`,
@@ -981,11 +1021,13 @@ function validateCompatibleWith(
       );
       continue;
     }
-    if (!fields) continue;
-    for (const [fieldName, targetField] of Object.entries(resolved.fields)) {
+
+    const targetFields = collectAncestorFields(target, ctx);
+    for (const [fieldName, targetEntry] of targetFields) {
+      const targetField = targetEntry.definition;
       if (targetField.required !== true) continue;
-      const own = asRecord(fields[fieldName]);
-      if (!own) {
+      const candidate = candidateFields.get(fieldName);
+      if (!candidate) {
         errors.push(
           issue({
             field: `compatible_with.${target}.${fieldName}`,
@@ -997,20 +1039,76 @@ function validateCompatibleWith(
         );
         continue;
       }
-      const normalized = normalizeFieldDefinition(own, {
-        required: requiredNames.has(fieldName),
-      });
-      if (normalized.type !== targetField.type) {
+
+      if (candidate.required !== true) {
         errors.push(
           issue({
-            field: `compatible_with.${target}.${fieldName}`,
+            field: `compatible_with.${target}.${fieldName}.required`,
             code: "compatible_with_violation",
-            expected: `"${fieldName}" typed ${targetField.type}, matching "${target}"`,
-            actual: `"${fieldName}" typed ${normalized.type}`,
-            hint: `A reader of "${target}" would mis-parse this field. Match the type, or drop the claim.`,
+            expected: `"${fieldName}" to be required, matching "${target}"`,
+            actual: `"${fieldName}" is optional`,
+            hint: `A reader of "${target}" expects this field on every item. Mark it required, or drop the claim.`,
+          }),
+        );
+      }
+
+      const conflict = describeCompatibilityConflict(candidate, targetField);
+      if (conflict) {
+        errors.push(
+          issue({
+            field: `compatible_with.${target}.${fieldName}.${conflict.attribute}`,
+            code: "compatible_with_violation",
+            expected: `${conflict.expected}, matching "${target}"`,
+            actual: conflict.actual,
+            hint: `A reader of "${target}" would mis-parse this field. Match its shape, or drop the claim.`,
           }),
         );
       }
     }
   }
+}
+
+function describeCompatibilityConflict(
+  candidate: FieldDefinition,
+  target: FieldDefinition,
+): { attribute: string; expected: string; actual: string } | null {
+  if (candidate.type !== target.type) {
+    return {
+      attribute: "type",
+      expected: `type ${target.type}`,
+      actual: `type ${candidate.type}`,
+    };
+  }
+
+  if (target.format !== undefined && candidate.format !== target.format) {
+    return {
+      attribute: "format",
+      expected: `format ${target.format}`,
+      actual: `format ${describe(candidate.format)}`,
+    };
+  }
+
+  if (target.type === "array" && candidate.items_type !== target.items_type) {
+    return {
+      attribute: "items_type",
+      expected: `items_type ${describe(target.items_type)}`,
+      actual: `items_type ${describe(candidate.items_type)}`,
+    };
+  }
+
+  if (target.type === "enum") {
+    const targetValues = new Set(target.enum_values ?? []);
+    const incompatibleValue = (candidate.enum_values ?? []).find(
+      (value) => !targetValues.has(value),
+    );
+    if (incompatibleValue !== undefined) {
+      return {
+        attribute: "enum_values",
+        expected: `enum values drawn from ${describe(target.enum_values)}`,
+        actual: `the additional value ${describe(incompatibleValue)}`,
+      };
+    }
+  }
+
+  return null;
 }

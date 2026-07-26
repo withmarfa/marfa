@@ -195,6 +195,166 @@ describe("compatible_with", () => {
     ).toBe(true);
   });
 
+  it("rejects a claim whose matching field remains optional", () => {
+    const result = validate({
+      id: "acme.optional_note",
+      version: 1,
+      compatible_with: ["core.note"],
+      fields: { body: { type: "string" } },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.note.body.required" &&
+          error.code === "compatible_with_violation",
+      ),
+    ).toBe(true);
+  });
+
+  it("enforces required fields inherited by the compatibility target", () => {
+    const result = validate({
+      id: "acme.partial_audio",
+      version: 1,
+      compatible_with: ["core.file.audio"],
+      fields: { duration: { type: "number", required: true } },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.file.audio.blob_ref" &&
+          error.code === "compatible_with_violation",
+      ),
+    ).toBe(true);
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.file.audio.mime_type" &&
+          error.code === "compatible_with_violation",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts required compatible fields inherited by the candidate", () => {
+    const result = validate({
+      id: "acme.annotated_note",
+      parent: "core.note",
+      version: 1,
+      compatible_with: ["core.note"],
+      fields: { sentiment: { type: "string" } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("preserves a required refinement of an inherited optional field", () => {
+    const result = validate({
+      id: "acme.titled_note",
+      parent: "core.note",
+      version: 1,
+      fields: { sentiment: { type: "string" } },
+      required: ["title"],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.fields.title).toMatchObject({
+      type: "string",
+      required: true,
+    });
+  });
+
+  it("rejects incompatible array elements and enum values", () => {
+    const customTargets = new Map<string, TypeSchema>([
+      [
+        "acme.collection",
+        {
+          id: "acme.collection",
+          version: 1,
+          fields: {
+            tags: { type: "array", items_type: "string", required: true },
+            workflow_stage: {
+              type: "enum",
+              enum_values: ["open", "closed"],
+              required: true,
+            },
+          },
+        },
+      ],
+    ]);
+    const result = validateTypeSchema(
+      {
+        id: "acme.unsafe_collection",
+        version: 1,
+        compatible_with: ["acme.collection"],
+        fields: {
+          tags: { type: "array", items_type: "number", required: true },
+          workflow_stage: {
+            type: "enum",
+            enum_values: ["open", "closed", "deleted"],
+            required: true,
+          },
+        },
+      },
+      {
+        resolveSchema: (id) => customTargets.get(id) ?? emitted.get(id),
+      },
+    );
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.acme.collection.tags.items_type",
+      ),
+    ).toBe(true);
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field ===
+          "compatible_with.acme.collection.workflow_stage.enum_values",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts an enum that narrows the target's allowed values", () => {
+    const customTargets = new Map<string, TypeSchema>([
+      [
+        "acme.workflow",
+        {
+          id: "acme.workflow",
+          version: 1,
+          fields: {
+            workflow_stage: {
+              type: "enum",
+              enum_values: ["open", "closed"],
+              required: true,
+            },
+          },
+        },
+      ],
+    ]);
+    const result = validateTypeSchema(
+      {
+        id: "acme.open_workflow",
+        version: 1,
+        compatible_with: ["acme.workflow"],
+        fields: {
+          workflow_stage: {
+            type: "enum",
+            enum_values: ["open"],
+            required: true,
+          },
+        },
+      },
+      {
+        resolveSchema: (id) => customTargets.get(id) ?? emitted.get(id),
+      },
+    );
+    expect(result.success).toBe(true);
+  });
+
   it("rejects a claim against an unregistered target", () => {
     const result = validate({
       id: "acme.orphan_claim",

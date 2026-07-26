@@ -663,7 +663,7 @@ const withmarfaCapturedEmail: TypeSchema = {
     to_address: { type: "string", description: "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.marfa.so`).", required: true },
     subject: { type: "string", description: "RFC 5322 `Subject:` header. Empty string when absent." },
     text_body: { type: "string", description: "Plain-text body. Either the `text/plain` MIME part directly, or downgraded from `text/html` when only HTML is present." },
-    body: { type: "string", description: "Mirror of `text_body` — kept so `core.note.body` satisfies the `compatible_with` contract for cross-app readers." },
+    body: { type: "string", description: "Mirror of `text_body` — kept so `core.note.body` satisfies the `compatible_with` contract for cross-app readers.", required: true },
     html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitized on storage." },
     sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time." },
     message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
@@ -736,7 +736,7 @@ const googleContactsContact: TypeSchema = {
 const googleDriveFile: TypeSchema = {
   id: "google.drive.file",
   label: "Google Drive File",
-  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
+  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. Metadata-only captures do not claim `core.file` compatibility because they have no required blob reference.",
   version: 1,
   fields: {
     title: { type: "string", description: "File name (maps to Drive `name`).", required: true },
@@ -757,7 +757,6 @@ const googleDriveFile: TypeSchema = {
     etag: { type: "string", description: "Drive's change-detection token (Drive returns ETag-style hashes on most responses). Used as the content-hash key for echo suppression." },
   },
   display_hints: { title_field: "title" },
-  compatible_with: ["core.file"],
 };
 
 const googleTasksTask: TypeSchema = {
