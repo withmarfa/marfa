@@ -27,14 +27,14 @@ export class SqliteMetadataStore implements MetadataStore {
       const includesStar = filters.allowedTypes.includes("*");
       if (!includesStar) {
         const typeClauses = filters.allowedTypes.map((pattern) => {
-          const { exact, descendantPrefix } = typePatternToSql(pattern);
+          const { exact, descendantPattern } = typePatternToSql(pattern);
           if (!exact) return "1=0";
-          if (!descendantPrefix) {
+          if (!descendantPattern) {
             params.push(exact);
             return "i.type = ?";
           }
-          params.push(exact, descendantPrefix + "%");
-          return "(i.type = ? OR i.type LIKE ?)";
+          params.push(exact, descendantPattern);
+          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
         });
         if (typeClauses.length > 0) {
           conditions.push(`(${typeClauses.join(" OR ")})`);

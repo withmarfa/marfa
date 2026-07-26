@@ -51,12 +51,12 @@ export function typeMatchesAnyPattern(
 
 /**
  * Splits a pattern into the two clauses a SQL predicate needs: an exact
- * identifier to compare, and a prefix to match descendants with. Keeping the
- * decomposition here is what stops each dialect's query builder from
+ * identifier to compare, and an escaped LIKE pattern for descendants.
+ * Keeping the decomposition here is what stops each dialect's query builder from
  * re-deriving (and re-getting-wrong) the parent-inclusion rule.
  *
  * - `*`               → `{ global: true }`
- * - `core.media.*`    → `{ exact: "core.media", descendantPrefix: "core.media." }`
+ * - `core.media.*`    → `{ exact: "core.media", descendantPattern: "core.media.%" }`
  * - `core.note`       → `{ exact: "core.note" }`
  */
 export interface TypePatternSql {
@@ -64,17 +64,28 @@ export interface TypePatternSql {
   global: boolean;
   /** Identifier to compare with equality, when the pattern has one. */
   exact: string | null;
-  /** Prefix descendants start with, ready for a `LIKE <prefix>%`. */
-  descendantPrefix: string | null;
+  /** Descendant matcher for `LIKE ... ESCAPE '\\'`. */
+  descendantPattern: string | null;
+}
+
+function escapeLikeLiteral(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("%", "\\%")
+    .replaceAll("_", "\\_");
 }
 
 export function typePatternToSql(pattern: string): TypePatternSql {
   if (pattern === GLOBAL_TYPE_WILDCARD) {
-    return { global: true, exact: null, descendantPrefix: null };
+    return { global: true, exact: null, descendantPattern: null };
   }
   const root = subtreeWildcardRoot(pattern);
   if (root === null) {
-    return { global: false, exact: pattern, descendantPrefix: null };
+    return { global: false, exact: pattern, descendantPattern: null };
   }
-  return { global: false, exact: root, descendantPrefix: `${root}.` };
+  return {
+    global: false,
+    exact: root,
+    descendantPattern: `${escapeLikeLiteral(root)}.%`,
+  };
 }

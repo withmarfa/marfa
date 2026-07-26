@@ -127,7 +127,7 @@ describe("typePatternToSql", () => {
     expect(typePatternToSql("core.media.*")).toEqual({
       global: false,
       exact: "core.media",
-      descendantPrefix: "core.media.",
+      descendantPattern: "core.media.%",
     });
   });
 
@@ -135,7 +135,7 @@ describe("typePatternToSql", () => {
     expect(typePatternToSql("core.note")).toEqual({
       global: false,
       exact: "core.note",
-      descendantPrefix: null,
+      descendantPattern: null,
     });
   });
 
@@ -143,7 +143,15 @@ describe("typePatternToSql", () => {
     expect(typePatternToSql("*")).toEqual({
       global: true,
       exact: null,
-      descendantPrefix: null,
+      descendantPattern: null,
+    });
+  });
+
+  it("escapes SQL LIKE metacharacters in valid identifier segments", () => {
+    expect(typePatternToSql("demo.web_gallery.*")).toEqual({
+      global: false,
+      exact: "demo.web_gallery",
+      descendantPattern: "demo.web\\_gallery.%",
     });
   });
 });

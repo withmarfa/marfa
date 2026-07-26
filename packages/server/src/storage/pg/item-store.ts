@@ -436,13 +436,14 @@ export class PgItemStore implements ItemStore {
         conditions.push(sql`1=0`);
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPrefix } = typePatternToSql(pattern);
+          const { global, exact, descendantPattern } =
+            typePatternToSql(pattern);
           if (global) return sql`1=1`;
           if (!exact) return sql`1=0`;
-          if (!descendantPrefix) return eq(items.type, exact);
+          if (!descendantPattern) return eq(items.type, exact);
           return or(
             eq(items.type, exact),
-            like(items.type, descendantPrefix + "%"),
+            sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
           );
         });
         const clause = or(...typeClauses);

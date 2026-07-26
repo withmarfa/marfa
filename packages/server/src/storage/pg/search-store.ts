@@ -167,15 +167,16 @@ export class PgSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPrefix } = typePatternToSql(pattern);
+          const { global, exact, descendantPattern } =
+            typePatternToSql(pattern);
           if (global) return "1=1";
           if (!exact) return "1=0";
-          if (!descendantPrefix) {
+          if (!descendantPattern) {
             params.push(exact);
             return `i.type = $${String(paramIdx++)}`;
           }
-          params.push(exact, descendantPrefix + "%");
-          return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)})`;
+          params.push(exact, descendantPattern);
+          return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)} ESCAPE '\\')`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }

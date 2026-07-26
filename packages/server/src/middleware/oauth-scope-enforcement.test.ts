@@ -118,6 +118,45 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(body.data).toEqual([]);
     });
 
+    it("treats underscores in subtree scopes as literal identifier bytes", async () => {
+      const schemas = [
+        "demo.web_gallery",
+        "demo.web_gallery.card",
+        "demo.webxgallery.card",
+      ];
+      for (const typeId of schemas) {
+        const registered = await request(ctx.app, "POST", "/types", {
+          key: ctx.adminKey,
+          body: {
+            id: typeId,
+            version: 1,
+            fields: { title: { type: "string" } },
+          },
+        });
+        expect(registered.status).toBe(201);
+        const created = await request(ctx.app, "POST", "/items", {
+          key: ctx.adminKey,
+          body: { type: typeId, properties: { title: typeId } },
+        });
+        expect(created.status).toBe(201);
+      }
+
+      const { rawToken } = await mintOAuthToken({
+        scopes: ["demo.web_gallery.*:read"],
+      });
+      const response = await request(ctx.app, "GET", "/items", {
+        key: rawToken,
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: { type: string }[];
+      };
+      expect(body.data.map((item) => item.type).sort()).toEqual([
+        "demo.web_gallery",
+        "demo.web_gallery.card",
+      ]);
+    });
+
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
       const admin = ctx.adminKey;
       const created = (await (

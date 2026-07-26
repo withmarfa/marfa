@@ -35,12 +35,12 @@ export class PgMetadataStore implements MetadataStore {
           .map((d) => d.exact)
           .filter((v): v is string => v !== null);
         const wildcards = decomposed
-          .map((d) => d.descendantPrefix)
-          .filter((v): v is string => v !== null)
-          .map((prefix) => prefix + "%");
+          .map((d) => d.descendantPattern)
+          .filter((v): v is string => v !== null);
         const parts: ReturnType<typeof sql>[] = [];
         if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
-        for (const w of wildcards) parts.push(sql`i.type LIKE ${w}`);
+        for (const w of wildcards)
+          parts.push(sql`i.type LIKE ${w} ESCAPE '\\'`);
         if (filters.allowedTypes.includes("*")) {
           // "*" always matches — leave no restriction
         } else if (parts.length > 0) {
