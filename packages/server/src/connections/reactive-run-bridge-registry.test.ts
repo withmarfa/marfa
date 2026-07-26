@@ -1041,4 +1041,96 @@ describe("bridge — unmapped integration handling", () => {
 
     await bridge!.stop();
   });
+
+  it("retries the activity write after a transient first-write failure", async () => {
+    const integrationName = "acme.unmapped-activity-retry";
+    const intUnmapped = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connUnmapped = await createConnection({
+      integrationRef: intUnmapped,
+    });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) {
+          throw new Error("forced first activity write failure");
+        }
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("first activity attempt fails");
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      await publishNote("second event retries activity write");
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 2,
+          { timeoutMs: 1_000 },
+        ),
+      ).toBe(2);
+
+      const activityRows = await ctx.storage.items.list({
+        type: "system.activity",
+        limit: 100,
+      });
+      expect(
+        activityRows.data.filter((row) => {
+          const properties = row.properties as {
+            connection_id?: string;
+            summary?: string;
+          };
+          return (
+            properties.connection_id === connUnmapped &&
+            properties.summary?.includes(integrationName)
+          );
+        }),
+      ).toHaveLength(1);
+
+      await publishNote("successful retry restores deduplication");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(activityWriteAttempts).toBe(2);
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
 });

@@ -922,6 +922,22 @@ export interface TenantQuotaStore {
       rate_per_minute_limit?: number | null;
     },
   ): Promise<import("@withmarfa/shared").TenantQuota>;
+  /**
+   * Upsert ceilings only while the tenant row exists. The existence read and
+   * write are serialized against account deletion, so an unknown tenant or a
+   * deletion that wins the tenant lock returns null without leaving an orphan
+   * quota row.
+   */
+  setForExistingTenant(
+    tenantId: string,
+    input: {
+      items_limit?: number | null;
+      webhooks_limit?: number | null;
+      blobs_limit?: number | null;
+      storage_bytes_limit?: number | null;
+      rate_per_minute_limit?: number | null;
+    },
+  ): Promise<import("@withmarfa/shared").TenantQuota | null>;
   /** Returns the current count for a resource within a tenant. */
   count(
     tenantId: string,

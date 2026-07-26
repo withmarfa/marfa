@@ -655,7 +655,6 @@ async function handleUnmappedIntegration(
     `[reactive-run-bridge] no queue URL mapped for integration "${entry.integration_name}" (connection ${entry.connection_id}); skipping dispatch — set CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS to include this integration`,
   );
   if (unmappedIntegrationsReported.has(entry.integration_name)) return;
-  unmappedIntegrationsReported.add(entry.integration_name);
   try {
     await storage.items.create(
       {
@@ -673,6 +672,7 @@ async function handleUnmappedIntegration(
       },
       event.tenantId,
     );
+    unmappedIntegrationsReported.add(entry.integration_name);
   } catch {
     // Don't crash the drainer over an activity-row write failure;
     // stderr already carries the loud error.

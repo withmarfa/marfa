@@ -1,7 +1,13 @@
 import { eq, sql } from "drizzle-orm";
 import type { TenantQuota, QuotaResource } from "@withmarfa/shared";
 import type { TenantQuotaStore } from "../interface.js";
-import { tenantQuotas, items, outboundWebhooks, blobs } from "./schema.js";
+import {
+  tenantQuotas,
+  tenants,
+  items,
+  outboundWebhooks,
+  blobs,
+} from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 /**
@@ -70,6 +76,64 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
       rate_per_minute_limit: input.rate_per_minute_limit ?? null,
       updated_at: now,
     };
+  }
+
+  async setForExistingTenant(
+    tenantId: string,
+    input: {
+      items_limit?: number | null;
+      webhooks_limit?: number | null;
+      blobs_limit?: number | null;
+      storage_bytes_limit?: number | null;
+      rate_per_minute_limit?: number | null;
+    },
+  ): Promise<TenantQuota | null> {
+    return this.db.transaction(async (tx) => {
+      // Account deletion takes the same row lock before removing quota data.
+      // Whichever transaction wins becomes the linearization point: a delete
+      // that wins makes this lookup return no row, while a quota update that
+      // wins commits before the cascade removes both rows.
+      const [tenant] = await tx
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .for("update");
+      if (!tenant) return null;
+
+      const now = new Date().toISOString();
+      await tx
+        .insert(tenantQuotas)
+        .values({
+          tenant_id: tenantId,
+          items_limit: input.items_limit ?? null,
+          webhooks_limit: input.webhooks_limit ?? null,
+          blobs_limit: input.blobs_limit ?? null,
+          storage_bytes_limit: input.storage_bytes_limit ?? null,
+          rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+          updated_at: now,
+        })
+        .onConflictDoUpdate({
+          target: tenantQuotas.tenant_id,
+          set: {
+            items_limit: input.items_limit ?? null,
+            webhooks_limit: input.webhooks_limit ?? null,
+            blobs_limit: input.blobs_limit ?? null,
+            storage_bytes_limit: input.storage_bytes_limit ?? null,
+            rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+            updated_at: now,
+          },
+        });
+
+      return {
+        tenant_id: tenantId,
+        items_limit: input.items_limit ?? null,
+        webhooks_limit: input.webhooks_limit ?? null,
+        blobs_limit: input.blobs_limit ?? null,
+        storage_bytes_limit: input.storage_bytes_limit ?? null,
+        rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+        updated_at: now,
+      };
+    });
   }
 
   async count(tenantId: string, resource: QuotaResource): Promise<number> {
