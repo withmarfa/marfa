@@ -132,7 +132,7 @@ async function seedClient(c: TestContext): Promise<string> {
 /** Flip an existing client to `disabled` — the operator kill switch. */
 async function disableClient(c: TestContext, clientId: string): Promise<void> {
   const schemaModule = await betterAuthSchema(c);
-  const db = c.storage.betterAuthDb as unknown as {
+  const db = c.storage.betterAuthDb as {
     update: (table: unknown) => {
       set: (v: Record<string, unknown>) => {
         where: (cond: unknown) => {

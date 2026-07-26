@@ -275,11 +275,15 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // secret anyone can read off npm. `MARFA_AUTH_SECRET` is mandatory in
   // production, so the ephemeral branch is dev-only — where a restart
   // invalidating sessions is the documented behavior.
-  const signingSecret =
-    options.secret ||
-    process.env.BETTER_AUTH_SECRET ||
-    process.env.AUTH_SECRET ||
-    randomBytes(32).toString("hex");
+  const configuredSecret = [
+    options.secret,
+    process.env.BETTER_AUTH_SECRET,
+    process.env.AUTH_SECRET,
+  ].find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.length > 0,
+  );
+  const signingSecret = configuredSecret ?? randomBytes(32).toString("hex");
 
   const instance = betterAuth({
     baseURL: options.baseURL,
