@@ -64,15 +64,17 @@ export function buildTypePermissions(
 export function buildExtensionPermissions(
   manifest: IntegrationManifest | undefined,
 ): Record<string, "read" | "write"> {
-  const out: Record<string, "read" | "write"> = {
-    "connection.runtime": "write",
-  };
+  const out: Record<string, "read" | "write"> = {};
   const declared = manifest?.permissions?.extension;
   if (declared) {
     for (const [ns, level] of Object.entries(declared)) {
       out[ns] = level;
     }
   }
+  // This is a substrate grant, not a manifest option. A manifest that names
+  // the reserved namespace cannot accidentally downgrade the credential and
+  // make cursor persistence fail at runtime.
+  out["connection.runtime"] = "write";
   return out;
 }
 

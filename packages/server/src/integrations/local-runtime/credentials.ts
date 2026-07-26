@@ -25,15 +25,17 @@
  */
 import { randomBytes } from "node:crypto";
 import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
-import type { IntegrationManifest } from "@withmarfa/shared";
 import { hashApiKey } from "../../middleware/auth.js";
-import { log } from "../../middleware/logger.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   buildEdgePermissions,
   buildExtensionPermissions,
   buildTypePermissions,
 } from "../../connections/manifest-permissions.js";
+import {
+  resolveRuntimeCredentialManifest,
+  revokeSupersededRuntimeCredentials,
+} from "../../connections/runtime-credential-lifecycle.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -80,10 +82,6 @@ interface ConnectionProperties {
   status?: string;
 }
 
-interface IntegrationProperties {
-  manifest?: IntegrationManifest;
-}
-
 /**
  * Mint a fresh runtime credential for a Connection. Returns the wire
  * `RuntimeCredential` shape the SDK consumes — `{ api_key, expires_at,
@@ -123,13 +121,7 @@ export async function mintLocalRuntimeCredential(
   // hosted install pipeline applies. No manifest means no reach beyond
   // the credential's own `connection.runtime` subtree: minting wide on a
   // resolution failure would silently hand out the whole tenant.
-  let manifest: IntegrationManifest | undefined;
-  if (props.integration_ref) {
-    const integration = await storage.items.get(props.integration_ref);
-    if (integration?.type === "system.integration") {
-      manifest = (integration.properties as IntegrationProperties).manifest;
-    }
-  }
+  const manifest = await resolveRuntimeCredentialManifest(storage, connection);
 
   const rawKey = KEY_PREFIX + randomBytes(32).toString("hex");
   const keyHash = hashApiKey(rawKey, salt);
@@ -169,25 +161,13 @@ export async function mintLocalRuntimeCredential(
   //
   // Best-effort — a supersede failure must not fail the dispatch that
   // triggered the mint; the retention reaper is the backstop.
-  const nowIso = new Date().toISOString();
-  const legacyCutoff = new Date(Date.now() - ttlMs).toISOString();
-  try {
-    const stale = await storage.keys.listByConnectionId(connectionId, tenantId);
-    for (const key of stale) {
-      if (key.id === minted.id) continue;
-      if (!key.is_runtime_credential) continue;
-      const expired = key.expires_at
-        ? key.expires_at <= nowIso
-        : key.created_at < legacyCutoff;
-      if (!expired) continue;
-      await storage.keys.revoke(key.id);
-    }
-  } catch (err) {
-    log("error", "Runtime credential supersede revoke failed", {
-      connection_id: connectionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  await revokeSupersededRuntimeCredentials(
+    storage,
+    connectionId,
+    tenantId,
+    minted.id,
+    ttlMs,
+  );
 
   return {
     api_key: rawKey,

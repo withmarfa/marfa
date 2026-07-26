@@ -18,14 +18,8 @@
  *     broker is tenant-less by construction, so inheriting the caller
  *     would strand the credential outside every tenant fence.
  *
- * Permissions translated from the manifest at mint time:
- *   - `type_permissions` from manifest.permissions (caller supplies;
- *     the broker is trusted to project from the manifest).
- *   - `extension_permissions` always carries `connection.runtime: write`
- *     so the credential can write its own subtree. Additional
- *     extension grants come from the manifest.
- *   - `edge_permissions`, `metadata_permissions` likewise from the
- *     manifest, optional.
+ * Permission maps are projected server-side from the Connection's persisted
+ * Integration manifest. The control plane cannot request broader reach.
  *
  * Caller authentication: `is_platform: true` required. Rejected
  * otherwise.
@@ -38,24 +32,21 @@ import { requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  buildEdgePermissions,
+  buildExtensionPermissions,
+  buildTypePermissions,
+} from "../connections/manifest-permissions.js";
+import {
+  resolveRuntimeCredentialManifest,
+  revokeSupersededRuntimeCredentials,
+} from "../connections/runtime-credential-lifecycle.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
 }
-
-const PermissionsSchema = z
-  .record(z.string(), z.enum(["read", "write", "none"]))
-  .optional();
-
-const ExtensionPermissionsSchema = z
-  .record(z.string(), z.enum(["read", "write"]))
-  .optional();
-
-const EdgePermissionsSchema = z
-  .record(z.string(), z.enum(["read", "write"]))
-  .optional();
 
 const RuntimeCredentialRequestSchema = z.object({
   /** Connection this credential is bound to. The extension gate keys
@@ -65,9 +56,6 @@ const RuntimeCredentialRequestSchema = z.object({
   label: z.string().min(1).max(200),
   /** Stamped onto items written by this credential. */
   source: z.string().min(1).max(200),
-  type_permissions: PermissionsSchema,
-  extension_permissions: ExtensionPermissionsSchema,
-  edge_permissions: EdgePermissionsSchema,
   /** Lease TTL in seconds. Default 600 (10 min). Min 60, max 3600. */
   ttl_seconds: z.number().int().min(60).max(3600).optional(),
 });
@@ -89,7 +77,7 @@ const createRuntimeCredentialRoute = createRoute({
   tags: ["System"],
   summary: "Issue a runtime credential",
   description:
-    "Mints a short-lived API key scoped to a single connection, for the per-integration Worker that calls Marfa on the connection's behalf. The api_key is returned once and never again.",
+    "Mints a short-lived API key scoped to a single connection. Permission maps are resolved by the server from the connection's persisted Integration manifest. The api_key is returned once and never again.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -134,6 +122,14 @@ const createRuntimeCredentialRoute = createRoute({
         },
       },
       description: "Caller lacks is_platform: true",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "Connection not found",
     },
     409: {
       content: {
@@ -387,27 +383,34 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
       );
     }
 
+    const connectionProperties = connection.properties as { kind?: string };
+    if (connectionProperties.kind !== "integration") {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Connection ${body.connection_id} is not of kind integration`,
+      );
+    }
+
     const ttlSeconds = body.ttl_seconds ?? 600;
+    const ttlMs = ttlSeconds * 1000;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    // Always grant connection.runtime:write so the credential can hydrate
-    // its own subtree; manifest grants merge on top.
-    const extensionPermissions = {
-      "connection.runtime": "write" as const,
-      ...(body.extension_permissions ?? {}),
-    };
+    const manifest = await resolveRuntimeCredentialManifest(
+      storage,
+      connection,
+    );
 
     const stored = await storage.keys.createRuntimeCredential(
       {
         label: body.label.trim(),
         source: body.source.trim(),
         role: "member",
-        type_permissions: body.type_permissions ?? {},
-        extension_permissions: extensionPermissions,
-        edge_permissions: body.edge_permissions ?? {},
+        type_permissions: buildTypePermissions(manifest),
+        extension_permissions: buildExtensionPermissions(manifest),
+        edge_permissions: buildEdgePermissions(manifest),
         connection_id: body.connection_id,
         expires_at: expiresAt,
       },
@@ -419,6 +422,14 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
       // storage layer's tenant predicate, handing an integration built
       // for one tenant reach into all of them.
       connection.tenant_id ?? undefined,
+    );
+
+    await revokeSupersededRuntimeCredentials(
+      storage,
+      body.connection_id,
+      connection.tenant_id ?? undefined,
+      stored.id,
+      ttlMs,
     );
 
     void storage.audit.log({

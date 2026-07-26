@@ -11,10 +11,10 @@ import { MarfaServerClient } from "../marfa-client.js";
  *     control plane authenticates with MARFA_RUNTIME_BROKER_KEY (a
  *     long-lived `is_platform: true` key bound as a secret).
  *
- *     Permissions default to `*: write` on all three axes. The
- *     integration Worker calls this on every queue message; the
- *     per-Connection DO caches the result with TTL ≤ 5 min so the
- *     broker isn't hit on the hot path.
+ *     The Marfa server resolves the Connection's persisted Integration
+ *     manifest and owns permission projection. The integration Worker calls
+ *     this on every queue message; the per-Connection DO caches the result
+ *     with TTL ≤ 5 min so the broker isn't hit on the hot path.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
  *     Not yet implemented. Returns 501 until install-time manifest
@@ -63,17 +63,6 @@ export function registerLeaseRoutes(
         connection_id: connectionId,
         label,
         source,
-        // Wildcard write on all three permission axes — mirrors the
-        // local-substrate credential mint (see
-        // `packages/server/src/integrations/local-runtime/credentials.ts`).
-        // All three axes must be granted: `edge_permissions` and
-        // `extension_permissions` default to `{}`, which blocks every
-        // `createEdge` / extension write, so a `type_permissions`-only
-        // credential could write items but silently fail edge and
-        // extension writes.
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
         ttl_seconds: ttl,
       });
     } catch (err) {

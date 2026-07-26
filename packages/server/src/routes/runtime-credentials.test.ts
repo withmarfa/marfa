@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -47,6 +48,87 @@ async function createActiveConnection(tenantId?: string): Promise<string> {
     tenantId,
   );
   return item.id;
+}
+
+function runtimeManifest(): IntegrationManifest {
+  return {
+    name: "acme.runtime-permissions",
+    version: "1.0.0",
+    publisher: "Acme",
+    description: "Exercises hosted runtime permission projection",
+    direction: "read",
+    triggers: [{ type: "manual" }],
+    target_types: ["core.note"],
+    runtime_compatibility: ["hosted"],
+    bidirectional_handling: {
+      echo_ttl_seconds: 60,
+      lag_window_seconds: 60,
+      tombstone_mapping: "state-trashed",
+      partial_write_mode: "all-or-nothing",
+    },
+    oauth_requirements: {},
+    webhook_verification: { method: "hmac-sha256" },
+    manifest_schema_version: "1.0.0",
+    permissions: {
+      extension: {
+        "acme.cursor": "write",
+        // The substrate grant wins over a manifest downgrade.
+        "connection.runtime": "read",
+      },
+      edge: { about: "read" },
+    },
+  };
+}
+
+async function createManifestConnection(tenantId?: string): Promise<string> {
+  const manifest = runtimeManifest();
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest_name: manifest.name,
+        manifest_version: manifest.version,
+        publisher: manifest.publisher,
+        manifest,
+        registered_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+      },
+    },
+    tenantId,
+  );
+  return connection.id;
+}
+
+async function expireCredential(id: string): Promise<void> {
+  const expiredAt = new Date(Date.now() - 60_000).toISOString();
+  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
+    const storage = ctx.storage as unknown as {
+      __pgClient: (sql: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await storage.__pgClient(
+      "UPDATE api_keys SET expires_at = $1 WHERE id = $2",
+      [expiredAt, id],
+    );
+  } else {
+    const storage = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await storage.__sqliteRun(
+      "UPDATE api_keys SET expires_at = ? WHERE id = ?",
+      [expiredAt, id],
+    );
+  }
 }
 
 describe("POST /system/runtime-credentials", () => {
@@ -199,6 +281,124 @@ describe("POST /system/runtime-credentials", () => {
 
     const stored = await ctx.storage.keys.get(body.id);
     expect(stored?.tenant_id).toBe(tenantId);
+  });
+
+  it("projects permissions from the persisted manifest and ignores injected maps", async () => {
+    const tenantId = `tenant-rc-${Math.random().toString(36).slice(2, 10)}`;
+    const connectionId = await createManifestConnection(tenantId);
+    const suffix = Math.random().toString(36).slice(2, 10);
+
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: connectionId,
+        label: `projected ${suffix}`,
+        source: `projected-${suffix}`,
+        // Legacy control planes sent these fields. Unknown-field stripping
+        // keeps a staged rollout compatible, while server-owned projection
+        // makes escalation impossible.
+        type_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as RuntimeCredentialResponse;
+    const stored = await ctx.storage.keys.get(body.id);
+    expect(stored?.type_permissions).toEqual({
+      "system.activity": "write",
+      "core.note": "write",
+    });
+    expect(stored?.extension_permissions).toEqual({
+      "connection.runtime": "write",
+      "acme.cursor": "write",
+    });
+    expect(stored?.edge_permissions).toEqual({ about: "read" });
+    expect(stored?.type_permissions["*"]).toBeUndefined();
+  });
+
+  it("fails closed when the connection has no resolvable manifest", async () => {
+    const connectionId = await createActiveConnection();
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: connectionId,
+        label: `closed ${suffix}`,
+        source: `closed-${suffix}`,
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as RuntimeCredentialResponse;
+    const stored = await ctx.storage.keys.get(body.id);
+    expect(stored?.type_permissions).toEqual({
+      "system.activity": "write",
+    });
+    expect(stored?.extension_permissions).toEqual({
+      "connection.runtime": "write",
+    });
+    expect(stored?.edge_permissions).toEqual({});
+  });
+
+  it("rejects a system.connection whose kind is not integration", async () => {
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: connection.id,
+        label: "not an integration",
+        source: `not-integration-${Math.random().toString(36).slice(2, 10)}`,
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("revokes an expired sibling after a successful hosted mint", async () => {
+    const connectionId = await createManifestConnection();
+    const firstSuffix = Math.random().toString(36).slice(2, 10);
+    const firstRes = await request(
+      ctx.app,
+      "POST",
+      "/system/runtime-credentials",
+      {
+        key: ctx.adminKey,
+        body: {
+          connection_id: connectionId,
+          label: `first ${firstSuffix}`,
+          source: `first-${firstSuffix}`,
+        },
+      },
+    );
+    expect(firstRes.status).toBe(201);
+    const first = (await firstRes.json()) as RuntimeCredentialResponse;
+    await expireCredential(first.id);
+
+    const secondSuffix = Math.random().toString(36).slice(2, 10);
+    const secondRes = await request(
+      ctx.app,
+      "POST",
+      "/system/runtime-credentials",
+      {
+        key: ctx.adminKey,
+        body: {
+          connection_id: connectionId,
+          label: `second ${secondSuffix}`,
+          source: `second-${secondSuffix}`,
+        },
+      },
+    );
+    expect(secondRes.status).toBe(201);
+    expect(await ctx.storage.keys.get(first.id)).toBeNull();
   });
 });
 

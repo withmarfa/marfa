@@ -191,9 +191,6 @@ export class MarfaServerClient {
     connection_id: string;
     label: string;
     source: string;
-    type_permissions?: Record<string, "read" | "write" | "none">;
-    extension_permissions?: Record<string, "read" | "write">;
-    edge_permissions?: Record<string, "read" | "write">;
     ttl_seconds?: number;
   }): Promise<MintedRuntimeCredential> {
     const headers = new Headers(this.headers());

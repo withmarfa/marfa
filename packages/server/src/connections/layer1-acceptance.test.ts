@@ -62,10 +62,6 @@ async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
       connection_id: connectionId,
       label: `acceptance ${suffix}`,
       source: `acceptance-${suffix}`,
-      // The install pipeline narrows these from the manifest's declared
-      // scopes. Default here is permissive — what the control-plane
-      // lease broker passes in routes/lease.ts.
-      type_permissions: { "*": "write" },
     },
   });
   expect(res.status).toBe(201);

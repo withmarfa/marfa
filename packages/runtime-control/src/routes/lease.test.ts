@@ -1,15 +1,11 @@
 /**
- * Lease route — pins the runtime-credential mint shape, in particular
- * that the broker mints with **wildcard write on all three permission
- * axes** (`type_permissions`, `edge_permissions`,
- * `extension_permissions`). All three axes must be granted because
- * `edge_permissions` and `extension_permissions` both default to `{}`
- * and block the call — a credential with only `type_permissions` can
- * write items but silently fails every `createEdge` / extension write.
+ * Lease route — pins the runtime-credential mint trust boundary. The broker
+ * identifies the Connection and lease metadata but never chooses permission
+ * maps; the Marfa server projects them from the persisted manifest.
  *
  * The test patches `globalThis.fetch` to capture the body the broker
  * POSTs to Marfa's `/system/runtime-credentials` endpoint, then asserts
- * all three permission maps are present and wildcard-write.
+ * no permission map crosses the control-plane boundary.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { buildApp } from "../app.js";
@@ -71,7 +67,7 @@ describe("POST /lease/:connection_id/runtime", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("mints with wildcard write on type_permissions, edge_permissions, AND extension_permissions", async () => {
+  it("leaves permission projection to the Marfa server", async () => {
     const captured: FetchCall[] = [];
     globalThis.fetch = mockMarfaFetch(captured);
     const app = buildApp();
@@ -93,14 +89,12 @@ describe("POST /lease/:connection_id/runtime", () => {
         c.url.endsWith("/system/runtime-credentials") && c.method === "POST",
     );
     expect(mintCall).toBeDefined();
-    const body = mintCall!.body as {
-      type_permissions: Record<string, string>;
-      edge_permissions: Record<string, string>;
-      extension_permissions: Record<string, string>;
-    };
-    expect(body.type_permissions).toEqual({ "*": "write" });
-    expect(body.edge_permissions).toEqual({ "*": "write" });
-    expect(body.extension_permissions).toEqual({ "*": "write" });
+    expect(mintCall!.body).toEqual({
+      connection_id: "conn_x",
+      label: "test",
+      source: expect.stringMatching(/^runtime-conn_x-/),
+      ttl_seconds: 600,
+    });
   });
 
   it("returns 503 when MARFA_API_URL is unset", async () => {
