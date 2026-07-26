@@ -48,6 +48,7 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
+import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
@@ -2435,31 +2436,6 @@ function parseNotice(
       },
     };
   return messages[raw];
-}
-
-/**
- * Forward selected headers (origin, cookie) from the inbound request
- * onto the upstream Better Auth dispatch. When `Origin` is absent or
- * `"null"` (browsers serialize it as `"null"` under strict referrer
- * policies / sandboxed iframes), fall back to `fallbackOrigin` so
- * Better Auth's trustedOrigins check passes on the internal dispatch.
- */
-function forwardHeaders(
-  src: Headers,
-  base: Record<string, string>,
-  fallbackOrigin?: string,
-): Headers {
-  const out = new Headers(base);
-  const passthrough = ["origin", "cookie", "user-agent", "accept-language"];
-  for (const name of passthrough) {
-    const value = src.get(name);
-    if (value) out.set(name, value);
-  }
-  const incomingOrigin = out.get("origin");
-  if (fallbackOrigin && (!incomingOrigin || incomingOrigin === "null")) {
-    out.set("origin", fallbackOrigin);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

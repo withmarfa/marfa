@@ -30,8 +30,9 @@
  *     runs at `/oauth2/authorize`, and the post-sign-in `return_to`
  *     lands here without passing back through it.
  *   - handles `prompt=none` per OIDC: silent code when the grant covers
- *     the request, otherwise a redirect back to the client with
- *     `error=consent_required` — never a rendered page
+ *     the request, `error=login_required` with no session, and
+ *     `error=consent_required` when the grant doesn't cover the request —
+ *     never a rendered page
  *   - renders via the existing `renderConsentScreen` otherwise
  *
  * The decision handler (`POST /auth/authorize/decision`) projects the
@@ -45,10 +46,21 @@
  * Auth gating: the plugin only redirects here when the user is already
  * signed in (it redirects to `loginPage: "/auth/sign-in"` first). If
  * a no-session request lands here directly, we bounce to sign-in with
- * a return_to so the round-trip works.
+ * a return_to so the round-trip works — except under `prompt=none`,
+ * which forbids showing the user anything and gets `login_required`
+ * returned to the client instead.
+ *
+ * What a silent re-authorization does and does not change: it mints a
+ * code for the scopes the client asked for, emits `auth.grant.reused`,
+ * and leaves both records of the grant alone — the projected
+ * `system.connection` row is not rewritten, and the plugin's own
+ * narrowing of `auth_oauth_consent.scopes` is undone. Narrowing a grant
+ * is a deliberate act; a client asking for less than it was given is
+ * not the user withdrawing the rest.
  */
 
 import { Hono } from "hono";
+import { makeSignature, constantTimeEqual } from "better-auth/crypto";
 import type { ParsedScope } from "@withmarfa/shared";
 import {
   parseScope,
@@ -60,7 +72,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
-import { setNoStore } from "./no-store.js";
+import { setNoStore, withNoStore } from "./no-store.js";
+import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 
@@ -120,6 +133,8 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     if (!deps.auth) {
       return c.text("Auth not configured on this instance", 503);
     }
+    // Bound to a local so the narrowing survives into the closures below.
+    const auth = deps.auth;
 
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id") ?? "";
@@ -142,12 +157,74 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       );
     }
 
+    // OIDC `prompt` rides the signed query verbatim:
+    //   - `consent` → always render, even when covered
+    //   - `none`    → never render; every outcome is a redirect back to
+    //     the client carrying either a code or an OIDC error code
+    //   - absent    → skip when covered, else render
+    //
+    // Parsed before the session gate because `prompt=none` changes what a
+    // missing session means: OIDC Core §3.1.2.6 requires `login_required`
+    // returned to the client, not a sign-in page the request explicitly
+    // forbade.
+    const promptSet = new Set(
+      (url.searchParams.get("prompt") ?? "").split(/\s+/).filter(Boolean),
+    );
+    const promptNone = promptSet.has("none");
+
+    /**
+     * Emit an OIDC error back to the client, for a `prompt=none` request
+     * that cannot be answered with a code.
+     *
+     * Gated on the query's signature. Everything on this path is
+     * attacker-supplied otherwise: any signed-in user's browser can be
+     * navigated to `/auth/authorize` with a registered `client_id`, that
+     * client's registered `redirect_uri`, `prompt=none` and a `state` of
+     * the attacker's choosing, and without the check they would get a
+     * 302 to the client's callback echoing that `state`. Verifying first
+     * also means appending `&prompt=none` to a legitimate consent URL
+     * fails closed (the edit breaks the signature) instead of converting
+     * that flow into a client-visible error.
+     */
+    const promptNoneError = async (
+      registeredRedirectUris: readonly string[],
+      error: string,
+      description: string,
+    ): Promise<Response> => {
+      if (!(await verifySignedQuery(auth, oauthQuery))) {
+        return c.text("Invalid or expired authorize request signature", 400);
+      }
+      return (
+        buildPromptNoneErrorRedirect(
+          registeredRedirectUris,
+          url,
+          error,
+          description,
+        ) ?? c.text("prompt=none requires a registered redirect_uri", 400)
+      );
+    };
+
     // Auth gate: the plugin's loginPage handles unsigned users normally,
     // but a direct hit on /auth/authorize without a session needs a
     // fallback bounce to sign-in. We pass the full URL as return_to
     // so the round-trip completes after sign-in.
-    const session = await deps.auth.getSession(c.req.raw.headers);
+    //
+    // The client row is resolved inside the `prompt=none` branch rather
+    // than ahead of this gate, so an unauthenticated caller still gets
+    // the same sign-in bounce whether or not `client_id` is registered.
+    // Resolving first would turn this route into a client-existence
+    // oracle for anyone with no session at all.
+    const session = await auth.getSession(c.req.raw.headers);
     if (!session) {
+      if (promptNone) {
+        const target = await resolveClient(deps.storage, clientId);
+        if (!target) return c.text(`Unknown client: ${clientId}`, 404);
+        return promptNoneError(
+          target.redirectUris,
+          "login_required",
+          "End-User authentication is required",
+        );
+      }
       const returnTo = encodeURIComponent(url.pathname + url.search);
       return c.redirect(`/auth/sign-in?return_to=${returnTo}`);
     }
@@ -199,28 +276,24 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // query, so a tampered request cannot silently mint a code) and
     // send the browser straight back to the app.
     //
-    // OIDC `prompt` rides the signed query verbatim:
-    //   - `consent` → always render, even when covered
-    //   - `none`    → silent code when covered, else an
-    //     `error=consent_required` redirect; never a rendered page
-    //   - absent    → skip when covered, else render
-    //
     // A requested set that WIDENS the prior grant falls through to the
     // re-consent diff render, and a revoked grant has no consent row
     // (revocation deletes it), so it falls through too.
-    const promptSet = new Set(
-      (url.searchParams.get("prompt") ?? "").split(/\s+/).filter(Boolean),
-    );
-    const promptNone = promptSet.has("none");
+    //
+    // An EMPTY requested set is not "covered" even though it is
+    // vacuously a subset of anything. The decision handler treats a
+    // zero-scope accept as a deny; the two must not disagree about
+    // whether a request for nothing is something the server approves.
     const priorSet =
       priorScopes !== undefined ? new Set(priorScopes) : undefined;
     const alreadyGranted =
       priorSet !== undefined &&
+      scopeLiterals.length > 0 &&
       scopeLiterals.every((literal) => priorSet.has(literal));
 
     if (!promptSet.has("consent") && alreadyGranted) {
       const proxyResp = await proxyConsentDecision(
-        deps.auth,
+        auth,
         c.req.url,
         c.req.raw.headers,
         {
@@ -228,34 +301,79 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           scope: scopeLiterals.join(" ") || undefined,
           oauthQuery,
         },
+        // A top-level browser navigation carries no `Origin`, and Better
+        // Auth rejects a cookie-bearing POST it can't attribute to a
+        // trusted origin. Without the fallback the internal accept is
+        // refused and the skip silently degrades to a re-render — which
+        // is the whole behavior this branch exists to prevent. The
+        // request being wrapped is a GET the browser already made; the
+        // origin of the dispatch genuinely is the issuer's own.
+        auth.baseURL,
       );
-      if (proxyResp.status === 302) {
-        // The grant record is deliberately untouched on reuse: no
-        // re-projection, no scope rewrite, no granted_at bump.
-        // `last_used_at` is stamped by the bearer middleware when the
-        // minted token is actually used.
+      // The plugin rewrites the stored consent scopes to the requested
+      // set, and does so BEFORE the checks that can still refuse the
+      // request (disabled client, invalid scope, unregistered redirect).
+      // So the standing grant has to be put back on every outcome, not
+      // just the successful one — a refusal must not be able to shrink a
+      // grant as a side effect.
+      await preserveBroaderGrant(deps.storage, {
+        authUserId: session.user.id,
+        clientId,
+        priorScopes: priorScopes ?? [],
+        requestedScopes: scopeLiterals,
+      });
+
+      const outcome = classifyProxyOutcome(proxyResp, client.redirectUris);
+
+      if (outcome === "code") {
+        // The projected grant record is deliberately untouched on reuse:
+        // no re-projection, no granted_at bump. `last_used_at` is
+        // stamped by the bearer middleware when the minted token is
+        // actually used.
         void auditGrantReused(deps.storage, {
           authUserId: session.user.id,
           clientId,
           scopes: scopeLiterals,
           clientIp: c.var.clientIp ?? null,
         });
-        return proxyResp;
+        // The Location carries a live authorization code. Every other
+        // auth surface stamps no-store; a redirect holding a credential
+        // has more reason to than most.
+        return withNoStore(proxyResp);
       }
-      // The plugin refused the silent accept (expired or tampered
-      // signature, session mismatch, ...). prompt=none must never
-      // render UI; everything else falls through to the consent
-      // screen, which surfaces the same failure on submit.
-      if (promptNone) {
-        return (
-          buildPromptNoneErrorRedirect(client.redirectUris, url) ??
-          c.text("prompt=none requires a registered redirect_uri", 400)
-        );
+
+      if (outcome === "client_error") {
+        // The plugin already produced a spec-shaped error response aimed
+        // at the client's own callback (invalid scope, disabled client,
+        // …). Forwarding it is strictly better than rendering a consent
+        // screen that would fail the same way on submit.
+        return withNoStore(proxyResp);
       }
+
+      if (outcome === "interaction") {
+        // Signature and session were fine, but the plugin wants a fresh
+        // interaction — an unsatisfied `prompt=login`, most commonly.
+        // `prompt=none` forbids exactly that.
+        if (promptNone) {
+          return promptNoneError(
+            client.redirectUris,
+            "interaction_required",
+            "End-User interaction is required",
+          );
+        }
+      } else if (promptNone) {
+        // `outcome === "rejected"`: the plugin refused the accept
+        // outright (expired or tampered signature, session mismatch).
+        // Nothing here is trustworthy enough to redirect anywhere.
+        return c.text("The authorize request was refused", 400);
+      }
+      // Everything else falls through to the consent screen, which
+      // surfaces the same failure on submit.
     } else if (promptNone) {
-      return (
-        buildPromptNoneErrorRedirect(client.redirectUris, url) ??
-        c.text("prompt=none requires a registered redirect_uri", 400)
+      return promptNoneError(
+        client.redirectUris,
+        "consent_required",
+        "End-User consent is required",
       );
     }
 
@@ -448,17 +566,27 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
  * normalized to a real 302 so the browser navigates correctly. Any
  * other response (signature failure, expired query, plugin rejection)
  * is returned verbatim for the caller to handle.
+ *
+ * `fallbackOrigin` stamps the dispatch with an `Origin` when the inbound
+ * request has none — needed when the caller is a GET the browser reached
+ * by navigation. The decision handler deliberately omits it: that POST
+ * arrives from a form, browsers always attach an `Origin` to one, and
+ * Better Auth refusing an origin-less form POST is a fence the handler
+ * relies on rather than something to paper over.
  */
 async function proxyConsentDecision(
   auth: MarfaAuth,
   requestUrl: string,
   requestHeaders: Headers,
   decision: { accept: boolean; scope?: string; oauthQuery: string },
+  fallbackOrigin?: string,
 ): Promise<Response> {
   const proxyUrl = new URL("/auth/oauth2/consent", requestUrl);
-  const proxyHeaders = new Headers(requestHeaders);
-  proxyHeaders.set("content-type", "application/json");
-  proxyHeaders.delete("content-length");
+  const proxyHeaders = forwardHeaders(
+    requestHeaders,
+    { "content-type": "application/json" },
+    fallbackOrigin,
+  );
 
   const proxyBody: Record<string, unknown> = {
     accept: decision.accept,
@@ -504,29 +632,62 @@ async function proxyConsentDecision(
 }
 
 /**
- * Build the OIDC error redirect for a `prompt=none` request that cannot
- * be silently approved: `redirect_uri?error=consent_required&...`, with
- * `state` echoed when present (mirroring the plugin's own
- * `redirectWithPromptNoneError` shape).
+ * Is this authorize query one the OAuth Provider plugin actually signed,
+ * and still inside its validity window?
  *
- * Returns `null` when the request's `redirect_uri` isn't registered for
- * the client — this handler doesn't verify the query signature before
- * redirecting, so an unvalidated target would be an open redirect.
- * Exact match, plus the loopback-IP allowance the plugin applies at
+ * Mirrors the plugin's own `verifyOAuthQueryParams`: strip `sig`,
+ * re-sign what remains with the instance's signing secret, compare in
+ * constant time, and reject anything past `exp`. The plugin's copy is
+ * internal to the package, so this is a deliberate re-implementation
+ * against the same public primitives (`makeSignature` from
+ * `better-auth/crypto`) and the same secret the instance signs with —
+ * `MarfaAuth.signingSecret` exists so there is one resolved value rather
+ * than a verifier guessing at what the signer used.
+ *
+ * The plugin re-verifies on its own before minting anything, so this is
+ * not the fence that protects code issuance. It is the fence in front of
+ * the paths that act on the query WITHOUT reaching the plugin: the
+ * `prompt=none` error redirects, which take a `redirect_uri` and a
+ * `state` straight off the URL.
+ */
+async function verifySignedQuery(
+  auth: MarfaAuth,
+  oauthQuery: string,
+): Promise<boolean> {
+  try {
+    const params = new URLSearchParams(oauthQuery);
+    const sig = params.get("sig");
+    if (!sig) return false;
+    const expSeconds = Number(params.get("exp"));
+    if (!Number.isFinite(expSeconds) || expSeconds * 1000 < Date.now()) {
+      return false;
+    }
+    params.delete("sig");
+    const expected = await makeSignature(params.toString(), auth.signingSecret);
+    return constantTimeEqual(sig, expected);
+  } catch (err) {
+    log("warn", "consent: signed-query verification failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
+/**
+ * Is `candidate` one of the client's registered redirect URIs? Exact
+ * match, plus the loopback-IP allowance the plugin applies at
  * `/oauth2/authorize` (RFC 8252 §7.3: native apps bind an ephemeral
  * port, so the port is ignored for loopback hosts).
  */
-function buildPromptNoneErrorRedirect(
+function isRegisteredRedirectUri(
   registeredRedirectUris: readonly string[],
-  url: URL,
-): Response | null {
-  const redirectUri = url.searchParams.get("redirect_uri");
-  if (!redirectUri) return null;
-  const registered = registeredRedirectUris.some((entry) => {
-    if (entry === redirectUri) return true;
+  candidate: string,
+): boolean {
+  return registeredRedirectUris.some((entry) => {
+    if (entry === candidate) return true;
     try {
       const a = new URL(entry);
-      const b = new URL(redirectUri);
+      const b = new URL(candidate);
       const loopback =
         a.hostname === "127.0.0.1" ||
         a.hostname === "::1" ||
@@ -542,19 +703,141 @@ function buildPromptNoneErrorRedirect(
       return false;
     }
   });
-  if (!registered) return null;
+}
+
+/**
+ * What the plugin actually did with a proxied consent decision.
+ *
+ * The proxy normalizes both of the plugin's success shapes to a 302, so
+ * "status is 302" answers nothing on its own: an error redirect and a
+ * bounce back to the sign-in page look identical to a minted code. Only
+ * a redirect at the client's own registered callback carrying `code`
+ * means an authorization was actually issued.
+ *
+ *  - `code`         — redirect to a registered `redirect_uri` with `code`
+ *  - `client_error` — redirect to a registered `redirect_uri` with `error`
+ *  - `interaction`  — a redirect somewhere else: the plugin wants the
+ *                     user to do something (sign in again, pick an
+ *                     account) before it will answer
+ *  - `rejected`     — not a redirect at all; the plugin refused the
+ *                     request outright
+ */
+type ProxyOutcome = "code" | "client_error" | "interaction" | "rejected";
+
+function classifyProxyOutcome(
+  response: Response,
+  registeredRedirectUris: readonly string[],
+): ProxyOutcome {
+  if (response.status !== 302) return "rejected";
+  const location = response.headers.get("location");
+  if (!location) return "rejected";
+  let target: URL;
+  try {
+    target = new URL(location);
+  } catch {
+    // A relative Location is always an internal bounce, never a client
+    // callback (registered redirect URIs are absolute).
+    return "interaction";
+  }
+  const withoutQuery = `${target.origin}${target.pathname}`;
+  if (
+    !isRegisteredRedirectUri(registeredRedirectUris, withoutQuery) &&
+    !isRegisteredRedirectUri(registeredRedirectUris, location)
+  ) {
+    return "interaction";
+  }
+  if (target.searchParams.get("code")) return "code";
+  if (target.searchParams.get("error")) return "client_error";
+  return "interaction";
+}
+
+/**
+ * Build the OIDC error redirect for a `prompt=none` request that cannot
+ * be answered with a code: `redirect_uri?error=<code>&...`, with `state`
+ * echoed when present (mirroring the plugin's own
+ * `redirectWithPromptNoneError` shape).
+ *
+ * Returns `null` when the request's `redirect_uri` isn't registered for
+ * the client, so a hand-crafted target can never become an open
+ * redirect. Callers verify the query signature before reaching here; the
+ * registration check is the second fence, not the only one.
+ */
+function buildPromptNoneErrorRedirect(
+  registeredRedirectUris: readonly string[],
+  url: URL,
+  error: string,
+  description: string,
+): Response | null {
+  const redirectUri = url.searchParams.get("redirect_uri");
+  if (!redirectUri) return null;
+  if (!isRegisteredRedirectUri(registeredRedirectUris, redirectUri)) {
+    return null;
+  }
 
   const params = new URLSearchParams({
-    error: "consent_required",
-    error_description: "End-User consent is required",
+    error,
+    error_description: description,
   });
   const state = url.searchParams.get("state");
   if (state) params.append("state", state);
   const separator = redirectUri.includes("?") ? "&" : "?";
-  return new Response(null, {
-    status: 302,
-    headers: { location: `${redirectUri}${separator}${params.toString()}` },
-  });
+  return withNoStore(
+    new Response(null, {
+      status: 302,
+      headers: { location: `${redirectUri}${separator}${params.toString()}` },
+    }),
+  );
+}
+
+/**
+ * Put the user's standing grant back after a silent re-authorization
+ * narrowed it.
+ *
+ * The OAuth Provider plugin rewrites `auth_oauth_consent.scopes` to the
+ * requested set on every accept. That is right for the interactive path
+ * — the user is looking at the checkboxes — but on the silent path
+ * nobody agreed to anything: a client that asks for one scope this time
+ * would shrink a three-scope grant it was given, with no interaction and
+ * no way for the user to see it happen. The next request for the full
+ * set would then re-prompt, and the projected `system.connection` row
+ * (which the silent path leaves alone) would disagree with the consent
+ * row in the meantime.
+ *
+ * So the standing grant wins: the code just minted carries only the
+ * scopes the client asked for, and the record keeps the wider set the
+ * user actually approved. Narrowing a grant stays a deliberate act,
+ * available on the consent screen and on `/auth/security`.
+ *
+ * Awaited rather than fired and forgotten — the window where the stored
+ * row disagrees with the projection should not outlive the request. A
+ * failure logs and leaves the narrowed row; the alternative (failing the
+ * authorization) would be worse for a user whose code is already minted.
+ */
+async function preserveBroaderGrant(
+  storage: Storage,
+  opts: {
+    authUserId: string;
+    clientId: string;
+    priorScopes: readonly string[];
+    requestedScopes: readonly string[];
+  },
+): Promise<void> {
+  const requested = new Set(opts.requestedScopes);
+  const narrowed = opts.priorScopes.some((s) => !requested.has(s));
+  if (!narrowed) return;
+  if (typeof storage.oauthProvider?.setConsentScopes !== "function") return;
+  try {
+    await storage.oauthProvider.setConsentScopes(
+      opts.clientId,
+      opts.authUserId,
+      opts.priorScopes,
+    );
+  } catch (err) {
+    log("warn", "consent skip: restoring the prior consent scopes failed", {
+      client_id: opts.clientId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**

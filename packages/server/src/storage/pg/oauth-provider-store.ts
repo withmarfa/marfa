@@ -375,4 +375,36 @@ export class PgOauthProviderStore implements OauthProviderStore {
     if (!Array.isArray(row.scopes)) return undefined;
     return row.scopes.filter((s): s is string => typeof s === "string");
   }
+
+  /**
+   * Targets the same row `getPriorConsent` reads (most recent by
+   * `updated_at`) so the read the consent route based its decision on and
+   * the write that repairs it can never address different rows.
+   * `updated_at` is deliberately left alone: bumping it would reorder the
+   * "most recent" selection this method just resolved.
+   */
+  async setConsentScopes(
+    clientId: string,
+    authUserId: string,
+    scopes: readonly string[],
+  ): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: auth_oauth_consent.id })
+      .from(auth_oauth_consent)
+      .where(
+        and(
+          eq(auth_oauth_consent.clientId, clientId),
+          eq(auth_oauth_consent.userId, authUserId),
+        ),
+      )
+      .orderBy(desc(auth_oauth_consent.updatedAt))
+      .limit(1);
+    const id = rows[0]?.id;
+    if (!id) return false;
+    await this.db
+      .update(auth_oauth_consent)
+      .set({ scopes: [...scopes] })
+      .where(eq(auth_oauth_consent.id, id));
+    return true;
+  }
 }

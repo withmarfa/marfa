@@ -1170,6 +1170,25 @@ export interface OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<readonly string[] | undefined>;
+  /**
+   * Overwrite the scope literals on the same `auth_oauth_consent` row
+   * `getPriorConsent` reads (most recent by `updated_at`). Returns true
+   * when a row was updated, false when there was none.
+   *
+   * Exists for one caller: the silent re-authorization path in
+   * `routes/auth-consent.ts`. The OAuth Provider plugin rewrites the
+   * stored consent scopes to the *requested* set on every accept, so a
+   * narrower request against a wider standing grant would silently
+   * shrink what the user approved — with no interaction to authorize the
+   * narrowing. The route restores the wider set afterwards. Not a
+   * general-purpose consent editor: widening a grant must go through the
+   * consent screen.
+   */
+  setConsentScopes(
+    clientId: string,
+    authUserId: string,
+    scopes: readonly string[],
+  ): Promise<boolean>;
   /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
    *  row keyed by the hashed token output of `storeTokens.hash` (which is
    *  `hashApiKey(token, salt)`), or null if the token isn't recognized or

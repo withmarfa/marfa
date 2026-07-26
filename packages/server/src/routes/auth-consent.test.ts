@@ -839,7 +839,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     expect(items.data.length).toBe(1);
   });
 
-  it("allows a POST with no Origin or Referer (same-origin form POST may omit both)", async () => {
+  it("passes a POST with no Origin or Referer to the proxy hop, where Better Auth refuses it", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-absent@example.com");
@@ -854,11 +854,19 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
       },
       headers: { cookie },
     });
-    expect(res.status).not.toBe(403);
+
+    // This handler's own guard rejects only a *present, non-allowlisted*
+    // origin, so the request gets through it — the projection landing
+    // proves that. Better Auth is the layer that refuses an origin-less
+    // cookie-bearing POST, and this handler deliberately forwards the
+    // request's own headers so it can. (The consent-skip path is the
+    // exception: a top-level navigation has no origin to forward, so it
+    // stamps the issuer's own. See `routes/forward-headers.ts`.)
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
     expect(items.data.length).toBe(1);
+    expect(res.status).toBe(403);
   });
 });
