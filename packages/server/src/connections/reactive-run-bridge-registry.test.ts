@@ -21,7 +21,7 @@ import {
   tryStartReactiveRunBridge,
   __test_internals,
 } from "./reactive-run-bridge.js";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import { isValidId, type IntegrationManifest } from "@withmarfa/shared";
 import { publish } from "../pubsub.js";
 
 /**
@@ -1042,6 +1042,82 @@ describe("bridge — unmapped integration handling", () => {
     await bridge!.stop();
   });
 
+  it("uses one genuine UUIDv7 activity for multiple connections of the same integration", async () => {
+    const integrationName = "acme.unmapped-shared-integration";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionIds = [
+      await createConnection({ integrationRef: integrationId }),
+      await createConnection({ integrationRef: integrationId }),
+    ];
+    const beforePublish = Date.now();
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "shared integration event" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+
+      const matchingRows = async () => {
+        const activity = await ctx.storage.items.list({
+          type: "system.activity",
+          limit: 100,
+        });
+        return activity.data.filter((row) => {
+          const properties = row.properties as { summary?: string };
+          return properties.summary?.includes(integrationName);
+        });
+      };
+      const rows = await waitFor(matchingRows, (value) => value.length === 1);
+      expect(rows).toHaveLength(1);
+
+      const activity = rows[0];
+      if (!activity) throw new Error("unmapped activity was not persisted");
+      expect(isValidId(activity.id)).toBe(true);
+      const timestampHex = activity.id.slice(0, 8) + activity.id.slice(9, 13);
+      const idTimestamp = Number.parseInt(timestampHex, 16);
+      expect(idTimestamp).toBeGreaterThanOrEqual(beforePublish);
+      expect(idTimestamp).toBeLessThanOrEqual(Date.now());
+      expect(activity.source).toBe("marfa/reactive-run-bridge");
+      expect(activity.source_id).toBe(
+        `unmapped-integration:${JSON.stringify([null, integrationName])}`,
+      );
+
+      const properties = activity.properties as { connection_id?: string };
+      expect(connectionIds).toContain(properties.connection_id);
+
+      const secondNote = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "second shared integration event" },
+      });
+      await publish({
+        type: "created",
+        item: secondNote,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(await matchingRows()).toHaveLength(1);
+    } finally {
+      await bridge!.stop();
+    }
+  });
+
   it("retries the activity write after a transient first-write failure", async () => {
     const integrationName = "acme.unmapped-activity-retry";
     const intUnmapped = await createIntegration(
@@ -1233,11 +1309,14 @@ describe("bridge — unmapped integration handling", () => {
       integrationRef: integrationId,
     });
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
-    const originalGet = ctx.storage.items.get.bind(ctx.storage.items);
-    let now = 2_000;
+    const originalFindBySourceId = ctx.storage.items.findBySourceId.bind(
+      ctx.storage.items,
+    );
     let activityWriteAttempts = 0;
     let committedActivityId: string | undefined;
     let hideCommittedRowOnce = true;
+    let sourceLookupAttempts = 0;
+    let sourceLookupCompletions = 0;
 
     ctx.storage.items.create = async (input, tenantId) => {
       const properties = input.properties as { summary?: string } | undefined;
@@ -1254,12 +1333,19 @@ describe("bridge — unmapped integration handling", () => {
       }
       return originalCreate(input, tenantId);
     };
-    ctx.storage.items.get = async (id, tenantId, options) => {
-      if (id === committedActivityId && hideCommittedRowOnce) {
+    ctx.storage.items.findBySourceId = async (source, sourceId, tenantId) => {
+      sourceLookupAttempts++;
+      const existing = await originalFindBySourceId(source, sourceId, tenantId);
+      sourceLookupCompletions++;
+      if (
+        committedActivityId !== undefined &&
+        existing?.id === committedActivityId &&
+        hideCommittedRowOnce
+      ) {
         hideCommittedRowOnce = false;
         return null;
       }
-      return originalGet(id, tenantId, options);
+      return existing;
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1268,9 +1354,8 @@ describe("bridge — unmapped integration handling", () => {
       apiToken: "stub-token",
       fetch: () => Promise.resolve(new Response(null, { status: 202 })),
       maxAttempts: 1,
-      unmappedActivityRetryBaseMs: 100,
-      unmappedActivityRetryMaxMs: 100,
-      unmappedActivityNow: () => now,
+      unmappedActivityRetryBaseMs: 0,
+      unmappedActivityRetryMaxMs: 0,
     });
     expect(bridge).not.toBeNull();
 
@@ -1291,19 +1376,37 @@ describe("bridge — unmapped integration handling", () => {
       await publishNote("ambiguous first attempt");
       expect(
         await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
-          (attempts) => attempts === 1,
+          () =>
+            Promise.resolve({
+              activityWriteAttempts,
+              sourceLookupAttempts,
+              sourceLookupCompletions,
+            }),
+          (attempts) =>
+            attempts.activityWriteAttempts === 1 &&
+            attempts.sourceLookupAttempts === 2 &&
+            attempts.sourceLookupCompletions === 2,
         ),
-      ).toBe(1);
+      ).toEqual({
+        activityWriteAttempts: 1,
+        sourceLookupAttempts: 2,
+        sourceLookupCompletions: 2,
+      });
 
-      now += 100;
+      // The lookup completes just before the bridge catch handler releases
+      // the in-flight gate. Let that continuation finish before retrying.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await publishNote("idempotent retry");
       expect(
         await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
-          (attempts) => attempts === 2,
+          () =>
+            Promise.resolve({ sourceLookupAttempts, sourceLookupCompletions }),
+          (lookups) =>
+            lookups.sourceLookupAttempts === 3 &&
+            lookups.sourceLookupCompletions === 3,
         ),
-      ).toBe(2);
+      ).toEqual({ sourceLookupAttempts: 3, sourceLookupCompletions: 3 });
+      expect(activityWriteAttempts).toBe(1);
 
       const activity = await ctx.storage.items.list({
         type: "system.activity",
@@ -1324,10 +1427,12 @@ describe("bridge — unmapped integration handling", () => {
 
       await publishNote("deduped after recovered commit");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(activityWriteAttempts).toBe(2);
+      expect(activityWriteAttempts).toBe(1);
+      expect(sourceLookupAttempts).toBe(3);
+      expect(sourceLookupCompletions).toBe(3);
     } finally {
       ctx.storage.items.create = originalCreate;
-      ctx.storage.items.get = originalGet;
+      ctx.storage.items.findBySourceId = originalFindBySourceId;
       await bridge!.stop();
     }
   });

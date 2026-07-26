@@ -36,7 +36,6 @@
  * separate subscriber listens for `system.connection` lifecycle events
  * (created/updated/deleted) and refreshes the affected entry.
  */
-import { createHash } from "node:crypto";
 import type { Item } from "@withmarfa/shared";
 import { Pool } from "undici";
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
@@ -733,17 +732,13 @@ function unmappedActivityKey(
   return JSON.stringify([tenantId ?? null, integrationName]);
 }
 
-/**
- * Content-derived UUIDv7-shaped identifier used only as an idempotency key.
- * The item store requires UUIDv7 syntax for caller-supplied ids; overriding
- * the version + variant nibbles retains 120 bits of the namespaced digest.
- */
-function unmappedActivityId(key: string): string {
-  const hex = createHash("sha256")
-    .update(`reactive-run-bridge:unmapped-activity:${key}`, "utf8")
-    .digest("hex");
-  const variant = (8 | (Number.parseInt(hex.charAt(16), 16) & 3)).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+const UNMAPPED_ACTIVITY_SOURCE = "marfa/reactive-run-bridge";
+
+function unmappedActivitySourceId(key: string): string {
+  // The database uniqueness constraint is global across tenants, so the
+  // tenant-inclusive key must remain part of source_id even though lookups
+  // also pass tenantId for read isolation.
+  return `unmapped-integration:${key}`;
 }
 
 function unmappedActivityProperties(entry: SubscriptionEntry): {
@@ -795,23 +790,42 @@ async function writeUnmappedActivity(
   storage: Storage,
 ): Promise<void> {
   const key = unmappedActivityKey(tenantId, entry.integration_name);
-  const id = unmappedActivityId(key);
+  const sourceId = unmappedActivitySourceId(key);
+  const existing = await storage.items.findBySourceId(
+    UNMAPPED_ACTIVITY_SOURCE,
+    sourceId,
+    tenantId,
+  );
+  if (isMatchingUnmappedActivity(existing, tenantId, entry.integration_name)) {
+    return;
+  }
+  if (existing) {
+    throw new Error(
+      `Natural-key collision for unmapped integration activity ${sourceId}`,
+    );
+  }
+
   try {
     await storage.items.create(
       {
-        id,
         type: "system.activity",
         properties: unmappedActivityProperties(entry),
+        source: UNMAPPED_ACTIVITY_SOURCE,
+        source_id: sourceId,
       },
       tenantId,
     );
   } catch (createError) {
     // A transport/driver rejection does not prove the transaction failed.
-    // Re-read the deterministic id and accept only the same tenant-scoped,
+    // Re-read the natural key and accept only the same tenant-scoped,
     // semantically identical alert; an unrelated collision remains a failure.
-    const existing = await storage.items.get(id, tenantId);
+    const committed = await storage.items.findBySourceId(
+      UNMAPPED_ACTIVITY_SOURCE,
+      sourceId,
+      tenantId,
+    );
     if (
-      isMatchingUnmappedActivity(existing, tenantId, entry.integration_name)
+      isMatchingUnmappedActivity(committed, tenantId, entry.integration_name)
     ) {
       return;
     }
