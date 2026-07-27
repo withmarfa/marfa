@@ -370,6 +370,116 @@ describe("compatible_with", () => {
   });
 });
 
+// A reader that understands the target reads its optional fields too, so a
+// same-named field with a different shape is a mis-parse waiting to happen —
+// the promise `compatible_with` makes is about reading, not about which
+// fields happen to be mandatory.
+describe("compatible_with — optional fields on the target", () => {
+  it("rejects a same-named optional field with a conflicting type", () => {
+    const result = validate({
+      id: "acme.numeric_priority_task",
+      version: 1,
+      compatible_with: ["core.task"],
+      fields: {
+        title: { type: "string", required: true },
+        // `core.task.priority` is an optional low|medium|high|urgent enum.
+        priority: { type: "integer" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.task.priority.type" &&
+          error.code === "compatible_with_violation",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a same-named optional field with conflicting enum values", () => {
+    const result = validate({
+      id: "acme.extra_precision_task",
+      version: 1,
+      compatible_with: ["core.task"],
+      fields: {
+        title: { type: "string", required: true },
+        precision: { type: "enum", enum_values: ["day", "century"] },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.task.precision.enum_values",
+      ),
+    ).toBe(true);
+  });
+
+  it("still allows the target's optional field to be absent entirely", () => {
+    const result = validate({
+      id: "acme.bare_task",
+      version: 1,
+      compatible_with: ["core.task"],
+      fields: { title: { type: "string", required: true } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("allows narrowing an optional string to an enum", () => {
+    // Two shipped connectors do exactly this: `core.task.status` and
+    // `core.event.status` are free-text, and the connector knows the closed
+    // set the upstream service actually emits. An enum only ever holds a
+    // string, so a reader expecting `string` is never surprised.
+    const result = validate({
+      id: "acme.staged_task",
+      version: 1,
+      compatible_with: ["core.task"],
+      fields: {
+        title: { type: "string", required: true },
+        status: { type: "enum", enum_values: ["pending", "completed"] },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects widening the target's required enum to a plain string", () => {
+    const customTargets = new Map<string, TypeSchema>([
+      [
+        "acme.staged",
+        {
+          id: "acme.staged",
+          version: 1,
+          fields: {
+            stage: {
+              type: "enum",
+              enum_values: ["open", "closed"],
+              required: true,
+            },
+          },
+        },
+      ],
+    ]);
+    const result = validateTypeSchema(
+      {
+        id: "acme.freeform_staged",
+        version: 1,
+        compatible_with: ["acme.staged"],
+        fields: { stage: { type: "string", required: true } },
+      },
+      { resolveSchema: (id) => customTargets.get(id) ?? emitted.get(id) },
+    );
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) => error.field === "compatible_with.acme.staged.stage.type",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("field attributes survive normalization", () => {
   it("carries searchable, maxLength, maxItems and annotation formats", () => {
     const result = validate({

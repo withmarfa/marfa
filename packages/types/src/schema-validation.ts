@@ -1025,8 +1025,30 @@ function validateCompatibleWith(
     const targetFields = collectAncestorFields(target, ctx);
     for (const [fieldName, targetEntry] of targetFields) {
       const targetField = targetEntry.definition;
-      if (targetField.required !== true) continue;
       const candidate = candidateFields.get(fieldName);
+
+      // An optional target field carries a weaker promise: a reader of the
+      // target already copes with it being absent, so this type need not
+      // declare it. What it may not do is declare the same name with a
+      // different shape — the reader will read that field when it is present,
+      // and an integer where it expects an enum is a mis-parse either way.
+      if (targetField.required !== true) {
+        if (!candidate) continue;
+        const conflict = describeCompatibilityConflict(candidate, targetField);
+        if (conflict) {
+          errors.push(
+            issue({
+              field: `compatible_with.${target}.${fieldName}.${conflict.attribute}`,
+              code: "compatible_with_violation",
+              expected: `${conflict.expected}, matching "${target}"`,
+              actual: conflict.actual,
+              hint: `A reader of "${target}" reads "${fieldName}" whenever it is present and would mis-parse this one. Match its shape, rename this field, or drop the claim.`,
+            }),
+          );
+        }
+        continue;
+      }
+
       if (!candidate) {
         errors.push(
           issue({
@@ -1068,11 +1090,35 @@ function validateCompatibleWith(
   }
 }
 
+/**
+ * Whether a value valid under `candidate` is also valid under `target`.
+ *
+ * Only one pair is asymmetric: `enum_values` is a list of strings, so an
+ * `enum` field only ever holds a string and a reader expecting `string` reads
+ * it fine. The reverse fails — a reader expecting one of a fixed set can be
+ * handed anything. Every other pair has to match exactly.
+ */
+function fieldTypeIsReadableAs(
+  candidate: FieldType,
+  target: FieldType,
+): boolean {
+  if (candidate === target) return true;
+  return candidate === "enum" && target === "string";
+}
+
+/**
+ * The first way `candidate` would surprise a reader of `target`, or null.
+ *
+ * Reaches field declarations only. Two `object` fields — or two arrays of
+ * them — pass whatever they contain, because a `FieldDefinition` has no
+ * vocabulary for nested shape and inventing one here would be guesswork. The
+ * limit is documented alongside the authoring rule rather than papered over.
+ */
 function describeCompatibilityConflict(
   candidate: FieldDefinition,
   target: FieldDefinition,
 ): { attribute: string; expected: string; actual: string } | null {
-  if (candidate.type !== target.type) {
+  if (!fieldTypeIsReadableAs(candidate.type, target.type)) {
     return {
       attribute: "type",
       expected: `type ${target.type}`,

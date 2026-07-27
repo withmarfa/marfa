@@ -632,7 +632,7 @@ const readwiseHighlight: TypeSchema = {
 const todoistTask: TypeSchema = {
   id: "todoist.task",
   label: "Todoist Task",
-  description: "A task on a Todoist project, captured with upstream fidelity. Mirrors Todoist's Sync API item resource closely so a round-trip preserves what Todoist considers authoritative (content, description, project_id, section_id, parent_id, labels, priority, due, child_order, completed, url, comment_count). For cross-app interop with non-Todoist consumers, the Todoist integration can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
+  description: "A task on a Todoist project, captured with upstream fidelity. Mirrors Todoist's Sync API item resource closely so a round-trip preserves what Todoist considers authoritative (content, description, project_id, section_id, parent_id, labels, priority, due, child_order, completed, url, comment_count). Deliberately not `compatible_with: core.task` — the two disagree on `priority`, which is Todoist's integer 1-4 here and a `low | medium | high | urgent` enum there, so a `core.task` reader would be handed `4` where it expects `\"urgent\"`. Retyping the field would both discard the upstream fidelity this type exists for and orphan the property on every task already captured. The Todoist integration can be configured to write `core.task` instead when cross-app interop matters more than fidelity.",
   version: 1,
   fields: {
     title: { type: "string", description: "Task title (maps to Todoist `content`).", required: true },
@@ -649,7 +649,6 @@ const todoistTask: TypeSchema = {
     comment_count: { type: "integer", description: "Number of comments on the task at last sync (maps to Todoist `comment_count`)." },
   },
   display_hints: { title_field: "title", body_field: "description" },
-  compatible_with: ["core.task"],
 };
 
 const withmarfaCapturedEmail: TypeSchema = {
