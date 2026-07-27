@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { createConnection } from "./connection.js";
+import { createConnection, pgEndpointHost } from "./connection.js";
 
 // Postgres-only — runs under `pnpm test:pg` which spins up a throw-away
 // pg17 container and sets DB_DIALECT=pg + DATABASE_URL.
@@ -76,5 +76,34 @@ describe("createConnection pool-mode guard", () => {
         directConnectionString: "   ",
       }),
     ).rejects.toThrow(/MARFA_DATABASE_URL_DIRECT/);
+  });
+});
+
+/**
+ * The startup log names the endpoint streaming RLS reserves from, and the only
+ * thing that identifies it is the host. The rest of the connection string is
+ * the password.
+ */
+describe("pgEndpointHost", () => {
+  it("returns the host and nothing else", () => {
+    expect(
+      pgEndpointHost(
+        "postgres://marfa:s3cret@ep-cool-1-pooler.example:6432/db",
+      ),
+    ).toBe("ep-cool-1-pooler.example");
+  });
+
+  it("never leaks the credentials in the string it returns", () => {
+    const host = pgEndpointHost(
+      "postgresql://marfa:hunter2@direct.example:5432/db?sslmode=require",
+    );
+    expect(host).not.toContain("hunter2");
+    expect(host).not.toContain("marfa:");
+  });
+
+  it("degrades to a placeholder rather than throwing on an unparseable URL", () => {
+    // A log line is never worth failing a boot over.
+    expect(pgEndpointHost("not a url")).toBe("unknown");
+    expect(pgEndpointHost("")).toBe("unknown");
   });
 });
