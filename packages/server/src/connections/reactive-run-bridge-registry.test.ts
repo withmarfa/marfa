@@ -1347,14 +1347,19 @@ describe("bridge — unmapped integration handling", () => {
           (attempts) => attempts === 2,
         ),
       ).toBe(2);
-      const activities = await ctx.storage.items.list({
-        type: "system.activity",
-        limit: 100,
-      });
-      const activity = activities.data.find((row) => {
-        const properties = row.properties as { summary?: string };
-        return properties.summary?.includes(integrationName);
-      });
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
       expect(activity?.properties).toMatchObject({
         connection_id: firstConnection,
       });
