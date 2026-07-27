@@ -28,11 +28,14 @@ import { isBrokerAuthorized } from "@withmarfa/shared";
  * operator can tell a Worker missing its secrets from a caller
  * presenting the wrong one. A Worker deployed without secrets must
  * refuse the request, not accept `Bearer undefined`.
+ *
+ * Async only because the shared comparison is constant-time, and Web
+ * Crypto is the one constant-time primitive a Workers isolate has.
  */
-export function brokerAuthFailure(
+export async function brokerAuthFailure(
   request: Request,
   brokerKey: string | undefined,
-): Response | null {
+): Promise<Response | null> {
   if (!brokerKey) {
     return Response.json(
       {
@@ -43,7 +46,9 @@ export function brokerAuthFailure(
       { status: 503 },
     );
   }
-  if (!isBrokerAuthorized(request.headers.get("authorization"), brokerKey)) {
+  if (
+    !(await isBrokerAuthorized(request.headers.get("authorization"), brokerKey))
+  ) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   return null;

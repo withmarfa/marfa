@@ -9,8 +9,8 @@ import { isBrokerAuthorized } from "./broker-auth.js";
 const KEY = "broker_key_value";
 
 describe("isBrokerAuthorized", () => {
-  it("admits the exact Bearer form", () => {
-    expect(isBrokerAuthorized(`Bearer ${KEY}`, KEY)).toBe(true);
+  it("admits the exact Bearer form", async () => {
+    await expect(isBrokerAuthorized(`Bearer ${KEY}`, KEY)).resolves.toBe(true);
   });
 
   it.each([
@@ -24,20 +24,43 @@ describe("isBrokerAuthorized", () => {
     ["lowercased scheme", `bearer ${KEY}`],
     ["a different scheme", `Basic ${KEY}`],
     ["double scheme", `Bearer Bearer ${KEY}`],
-  ])("refuses %s", (_label, header) => {
-    expect(isBrokerAuthorized(header, KEY)).toBe(false);
+  ])("refuses %s", async (_label, header) => {
+    await expect(isBrokerAuthorized(header, KEY)).resolves.toBe(false);
   });
 
   it.each([
     ["undefined", undefined],
     ["null", null],
     ["empty string", ""],
-  ])("fails closed when the configured key is %s", (_label, key) => {
+  ])("fails closed when the configured key is %s", async (_label, key) => {
     // The interpolation trap: a caller as misconfigured as the callee
     // would send exactly what a naive compare accepts.
-    expect(isBrokerAuthorized("Bearer undefined", key)).toBe(false);
-    expect(isBrokerAuthorized("Bearer ", key)).toBe(false);
-    expect(isBrokerAuthorized("Bearer null", key)).toBe(false);
-    expect(isBrokerAuthorized(undefined, key)).toBe(false);
+    await expect(isBrokerAuthorized("Bearer undefined", key)).resolves.toBe(
+      false,
+    );
+    await expect(isBrokerAuthorized("Bearer ", key)).resolves.toBe(false);
+    await expect(isBrokerAuthorized("Bearer null", key)).resolves.toBe(false);
+    await expect(isBrokerAuthorized(undefined, key)).resolves.toBe(false);
+  });
+
+  it("admits a key longer than one hash block", async () => {
+    // The comparison MACs both sides before comparing them, so a key
+    // that spans several SHA-256 blocks exercises a different path
+    // through Web Crypto than the short keys above.
+    const long = "k".repeat(4096);
+    await expect(isBrokerAuthorized(`Bearer ${long}`, long)).resolves.toBe(
+      true,
+    );
+    await expect(isBrokerAuthorized(`Bearer ${long}x`, long)).resolves.toBe(
+      false,
+    );
+  });
+
+  it("compares bytes, not glyphs", async () => {
+    // Two strings that render identically but differ byte for byte are
+    // not interchangeable: the key is an opaque secret, not text to be
+    // matched leniently. Precomposed U+00E9 against e + U+0301.
+    await expect(isBrokerAuthorized("Bearer é", "é")).resolves.toBe(false);
+    await expect(isBrokerAuthorized("Bearer é", "é")).resolves.toBe(true);
   });
 });

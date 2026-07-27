@@ -10,7 +10,7 @@ import type { ControlPlaneEnv } from "./env.js";
  * a credential — minting a runtime credential, arming a schedule —
  * has to gate identically. A second inline copy is how two routes
  * quietly stop agreeing on what "authorized" means: one gets a fix (a
- * header rename, a timing-safe compare) and the other doesn't, and the
+ * header rename, a comparison change) and the other doesn't, and the
  * gap goes unnoticed until something depends on it.
  *
  * The Worker is routed to public hostnames, so every route that can
@@ -24,12 +24,15 @@ import type { ControlPlaneEnv } from "./env.js";
  * through, and `@withmarfa/runtime-sdk` must not take a Hono
  * dependency it would ship into every integration bundle. This
  * function is the Hono-shaped half; the rule is shared.
+ *
+ * Async only because that comparison is constant-time, and Web Crypto
+ * is the one constant-time primitive a Workers isolate has.
  */
-export function brokerAuthFailure(
+export async function brokerAuthFailure(
   c: Context<{ Bindings: ControlPlaneEnv }>,
   brokerKey: string,
-): Response | null {
-  if (!isBrokerAuthorized(c.req.header("authorization"), brokerKey)) {
+): Promise<Response | null> {
+  if (!(await isBrokerAuthorized(c.req.header("authorization"), brokerKey))) {
     return c.json({ error: "unauthorized" }, 401);
   }
   return null;

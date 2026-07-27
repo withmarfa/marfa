@@ -172,7 +172,10 @@ export function createIntegrationWorker<
       // parsing, so a caller that cannot authenticate learns nothing
       // about which paths exist, which parameters they take, or
       // whether a given connection is real.
-      const refusal = brokerAuthFailure(request, env.MARFA_RUNTIME_BROKER_KEY);
+      const refusal = await brokerAuthFailure(
+        request,
+        env.MARFA_RUNTIME_BROKER_KEY,
+      );
       if (refusal) return refusal;
 
       const url = new URL(request.url);
