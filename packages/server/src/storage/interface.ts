@@ -911,6 +911,19 @@ export interface TenantQuotaStore {
   get(
     tenantId: string,
   ): Promise<import("@withmarfa/shared").TenantQuota | null>;
+  /**
+   * Reads tenant existence and its optional quota row in one transaction,
+   * serialized against tenant deletion. `exists: true, quota: null` means the
+   * tenant uses environment defaults; `exists: false` means the tenant is
+   * unknown at the read's linearization point.
+   */
+  getForExistingTenant(tenantId: string): Promise<
+    | {
+        exists: true;
+        quota: import("@withmarfa/shared").TenantQuota | null;
+      }
+    | { exists: false; quota: null }
+  >;
   /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
   set(
     tenantId: string,

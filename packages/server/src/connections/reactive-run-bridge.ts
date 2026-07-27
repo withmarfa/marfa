@@ -92,6 +92,7 @@ interface SubscriberFailureState {
 interface UnmappedActivityState {
   reported: boolean;
   inFlight: Promise<void> | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
   consecutiveFailures: number;
   retryAfter: number;
 }
@@ -371,6 +372,22 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   // bridge has fully unwound before they move on.
   let drainerExit: Promise<void> | null = null;
 
+  const clearUnmappedStateIfUnused = (entry: SubscriptionEntry): void => {
+    const stillUsed = Array.from(subscriptions.values()).some(
+      (candidate) =>
+        candidate.integration_name === entry.integration_name &&
+        candidate.tenant_id === entry.tenant_id,
+    );
+    if (stillUsed) return;
+    const key = unmappedActivityKey(
+      entry.tenant_id ?? undefined,
+      entry.integration_name,
+    );
+    const state = unmappedActivityStates.get(key);
+    if (state?.retryTimer) clearTimeout(state.retryTimer);
+    unmappedActivityStates.delete(key);
+  };
+
   /**
    * Refresh the subscription entry for one connection id. Called from
    * the cache-invalidation subscriber on system.connection lifecycle
@@ -378,10 +395,12 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
    * the storage reads are idempotent.
    */
   const refreshConnection = async (connectionId: string): Promise<void> => {
+    const previous = subscriptions.get(connectionId);
     const item = await storage.items.get(connectionId);
     if (item?.type !== "system.connection") {
       subscriptions.delete(connectionId);
       subscriberFailures.delete(connectionId);
+      if (previous) clearUnmappedStateIfUnused(previous);
       return;
     }
     const entry = await buildEntryForConnection(storage, {
@@ -399,6 +418,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       subscriptions.delete(connectionId);
       subscriberFailures.delete(connectionId);
     }
+    if (previous) clearUnmappedStateIfUnused(previous);
   };
 
   /**
@@ -492,6 +512,12 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       running = false;
       subscriptions.clear();
       subscriberFailures.clear();
+      const unmappedActivityInFlight = Array.from(
+        unmappedActivityStates.values(),
+      ).flatMap((state) => (state.inFlight ? [state.inFlight] : []));
+      for (const state of unmappedActivityStates.values()) {
+        if (state.retryTimer) clearTimeout(state.retryTimer);
+      }
       unmappedActivityStates.clear();
       // Wake the for-await loops by emitting synthetic events. Each
       // loop wakes, sees `stopRequested === true`, breaks. The
@@ -538,6 +564,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       const exit = drainerExit;
       drainerExit = null;
       if (exit) await exit;
+      await Promise.allSettled(unmappedActivityInFlight);
       // Close every Pool last — after the drainer has stopped issuing
       // new requests. close() awaits in-flight, then destroys all
       // connections. Tests injecting config.fetch won't have any pools.
@@ -688,6 +715,7 @@ function handleUnmappedIntegration(
     state = {
       reported: false,
       inFlight: null,
+      retryTimer: null,
       consecutiveFailures: 0,
       retryAfter: 0,
     };
@@ -701,21 +729,39 @@ function handleUnmappedIntegration(
     try {
       await writeUnmappedActivity(entry, tenantId, storage);
       state.reported = true;
+      if (state.retryTimer) clearTimeout(state.retryTimer);
+      state.retryTimer = null;
       state.consecutiveFailures = 0;
       state.retryAfter = 0;
     } catch (err) {
       state.consecutiveFailures++;
+      const retryDelay = computeUnmappedActivityRetryMs(
+        state.consecutiveFailures,
+        config.unmappedActivityRetryBaseMs ?? UNMAPPED_ACTIVITY_RETRY_BASE_MS,
+        config.unmappedActivityRetryMaxMs ?? UNMAPPED_ACTIVITY_RETRY_MAX_MS,
+      );
       state.retryAfter =
-        (config.unmappedActivityNow?.() ?? Date.now()) +
-        computeUnmappedActivityRetryMs(
-          state.consecutiveFailures,
-          config.unmappedActivityRetryBaseMs ?? UNMAPPED_ACTIVITY_RETRY_BASE_MS,
-          config.unmappedActivityRetryMaxMs ?? UNMAPPED_ACTIVITY_RETRY_MAX_MS,
-        );
+        (config.unmappedActivityNow?.() ?? Date.now()) + retryDelay;
       console.error(
         `[reactive-run-bridge] unmapped-integration activity write failed for ${entry.integration_name}:`,
         err instanceof Error ? err.message : String(err),
       );
+      if (state.retryTimer) clearTimeout(state.retryTimer);
+      state.retryTimer = setTimeout(() => {
+        state.retryTimer = null;
+        if (states.get(key) !== state || state.reported) return;
+        if (config.resolveQueueUrl(entry.integration_name) !== null) {
+          states.delete(key);
+          return;
+        }
+        void handleUnmappedIntegration(
+          entry,
+          tenantId,
+          states,
+          config,
+          storage,
+        );
+      }, retryDelay);
       // Don't crash the drainer over an activity-row write failure.
     } finally {
       state.inFlight = null;

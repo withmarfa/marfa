@@ -42,6 +42,30 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
     };
   }
 
+  async getForExistingTenant(
+    tenantId: string,
+  ): Promise<
+    { exists: true; quota: TenantQuota | null } | { exists: false; quota: null }
+  > {
+    return this.db.transaction(async (tx) => {
+      // libsql write transactions use BEGIN IMMEDIATE, so this existence read
+      // and the optional quota read cannot interleave with account deletion.
+      const tenant = await tx
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .get();
+      if (!tenant) return { exists: false, quota: null };
+
+      const row = await tx
+        .select()
+        .from(tenantQuotas)
+        .where(eq(tenantQuotas.tenant_id, tenantId))
+        .get();
+      return { exists: true, quota: row ? toTenantQuota(row) : null };
+    });
+  }
+
   async set(
     tenantId: string,
     input: {
@@ -184,4 +208,16 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
     // count query — no DB row to sum here.
     return 0;
   }
+}
+
+function toTenantQuota(row: typeof tenantQuotas.$inferSelect): TenantQuota {
+  return {
+    tenant_id: row.tenant_id,
+    items_limit: row.items_limit,
+    webhooks_limit: row.webhooks_limit,
+    blobs_limit: row.blobs_limit,
+    storage_bytes_limit: row.storage_bytes_limit,
+    rate_per_minute_limit: row.rate_per_minute_limit,
+    updated_at: row.updated_at,
+  };
 }

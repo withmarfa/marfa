@@ -364,11 +364,11 @@ export function tenantRoutes(storage: Storage) {
   router.openapi(getQuotasRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
-    const tenant = await storage.tenants?.get(id);
-    if (!tenant) {
+    const result = await storage.tenantQuotas.getForExistingTenant(id);
+    if (!result.exists) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
-    const quota = await storage.tenantQuotas.get(id);
+    const quota = result.quota;
     return c.json(
       {
         tenant_id: id,

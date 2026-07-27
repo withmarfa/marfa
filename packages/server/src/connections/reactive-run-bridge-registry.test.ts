@@ -1118,7 +1118,7 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
-  it("retries the activity write after a transient first-write failure", async () => {
+  it("retries a transient activity-write failure without another event", async () => {
     const integrationName = "acme.unmapped-activity-retry";
     const intUnmapped = await createIntegration(
       manifest({ name: integrationName }),
@@ -1129,7 +1129,6 @@ describe("bridge — unmapped integration handling", () => {
 
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
     let activityWriteAttempts = 0;
-    let now = 1_000;
     ctx.storage.items.create = async (input, tenantId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
@@ -1150,9 +1149,8 @@ describe("bridge — unmapped integration handling", () => {
       apiToken: "stub-token",
       fetch: () => Promise.resolve(new Response(null, { status: 202 })),
       maxAttempts: 1,
-      unmappedActivityRetryBaseMs: 100,
-      unmappedActivityRetryMaxMs: 100,
-      unmappedActivityNow: () => now,
+      unmappedActivityRetryBaseMs: 10,
+      unmappedActivityRetryMaxMs: 10,
     });
     expect(bridge).not.toBeNull();
 
@@ -1172,15 +1170,6 @@ describe("bridge — unmapped integration handling", () => {
       };
 
       await publishNote("first activity attempt fails");
-      expect(
-        await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
-          (attempts) => attempts === 1,
-        ),
-      ).toBe(1);
-
-      now += 100;
-      await publishNote("second event retries activity write");
       expect(
         await waitFor(
           () => Promise.resolve(activityWriteAttempts),
@@ -1206,7 +1195,7 @@ describe("bridge — unmapped integration handling", () => {
         }),
       ).toHaveLength(1);
 
-      await publishNote("successful retry restores deduplication");
+      await publishNote("later events remain deduplicated");
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(activityWriteAttempts).toBe(2);
     } finally {
@@ -1382,30 +1371,20 @@ describe("bridge — unmapped integration handling", () => {
               sourceLookupAttempts,
               sourceLookupCompletions,
             }),
-          (attempts) =>
-            attempts.activityWriteAttempts === 1 &&
-            attempts.sourceLookupAttempts === 2 &&
-            attempts.sourceLookupCompletions === 2,
-        ),
-      ).toEqual({
-        activityWriteAttempts: 1,
-        sourceLookupAttempts: 2,
-        sourceLookupCompletions: 2,
-      });
-
-      // The lookup completes just before the bridge catch handler releases
-      // the in-flight gate. Let that continuation finish before retrying.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await publishNote("idempotent retry");
-      expect(
-        await waitFor(
-          () =>
-            Promise.resolve({ sourceLookupAttempts, sourceLookupCompletions }),
           (lookups) =>
+            lookups.activityWriteAttempts === 1 &&
             lookups.sourceLookupAttempts === 3 &&
             lookups.sourceLookupCompletions === 3,
         ),
-      ).toEqual({ sourceLookupAttempts: 3, sourceLookupCompletions: 3 });
+      ).toEqual({
+        activityWriteAttempts: 1,
+        sourceLookupAttempts: 3,
+        sourceLookupCompletions: 3,
+      });
+
+      await publishNote("later event remains deduplicated");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sourceLookupAttempts).toBe(3);
       expect(activityWriteAttempts).toBe(1);
 
       const activity = await ctx.storage.items.list({

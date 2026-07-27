@@ -72,5 +72,63 @@ describe.skipIf(!isPg)(
       await expect(update).resolves.toBeNull();
       await expect(ctx.storage.tenantQuotas.get(tenant.id)).resolves.toBeNull();
     });
+
+    it("reports an unknown tenant when deletion wins a quota read", async () => {
+      const tenant = await ctx.storage.tenants!.create(
+        "Quota read race tenant",
+      );
+      await ctx.storage.tenantQuotas.set(tenant.id, { items_limit: 5 });
+
+      let releaseDeletion!: () => void;
+      const deletionMayContinue = new Promise<void>((resolve) => {
+        releaseDeletion = resolve;
+      });
+      let tenantLocked!: () => void;
+      const deletionHasLock = new Promise<void>((resolve) => {
+        tenantLocked = resolve;
+      });
+
+      const deletion = pgDb.transaction(async (tx) => {
+        await tx
+          .select({ id: tenants.id })
+          .from(tenants)
+          .where(eq(tenants.id, tenant.id))
+          .for("update");
+        tenantLocked();
+        await deletionMayContinue;
+        await tx
+          .delete(tenantQuotas)
+          .where(eq(tenantQuotas.tenant_id, tenant.id));
+        await tx.delete(tenants).where(eq(tenants.id, tenant.id));
+      });
+
+      await deletionHasLock;
+      const read = ctx.storage.tenantQuotas.getForExistingTenant(tenant.id);
+      const settledWhileLocked = await Promise.race([
+        read.then(() => true),
+        new Promise<false>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 100),
+        ),
+      ]);
+      expect(settledWhileLocked).toBe(false);
+
+      releaseDeletion();
+      await deletion;
+      await expect(read).resolves.toEqual({ exists: false, quota: null });
+    });
+
+    it("returns a coherent tenant and quota snapshot when the reader wins", async () => {
+      const tenant = await ctx.storage.tenants!.create("Quota read tenant");
+      await ctx.storage.tenantQuotas.set(tenant.id, { items_limit: 7 });
+
+      await expect(
+        ctx.storage.tenantQuotas.getForExistingTenant(tenant.id),
+      ).resolves.toMatchObject({
+        exists: true,
+        quota: { tenant_id: tenant.id, items_limit: 7 },
+      });
+    });
   },
 );
