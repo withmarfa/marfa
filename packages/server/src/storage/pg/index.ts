@@ -4,6 +4,7 @@ import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
 } from "@withmarfa/shared";
+import type { DbPoolMode } from "../../config.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";
@@ -54,6 +55,9 @@ export async function createPgStorage(
      *  `createConnection`. Keeps streaming's session-level `SET ROLE` off
      *  the app's transaction-mode pooled connections. */
     directConnectionString?: string;
+    /** What kind of endpoint `connectionString` points at. `transaction`
+     *  makes `directConnectionString` mandatory — see `createConnection`. */
+    poolMode?: DbPoolMode;
   },
 ): Promise<Storage> {
   const { db, baseDb, client, streamClient, close } = await createConnection(
@@ -62,6 +66,7 @@ export async function createPgStorage(
       maxPoolSize: options?.maxPoolSize,
       skipBootstrap: options?.skipBootstrap,
       directConnectionString: options?.directConnectionString,
+      poolMode: options?.poolMode,
     },
   );
 

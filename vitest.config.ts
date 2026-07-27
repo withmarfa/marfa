@@ -13,6 +13,7 @@ export default defineConfig({
     // own vitest.config.ts, the only nested-workspace package today.
     projects: [
       "packages/*",
+      "infra/cloudflare/vitest.config.ts",
       "integrations/*/vitest.config.ts",
       "integrations/*/email-worker/vitest.config.ts",
     ],

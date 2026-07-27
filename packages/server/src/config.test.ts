@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   envNumber,
+  parseDbPoolMode,
   parseOtelSampleRatio,
   parseOtelHeaders,
   loadConfig,
@@ -137,6 +138,92 @@ describe("loadConfig MARFA_AUTH_SECRET production guard", () => {
     process.env.NODE_ENV = "test";
     delete process.env.API_KEY_SALT;
     delete process.env.MARFA_AUTH_SECRET;
+    expect(() => loadConfig()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MARFA_DB_POOL_MODE — the fail-closed boot guard for streaming RLS
+// ---------------------------------------------------------------------------
+
+describe("parseDbPoolMode", () => {
+  it("defaults to session when unset or empty", () => {
+    // Self-hosts talk to Postgres directly, so the session-mode default keeps
+    // them out of the guard entirely.
+    expect(parseDbPoolMode(undefined)).toBe("session");
+    expect(parseDbPoolMode("")).toBe("session");
+  });
+
+  it("honors both legal values", () => {
+    expect(parseDbPoolMode("session")).toBe("session");
+    expect(parseDbPoolMode("transaction")).toBe("transaction");
+  });
+
+  it("throws on an unrecognized value rather than picking a default", () => {
+    // Warn-and-default (the pattern the other parsers in this file use) would
+    // resolve a typo to the permissive mode, which is precisely the silent
+    // downgrade this knob exists to prevent.
+    expect(() => parseDbPoolMode("transacton")).toThrow(/MARFA_DB_POOL_MODE/);
+  });
+});
+
+describe("loadConfig streaming-RLS endpoint guard", () => {
+  const saved = {
+    DB_DIALECT: process.env.DB_DIALECT,
+    DATABASE_URL: process.env.DATABASE_URL,
+    MARFA_DB_POOL_MODE: process.env.MARFA_DB_POOL_MODE,
+    MARFA_DATABASE_URL_DIRECT: process.env.MARFA_DATABASE_URL_DIRECT,
+  };
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  });
+
+  it("throws naming MARFA_DATABASE_URL_DIRECT on a transaction-mode pool with no direct endpoint", () => {
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@pooler.example/marfa";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    delete process.env.MARFA_DATABASE_URL_DIRECT;
+    expect(() => loadConfig()).toThrow(/MARFA_DATABASE_URL_DIRECT/);
+  });
+
+  it("treats an empty direct URL the same as an unset one", () => {
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@pooler.example/marfa";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    process.env.MARFA_DATABASE_URL_DIRECT = "";
+    expect(() => loadConfig()).toThrow(/MARFA_DATABASE_URL_DIRECT/);
+  });
+
+  it("succeeds on a transaction-mode pool once the direct endpoint is configured", () => {
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@pooler.example/marfa";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    process.env.MARFA_DATABASE_URL_DIRECT =
+      "postgres://user:pw@direct.example/marfa";
+    const config = loadConfig();
+    expect(config.dbPoolMode).toBe("transaction");
+    expect(config.databaseUrlDirect).toBe(
+      "postgres://user:pw@direct.example/marfa",
+    );
+  });
+
+  it("leaves session-mode deployments alone when no direct endpoint is set", () => {
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@direct.example/marfa";
+    delete process.env.MARFA_DB_POOL_MODE;
+    delete process.env.MARFA_DATABASE_URL_DIRECT;
+    expect(() => loadConfig()).not.toThrow();
+    expect(loadConfig().dbPoolMode).toBe("session");
+  });
+
+  it("does not fire on SQLite, which has no pooler to strand a role on", () => {
+    process.env.DB_DIALECT = "sqlite";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    delete process.env.MARFA_DATABASE_URL_DIRECT;
     expect(() => loadConfig()).not.toThrow();
   });
 });

@@ -24,9 +24,10 @@
 #
 # MARFA_DATABASE_URL_DIRECT is the DIRECT (unpooled, session-mode) endpoint,
 # used by the app ONLY for streaming RLS: its session-level SET ROLE must not
-# run on the transaction-mode pooled endpoint, where the role can strand on a
-# shared backend and leak into a later write. Resolved per-env; OPTIONAL (the
-# app falls back to the pooled client if unset, with the role-leak risk):
+# run on the transaction-mode pooled endpoint, where the role strands on a
+# shared backend and is inherited by later, unrelated queries. Resolved per-env
+# and REQUIRED — the container declares MARFA_DB_POOL_MODE=transaction, so the
+# server refuses to boot without this:
 #
 #   MARFA_DATABASE_URL_DIRECT  staging  <- NEON_DATABASE_URL_STAGING || NEON_DATABASE_URL_MARFA
 #   MARFA_DATABASE_URL_DIRECT  prod     <- NEON_DATABASE_URL_PROD
@@ -89,12 +90,22 @@ if [[ -z "$POOLED_DB_URL" ]]; then
 fi
 
 # Resolve the DIRECT (session-mode, unpooled) DB URL per-env for streaming RLS.
-# Optional: if unset, the app falls back to the pooled client (the role-switch
-# can then strand on the pooler — only safe off a transaction-mode pooler).
+# Required: the container sets MARFA_DB_POOL_MODE=transaction, and the server
+# fails closed at boot rather than reusing the pooled client for a session-level
+# role switch. Fail here instead, where the operator can act on it.
 if [[ "$ENV_NAME" == "staging" ]]; then
   DIRECT_DB_URL="${NEON_DATABASE_URL_STAGING:-${NEON_DATABASE_URL_MARFA:-}}"
 else
   DIRECT_DB_URL="${NEON_DATABASE_URL_PROD:-}"
+fi
+if [[ -z "$DIRECT_DB_URL" ]]; then
+  echo "error: no direct (unpooled) Neon URL resolved for $ENV_NAME" >&2
+  if [[ "$ENV_NAME" == "staging" ]]; then
+    echo "  set NEON_DATABASE_URL_STAGING (or legacy NEON_DATABASE_URL_MARFA)" >&2
+  else
+    echo "  set NEON_DATABASE_URL_PROD" >&2
+  fi
+  exit 1
 fi
 
 : "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"

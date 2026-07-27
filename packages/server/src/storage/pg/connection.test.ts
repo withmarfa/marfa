@@ -50,3 +50,31 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
     }
   });
 });
+
+/**
+ * Fail-closed guard on the streaming-RLS endpoint. Needs no database: the
+ * check runs before any client is constructed, precisely so a misconfigured
+ * deployment dies at boot rather than at the first stream.
+ */
+describe("createConnection pool-mode guard", () => {
+  const POOLED = "postgres://user:pw@pooler.invalid:6432/marfa";
+
+  it("rejects a transaction-mode pool with no direct endpoint, naming the variable", async () => {
+    // Streaming issues a session-level SET ROLE. Reusing the pooled client for
+    // it strands that role on a shared PgBouncer backend, where an unrelated
+    // later query inherits it — so "no direct endpoint" cannot silently mean
+    // "reuse the pooled one".
+    await expect(
+      createConnection(POOLED, { poolMode: "transaction" }),
+    ).rejects.toThrow(/MARFA_DATABASE_URL_DIRECT/);
+  });
+
+  it("rejects a direct endpoint that is only whitespace", async () => {
+    await expect(
+      createConnection(POOLED, {
+        poolMode: "transaction",
+        directConnectionString: "   ",
+      }),
+    ).rejects.toThrow(/MARFA_DATABASE_URL_DIRECT/);
+  });
+});

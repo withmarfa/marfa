@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   formatErrorSummary,
+  log,
   resolveRequestId,
   serializeError,
 } from "./logger.js";
@@ -183,5 +184,112 @@ describe("serializeError", () => {
     const err: Error & { cause?: unknown } = new Error("looping");
     err.cause = err;
     expect(() => JSON.stringify(serializeError(err))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// log() payload serialization
+// ---------------------------------------------------------------------------
+
+/**
+ * `JSON.stringify` renders an `Error` as `{}` — its message, name, and
+ * SQLSTATE all live on non-enumerable properties. The Better Auth logger
+ * bridge hands `log()` a payload shaped `{ args: [Error] }`, so a database
+ * permission failure reached the log line as `{"args":[{}]}` and the absence
+ * of "permission denied" in the logs was then read as evidence that no
+ * permission error was occurring. Anything Error-shaped in a logged payload
+ * has to survive the trip.
+ */
+describe("log payload serialization", () => {
+  function captureLog(
+    level: "info" | "warn" | "error",
+    message: string,
+    data?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const written: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      written.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    };
+    try {
+      log(level, message, data);
+    } finally {
+      process.stdout.write = original;
+    }
+    return JSON.parse(written.join("")) as Record<string, unknown>;
+  }
+
+  /** Shape of a `postgres.js` privilege error, SQLSTATE and all. */
+  function permissionDenied(): Error {
+    return Object.assign(
+      new Error("permission denied for table auth_session"),
+      { code: "42501", severity: "ERROR", routine: "aclcheck_error" },
+    );
+  }
+
+  it("preserves an error nested inside an array, as Better Auth passes it", () => {
+    const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
+      args: [permissionDenied()],
+    });
+    const args = entry.args as Record<string, unknown>[];
+    expect(args[0]?.message).toBe("permission denied for table auth_session");
+    expect(args[0]?.code).toBe("42501");
+  });
+
+  it("adds a one-line error summary carrying the message and SQLSTATE", () => {
+    const entry = captureLog("error", "Better Auth: INTERNAL_SERVER_ERROR", {
+      args: [permissionDenied()],
+    });
+    expect(entry.error_summary).toContain(
+      "permission denied for table auth_session",
+    );
+    expect(entry.error_summary).toContain("42501");
+  });
+
+  it("preserves an error passed directly and one nested in an object", () => {
+    const direct = captureLog("error", "boom", { error: permissionDenied() });
+    const error = direct.error as Record<string, unknown>;
+    expect(error.message).toBe("permission denied for table auth_session");
+    expect(error.code).toBe("42501");
+
+    const nested = captureLog("error", "boom", {
+      context: { cause: permissionDenied() },
+    });
+    const context = nested.context as Record<string, Record<string, unknown>>;
+    expect(context.cause?.message).toBe(
+      "permission denied for table auth_session",
+    );
+    expect(context.cause?.code).toBe("42501");
+  });
+
+  it("leaves ordinary payload values untouched", () => {
+    const entry = captureLog("info", "Server version", {
+      sha: "abc123",
+      count: 3,
+      enabled: true,
+      list: ["a", "b"],
+      nothing: null,
+    });
+    expect(entry.sha).toBe("abc123");
+    expect(entry.count).toBe(3);
+    expect(entry.enabled).toBe(true);
+    expect(entry.list).toEqual(["a", "b"]);
+    expect(entry.nothing).toBeNull();
+    expect(entry).not.toHaveProperty("error_summary");
+  });
+
+  it("does not overwrite an error_summary the caller supplied itself", () => {
+    const entry = captureLog("error", "boom", {
+      error: permissionDenied(),
+      error_summary: "caller's own summary",
+    });
+    expect(entry.error_summary).toBe("caller's own summary");
+  });
+
+  it("survives a circular payload rather than throwing inside the logger", () => {
+    const circular: Record<string, unknown> = { name: "loop" };
+    circular.self = circular;
+    expect(() => captureLog("warn", "circular", circular)).not.toThrow();
   });
 });

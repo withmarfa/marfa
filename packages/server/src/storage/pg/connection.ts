@@ -1,12 +1,26 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
+import type { DbPoolMode } from "../../config.js";
 import { stampPgDrizzleMigrations } from "../bootstrap-stamp.js";
 import { wrapDbWithRequestContext } from "./request-context.js";
 import { SCHEMA_SQL } from "./schema-sql.generated.js";
 
 export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
+
+/**
+ * Host of a Postgres URL, for logging. Never the whole connection string —
+ * that carries the password. Returns `"unknown"` rather than throwing, since
+ * a log line is not worth failing a boot over.
+ */
+export function pgEndpointHost(connectionString: string): string {
+  try {
+    return new URL(connectionString).hostname || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 export async function createConnection(
   connectionString: string,
@@ -25,18 +39,25 @@ export async function createConnection(
      *  Defaults to false (production behavior preserved). */
     skipBootstrap?: boolean;
     /**
-     * Optional direct (session-mode) connection string used ONLY for
-     * streaming RLS reservations. Streaming issues a SESSION-level
-     * `SET ROLE marfa_app`; over a transaction-mode pooler (Neon's pooled
-     * endpoint — the app's `DATABASE_URL`) that role can strand on a shared
-     * PgBouncer backend and be inherited by a later write (e.g. sign-up),
-     * which then hits RLS as the restricted role. Pointing streaming at the
-     * direct, unpooled endpoint keeps the reserve → SET ROLE → reset cycle
-     * 1:1 with a real backend, so nothing strands on the app pool. When
-     * unset, streaming reuses the main pooled client (correct for self-hosts
-     * not behind a transaction-mode pooler).
+     * Direct (session-mode) connection string used ONLY for streaming RLS
+     * reservations. Streaming issues a SESSION-level `SET ROLE marfa_app`;
+     * over a transaction-mode pooler (Neon's pooled endpoint — the app's
+     * `DATABASE_URL`) that role strands on a shared PgBouncer backend and is
+     * inherited by a later, unrelated query, which then hits RLS as the
+     * restricted role. Pointing streaming at the direct, unpooled endpoint
+     * keeps the reserve → SET ROLE → reset cycle 1:1 with a real backend, so
+     * nothing strands on the app pool.
+     *
+     * Required when `poolMode` is `transaction`; optional otherwise, and
+     * streaming then reuses the main client.
      */
     directConnectionString?: string;
+    /**
+     * What kind of endpoint `connectionString` points at. Defaults to
+     * `session` — a direct Postgres connection, where streaming can safely
+     * share the main client. See `DbPoolMode`.
+     */
+    poolMode?: DbPoolMode;
   },
 ): Promise<{
   /**
@@ -64,6 +85,22 @@ export async function createConnection(
   streamClient: PgClient;
   close: () => Promise<void>;
 }> {
+  const directConnectionString = options?.directConnectionString?.trim() ?? "";
+
+  // Fail closed before opening anything. On a transaction-mode pooler,
+  // "no direct endpoint" cannot mean "share the pooled client": streaming's
+  // session-level SET ROLE would strand on a shared backend and be inherited
+  // by unrelated queries across the whole instance. Silently disabling
+  // streaming RLS instead would trade a loud failure for a quiet loss of
+  // tenant isolation, so neither fallback is acceptable.
+  if (options?.poolMode === "transaction" && directConnectionString === "") {
+    throw new Error(
+      "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
+        "Streaming RLS must reserve from a direct (unpooled) endpoint, not the " +
+        "transaction-mode pooled one DATABASE_URL points at.",
+    );
+  }
+
   const client = postgres(connectionString, {
     max: options?.maxPoolSize ?? 10,
     // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -72,12 +109,12 @@ export async function createConnection(
   // Dedicated streaming client on the direct (session-mode) endpoint, when
   // configured, so streaming's session-level `SET ROLE` never strands on the
   // app's transaction-mode pooled connections (see `directConnectionString`).
-  const streamClient = options?.directConnectionString
-    ? postgres(options.directConnectionString, {
+  const streamClient = directConnectionString
+    ? postgres(directConnectionString, {
         // One slot per concurrent stream; streams are far rarer than
         // data-plane requests and the direct endpoint has a tighter
         // connection ceiling than the pooler.
-        max: Math.min(options.maxPoolSize ?? 10, 5),
+        max: Math.min(options?.maxPoolSize ?? 10, 5),
         // eslint-disable-next-line @typescript-eslint/no-empty-function
         onnotice: () => {},
       })

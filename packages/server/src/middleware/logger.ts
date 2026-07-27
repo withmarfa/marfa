@@ -87,14 +87,88 @@ export function log(
   message: string,
   data?: Record<string, unknown>,
 ): void {
+  const { payload, firstError } = prepareLogPayload(data);
+  // The one-line summary is what a human greps for; the structured form is
+  // what a log query filters on. A caller that supplied its own summary knows
+  // more about the failure than this does, so it wins.
+  if (firstError !== undefined && payload.error_summary === undefined) {
+    payload.error_summary = formatErrorSummary(firstError);
+  }
   const entry = {
     timestamp: new Date().toISOString(),
     level,
     message,
-    ...data,
+    ...payload,
   };
   process.stdout.write(JSON.stringify(entry) + "\n");
-  emitOtelLog(level, message, data ?? {});
+  emitOtelLog(level, message, payload);
+}
+
+/**
+ * Render a log payload so `JSON.stringify` cannot silently discard the most
+ * important thing in it.
+ *
+ * An `Error` holds its `message`, `name`, and `stack` on non-enumerable
+ * properties, so `JSON.stringify(err)` is `{}`. Better Auth's logger bridge
+ * hands this function `{ args: [Error] }`, which means a database failure
+ * reached the log line as `{"args":[{}]}` — SQLSTATE, message and all,
+ * deleted at the log layer. That absence was then read as evidence that no
+ * such failure was happening.
+ *
+ * Errors are replaced with `serializeError`'s structured form wherever they
+ * appear: passed directly, nested in an object, or inside an array. The first
+ * one found is returned so the caller can also stamp a one-line summary.
+ */
+function prepareLogPayload(data: Record<string, unknown> | undefined): {
+  payload: Record<string, unknown>;
+  firstError: unknown;
+} {
+  const payload: Record<string, unknown> = {};
+  if (!data) return { payload, firstError: undefined };
+
+  let firstError: unknown;
+  // Cycles are rare in log payloads but fatal when they happen: an unguarded
+  // `JSON.stringify` throws, and a logger that throws takes out the code path
+  // that was trying to report a problem.
+  const seen = new WeakSet();
+
+  const visit = (value: unknown, depth: number): unknown => {
+    if (value == null || typeof value !== "object") return value;
+    if (isErrorLike(value)) {
+      firstError ??= value;
+      return serializeError(value);
+    }
+    if (depth >= MAX_PAYLOAD_DEPTH) return "[truncated]";
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    if (Array.isArray(value))
+      return value.map((item) => visit(item, depth + 1));
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = visit(nested, depth + 1);
+    }
+    return out;
+  };
+
+  for (const [key, value] of Object.entries(data)) {
+    payload[key] = visit(value, 0);
+  }
+  return { payload, firstError };
+}
+
+/** Depth beyond which a logged payload is noise rather than diagnosis. */
+const MAX_PAYLOAD_DEPTH = 6;
+
+/**
+ * `instanceof Error` misses errors thrown across a realm boundary — a
+ * `worker_thread`, a `vm` context, or a dependency bundling its own copy of a
+ * subclass. The internal-class tag survives all three.
+ */
+function isErrorLike(value: object): boolean {
+  return (
+    value instanceof Error ||
+    Object.prototype.toString.call(value) === "[object Error]"
+  );
 }
 
 // ---------------------------------------------------------------------------
