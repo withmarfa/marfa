@@ -998,9 +998,20 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
-  // Admin (platform-admin or tenant-admin with no tenant scope on the
-  // job) bypasses the credential check.
-  if (apiKey.role === "admin") return;
+  // `role: "admin"` alone is not platform authority — `POST
+  // /admin/tenants/:id/keys` mints admin keys bound to one tenant, and
+  // `getById` applies no tenant filter, so trusting the role by itself
+  // would hand a tenant-bound key every other tenant's jobs. Mirror
+  // `checkAdmin`: only an unbound admin has instance-wide reach, and a
+  // bound one stays admin-shaped inside its own tenant.
+  if (apiKey.role === "admin") {
+    if (!apiKey.tenant_id) return;
+    if (apiKey.tenant_id === job.tenant_id) return;
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "This job belongs to a different tenant",
+    );
+  }
   if (job.api_key_id && apiKey.id === job.api_key_id) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
