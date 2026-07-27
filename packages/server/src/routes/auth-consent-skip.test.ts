@@ -747,7 +747,7 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
   });
 
-  it("a forged signature renders consent instead of minting, even with a covering grant", async () => {
+  it("a forged signature is refused outright, even with a covering grant", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "skip-forged@example.com");
@@ -762,8 +762,12 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
     params.set("exp", String(Math.floor(Date.now() / 1000) + 600));
     params.set("sig", "forged-not-a-real-signature");
 
+    // Not minting is necessary but not enough: a consent screen rendered
+    // from a request nobody signed is an attacker-composed page on the
+    // real origin. Nothing gets built from this query at all.
     const res = await landOnConsentPage(ctx, params.toString(), { cookie });
-    expectRendersConsent(res, await res.text());
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
   });
 

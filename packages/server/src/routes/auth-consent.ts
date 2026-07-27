@@ -16,7 +16,12 @@
  * `redirectWithPromptCode` + `signParams`.)
  *
  * This route:
- *   - extracts `client_id` + `scope` from the query for rendering
+ *   - verifies that signature before anything else, including before
+ *     rendering: a consent screen composed from a request nobody signed
+ *     is an attacker-authored page served by the real issuer on the real
+ *     origin, and refusing the submit afterwards does not take it back
+ *   - extracts `client_id` + `scope` from the verified parameter set for
+ *     rendering
  *   - keeps the signed parameter set as `oauthQuery` so the consent form
  *     can POST it back to `/auth/oauth2/consent` unchanged (the plugin's
  *     before-hook re-verifies the sig). Marfa's own display-only
@@ -158,29 +163,42 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const auth = deps.auth;
 
     const url = new URL(c.req.url);
-    const clientId = url.searchParams.get("client_id") ?? "";
-    const requestedRedirectUri = url.searchParams.get("redirect_uri");
-    const scopeParam = url.searchParams.get("scope") ?? "";
     // The plugin signs an exact parameter set and expects it returned
-    // verbatim. `oauthQuery` is that set and nothing else: Marfa's own
+    // verbatim. `signedParams` is that set and nothing else: Marfa's own
     // display-only parameters are lifted off first (see
     // `CONSENT_DISPLAY_PARAMS`), because the signature covers every
-    // remaining key and one extra pair invalidates it. It round-trips
-    // through the form's `oauth_query` hidden field.
-    // `sig` is the canary — without it the plugin won't accept the
-    // consent POST, which lets us 400 early rather than render a
-    // consent screen that will fail on submit.
+    // remaining key and one extra pair invalidates it. Everything this
+    // handler reads about the request comes from here rather than from
+    // `url`, so no unsigned parameter can influence a decision. It
+    // round-trips to the plugin through the form's `oauth_query` field.
     const signedParams = new URLSearchParams(url.search);
     const consentError = signedParams.get(CONSENT_ERROR_PARAM);
     for (const name of CONSENT_DISPLAY_PARAMS) signedParams.delete(name);
     const oauthQuery = signedParams.toString();
-    const sig = url.searchParams.get("sig");
+
+    const clientId = signedParams.get("client_id") ?? "";
+    const requestedRedirectUri = signedParams.get("redirect_uri");
+    const scopeParam = signedParams.get("scope") ?? "";
+    const sig = signedParams.get("sig");
 
     if (!clientId || !sig) {
       return c.text(
         "Missing required query params: client_id and sig (the plugin's signed redirect to /auth/authorize must carry both)",
         400,
       );
+    }
+
+    // Nothing below acts on an authorize request the plugin did not sign,
+    // and rendering is acting on it. A consent screen is a page the user
+    // is meant to trust: served by the real issuer, on the real origin,
+    // naming an app and a list of permissions that on this path would be
+    // whoever crafted the URL's to choose. Refusing the submit afterwards
+    // does not help — the page was the payload. The same reasoning covers
+    // the sign-in bounce below, which is the same page one hop earlier
+    // with a credential prompt on it, and an expired-but-genuine request,
+    // which can no longer produce a code and so has nothing to render for.
+    if (!(await verifySignedQuery(auth, oauthQuery))) {
+      return c.text("Invalid or expired authorize request signature", 400);
     }
 
     // OIDC `prompt` rides the signed query verbatim:
@@ -194,7 +212,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // returned to the client, not a sign-in page the request explicitly
     // forbade.
     const promptSet = new Set(
-      (url.searchParams.get("prompt") ?? "").split(/\s+/).filter(Boolean),
+      (signedParams.get("prompt") ?? "").split(/\s+/).filter(Boolean),
     );
     const promptNone = promptSet.has("none");
 
@@ -202,33 +220,27 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
      * Emit an OIDC error back to the client, for a `prompt=none` request
      * that cannot be answered with a code.
      *
-     * Gated on the query's signature. Everything on this path is
-     * attacker-supplied otherwise: any signed-in user's browser can be
-     * navigated to `/auth/authorize` with a registered `client_id`, that
-     * client's registered `redirect_uri`, `prompt=none` and a `state` of
-     * the attacker's choosing, and without the check they would get a
-     * 302 to the client's callback echoing that `state`. Verifying first
-     * also means appending `&prompt=none` to a legitimate consent URL
-     * fails closed (the edit breaks the signature) instead of converting
-     * that flow into a client-visible error.
+     * The `redirect_uri` and `state` come straight off the request, so
+     * this path is only safe behind the signature check above: without it
+     * any signed-in user's browser could be navigated to
+     * `/auth/authorize` with a registered `client_id`, that client's
+     * registered `redirect_uri`, `prompt=none` and a `state` of the
+     * attacker's choosing, and would 302 to the client's callback echoing
+     * that `state`. Reading from the verified parameter set is also what
+     * makes appending `&prompt=none` to a legitimate consent URL fail
+     * closed rather than convert that flow into a client-visible error.
      */
-    const promptNoneError = async (
+    const promptNoneError = (
       registeredRedirectUris: readonly string[],
       error: string,
       description: string,
-    ): Promise<Response> => {
-      if (!(await verifySignedQuery(auth, oauthQuery))) {
-        return c.text("Invalid or expired authorize request signature", 400);
-      }
-      return (
-        buildPromptNoneErrorRedirect(
-          registeredRedirectUris,
-          url,
-          error,
-          description,
-        ) ?? c.text("prompt=none requires a registered redirect_uri", 400)
-      );
-    };
+    ): Response =>
+      buildPromptNoneErrorRedirect(
+        registeredRedirectUris,
+        signedParams,
+        error,
+        description,
+      ) ?? c.text("prompt=none requires a registered redirect_uri", 400);
 
     // Auth gate: the plugin's loginPage handles unsigned users normally,
     // but a direct hit on /auth/authorize without a session needs a
@@ -946,18 +958,20 @@ export const __test_internals = { isRegisteredResponseRedirect };
  * echoed when present (mirroring the plugin's own
  * `redirectWithPromptNoneError` shape).
  *
- * Returns `null` when the request's `redirect_uri` isn't registered for
- * the client, so a hand-crafted target can never become an open
- * redirect. Callers verify the query signature before reaching here; the
- * registration check is the second fence, not the only one.
+ * Reads only from the verified parameter set, so `redirect_uri` and
+ * `state` are values the plugin signed rather than whatever the URL
+ * happened to carry. Returns `null` when that `redirect_uri` isn't
+ * registered for the client, so a hand-crafted target can never become an
+ * open redirect — the registration check is the second fence beneath the
+ * signature, not the only one.
  */
 function buildPromptNoneErrorRedirect(
   registeredRedirectUris: readonly string[],
-  url: URL,
+  signedParams: URLSearchParams,
   error: string,
   description: string,
 ): Response | null {
-  const redirectUri = url.searchParams.get("redirect_uri");
+  const redirectUri = signedParams.get("redirect_uri");
   if (!redirectUri) return null;
   if (!isRegisteredRedirectUri(registeredRedirectUris, redirectUri)) {
     return null;
@@ -967,7 +981,7 @@ function buildPromptNoneErrorRedirect(
     error,
     error_description: description,
   });
-  const state = url.searchParams.get("state");
+  const state = signedParams.get("state");
   if (state) params.append("state", state);
   const separator = redirectUri.includes("?") ? "&" : "?";
   return withNoStore(

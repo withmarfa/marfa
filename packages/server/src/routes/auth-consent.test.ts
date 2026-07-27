@@ -136,10 +136,12 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 /**
- * Build a plausible-looking unsigned oauth_query string for page-render
- * tests. Those paths do not proxy or perform any consent side effects.
+ * Build a plausible-looking authorize query carrying a signature the
+ * plugin never produced. For the tests that mean to send one; every
+ * render test uses `buildSignedOauthQuery`, because a page rendered from
+ * an unsigned query is the defect, not the fixture.
  */
-function buildOauthQuery(clientId: string, scope: string): string {
+function buildForgedOauthQuery(clientId: string, scope: string): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
@@ -231,7 +233,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/auth/authorize?response_type=code&client_id=client_x&redirect_uri=http%3A%2F%2Flocalhost%2F&scope=core.note%3Aread&state=s&code_challenge=c&code_challenge_method=S256&exp=1&sig=fake",
+      `/auth/authorize?${await buildSignedOauthQuery("client_x", "core.note:read")}`,
     );
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
@@ -256,6 +258,58 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(r2.status).toBe(400);
   });
 
+  it("REGRESSION: refuses to render for a query the plugin never signed", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    // An attacker picks the client and the scope list; the page they get
+    // back is served by the real issuer on the real origin, with the real
+    // chrome. Rejecting the submit later does not undo that: the page is
+    // the payload.
+    const clientId = await seedClient(ctx, { name: "Marfa Drive" });
+    const cookie = await signInUser(ctx, "forged-render@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildForgedOauthQuery(clientId, "openid core.note:read")}`,
+      { headers: { cookie } },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+  });
+
+  it("REGRESSION: refuses to render a genuinely signed query past its exp", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "expired-render@example.com");
+    const oauthQuery = await buildSignedOauthQuery(clientId, "openid", {
+      exp: String(Math.floor(Date.now() / 1000) - 1),
+    });
+
+    const res = await request(ctx.app, "GET", `/auth/authorize?${oauthQuery}`, {
+      headers: { cookie },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+  });
+
+  it("REGRESSION: refuses a forged query before bouncing an anonymous visitor to sign-in", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, { name: "Marfa Drive" });
+
+    // No session. The sign-in bounce is reached from the same forged URL,
+    // so it is the same phishing surface one hop earlier — the credential
+    // prompt is the more valuable half.
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildForgedOauthQuery(clientId, "openid")}`,
+    );
+
+    expect(res.status).toBe(400);
+  });
+
   it("F9: sets Cache-Control: no-store on the rendered consent page", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
@@ -264,7 +318,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "openid")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -283,7 +337,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "openid")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -301,7 +355,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "openid")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -321,7 +375,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "openid")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -337,7 +391,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery("client_nonexistent_xxx", "openid")}`,
+      `/auth/authorize?${await buildSignedOauthQuery("client_nonexistent_xxx", "openid")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(404);
@@ -351,7 +405,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "openid profile email offline_access")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "openid profile email offline_access")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -377,7 +431,7 @@ describe("GET /auth/authorize (consent page)", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/authorize?${buildOauthQuery(clientId, "edge.parent-of:read")}`,
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "edge.parent-of:read")}`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
