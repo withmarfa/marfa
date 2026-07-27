@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import type { Context } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
 import { MarfaServerClient } from "../marfa-client.js";
+import { brokerAuthFailure } from "../broker-auth.js";
 
 /**
  * Lease broker.
@@ -26,25 +26,6 @@ import { MarfaServerClient } from "../marfa-client.js";
  * logs and in client state, so an unauthenticated mint path hands a
  * tenant-scoped credential to anyone who has seen one.
  */
-
-/**
- * Reject a caller that did not present the broker key. Returns the
- * refusal to hand back, or `null` when the caller is authorized.
- *
- * The Worker is routed to public hostnames, so every route that can
- * reach a credential needs this. Integration Workers already send the
- * header on every call (see `worker-entry.ts` in `@withmarfa/runtime-sdk`).
- */
-function brokerAuthFailure(
-  c: Context<{ Bindings: ControlPlaneEnv }>,
-  brokerKey: string,
-): Response | null {
-  const auth = c.req.header("authorization");
-  if (auth !== `Bearer ${brokerKey}`) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  return null;
-}
 
 export function registerLeaseRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
