@@ -72,7 +72,10 @@ describe("control plane app — base routes", () => {
     const app = buildApp();
     const res = await app.request(
       "/lease/conn_123/oauth/cap_calendar_read",
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { authorization: "Bearer marfa_k1_broker_test" },
+      },
       TEST_ENV,
     );
     expect(res.status).toBe(501);
