@@ -654,7 +654,7 @@ const todoistTask: TypeSchema = {
 const withmarfaCapturedEmail: TypeSchema = {
   id: "withmarfa.captured_email",
   label: "Captured Email",
-  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   version: 1,
   fields: {
     from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
@@ -662,7 +662,7 @@ const withmarfaCapturedEmail: TypeSchema = {
     to_address: { type: "string", description: "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.marfa.so`).", required: true },
     subject: { type: "string", description: "RFC 5322 `Subject:` header. Empty string when absent." },
     text_body: { type: "string", description: "Plain-text body. Either the `text/plain` MIME part directly, or downgraded from `text/html` when only HTML is present." },
-    body: { type: "string", description: "Mirror of `text_body` — kept so `core.note.body` satisfies the `compatible_with` contract for cross-app readers.", required: true },
+    body: { type: "string", description: "Mirror of `text_body`, present so a generic note reader finds a body where it expects one. Always written (empty string when the email had no text part), which is what will eventually let this type claim `core.note` compatibility." },
     html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitized on storage." },
     sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time." },
     message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
@@ -672,7 +672,6 @@ const withmarfaCapturedEmail: TypeSchema = {
     attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.", items_type: "object" },
   },
   display_hints: { title_field: "subject", body_field: "text_body" },
-  compatible_with: ["core.note"],
 };
 
 const googleCalendarEvent: TypeSchema = {

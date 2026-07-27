@@ -171,9 +171,11 @@ function buildCapturedEmail(
   const properties: Record<string, unknown> = {
     from_address: fromAddress,
     to_address: toAddress,
-    // `body` is required by the declared `core.note` compatibility contract.
-    // Empty messages still carry an empty string so generic note readers never
-    // encounter a structurally incomplete item.
+    // Written unconditionally, empty string included, so a generic note
+    // reader always finds a body where it expects one. Also what will
+    // eventually let the type declare `core.note` compatibility: that claim
+    // requires `body`, and the requirement can only land once no capture
+    // is missing it.
     body: typeof envelope.text_body === "string" ? envelope.text_body : "",
   };
   if (envelope.from?.name !== undefined) {
