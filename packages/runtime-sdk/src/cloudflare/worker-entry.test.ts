@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach, type Mock } from "vitest";
 import {
   buildConsumerEnv,
   createIntegrationWorker,
@@ -91,6 +91,55 @@ describe("buildConsumerEnv.dlqProducerFor routing", () => {
     expect(consumer.dlqProducerFor?.("schedule")).toBe(sp);
     expect(consumer.dlqProducerFor?.("item-event")).toBe(rr);
     expect(consumer.dlqProducerFor?.("webhook")).toBe(wh);
+  });
+});
+
+/**
+ * The connection id reaches `mintCredential` from a queue envelope or a
+ * verify payload, so it is caller-controlled by the time it is spliced
+ * into the lease broker path. Percent-encoding is what stops a crafted
+ * id steering the request at a different control-plane route.
+ */
+describe("buildConsumerEnv.mintCredential broker URL", () => {
+  const CREDENTIAL = { token: "tok", expires_at: "2026-01-01T00:00:00Z" };
+
+  function stubFetch(): Mock<typeof fetch> {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json(CREDENTIAL)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("presents the broker key and leaves an ordinary id untouched", async () => {
+    const fetchMock = stubFetch();
+    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+    await consumer.mintCredential("conn_1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://control.invalid/lease/conn_1/runtime",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer broker_key",
+        },
+      },
+    );
+  });
+
+  it.each([
+    ["../dlq", "https://control.invalid/lease/..%2Fdlq/runtime"],
+    ["a?b=c", "https://control.invalid/lease/a%3Fb%3Dc/runtime"],
+    ["a#frag", "https://control.invalid/lease/a%23frag/runtime"],
+  ])("encodes %s so it cannot reshape the path", async (id, expected) => {
+    const fetchMock = stubFetch();
+    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+    await consumer.mintCredential(id);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(expected);
   });
 });
 
