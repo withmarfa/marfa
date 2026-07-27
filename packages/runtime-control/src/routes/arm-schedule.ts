@@ -69,7 +69,15 @@ export function registerArmScheduleRoute(
     let res: Response;
     try {
       res = await binding.fetch(
-        new Request(inner.toString(), { method: "POST" }),
+        new Request(inner.toString(), {
+          method: "POST",
+          // Present the broker key onward. The Service Binding proves
+          // topology; the Worker still verifies its caller, so the hop
+          // carries the same credential in both directions.
+          headers: {
+            authorization: `Bearer ${c.env.MARFA_RUNTIME_BROKER_KEY}`,
+          },
+        }),
       );
     } catch (err) {
       return c.json(
