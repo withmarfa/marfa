@@ -42,6 +42,7 @@ import {
   type SecurityPageSession,
 } from "./security-page.js";
 import { PerEmailThrottle } from "../auth/per-email-throttle.js";
+import { withConsentLock } from "../auth/consent-lock.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -52,6 +53,61 @@ import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
+
+/**
+ * Flip a projected `system.connection { kind: "app" }` grant to revoked
+ * and cascade through the OAuth Provider plugin's tables (access tokens,
+ * refresh tokens, and the consent row itself).
+ *
+ * Runs under the consent lock for the (client, user) pair. The silent
+ * re-authorization path on `GET /auth/authorize` reads the standing
+ * scopes, lets the plugin rewrite them, then writes the read-back set;
+ * a revocation landing inside that window would be undone by a
+ * restoration computed before the user asked for it, and the app would
+ * keep a fully-scoped consent row for a grant they revoked.
+ */
+async function revokeProjectedGrant(
+  storage: Storage,
+  opts: {
+    itemId: string;
+    properties: Record<string, unknown>;
+    tenantId: string | undefined;
+    clientId: string | undefined;
+    authUserId: string | undefined;
+  },
+): Promise<void> {
+  const cascade = async (): Promise<void> => {
+    await storage.items.update(
+      opts.itemId,
+      {
+        properties: {
+          ...opts.properties,
+          status: "revoked",
+          revoked_at: new Date().toISOString(),
+        },
+      },
+      opts.tenantId,
+    );
+    if (
+      opts.clientId &&
+      opts.authUserId &&
+      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
+    ) {
+      await storage.oauthProvider.revokeTokensForGrant(
+        opts.clientId,
+        opts.authUserId,
+      );
+    }
+  };
+  // Without both ids there is no consent row and nothing to race over,
+  // and no key to lock on either. The state flip still stands as the
+  // user-facing signal.
+  if (!opts.clientId || !opts.authUserId) {
+    await cascade();
+    return;
+  }
+  await withConsentLock(opts.clientId, opts.authUserId, cascade);
+}
 
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const REFRESH_TOKEN_PREFIX = "marfa_rt_";
@@ -380,14 +436,6 @@ export function authRoutes(
     if (props.kind !== "app") {
       throw new MarfaError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
-    const now = new Date().toISOString();
-    await storage.items.update(
-      id,
-      {
-        properties: { ...props, status: "revoked", revoked_at: now },
-      },
-      tenantId,
-    );
     // Cascade-revoke through the plugin's tables. The system.connection
     // properties carry `client_id` + `user_id` — use those to delete
     // every access + refresh token for this grant and drop the consent
@@ -396,13 +444,13 @@ export function authRoutes(
       typeof props.client_id === "string" ? props.client_id : undefined;
     const authUserId =
       typeof props.user_id === "string" ? props.user_id : undefined;
-    if (
-      clientId &&
-      authUserId &&
-      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
-    ) {
-      await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
-    }
+    await revokeProjectedGrant(storage, {
+      itemId: id,
+      properties: props,
+      tenantId,
+      clientId,
+      authUserId,
+    });
     // Emit the audit row. Fire-and-forget — audit failures must never
     // break the user-facing revoke flow. Emitted here rather than from
     // the plugin hook, which fires without `client_id`.
@@ -1628,27 +1676,18 @@ export function authRoutes(
     if (props.kind !== "app") {
       return c.redirect("/auth/security?notice=grant_not_found", 302);
     }
-    const now = new Date().toISOString();
-    await storage.items.update(
-      id,
-      { properties: { ...props, status: "revoked", revoked_at: now } },
-      tenantId,
-    );
     // Cascade-revoke via plugin tables (same logic as DELETE /grants/:id).
-    // Falls through silently if the grant has no client_id/user_id —
-    // the system.connection state flip is still the authoritative
-    // user-facing signal.
     const clientId =
       typeof props.client_id === "string" ? props.client_id : undefined;
     const authUserId =
       typeof props.user_id === "string" ? props.user_id : undefined;
-    if (
-      clientId &&
-      authUserId &&
-      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
-    ) {
-      await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
-    }
+    await revokeProjectedGrant(storage, {
+      itemId: id,
+      properties: props,
+      tenantId,
+      clientId,
+      authUserId,
+    });
     // Emit the audit row (same shape as DELETE /grants/:id).
     void storage.audit.log({
       tenant_id: tenantId ?? null,

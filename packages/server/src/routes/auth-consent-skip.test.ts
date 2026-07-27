@@ -1207,3 +1207,161 @@ describe("GET /auth/authorize (consent skip) — audit and grant records", () =>
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Concurrent grant changes
+// ---------------------------------------------------------------------------
+//
+// The silent path reads the standing grant, lets the plugin narrow it,
+// then writes the standing set back. Read and write straddle a whole
+// proxy round trip, so anything the user does to the grant in between is
+// racing a restoration computed before they did it. Both requests below
+// are real, overlapping, in-flight HTTP requests through the app; only
+// the interleaving is pinned, by holding the silent flow at the point
+// where it has read the grant and not yet acted on it.
+
+/** A promise plus its resolver, for pinning an interleaving. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Replace `getPriorConsent` with one that performs the real read and then
+ * parks the first caller until the returned gate is opened. Returns the
+ * unpatched reader so assertions can still see the stored state.
+ */
+function holdSilentFlowAfterReadingGrant(c: TestContext): {
+  reachedRead: Promise<void>;
+  resume: () => void;
+  readStandingGrant: (
+    clientId: string,
+    authUserId: string,
+  ) => Promise<readonly string[] | undefined>;
+} {
+  const store = c.storage.oauthProvider!;
+  const readStandingGrant = store.getPriorConsent.bind(store);
+  const reached = deferred();
+  const gate = deferred();
+  let parked = false;
+  store.getPriorConsent = async (clientId, authUserId) => {
+    const scopes = await readStandingGrant(clientId, authUserId);
+    if (!parked) {
+      parked = true;
+      reached.resolve();
+      await gate.promise;
+    }
+    return scopes;
+  };
+  return {
+    reachedRead: reached.promise,
+    resume: gate.resolve,
+    readStandingGrant,
+  };
+}
+
+/** Let the concurrent request get well clear of the gate before opening it. */
+const RACE_SETTLE_MS = 150;
+
+describe("GET /auth/authorize (consent skip) — concurrent grant changes", () => {
+  it("REGRESSION: a narrowing that lands mid-flight is not undone by the silent restoration", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "race-narrow@example.com");
+    const wide = "openid core.note:read core.task:read";
+
+    await grantFirstConsent(c, clientId, cookie, wide, [
+      "openid",
+      "core.note:read",
+      "core.task:read",
+    ]);
+    const authUserId = await grantUserId(c);
+
+    const { reachedRead, resume, readStandingGrant } =
+      holdSilentFlowAfterReadingGrant(c);
+
+    // A silent re-authorization for a subset of the standing grant.
+    const silentQuery = await mintSignedQuery(
+      authorizeFields(clientId, "openid"),
+    );
+    const silent = landOnConsentPage(c, silentQuery, { cookie });
+    await reachedRead;
+
+    // Meanwhile the user unticks core.task:read on the consent screen.
+    const narrowQuery = await mintSignedQuery(authorizeFields(clientId, wide));
+    const narrowing = request(c.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: narrowQuery,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    await new Promise((r) => setTimeout(r, RACE_SETTLE_MS));
+    resume();
+
+    const [silentRes, narrowRes] = await Promise.all([silent, narrowing]);
+    expectCodeRedirect(silentRes);
+    expect(narrowRes.status).toBe(302);
+
+    // The permission the user took away must stay taken away. Whichever
+    // way the two requests are ordered, a scope can only come back
+    // through an interaction that asks for it.
+    const stored = await readStandingGrant(clientId, authUserId);
+    expect(stored).not.toContain("core.task:read");
+    expect([...(stored ?? [])].sort()).toEqual(["core.note:read", "openid"]);
+  });
+
+  it("REGRESSION: a revocation that lands mid-flight is not resurrected by the silent restoration", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "race-revoke@example.com");
+    const wide = "openid core.note:read core.task:read";
+
+    await grantFirstConsent(c, clientId, cookie, wide, [
+      "openid",
+      "core.note:read",
+      "core.task:read",
+    ]);
+    const grants = await c.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    const grantItemId = grants.data[0]!.id;
+    const authUserId = grants.data[0]!.properties.user_id as string;
+
+    const { reachedRead, resume, readStandingGrant } =
+      holdSilentFlowAfterReadingGrant(c);
+
+    const silentQuery = await mintSignedQuery(
+      authorizeFields(clientId, "openid"),
+    );
+    const silent = landOnConsentPage(c, silentQuery, { cookie });
+    await reachedRead;
+
+    // Meanwhile the user revokes the whole grant from /auth/security.
+    const revoke = request(
+      c.app,
+      "POST",
+      `/auth/grants/${grantItemId}/revoke`,
+      { headers: { cookie, origin: ORIGIN } },
+    );
+    await new Promise((r) => setTimeout(r, RACE_SETTLE_MS));
+    resume();
+
+    const [, revokeRes] = await Promise.all([silent, revoke]);
+    expect(revokeRes.status).toBe(302);
+    expect(revokeRes.headers.get("location") ?? "").toContain("grant_revoked");
+
+    // Revocation deletes the consent row. A restoration computed before
+    // the revoke must not put a fully-scoped one back.
+    expect(await readStandingGrant(clientId, authUserId)).toBeUndefined();
+    const after = await c.storage.items.get(grantItemId);
+    expect(after!.properties.status).toBe("revoked");
+  });
+});
