@@ -154,6 +154,7 @@ export const apiKeys = sqliteTable(
       .notNull()
       .default(false),
     connection_id: text("connection_id"),
+    item_source: text("item_source"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),

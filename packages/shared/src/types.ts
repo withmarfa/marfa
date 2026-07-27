@@ -249,6 +249,15 @@ export interface ApiKey {
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
+  /**
+   * Stable item-provenance source. Runtime credentials rotate frequently,
+   * so their credential `source` identifies one bearer generation while
+   * `item_source` stays fixed for the bound Connection. Item writes stamp
+   * this value when present, preserving `(source, source_id)` idempotency
+   * across credential refreshes. Ordinary keys leave it unset and continue
+   * stamping `source`.
+   */
+  item_source?: string;
   role: MarfaRole;
   /**
    * Platform-credential gate. When `true`, the credential may register and

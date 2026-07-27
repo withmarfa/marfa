@@ -44,6 +44,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,
     connection_id: row.connection_id ?? undefined,
+    item_source: row.item_source ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -145,7 +146,11 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   async createRuntimeCredential(
-    input: CreateKeyInput & { connection_id: string; expires_at: string },
+    input: CreateKeyInput & {
+      connection_id: string;
+      expires_at: string;
+      item_source: string;
+    },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey> {
@@ -182,6 +187,7 @@ export class SqliteKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
+      item_source: input.item_source,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
@@ -200,6 +206,7 @@ export class SqliteKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
+      item_source: input.item_source,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},

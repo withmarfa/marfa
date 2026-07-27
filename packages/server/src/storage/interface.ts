@@ -472,7 +472,11 @@ export interface KeyStore {
    * the local substrate's in-process mint.
    */
   createRuntimeCredential(
-    input: CreateKeyInput & { connection_id: string; expires_at: string },
+    input: CreateKeyInput & {
+      connection_id: string;
+      expires_at: string;
+      item_source: string;
+    },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey>;
@@ -1768,6 +1772,13 @@ export interface CoordinationStore {
    * no-op tick, not an error).
    */
   withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
+  /**
+   * Acquire a named lock, waiting rather than skipping when another caller
+   * holds it. Connection mint and uninstall use this to serialize lifecycle
+   * decisions across server instances; unlike a background-job lock, either
+   * operation must eventually run and re-check state under the same lock.
+   */
+  withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
 }
 
 /**

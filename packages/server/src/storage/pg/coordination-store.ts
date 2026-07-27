@@ -18,6 +18,21 @@ import type { PgClient } from "./connection.js";
 export class PgCoordinationStore implements CoordinationStore {
   constructor(private client: PgClient) {}
 
+  async withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const key = `marfa:${name}`;
+    const conn = await this.client.reserve();
+    try {
+      await conn`SELECT pg_advisory_lock(hashtextextended(${key}, 0))`;
+      try {
+        return await fn();
+      } finally {
+        await conn`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
+      }
+    } finally {
+      conn.release();
+    }
+  }
+
   async withJobLock<T>(
     name: string,
     fn: () => Promise<T>,

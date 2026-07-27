@@ -48,6 +48,7 @@ import {
   buildExtensionPermissions,
   buildTypePermissions,
 } from "./manifest-permissions.js";
+import { runtimeCredentialItemSource } from "./lifecycle-lock.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -258,6 +259,7 @@ export async function performInstall(
         edge_permissions: buildEdgePermissions(manifest),
         connection_id: connection.id,
         expires_at: credentialExpiresAt,
+        item_source: runtimeCredentialItemSource(connection.id),
       },
       keyHash,
       input.tenantId,
