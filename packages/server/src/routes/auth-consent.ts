@@ -752,9 +752,11 @@ function isRegisteredRedirectUri(
 type ProxyOutcome = "code" | "client_error" | "interaction" | "rejected";
 
 // These are the query parameters this OAuth Provider implementation adds
-// to a registered redirect URI. Removing any other parameter would let a
-// callback with missing or changed fixed registration data pass as the
-// registered URI.
+// to a registered redirect URI. They are removed from both sides during
+// callback matching: a client may already have one in its registered URI,
+// and the provider replaces or appends the response value. Removing any
+// other parameter would let a callback with missing or changed fixed
+// registration data pass as the registered URI.
 const OAUTH_RESPONSE_PARAMS = new Set([
   "code",
   "error",
@@ -770,26 +772,36 @@ const OAUTH_RESPONSE_PARAMS = new Set([
  * `URL.origin` cannot represent native custom schemes (it is the literal
  * string `"null"` for all of them), so scheme, authority, and path are
  * compared directly. Fixed registered query parameters remain load-bearing:
- * the returned callback must contain the same key/value multiset after the
- * OAuth response fields are removed.
+ * both URLs must contain the same non-response key/value multiset after the
+ * OAuth response fields are removed from each side.
  */
 function isRegisteredResponseRedirect(
   registeredRedirectUris: readonly string[],
   candidate: string,
 ): boolean {
+  return (
+    findRegisteredResponseRedirect(registeredRedirectUris, candidate) !==
+    undefined
+  );
+}
+
+function findRegisteredResponseRedirect(
+  registeredRedirectUris: readonly string[],
+  candidate: string,
+): URL | undefined {
   let returned: URL;
   try {
     returned = new URL(candidate);
   } catch {
-    return false;
+    return undefined;
   }
 
-  return registeredRedirectUris.some((entry) => {
+  for (const entry of registeredRedirectUris) {
     let registered: URL;
     try {
       registered = new URL(entry);
     } catch {
-      return false;
+      continue;
     }
 
     const loopback =
@@ -805,17 +817,18 @@ function isRegisteredResponseRedirect(
       registered.pathname !== returned.pathname ||
       registered.hash !== returned.hash
     ) {
-      return false;
+      continue;
     }
 
-    const registeredQuery = [...registered.searchParams.entries()].sort(
-      compareQueryEntry,
-    );
+    const registeredQuery = [...registered.searchParams.entries()]
+      .filter(([key]) => !OAUTH_RESPONSE_PARAMS.has(key))
+      .sort(compareQueryEntry);
     const returnedQuery = [...returned.searchParams.entries()]
       .filter(([key]) => !OAUTH_RESPONSE_PARAMS.has(key))
       .sort(compareQueryEntry);
-    return queryEntriesEqual(registeredQuery, returnedQuery);
-  });
+    if (queryEntriesEqual(registeredQuery, returnedQuery)) return registered;
+  }
+  return undefined;
 }
 
 function compareQueryEntry(
@@ -838,6 +851,29 @@ function queryEntriesEqual(
   );
 }
 
+/**
+ * Did the provider add or replace a response parameter rather than merely
+ * preserve a fixed value from the registered URI? This distinction matters
+ * when, for example, an error callback retains a fixed `code` query pair:
+ * that pair must not turn the error into a successful-code outcome.
+ */
+function hasAddedResponseParam(
+  registered: URL,
+  returned: URL,
+  key: string,
+): boolean {
+  const registeredCounts = new Map<string, number>();
+  for (const value of registered.searchParams.getAll(key)) {
+    registeredCounts.set(value, (registeredCounts.get(value) ?? 0) + 1);
+  }
+  for (const value of returned.searchParams.getAll(key)) {
+    const remaining = registeredCounts.get(value) ?? 0;
+    if (remaining === 0) return true;
+    registeredCounts.set(value, remaining - 1);
+  }
+  return false;
+}
+
 function classifyProxyOutcome(
   response: Response,
   registeredRedirectUris: readonly string[],
@@ -853,13 +889,21 @@ function classifyProxyOutcome(
     // callback (registered redirect URIs are absolute).
     return "interaction";
   }
-  if (!isRegisteredResponseRedirect(registeredRedirectUris, location)) {
+  const registered = findRegisteredResponseRedirect(
+    registeredRedirectUris,
+    location,
+  );
+  if (!registered) {
     return "interaction";
   }
-  if (target.searchParams.get("code")) return "code";
-  if (target.searchParams.get("error")) return "client_error";
+  if (hasAddedResponseParam(registered, target, "code")) return "code";
+  if (hasAddedResponseParam(registered, target, "error")) {
+    return "client_error";
+  }
   return "interaction";
 }
+
+export const __test_internals = { isRegisteredResponseRedirect };
 
 /**
  * Build the OIDC error redirect for a `prompt=none` request that cannot

@@ -61,6 +61,7 @@ import {
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { __test_internals } from "./auth-consent.js";
 
 let ctx: TestContext | undefined;
 
@@ -76,6 +77,16 @@ afterEach(async () => {
 /** Marfa's own origin under the default test config (`authBaseUrl`). */
 const ORIGIN = "http://localhost:0";
 const CALLBACK = "http://localhost:0/callback";
+const RESPONSE_PARAM_NAMES = new Set([
+  "code",
+  "error",
+  "error_description",
+  "iss",
+  "state",
+]);
+const RESERVED_COLLISIONS =
+  "state=fixed-state&code=fixed-code&error=fixed-error" +
+  "&error_description=fixed-description&iss=https%3A%2F%2Fissuer.example";
 /** Where a relying party sends the user from, on a cross-site start. */
 const RP_REFERER = "https://rp.example.com/sign-in";
 
@@ -315,8 +326,28 @@ function expectCallbackBase(location: string, registeredRedirectUri: string) {
   expect(actual.pathname).toBe(registered.pathname);
   expect(actual.hash).toBe(registered.hash);
   for (const [key, value] of registered.searchParams) {
+    if (RESPONSE_PARAM_NAMES.has(key)) continue;
     expect(actual.searchParams.getAll(key)).toContain(value);
   }
+}
+
+function addedResponseValues(
+  location: string,
+  registeredRedirectUri: string,
+  key: string,
+): string[] {
+  const actual = new URL(location);
+  const registered = new URL(registeredRedirectUri);
+  const fixedCounts = new Map<string, number>();
+  for (const value of registered.searchParams.getAll(key)) {
+    fixedCounts.set(value, (fixedCounts.get(value) ?? 0) + 1);
+  }
+  return actual.searchParams.getAll(key).filter((value) => {
+    const remaining = fixedCounts.get(value) ?? 0;
+    if (remaining === 0) return true;
+    fixedCounts.set(value, remaining - 1);
+    return false;
+  });
 }
 
 function expectCodeRedirect(
@@ -326,8 +357,12 @@ function expectCodeRedirect(
   expect(res.status).toBe(302);
   const location = res.headers.get("location") ?? "";
   expectCallbackBase(location, registeredRedirectUri);
-  expect(new URL(location).searchParams.get("code")).toBeTruthy();
-  expect(new URL(location).searchParams.get("error")).toBeNull();
+  expect(
+    addedResponseValues(location, registeredRedirectUri, "code"),
+  ).not.toHaveLength(0);
+  expect(
+    addedResponseValues(location, registeredRedirectUri, "error"),
+  ).toHaveLength(0);
 }
 
 function expectRendersConsent(res: Response, body: string): void {
@@ -411,12 +446,24 @@ describe("GET /auth/authorize (consent skip)", () => {
   it.each([
     ["fixed-query", `${CALLBACK}?channel=stable`],
     ["custom-scheme", "marfa-test://oauth/callback?channel=native"],
+    [
+      "reserved-query-collisions",
+      `${CALLBACK}?channel=stable&${RESERVED_COLLISIONS}`,
+    ],
+    [
+      "custom-scheme reserved-query-collisions",
+      `marfa-test://oauth/callback?channel=native&${RESERVED_COLLISIONS}`,
+    ],
   ] as const)(
     "classifies a code callback for a %s registered redirect URI",
     async (kind, redirectUri) => {
       ctx = await createTestContext({ authAllowSignup: true });
       const clientId = await seedClient(ctx, redirectUri);
-      const cookie = await signInUser(ctx, `skip-callback-${kind}@example.com`);
+      const fixtureKind = kind.replaceAll(" ", "-");
+      const cookie = await signInUser(
+        ctx,
+        `skip-callback-${fixtureKind}@example.com`,
+      );
       const scope = "openid core.note:read";
 
       const signedQuery = await grantFirstConsent(
@@ -437,6 +484,15 @@ describe("GET /auth/authorize (consent skip)", () => {
       expect(projected.data.length).toBe(1);
     },
   );
+
+  it("does not match a callback when a non-reserved fixed query pair differs", () => {
+    const registered = `${CALLBACK}?channel=stable&state=fixed-state&code=fixed-code`;
+    const returned = `${CALLBACK}?channel=beta&state=response-state&code=issued-code`;
+
+    expect(
+      __test_internals.isRegisteredResponseRedirect([registered], returned),
+    ).toBe(false);
+  });
 
   it("REGRESSION: skips with no Referer at all (magic link, Referrer-Policy: no-referrer)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
@@ -818,6 +874,14 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
   it.each([
     ["fixed-query", `${CALLBACK}?channel=stable`],
     ["custom-scheme", "marfa-test://oauth/callback?channel=native"],
+    [
+      "reserved-query-collisions",
+      `${CALLBACK}?channel=stable&${RESERVED_COLLISIONS}`,
+    ],
+    [
+      "custom-scheme reserved-query-collisions",
+      `marfa-test://oauth/callback?channel=native&${RESERVED_COLLISIONS}`,
+    ],
   ] as const)(
     "classifies a prompt=none provider error for a %s registered redirect URI",
     async (kind, redirectUri) => {
@@ -825,7 +889,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       const clientId = await seedClient(ctx, redirectUri);
       const cookie = await signInUser(
         ctx,
-        `skip-none-callback-${kind}@example.com`,
+        `skip-none-callback-${kind.replaceAll(" ", "-")}@example.com`,
       );
       const scope = "openid core.note:read";
       await grantFirstConsent(
@@ -857,9 +921,16 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       const location = res.headers.get("location") ?? "";
       expectCallbackBase(location, redirectUri);
       const callback = new URL(location);
-      expect(callback.searchParams.get("error")).toBe("invalid_request");
-      expect(callback.searchParams.get("state")).toBe(`none-${kind}`);
-      expect(callback.searchParams.get("code")).toBeNull();
+      expect(callback.searchParams.getAll("error")).toContain(
+        "invalid_request",
+      );
+      expect(addedResponseValues(location, redirectUri, "error")).toContain(
+        "invalid_request",
+      );
+      expect(callback.searchParams.getAll("state")).toContain(`none-${kind}`);
+      expect(addedResponseValues(location, redirectUri, "code")).toHaveLength(
+        0,
+      );
       expectNoStore(res);
     },
   );

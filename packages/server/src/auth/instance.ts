@@ -610,11 +610,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
             }),
-            // Sibling shell plugin hosting the four `hooks.after` matchers
-            // that project plugin grant lifecycle into `system.connection`
-            // items + emit auth.grant.created / auth.grant.revoked audit
-            // rows. Best-effort — projection failures must NEVER break
-            // the auth flow.
+            // Sibling shell plugin hosting the refresh-replay before-hook.
+            // Consent projection and grant revocation remain in the Marfa
+            // route handlers that hold the verified client/user context.
             buildOauthProjectionPlugin({
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
