@@ -103,6 +103,23 @@ const CONSENT_ERROR_PARAM = "marfa_consent_error";
  *  query is handed back to the plugin. */
 const CONSENT_DISPLAY_PARAMS = [CONSENT_ERROR_PARAM] as const;
 
+/**
+ * Raised when a consent narrowed the granted scopes but the access tokens
+ * carrying the removed ones could not be revoked.
+ *
+ * Distinct from every other projection failure because the caller has to
+ * treat it differently: a projection that fails to write leaves the user
+ * with a stale record of a grant that is otherwise correct, while a
+ * narrowing that fails to revoke leaves live credentials for permissions
+ * the user believes they have taken away.
+ */
+class NarrowingNotEnforced extends Error {
+  constructor(override readonly cause: unknown) {
+    super("consent narrowing could not revoke the wider-scope tokens");
+    this.name = "NarrowingNotEnforced";
+  }
+}
+
 interface ConsentRouteDeps {
   storage: Storage;
   auth: MarfaAuth | undefined;
@@ -601,22 +618,41 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // revocation are consent-success side effects, so none may happen until
     // a code actually reaches the client's registered callback.
     if (
-      accept &&
-      classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code"
+      !accept ||
+      classifyProxyOutcome(proxyResp, requestedRedirectUri) !== "code"
     ) {
-      try {
-        await projectGrantOnConsent(deps.storage, {
-          authUserId: session.user.id,
-          clientId,
-          scopes: formScopes,
-          clientIp: c.var.clientIp ?? null,
-        });
-      } catch (err) {
-        log("warn", "consent decision: projection failed", {
+      return proxyResp;
+    }
+
+    try {
+      await projectGrantOnConsent(deps.storage, {
+        authUserId: session.user.id,
+        clientId,
+        scopes: formScopes,
+        clientIp: c.var.clientIp ?? null,
+      });
+    } catch (err) {
+      if (err instanceof NarrowingNotEnforced) {
+        // Narrowing a grant is a promise that the access it removes stops
+        // working. Tokens already issued at the wider scope outlive the
+        // consent row, so if they cannot be revoked the promise is not
+        // kept — and handing back the code-bearing redirect would tell
+        // the user it was. Fail loudly instead: the record still
+        // describes the wider grant the tokens actually carry, which is
+        // at least true.
+        log("error", "consent decision: narrowing revocation failed", {
           client_id: clientId,
-          error: err instanceof Error ? err.message : String(err),
+          error: err.cause instanceof Error ? err.cause.message : "unknown",
         });
+        return c.text(
+          "Could not withdraw the access you removed, so the change was not applied. Try again.",
+          500,
+        );
       }
+      log("warn", "consent decision: projection failed", {
+        client_id: clientId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     return proxyResp;
@@ -1153,6 +1189,36 @@ async function projectGrantOnConsent(
         : [];
     }
 
+    // If the new scope set is narrower than the prior set, revoke
+    // existing access tokens — RPs must not continue calling narrowed-
+    // away APIs. Refresh tokens are left intact; they mint at the
+    // narrower scope on next refresh.
+    //
+    // Ahead of the record update, and fatal when it fails, because a
+    // narrowing that cannot revoke is a narrowing that did not happen:
+    // the tokens carrying the removed scopes stay valid for the rest of
+    // their lifetime. Rewriting the record first would leave /auth/security
+    // describing access the user no longer has while that access still
+    // works. The caller turns this into a failed request rather than a
+    // code-bearing redirect that claims otherwise.
+    const newSet = new Set(opts.scopes);
+    if (priorScopes.some((s) => !newSet.has(s))) {
+      const provider = storage.oauthProvider;
+      if (typeof provider?.revokeAccessTokensForGrant !== "function") {
+        throw new NarrowingNotEnforced(
+          new Error("storage cannot revoke access tokens for a grant"),
+        );
+      }
+      try {
+        await provider.revokeAccessTokensForGrant(
+          opts.clientId,
+          opts.authUserId,
+        );
+      } catch (err) {
+        throw new NarrowingNotEnforced(err);
+      }
+    }
+
     // Reset status + clear revoked_at on re-consent. Without this a
     // re-consented row keeps status="revoked" — /security hides the grant
     // while the plugin issues tokens against it. Setting revoked_at:
@@ -1178,23 +1244,6 @@ async function projectGrantOnConsent(
     }
     projectedItem = updated;
     eventType = "updated";
-
-    // If the new scope set is narrower than the prior set, revoke
-    // existing access tokens — RPs must not continue calling narrowed-
-    // away APIs. Refresh tokens are left intact; they mint at the
-    // narrower scope on next refresh.
-    if (
-      typeof storage.oauthProvider?.revokeAccessTokensForGrant === "function"
-    ) {
-      const newSet = new Set(opts.scopes);
-      const narrowed = priorScopes.some((s) => !newSet.has(s));
-      if (narrowed) {
-        await storage.oauthProvider.revokeAccessTokensForGrant(
-          opts.clientId,
-          opts.authUserId,
-        );
-      }
-    }
   } else {
     // First-time consent: insert a fresh row.
     const item = await storage.items.create(

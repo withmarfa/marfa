@@ -879,6 +879,61 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(afterRow).toBeNull();
   });
 
+  it("REGRESSION: a narrowing whose token revocation fails does not report success", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "revoke-fails@example.com");
+    const wide = ["openid", "core.note:read", "core.note:write"];
+    const oauthQuery = await buildSignedOauthQuery(clientId, wide.join(" "));
+
+    const first = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", oauth_query: oauthQuery, scopes: wide },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(first.status).toBe(302);
+
+    const granted = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(granted.data.length).toBe(1);
+    const grantItem = granted.data[0]!;
+    const authUserId = grantItem.properties.user_id as string;
+    const tokenHash = await seedAccessToken(ctx, clientId, authUserId, wide);
+
+    // The revocation the narrowing depends on cannot be performed.
+    const store = ctx.storage.oauthProvider!;
+    store.revokeAccessTokensForGrant = () =>
+      Promise.reject(new Error("token store unavailable"));
+
+    const narrowed = await request(
+      ctx.app,
+      "POST",
+      "/auth/authorize/decision",
+      {
+        form: {
+          accept: "true",
+          oauth_query: oauthQuery,
+          scopes: ["openid", "core.note:read"],
+        },
+        headers: { cookie, origin: ORIGIN },
+      },
+    );
+
+    // Handing back the code-bearing redirect tells the user the narrowing
+    // took effect. It did not: the wider-scope token is still live.
+    expect(narrowed.headers.get("location") ?? "").not.toContain("code=");
+    expect(narrowed.status).toBeGreaterThanOrEqual(500);
+
+    // The token that carries the scopes the user just removed still works,
+    // which is exactly why the request must not be reported as successful.
+    expect(await store.validateAccessToken(tokenHash)).not.toBeNull();
+
+    // And the record still says what is actually true — the wider grant.
+    const after = await ctx.storage.items.get(grantItem.id);
+    expect(after!.properties.scopes).toEqual(wide);
+  });
+
   it("F4: re-consent with SAME scopes leaves access tokens alone (no narrowing → no revoke)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
