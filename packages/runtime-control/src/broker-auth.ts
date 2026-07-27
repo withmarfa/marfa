@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { isBrokerAuthorized } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "./env.js";
 
 /**
@@ -16,13 +17,19 @@ import type { ControlPlaneEnv } from "./env.js";
  * reach a credential needs this gate. Integration Workers already send
  * the header on every call (see `worker-entry.ts` in
  * `@withmarfa/runtime-sdk`).
+ *
+ * The comparison itself lives in `@withmarfa/shared` because the
+ * integration Workers gate their own fetch surface on the same key and
+ * cannot reuse this wrapper — they have no Hono context to answer
+ * through, and `@withmarfa/runtime-sdk` must not take a Hono
+ * dependency it would ship into every integration bundle. This
+ * function is the Hono-shaped half; the rule is shared.
  */
 export function brokerAuthFailure(
   c: Context<{ Bindings: ControlPlaneEnv }>,
   brokerKey: string,
 ): Response | null {
-  const auth = c.req.header("authorization");
-  if (auth !== `Bearer ${brokerKey}`) {
+  if (!isBrokerAuthorized(c.req.header("authorization"), brokerKey)) {
     return c.json({ error: "unauthorized" }, 401);
   }
   return null;
