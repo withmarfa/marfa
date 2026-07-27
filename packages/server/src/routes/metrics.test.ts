@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -18,6 +19,7 @@ beforeAll(async () => {
       type_permissions: {},
       connection_id: "conn_metrics_live",
       expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: runtimeCredentialItemSource("conn_metrics_live"),
     },
     hashApiKey("marfa_k1_metrics_runtime_live", "test-salt"),
   );
@@ -29,6 +31,7 @@ beforeAll(async () => {
       type_permissions: {},
       connection_id: "conn_metrics_retired",
       expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: runtimeCredentialItemSource("conn_metrics_retired"),
     },
     hashApiKey("marfa_k1_metrics_runtime_retired", "test-salt"),
   );

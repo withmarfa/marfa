@@ -32,6 +32,7 @@ import { requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 import {
   buildEdgePermissions,
   buildExtensionPermissions,
@@ -413,6 +414,11 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
         edge_permissions: buildEdgePermissions(manifest),
         connection_id: body.connection_id,
         expires_at: expiresAt,
+        // `source` rotates on every mint, so it cannot carry provenance.
+        // `item_source` stays stable for the Connection's lifetime, which
+        // is what keeps `(source, source_id)` upsert identity intact
+        // across a credential refresh.
+        item_source: runtimeCredentialItemSource(body.connection_id),
       },
       keyHash,
       // The connection's tenant, never the caller's. The broker

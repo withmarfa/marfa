@@ -26,6 +26,7 @@
 import { randomBytes } from "node:crypto";
 import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
 import { hashApiKey } from "../../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../../connections/lifecycle-lock.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   buildEdgePermissions,
@@ -141,6 +142,11 @@ export async function mintLocalRuntimeCredential(
       edge_permissions: buildEdgePermissions(manifest),
       connection_id: connectionId,
       expires_at: expiresAt,
+      // Stable across mints, unlike `source`, which carries a random
+      // suffix per credential. Keeps written items attributable to the
+      // Connection rather than to whichever credential happened to be
+      // live at the time.
+      item_source: runtimeCredentialItemSource(connectionId),
     },
     keyHash,
     tenantId,

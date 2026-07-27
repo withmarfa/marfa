@@ -12,6 +12,7 @@ import {
   decryptSecret,
   SECRET_INFO,
 } from "../crypto/secret-encryption.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 let realFetch: typeof globalThis.fetch;
@@ -713,6 +714,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
         edge_permissions: {},
         connection_id: connectionId,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource(connectionId),
       },
       keyHash,
       undefined,
@@ -755,6 +757,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
         edge_permissions: {},
         connection_id: connectionB,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource(connectionB),
       },
       keyHash,
       undefined,

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS \`api_keys\` (
 	\`created_at\` text NOT NULL,
 	\`revoked_at\` text,
 	\`last_used_at\` text
-, \`source\` text NOT NULL DEFAULT '', \`edge_permissions\` text NOT NULL DEFAULT '{}', \`default_tier\` text NOT NULL DEFAULT 'library', \`is_platform\` integer NOT NULL DEFAULT 0, \`metadata_permissions\` text NOT NULL DEFAULT '{}', \`is_runtime_credential\` integer NOT NULL DEFAULT 0, \`connection_id\` text, \`expires_at\` text);
+, \`source\` text NOT NULL DEFAULT '', \`edge_permissions\` text NOT NULL DEFAULT '{}', \`default_tier\` text NOT NULL DEFAULT 'library', \`is_platform\` integer NOT NULL DEFAULT 0, \`metadata_permissions\` text NOT NULL DEFAULT '{}', \`is_runtime_credential\` integer NOT NULL DEFAULT 0, \`connection_id\` text, \`expires_at\` text, \`item_source\` text);
 
 CREATE TABLE IF NOT EXISTS \`audit_log\` (
 	\`id\` text PRIMARY KEY NOT NULL,

@@ -11,6 +11,7 @@ import {
 import type { TenantFanout } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -773,6 +774,7 @@ async function seedRuntimeCredential(opts: {
       type_permissions: {},
       connection_id: `conn_${opts.id}`,
       expires_at: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS).toISOString(),
+      item_source: runtimeCredentialItemSource(`conn_${opts.id}`),
     },
     hashApiKey(`marfa_k1_${opts.id}`, TEST_API_KEY_SALT),
     undefined,
@@ -1036,6 +1038,16 @@ describe("RuntimeCredentialReaper — scheduling and coordination", () => {
         ): Promise<T | undefined> => {
           names.push(name);
           return opts.granted ? await fn() : undefined;
+        },
+        // The reaper never takes this lock, but the store has to satisfy
+        // the interface. Always running `fn` matches the real contract:
+        // an exclusive lock waits rather than skipping.
+        withExclusiveLock: async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T> => {
+          names.push(name);
+          return await fn();
         },
       },
     };
