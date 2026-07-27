@@ -89,3 +89,30 @@ export function typePatternToSql(pattern: string): TypePatternSql {
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
   };
 }
+
+/**
+ * The SQL decomposition for a *read filter* (`?type=`), where a bare
+ * identifier already selects its subtree: `core.entity` has always returned
+ * `core.entity.person` too. Both spellings therefore produce both clauses.
+ *
+ * Deliberately separate from `typePatternToSql`, which serves permission
+ * grants — there a bare `core.note` is an exact grant and must NOT reach
+ * descendants, or a credential scoped to one type would silently read the
+ * whole subtree. Same input strings, opposite defaults, so they cannot share
+ * one function.
+ *
+ * - `*`               → `{ global: true }`
+ * - `core.entity`     → `{ exact: "core.entity", descendantPattern: "core.entity.%" }`
+ * - `core.entity.*`   → identical to the line above
+ */
+export function typeSubtreeToSql(type: string): TypePatternSql {
+  if (type === GLOBAL_TYPE_WILDCARD) {
+    return { global: true, exact: null, descendantPattern: null };
+  }
+  const root = subtreeWildcardRoot(type) ?? type;
+  return {
+    global: false,
+    exact: root,
+    descendantPattern: `${escapeLikeLiteral(root)}.%`,
+  };
+}

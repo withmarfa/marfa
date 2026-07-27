@@ -9,7 +9,6 @@ import {
   gt,
   desc,
   asc,
-  like,
   sql,
   inArray,
   isNull,
@@ -26,6 +25,7 @@ import {
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
   typePatternToSql,
+  typeSubtreeToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
 import { filterToSqlConditions } from "../filter-sql.js";
@@ -367,11 +367,13 @@ export class PgItemStore implements ItemStore {
       // `core.entity` and `core.entity.*` mean the same thing: the type and
       // everything under it. A bare identifier has always included its
       // subtypes here, so the explicit wildcard must too.
-      const { global, exact } = typePatternToSql(filters.type);
-      if (!global && exact) {
+      const { global, exact, descendantPattern } = typeSubtreeToSql(
+        filters.type,
+      );
+      if (!global && exact && descendantPattern) {
         const typeClause = or(
           eq(items.type, exact),
-          like(items.type, exact + ".%"),
+          sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
         );
         if (typeClause) conditions.push(typeClause);
       }

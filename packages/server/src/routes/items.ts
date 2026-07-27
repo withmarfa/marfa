@@ -5,6 +5,9 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
+  isValidTypePattern,
+  GLOBAL_TYPE_WILDCARD,
+  subtreeWildcardRoot,
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
@@ -1206,7 +1209,13 @@ export function itemRoutes(storage: Storage) {
     const query = c.req.valid("query");
 
     const type = query.type;
-    if (type && !isValidTypeIdentifier(type) && !type.endsWith(".*")) {
+    // The value compiles into a `LIKE` predicate, so it has to clear the
+    // pattern grammar rather than a bare "ends with `.*`" shape check —
+    // otherwise `%.*` reaches the query as a SQL wildcard. The global `*` is
+    // rejected on top: "everything" is `GET /items` with no type at all, and
+    // a type filter that matches every type would slip past the per-type
+    // enforcement levers keyed off this parameter.
+    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
@@ -1276,9 +1285,15 @@ export function itemRoutes(storage: Storage) {
       tenantConfigForRead,
       callerKeyForRead,
     );
+    // `core.note` and `core.note.*` select the same rows, so the lever has to
+    // resolve to the same configured type either way. Matching the raw query
+    // string would let a caller switch a read-narrowing control off by
+    // appending two characters to it.
+    const sourceFilterType =
+      typeof type === "string" ? (subtreeWildcardRoot(type) ?? type) : null;
     const sourcesFilter =
-      typeof type === "string"
-        ? (getSourceFilter(enforcementForRead, type) ?? undefined)
+      sourceFilterType !== null
+        ? (getSourceFilter(enforcementForRead, sourceFilterType) ?? undefined)
         : undefined;
 
     const result = await storage.items.list({
