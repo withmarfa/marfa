@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { findIntegration } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
+import { brokerAuthFailure } from "../broker-auth.js";
 
 type ControlPlaneContext = Context<{ Bindings: ControlPlaneEnv }>;
 
@@ -61,10 +62,8 @@ async function handleScheduleDispatch(
       503,
     );
   }
-  const auth = c.req.header("authorization");
-  if (auth !== `Bearer ${env.MARFA_RUNTIME_BROKER_KEY}`) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
+  const unauthorized = brokerAuthFailure(c, env.MARFA_RUNTIME_BROKER_KEY);
+  if (unauthorized) return unauthorized;
 
   let body: { integration_name?: string };
   try {
