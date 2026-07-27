@@ -1455,6 +1455,132 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
+  it("treats a trashed prior unmapped activity as already reported after restart", async () => {
+    const integrationName = "acme.unmapped-trashed-alert";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const firstBridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(firstBridge).not.toBeNull();
+
+    let activityId: string;
+    try {
+      await firstBridge!.start();
+      const note = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "create the original alert" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
+      expect(activity).toBeDefined();
+      activityId = activity!.id;
+    } finally {
+      await firstBridge!.stop();
+    }
+
+    await ctx.storage.items.delete(activityId);
+    expect(await ctx.storage.items.get(activityId)).toBeNull();
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    const originalFindBySourceIdIncludingTrashed =
+      ctx.storage.items.findBySourceIdIncludingTrashed.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    let sourceLookupCompletions = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+      }
+      return originalCreate(input, tenantId);
+    };
+    ctx.storage.items.findBySourceIdIncludingTrashed = async (
+      source,
+      sourceId,
+      tenantId,
+    ) => {
+      const item = await originalFindBySourceIdIncludingTrashed(
+        source,
+        sourceId,
+        tenantId,
+      );
+      if (item?.id === activityId) sourceLookupCompletions++;
+      return item;
+    };
+
+    const restartedBridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 1,
+      unmappedActivityRetryMaxMs: 1,
+    });
+    expect(restartedBridge).not.toBeNull();
+
+    try {
+      await restartedBridge!.start();
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("restart sees the reserved natural key");
+      expect(
+        await waitFor(
+          () => Promise.resolve(sourceLookupCompletions),
+          (count) => count === 1,
+        ),
+      ).toBe(1);
+      await Promise.resolve();
+      expect(activityWriteAttempts).toBe(0);
+
+      await publishNote("later events stay deduplicated");
+      await Promise.resolve();
+      expect(sourceLookupCompletions).toBe(1);
+      expect(activityWriteAttempts).toBe(0);
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      ctx.storage.items.findBySourceIdIncludingTrashed =
+        originalFindBySourceIdIncludingTrashed;
+      await restartedBridge!.stop();
+    }
+  });
+
   it("recognizes a committed activity after an ambiguous rejection and retry", async () => {
     const integrationName = "acme.unmapped-ambiguous-commit";
     const integrationId = await createIntegration(
@@ -1464,9 +1590,8 @@ describe("bridge — unmapped integration handling", () => {
       integrationRef: integrationId,
     });
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
-    const originalFindBySourceId = ctx.storage.items.findBySourceId.bind(
-      ctx.storage.items,
-    );
+    const originalFindBySourceIdIncludingTrashed =
+      ctx.storage.items.findBySourceIdIncludingTrashed.bind(ctx.storage.items);
     let activityWriteAttempts = 0;
     let committedActivityId: string | undefined;
     let hideCommittedRowOnce = true;
@@ -1488,9 +1613,17 @@ describe("bridge — unmapped integration handling", () => {
       }
       return originalCreate(input, tenantId);
     };
-    ctx.storage.items.findBySourceId = async (source, sourceId, tenantId) => {
+    ctx.storage.items.findBySourceIdIncludingTrashed = async (
+      source,
+      sourceId,
+      tenantId,
+    ) => {
       sourceLookupAttempts++;
-      const existing = await originalFindBySourceId(source, sourceId, tenantId);
+      const existing = await originalFindBySourceIdIncludingTrashed(
+        source,
+        sourceId,
+        tenantId,
+      );
       sourceLookupCompletions++;
       if (
         committedActivityId !== undefined &&
@@ -1577,7 +1710,8 @@ describe("bridge — unmapped integration handling", () => {
       expect(sourceLookupCompletions).toBe(3);
     } finally {
       ctx.storage.items.create = originalCreate;
-      ctx.storage.items.findBySourceId = originalFindBySourceId;
+      ctx.storage.items.findBySourceIdIncludingTrashed =
+        originalFindBySourceIdIncludingTrashed;
       await bridge!.stop();
     }
   });

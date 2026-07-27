@@ -850,7 +850,7 @@ async function writeUnmappedActivity(
 ): Promise<void> {
   const key = unmappedActivityKey(tenantId, entry.integration_name);
   const sourceId = unmappedActivitySourceId(key);
-  const existing = await storage.items.findBySourceId(
+  const existing = await storage.items.findBySourceIdIncludingTrashed(
     UNMAPPED_ACTIVITY_SOURCE,
     sourceId,
     tenantId,
@@ -878,7 +878,7 @@ async function writeUnmappedActivity(
     // A transport/driver rejection does not prove the transaction failed.
     // Re-read the natural key and accept only the same tenant-scoped,
     // semantically identical alert; an unrelated collision remains a failure.
-    const committed = await storage.items.findBySourceId(
+    const committed = await storage.items.findBySourceIdIncludingTrashed(
       UNMAPPED_ACTIVITY_SOURCE,
       sourceId,
       tenantId,

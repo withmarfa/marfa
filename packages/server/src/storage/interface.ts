@@ -264,6 +264,17 @@ export interface ItemStore {
     sourceId: string,
     tenantId?: string,
   ): Promise<Item | null>;
+  /**
+   * Internal natural-key lookup that also returns a soft-deleted row. Use
+   * this only when a caller must reconcile against the database uniqueness
+   * constraint itself; normal API reads and upserts must keep using
+   * `findBySourceId`, which hides trashed items.
+   */
+  findBySourceIdIncludingTrashed(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null>;
   update(
     id: string,
     input: UpdateItemInput,
