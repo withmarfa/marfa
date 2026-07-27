@@ -21,6 +21,7 @@ import { renderVerifyEmailPage } from "../src/routes/verify-email-page.js";
 import { renderForgotPasswordPage } from "../src/routes/forgot-password-page.js";
 import { renderResetPasswordPage } from "../src/routes/reset-password-page.js";
 import { renderConsentScreen } from "../src/routes/consent.js";
+import { renderAuthorizeExpiredPage } from "../src/routes/authorize-expired-page.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -341,6 +342,15 @@ const AUTH_SCREENS: GalleryScreen[] = [
               "core.event:read",
             ],
           }),
+      },
+      {
+        // The signed authorize request has to survive the user's whole
+        // authentication journey, and a magic link or an email
+        // verification hop routinely outlasts it — so this is a state a
+        // real user reaches, not just a malformed-request screen.
+        id: "expired",
+        label: "Request expired",
+        render: () => renderAuthorizeExpiredPage(),
       },
     ],
   },

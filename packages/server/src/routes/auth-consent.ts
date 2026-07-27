@@ -89,6 +89,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
+import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
@@ -236,8 +237,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // the sign-in bounce below, which is the same page one hop earlier
     // with a credential prompt on it, and an expired-but-genuine request,
     // which can no longer produce a code and so has nothing to render for.
-    if (!(await verifySignedQuery(auth, oauthQuery))) {
-      return c.text("Invalid or expired authorize request signature", 400);
+    //
+    // What it does render is a page built entirely from fixed copy, with
+    // nothing from the query on it. The signed window is ten minutes from
+    // the plugin's first authorize hit and has to cover the whole
+    // authentication journey — a magic link, or a sign-up with an email
+    // verification hop, routinely outruns it — so an honest user reaching
+    // this is ordinary, and a raw 400 would leave them stranded on a
+    // developer's error message with nothing to do next.
+    if ((await verifySignedQuery(auth, oauthQuery)) !== "valid") {
+      setNoStore(c);
+      return c.html(renderAuthorizeExpiredPage(), 400);
     }
 
     // OIDC `prompt` rides the signed query verbatim:
@@ -586,8 +596,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // Marfa-owned side effect below must be gated independently. Rejecting
     // here also avoids relying on the shape of a plugin error response to
     // decide whether it is safe to project or revoke anything.
-    if (!(await verifySignedQuery(deps.auth, oauthQuery))) {
-      return c.text("Invalid or expired authorize request signature", 400);
+    //
+    // The same page as the GET path, for the same reason: this POST is a
+    // form submit from a browser, and the likeliest way to reach it is a
+    // user who read the consent screen for longer than the signed window
+    // lasts.
+    if ((await verifySignedQuery(deps.auth, oauthQuery)) !== "valid") {
+      setNoStore(c);
+      return c.html(renderAuthorizeExpiredPage(), 400);
     }
 
     // Parse `client_id` + `scope` from the verified `oauth_query`, NOT
@@ -804,6 +820,19 @@ async function proxyConsentDecision(
 }
 
 /**
+ * Verdict on an authorize query's signature.
+ *
+ * `expired` and `unsigned` both end the request the same way and get the
+ * same page — the user's only move either way is to start again at the
+ * app, and telling them which it was would be no help to them and a hint
+ * to anyone probing. The split exists for the operator: a request that
+ * timed out is routine traffic, one nobody signed is somebody building a
+ * consent screen, and a log that couldn't tell them apart would bury the
+ * second in the first.
+ */
+type SignedQueryVerdict = "valid" | "expired" | "unsigned";
+
+/**
  * Is this authorize query one the OAuth Provider plugin actually signed,
  * and still inside its validity window?
  *
@@ -825,23 +854,30 @@ async function proxyConsentDecision(
 async function verifySignedQuery(
   auth: MarfaAuth,
   oauthQuery: string,
-): Promise<boolean> {
+): Promise<SignedQueryVerdict> {
   try {
     const params = new URLSearchParams(oauthQuery);
     const sig = params.get("sig");
-    if (!sig) return false;
+    if (!sig) return "unsigned";
     const expSeconds = Number(params.get("exp"));
-    if (!Number.isFinite(expSeconds) || expSeconds * 1000 < Date.now()) {
-      return false;
-    }
+    // A missing or unparseable `exp` is not a request that timed out. The
+    // plugin always signs one, so its absence means the parameter set
+    // never came from the plugin at all.
+    if (!Number.isFinite(expSeconds)) return "unsigned";
+    if (expSeconds * 1000 < Date.now()) return "expired";
     params.delete("sig");
     const expected = await makeSignature(params.toString(), auth.signingSecret);
-    return constantTimeEqual(sig, expected);
+    if (constantTimeEqual(sig, expected)) return "valid";
+    log(
+      "warn",
+      "consent: authorize request carries a signature we did not make",
+    );
+    return "unsigned";
   } catch (err) {
     log("warn", "consent: signed-query verification failed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return false;
+    return "unsigned";
   }
 }
 

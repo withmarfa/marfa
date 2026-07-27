@@ -156,6 +156,27 @@ function buildForgedOauthQuery(clientId: string, scope: string): string {
   return params.toString();
 }
 
+/**
+ * Assert the refusal page an authorize request gets when its signature
+ * doesn't verify.
+ *
+ * What it says matters less than what it doesn't. On the forged path
+ * every value in the query is the attacker's to choose, so the test that
+ * catches a regression to rendering consent is the one that pins their
+ * absence: no client name, no scope list, no `state`, no form to submit.
+ */
+async function expectRefusedAuthorizePage(
+  res: Response,
+  fromTheQuery: readonly string[],
+): Promise<void> {
+  expect(res.status).toBe(400);
+  const body = await res.text();
+  expect(body).toContain("This request has expired");
+  for (const value of fromTheQuery) expect(body).not.toContain(value);
+  expect(body).not.toContain("oauth_query");
+  expect(body).not.toContain("code=");
+}
+
 /** Build a signed oauth_query accepted by both Marfa and the provider. */
 async function buildSignedOauthQuery(
   clientId: string,
@@ -274,8 +295,12 @@ describe("GET /auth/authorize (consent page)", () => {
       { headers: { cookie } },
     );
 
-    expect(res.status).toBe(400);
-    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+    await expectRefusedAuthorizePage(res, [
+      "Marfa Drive",
+      "core.note:read",
+      "test-state",
+      clientId,
+    ]);
   });
 
   it("REGRESSION: refuses to render a genuinely signed query past its exp", async () => {
@@ -290,8 +315,11 @@ describe("GET /auth/authorize (consent page)", () => {
       headers: { cookie },
     });
 
-    expect(res.status).toBe(400);
-    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+    // A genuinely signed request past its exp gets the same page as a
+    // forged one. It can no longer produce a code, so there is nothing to
+    // render a consent screen for, and the user's only move either way is
+    // to start again at the app.
+    await expectRefusedAuthorizePage(res, ["Test Client", "test-state"]);
   });
 
   it("REGRESSION: refuses a forged query before bouncing an anonymous visitor to sign-in", async () => {
@@ -639,6 +667,11 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         },
       );
       expect(invalid.status).toBe(400);
+      // A form submit from a browser, so it gets the themed page rather
+      // than a developer's sentence. The likeliest way to reach it is a
+      // user who read the consent screen for longer than the signed
+      // window lasts.
+      expect(await invalid.text()).toContain("This request has expired");
 
       const grantAfter = await ctx.storage.items.get(grantBefore.id);
       expect(grantAfter?.version).toBe(grantBefore.version);

@@ -764,10 +764,21 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
 
     // Not minting is necessary but not enough: a consent screen rendered
     // from a request nobody signed is an attacker-composed page on the
-    // real origin. Nothing gets built from this query at all.
+    // real origin. The refusal page is fixed copy, so nothing from this
+    // query reaches it.
     const res = await landOnConsentPage(ctx, params.toString(), { cookie });
     expect(res.status).toBe(400);
-    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("This request has expired");
+    for (const fromTheQuery of [
+      "Skip Test Client",
+      "core.note:read",
+      "minted-state",
+      clientId,
+    ]) {
+      expect(body).not.toContain(fromTheQuery);
+    }
+    expect(body).not.toContain("oauth_query");
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
   });
 
