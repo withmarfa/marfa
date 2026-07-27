@@ -75,9 +75,23 @@ function diffCaps(a: FieldDefinition, b: FieldDefinition): FieldDiff {
   return widened ? "widened" : "same";
 }
 
+/**
+ * `compatible_with` is typed `string[]`, but the validator accepts a bare
+ * string as the single-target shorthand, and custom types registered before it
+ * normalized are stored that way. Reading one back and handing it to `new Set`
+ * would iterate its characters, so every target would look withdrawn and an
+ * untouched claim would report as breaking.
+ */
+function compatibleWithTargets(schema: TypeSchema): Set<string> {
+  const declared: unknown = schema.compatible_with;
+  if (typeof declared === "string") return new Set([declared]);
+  if (!Array.isArray(declared)) return new Set();
+  return new Set(declared.filter((t): t is string => typeof t === "string"));
+}
+
 function compatibleWithDiff(prev: TypeSchema, next: TypeSchema): FieldDiff {
-  const before = new Set(prev.compatible_with ?? []);
-  const after = new Set(next.compatible_with ?? []);
+  const before = compatibleWithTargets(prev);
+  const after = compatibleWithTargets(next);
   // Withdrawing a claim breaks every reader that relied on this type being
   // readable as the target; adding one only offers more.
   for (const target of before) if (!after.has(target)) return "breaking";

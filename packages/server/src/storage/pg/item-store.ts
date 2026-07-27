@@ -12,6 +12,7 @@ import {
   sql,
   inArray,
   isNull,
+  type SQL,
 } from "drizzle-orm";
 import {
   generateId,
@@ -117,6 +118,39 @@ import type { PgDb } from "./connection.js";
 import type { PgVersionStore } from "./version-store.js";
 import type { PgSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
+
+/**
+ * Compiles the caller's readable-type patterns into one predicate.
+ *
+ * Shared by `list` and `stats` so the two cannot disagree about what a
+ * credential can see. Both directions of disagreement have bitten: comparing
+ * the patterns as literal identifiers reports zero rows for every
+ * wildcard-scoped credential, and ignoring an empty list reports the whole
+ * tenant to a credential that may read nothing.
+ *
+ * `undefined` in means "no filter" — an admin or tenant_admin, whose tenant
+ * isolation is enforced separately. An empty array is the opposite: a member
+ * credential or an OAuth token whose scopes project into no type permission at
+ * all, which must see nothing rather than everything. `undefined` out means "no
+ * predicate", so a caller pushes the result only when it is present.
+ */
+function allowedTypesCondition(
+  patterns: string[] | undefined,
+): SQL | undefined {
+  if (!patterns) return undefined;
+  if (patterns.length === 0) return sql`1=0`;
+  const clauses = patterns.map((pattern) => {
+    const { global, exact, descendantPattern } = typePatternToSql(pattern);
+    if (global) return sql`1=1`;
+    if (!exact) return sql`1=0`;
+    if (!descendantPattern) return eq(items.type, exact);
+    return or(
+      eq(items.type, exact),
+      sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+    );
+  });
+  return or(...clauses);
+}
 
 export class PgItemStore implements ItemStore {
   constructor(
@@ -432,25 +466,8 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      // Empty allowed_types means "no readable types" — must filter to zero
-      // rows. See SqliteItemStore.list for the rationale.
-      if (filters.allowed_types.length === 0) {
-        conditions.push(sql`1=0`);
-      } else {
-        const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPattern } =
-            typePatternToSql(pattern);
-          if (global) return sql`1=1`;
-          if (!exact) return sql`1=0`;
-          if (!descendantPattern) return eq(items.type, exact);
-          return or(
-            eq(items.type, exact),
-            sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-          );
-        });
-        const clause = or(...typeClauses);
-        if (clause) conditions.push(clause);
-      }
+      const clause = allowedTypesCondition(filters.allowed_types);
+      if (clause) conditions.push(clause);
     }
 
     if (filters.filter) {
@@ -932,9 +949,8 @@ export class PgItemStore implements ItemStore {
     if (tenantId) {
       conditions.push(eq(items.tenant_id, tenantId));
     }
-    if (allowedTypes && allowedTypes.length > 0) {
-      conditions.push(inArray(items.type, allowedTypes));
-    }
+    const typeClause = allowedTypesCondition(allowedTypes);
+    if (typeClause) conditions.push(typeClause);
 
     // Use ::int (matches sibling counters in version-store, webhook-store,
     // type-store). ::bigint is serialized as a string by node-postgres, which

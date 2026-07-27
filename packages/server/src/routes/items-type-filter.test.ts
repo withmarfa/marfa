@@ -170,6 +170,50 @@ describe("allowed_types — underscore handling across read surfaces", () => {
   });
 });
 
+describe("GET /items?filter= — LIKE operands declare their escape character", () => {
+  it("treats an underscore in a contains filter as a literal", async () => {
+    // `escapeLike` writes `\_`, but Postgres and SQLite disagree on whether a
+    // LIKE has a default escape character at all: unaccompanied by an ESCAPE
+    // clause the pattern means "backslash, then any character" on SQLite, and
+    // this query returns nothing.
+    const types = await listTypes(
+      `/items?filter=${encodeURIComponent('type contains "web_gallery"')}`,
+      ctx.adminKey,
+    );
+    expect(types).toContain(UNDERSCORE_PARENT);
+    expect(types).not.toContain(LOOKALIKE);
+    expect(types).not.toContain(LOOKALIKE_CHILD);
+  });
+});
+
+describe("GET /items/stats — counts what the caller can actually read", () => {
+  async function statsTotal(key: string): Promise<number> {
+    const res = await request(ctx.app, "GET", "/items/stats", { key });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, number>;
+    return Object.values(body).reduce((sum, n) => sum + n, 0);
+  }
+
+  it("counts the subtree a wildcard-scoped credential can read", async () => {
+    // The patterns reach here verbatim, so comparing them as literal
+    // identifiers found no type named `demo.web_gallery.*` and reported zero.
+    const key = await mintScopedKey({ [`${UNDERSCORE_PARENT}.*`]: "read" });
+    expect(await statsTotal(key)).toBeGreaterThan(0);
+  });
+
+  it("counts everything for a globally-scoped credential", async () => {
+    const key = await mintScopedKey({ "*": "read" });
+    expect(await statsTotal(key)).toBeGreaterThan(0);
+  });
+
+  it("counts nothing for a credential with no readable types", async () => {
+    // The list path already forces zero rows on an empty filter; stats used to
+    // skip the clause entirely and report the whole tenant.
+    const key = await mintScopedKey({});
+    expect(await statsTotal(key)).toBe(0);
+  });
+});
+
 describe("DELETE /types/:id — in-use check", () => {
   it("does not count a lookalike sibling's items as in-use", async () => {
     // `demo.solo_type` has no items of its own; `demo.soloxtype.child` does.

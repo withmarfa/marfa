@@ -12,6 +12,7 @@ import {
   sql,
   inArray,
   isNull,
+  type SQL,
 } from "drizzle-orm";
 import {
   generateId,
@@ -101,6 +102,39 @@ function isPrimaryKeyViolation(err: unknown): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Compiles the caller's readable-type patterns into one predicate.
+ *
+ * Shared by `list` and `stats` so the two cannot disagree about what a
+ * credential can see. Both directions of disagreement have bitten: comparing
+ * the patterns as literal identifiers reports zero rows for every
+ * wildcard-scoped credential, and ignoring an empty list reports the whole
+ * tenant to a credential that may read nothing.
+ *
+ * `undefined` in means "no filter" — an admin or tenant_admin, whose tenant
+ * isolation is enforced separately. An empty array is the opposite: a member
+ * credential or an OAuth token whose scopes project into no type permission at
+ * all, which must see nothing rather than everything. `undefined` out means "no
+ * predicate", so a caller pushes the result only when it is present.
+ */
+function allowedTypesCondition(
+  patterns: string[] | undefined,
+): SQL | undefined {
+  if (!patterns) return undefined;
+  if (patterns.length === 0) return sql`1=0`;
+  const clauses = patterns.map((pattern) => {
+    const { global, exact, descendantPattern } = typePatternToSql(pattern);
+    if (global) return sql`1=1`;
+    if (!exact) return sql`1=0`;
+    if (!descendantPattern) return eq(items.type, exact);
+    return or(
+      eq(items.type, exact),
+      sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+    );
+  });
+  return or(...clauses);
 }
 
 export class SqliteItemStore implements ItemStore {
@@ -422,29 +456,8 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      // An empty allowed_types array means "the caller has no readable
-      // types" — typically a member-tier credential or an OAuth token
-      // whose scopes don't project into any type_permission. The route
-      // layer (computeTypeFilter) returns `undefined` for "no filter"
-      // (admin / tenant_admin) and an array for "filter to these patterns".
-      // An empty array must filter to zero rows.
-      if (filters.allowed_types.length === 0) {
-        conditions.push(sql`1=0`);
-      } else {
-        const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPattern } =
-            typePatternToSql(pattern);
-          if (global) return sql`1=1`;
-          if (!exact) return sql`1=0`;
-          if (!descendantPattern) return eq(items.type, exact);
-          return or(
-            eq(items.type, exact),
-            sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-          );
-        });
-        const clause = or(...typeClauses);
-        if (clause) conditions.push(clause);
-      }
+      const clause = allowedTypesCondition(filters.allowed_types);
+      if (clause) conditions.push(clause);
     }
 
     if (filters.filter) {
@@ -933,30 +946,23 @@ export class SqliteItemStore implements ItemStore {
     tenantId?: string,
     allowedTypes?: string[],
   ): Promise<Record<string, number>> {
-    let sqlText = "SELECT state, COUNT(*) as count FROM items WHERE 1=1";
-    const params: unknown[] = [];
-
+    const conditions = [];
     if (tenantId) {
-      sqlText += " AND tenant_id = ?";
-      params.push(tenantId);
+      conditions.push(eq(items.tenant_id, tenantId));
     }
+    const typeClause = allowedTypesCondition(allowedTypes);
+    if (typeClause) conditions.push(typeClause);
 
-    if (allowedTypes && allowedTypes.length > 0) {
-      sqlText += ` AND type IN (${allowedTypes.map(() => "?").join(", ")})`;
-      params.push(...allowedTypes);
-    }
+    const rows = await this.db
+      .select({
+        state: items.state,
+        count: sql<number>`count(*)`,
+      })
+      .from(items)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .groupBy(items.state)
+      .all();
 
-    sqlText += " GROUP BY state";
-
-    const fragments = sqlText.split("?");
-    const builder = sql.empty();
-    for (let i = 0; i < fragments.length; i++) {
-      builder.append(sql.raw(fragments[i] ?? ""));
-      if (i < fragments.length - 1) {
-        builder.append(sql`${params[i]}`);
-      }
-    }
-    const rows = await this.db.all<{ state: string; count: number }>(builder);
     const result: Record<string, number> = {};
     for (const row of rows) {
       result[row.state] = row.count;

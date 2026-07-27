@@ -19,10 +19,22 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Escape LIKE pattern characters so they are treated as literals. */
+/**
+ * Escape LIKE pattern characters so they are treated as literals.
+ *
+ * Only half the job: the escape character has to be declared too. Postgres
+ * defaults to backslash, SQLite has no default at all, so on SQLite an
+ * unaccompanied `\_` is a literal backslash followed by the single-character
+ * wildcard — a `contains` filter for `web_gallery` silently matches nothing.
+ * Every LIKE built from this must carry `LIKE_ESCAPE_CLAUSE`, which reads the
+ * same on both dialects.
+ */
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
 }
+
+/** Declares the escape character `escapeLike` writes. Append to every LIKE. */
+const LIKE_ESCAPE_CLAUSE = " ESCAPE '\\'";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -221,9 +233,9 @@ function systemFieldSql(
     case "lte":
       return sql`${col} <= ${v}`;
     case "contains":
-      return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
+      return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return sql`${col} LIKE ${escapeLike(String(value)) + "%"}`;
+      return sql`${col} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     default:
       throw new Error(`Unsupported operator "${op}" for system field`);
   }
@@ -273,9 +285,9 @@ function propertyFieldSql(
         ? sql`${numericExtract} <= ${value}`
         : sql`${extract} <= ${value}`;
     case "contains":
-      return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
+      return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return sql`${extract} LIKE ${escapeLike(String(value)) + "%"}`;
+      return sql`${extract} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "exists":
       return sql`${extract} IS NOT NULL`;
     case "not_exists":
@@ -507,11 +519,17 @@ function systemFieldRawSql(
       return { fragment: `${col} <= ${p}`, paramIdx: idx + 1 };
     case "contains": {
       params.push("%" + escapeLike(String(value)) + "%");
-      return { fragment: `${col} LIKE ${p}`, paramIdx: idx + 1 };
+      return {
+        fragment: `${col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        paramIdx: idx + 1,
+      };
     }
     case "starts_with": {
       params.push(escapeLike(String(value)) + "%");
-      return { fragment: `${col} LIKE ${p}`, paramIdx: idx + 1 };
+      return {
+        fragment: `${col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        paramIdx: idx + 1,
+      };
     }
     default:
       throw new Error(
@@ -611,11 +629,17 @@ function propertyOpRawSql(
     }
     case "contains": {
       params.push("%" + escapeLike(String(value)) + "%");
-      return { fragment: `${extract} LIKE ${p}`, paramIdx: idx + 1 };
+      return {
+        fragment: `${extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        paramIdx: idx + 1,
+      };
     }
     case "starts_with": {
       params.push(escapeLike(String(value)) + "%");
-      return { fragment: `${extract} LIKE ${p}`, paramIdx: idx + 1 };
+      return {
+        fragment: `${extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        paramIdx: idx + 1,
+      };
     }
     case "exists":
       return { fragment: `${extract} IS NOT NULL`, paramIdx: idx };
