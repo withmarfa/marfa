@@ -1,7 +1,14 @@
 /**
- * Lease route — pins the runtime-credential mint shape, in particular
- * that the broker mints with **wildcard write on all three permission
- * axes** (`type_permissions`, `edge_permissions`,
+ * Lease route — pins two things.
+ *
+ * First, the auth gate. The route mints a real tenant-scoped credential
+ * and the Worker is routed to public hostnames, so it must refuse a
+ * caller that does not present the broker key. A Connection ID is not a
+ * secret, so without the gate anyone who has seen one can mint against
+ * it.
+ *
+ * Second, the mint shape: the broker mints with **wildcard write on all
+ * three permission axes** (`type_permissions`, `edge_permissions`,
  * `extension_permissions`). All three axes must be granted because
  * `edge_permissions` and `extension_permissions` both default to `{}`
  * and block the call — a credential with only `type_permissions` can
@@ -62,6 +69,11 @@ function buildTestEnv(): ControlPlaneEnv {
   };
 }
 
+const AUTHORIZED_HEADERS = {
+  "content-type": "application/json",
+  authorization: "Bearer broker-key-test",
+};
+
 describe("POST /lease/:connection_id/runtime", () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
@@ -81,7 +93,7 @@ describe("POST /lease/:connection_id/runtime", () => {
       "/lease/conn_x/runtime",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: AUTHORIZED_HEADERS,
         body: JSON.stringify({ label: "test", ttl_seconds: 600 }),
       },
       env,
@@ -120,5 +132,68 @@ describe("POST /lease/:connection_id/runtime", () => {
     expect(res.status).toBe(503);
     const json = await res.json<{ error: string }>();
     expect(json.error).toBe("control_plane_misconfigured");
+  });
+
+  // The mint must never happen for an unauthenticated caller, so these
+  // assert both the 401 and that no request reached Marfa at all.
+  it("refuses a caller that sends no Authorization header", async () => {
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "test", ttl_seconds: 600 }),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json<{ error: string }>()).toEqual({
+      error: "unauthorized",
+    });
+    expect(captured).toHaveLength(0);
+  });
+
+  it("refuses a caller that sends the wrong bearer", async () => {
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer not-the-broker-key",
+        },
+        body: JSON.stringify({ label: "test", ttl_seconds: 600 }),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+});
+
+describe("POST /lease/:connection_id/oauth/:capability_id", () => {
+  // Gated even though it is a 501 stub: an ungated route is how the
+  // runtime mint path came to be reachable in the first place, and this
+  // one is scheduled to start returning real tokens.
+  it("refuses an unauthenticated caller before reporting not-implemented", async () => {
+    const res = await buildApp().request(
+      "/lease/conn_x/oauth/cap_calendar_read",
+      { method: "POST" },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("still reports not-implemented for an authorized caller", async () => {
+    const res = await buildApp().request(
+      "/lease/conn_x/oauth/cap_calendar_read",
+      { method: "POST", headers: AUTHORIZED_HEADERS },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(501);
   });
 });

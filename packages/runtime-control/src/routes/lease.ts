@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
 import { MarfaServerClient } from "../marfa-client.js";
 
@@ -19,7 +20,32 @@ import { MarfaServerClient } from "../marfa-client.js";
  *   POST /lease/:connection_id/oauth/:capability_id
  *     Not yet implemented. Returns 501 until install-time manifest
  *     persistence captures `oauth_requirements.<capability_id>`.
+ *
+ * Both routes require the caller to present the broker key, because a
+ * Connection ID is not a secret: it appears in operator surfaces, in
+ * logs and in client state, so an unauthenticated mint path hands a
+ * tenant-scoped credential to anyone who has seen one.
  */
+
+/**
+ * Reject a caller that did not present the broker key. Returns the
+ * refusal to hand back, or `null` when the caller is authorized.
+ *
+ * The Worker is routed to public hostnames, so every route that can
+ * reach a credential needs this. Integration Workers already send the
+ * header on every call (see `worker-entry.ts` in `@withmarfa/runtime-sdk`).
+ */
+function brokerAuthFailure(
+  c: Context<{ Bindings: ControlPlaneEnv }>,
+  brokerKey: string,
+): Response | null {
+  const auth = c.req.header("authorization");
+  if (auth !== `Bearer ${brokerKey}`) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  return null;
+}
+
 export function registerLeaseRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
 ): void {
@@ -36,6 +62,9 @@ export function registerLeaseRoutes(
         503,
       );
     }
+    const unauthorized = brokerAuthFailure(c, env.MARFA_RUNTIME_BROKER_KEY);
+    if (unauthorized) return unauthorized;
+
     const marfa = new MarfaServerClient(
       env.MARFA_API_URL,
       env.MARFA_RUNTIME_BROKER_KEY,
@@ -97,6 +126,18 @@ export function registerLeaseRoutes(
   });
 
   app.post("/lease/:connection_id/oauth/:capability_id", (c) => {
+    if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
+      return c.json(
+        {
+          error: "control_plane_misconfigured",
+          message: "MARFA_RUNTIME_BROKER_KEY must be set.",
+        },
+        503,
+      );
+    }
+    const unauthorized = brokerAuthFailure(c, c.env.MARFA_RUNTIME_BROKER_KEY);
+    if (unauthorized) return unauthorized;
+
     const connectionId = c.req.param("connection_id");
     const capabilityId = c.req.param("capability_id");
     return c.json(
