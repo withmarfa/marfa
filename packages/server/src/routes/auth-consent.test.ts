@@ -176,6 +176,16 @@ async function buildSignedOauthQuery(
   return params.toString();
 }
 
+/** Reverse `escapeHtml` for a value read back out of a rendered form. */
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 async function seedAccessToken(
   c: TestContext,
   clientId: string,
@@ -461,6 +471,45 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       limit: 10,
     });
     expect(audits.data.length).toBe(0);
+  });
+
+  it("REGRESSION: the zero-scope bounce keeps the signed query intact, so the retry works", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "zero-scope-retry@example.com");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
+
+    const bounced = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", oauth_query: oauthQuery },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(bounced.status).toBe(302);
+    const location = bounced.headers.get("location") ?? "";
+
+    // Follow the bounce the way the browser does, and read back the
+    // query the form will actually resubmit.
+    const page = await request(ctx.app, "GET", location, {
+      headers: { cookie },
+    });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("at least one permission");
+    const match = /name="oauth_query" value="([^"]*)"/.exec(html);
+    expect(match).not.toBeNull();
+    const resubmitted = decodeHtmlEntities(match![1]!);
+
+    // The user ticks a box and submits. The recovery redirect must not
+    // have edited the query the plugin signed — every retry after a
+    // zero-scope slip dies on signature verification if it did.
+    const retry = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", oauth_query: resubmitted, scopes: ["openid"] },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(retry.status).toBe(302);
+    expect(retry.headers.get("location") ?? "").toContain("code=");
   });
 
   it.each(["forged", "expired"] as const)(

@@ -17,9 +17,12 @@
  *
  * This route:
  *   - extracts `client_id` + `scope` from the query for rendering
- *   - keeps the full URL search string verbatim as `oauthQuery` so the
- *     consent form can POST it back to `/auth/oauth2/consent` unchanged
- *     (the plugin's before-hook re-verifies the sig)
+ *   - keeps the signed parameter set as `oauthQuery` so the consent form
+ *     can POST it back to `/auth/oauth2/consent` unchanged (the plugin's
+ *     before-hook re-verifies the sig). Marfa's own display-only
+ *     parameters are lifted off first — the signature covers every other
+ *     key, so a parameter added to the URL for the page's benefit has to
+ *     be one this route knows to remove
  *   - looks up the user's prior consent for the re-consent diff
  *   - **skips the consent screen** when that prior consent already covers
  *     every requested scope (and the request doesn't carry
@@ -77,6 +80,23 @@ import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
+
+/**
+ * Query parameter carrying a consent-page error banner code back from the
+ * decision handler.
+ *
+ * Marfa-owned and Marfa-named: the plugin signs an exact parameter set,
+ * and the round trip has to carry the signed query back untouched, so a
+ * parameter added for the page's own use must be one this route knows to
+ * lift off before handing the query back. It also has to be a name the
+ * plugin will never sign — `error` alone is an OAuth response parameter
+ * and reserving it here would be reserving somebody else's word.
+ */
+const CONSENT_ERROR_PARAM = "marfa_consent_error";
+
+/** Every parameter this route adds to its own URL. Stripped before the
+ *  query is handed back to the plugin. */
+const CONSENT_DISPLAY_PARAMS = [CONSENT_ERROR_PARAM] as const;
 
 interface ConsentRouteDeps {
   storage: Storage;
@@ -141,15 +161,19 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const clientId = url.searchParams.get("client_id") ?? "";
     const requestedRedirectUri = url.searchParams.get("redirect_uri");
     const scopeParam = url.searchParams.get("scope") ?? "";
-    // The plugin signs the entire query string and expects it returned
-    // verbatim. We preserve the original `search` (minus leading `?`)
-    // and round-trip it through the form's `oauth_query` hidden field.
+    // The plugin signs an exact parameter set and expects it returned
+    // verbatim. `oauthQuery` is that set and nothing else: Marfa's own
+    // display-only parameters are lifted off first (see
+    // `CONSENT_DISPLAY_PARAMS`), because the signature covers every
+    // remaining key and one extra pair invalidates it. It round-trips
+    // through the form's `oauth_query` hidden field.
     // `sig` is the canary — without it the plugin won't accept the
     // consent POST, which lets us 400 early rather than render a
     // consent screen that will fail on submit.
-    const oauthQuery = url.search.startsWith("?")
-      ? url.search.slice(1)
-      : url.search;
+    const signedParams = new URLSearchParams(url.search);
+    const consentError = signedParams.get(CONSENT_ERROR_PARAM);
+    for (const name of CONSENT_DISPLAY_PARAMS) signedParams.delete(name);
+    const oauthQuery = signedParams.toString();
     const sig = url.searchParams.get("sig");
 
     if (!clientId || !sig) {
@@ -227,7 +251,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           "End-User authentication is required",
         );
       }
-      const returnTo = encodeURIComponent(url.pathname + url.search);
+      // Round-trip the signed parameter set, not the raw search: the
+      // display-only parameters have served their purpose and a stale
+      // error banner after signing in would be noise.
+      const returnTo = encodeURIComponent(`${url.pathname}?${oauthQuery}`);
       return c.redirect(`/auth/sign-in?return_to=${returnTo}`);
     }
 
@@ -387,8 +414,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     // Optional error banner (e.g. when redirected back from a zero-scopes
     // accept). Renderer ignores undefined.
-    const error = url.searchParams.get("error");
-    const errorMessage = error ? translateConsentError(error) : undefined;
+    const errorMessage = consentError
+      ? translateConsentError(consentError)
+      : undefined;
 
     const html = renderConsentScreen({
       clientName,
@@ -523,11 +551,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // requested scope set AND the projection would skip — leaving /security
     // showing no grant while tokens are valid. Treat as deny + redirect
     // back with an error banner.
+    //
+    // The banner rides a Marfa-owned parameter that the consent page lifts
+    // back off before handing the query on. Appending anything else here
+    // would leave the user on a page whose signed query no longer
+    // verifies, so every retry after a mis-click would die at the
+    // signature check — the one failure mode this recovery exists to
+    // avoid.
     if (accept && formScopes.length === 0) {
-      return c.redirect(
-        `/auth/authorize?${oauthQuery}&error=no_scopes_selected`,
-        302,
-      );
+      const bounce = new URLSearchParams(oauthQuery);
+      bounce.set(CONSENT_ERROR_PARAM, "no_scopes_selected");
+      return c.redirect(`/auth/authorize?${bounce.toString()}`, 302);
     }
 
     const scopeStr = formScopes.join(" ");
