@@ -16,6 +16,7 @@
  *     (DCR registration without client_name is RFC 7591-compliant)
  */
 import { describe, it, expect, afterEach } from "vitest";
+import { makeSignature } from "better-auth/crypto";
 import {
   createTestContext,
   markEmailVerified,
@@ -36,6 +37,8 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 const ORIGIN = "http://localhost:0";
+const TEST_AUTH_SECRET =
+  "test-auth-secret-change-in-production-not-required-here";
 
 /**
  * Seed an `auth_oauth_client` row directly (the plugin's DCR endpoint
@@ -133,10 +136,8 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 /**
- * Build a plausible-looking oauth_query string. The plugin's sig won't
- * validate (we use "fake" as sig), so anything that proxies to
- * /auth/oauth2/consent will get a 4xx — that's fine for tests asserting
- * on the projection/audit side-effects, which run BEFORE the proxy.
+ * Build a plausible-looking unsigned oauth_query string for page-render
+ * tests. Those paths do not proxy or perform any consent side effects.
  */
 function buildOauthQuery(clientId: string, scope: string): string {
   const params = new URLSearchParams({
@@ -151,6 +152,63 @@ function buildOauthQuery(clientId: string, scope: string): string {
     sig: "fake",
   });
   return params.toString();
+}
+
+/** Build a signed oauth_query accepted by both Marfa and the provider. */
+async function buildSignedOauthQuery(
+  clientId: string,
+  scope: string,
+  extra?: Record<string, string>,
+): Promise<string> {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: "http://localhost:0/callback",
+    scope,
+    state: "test-state",
+    code_challenge: "0123456789012345678901234567890123456789012",
+    code_challenge_method: "S256",
+    ...extra,
+  });
+  params.set("exp", extra?.exp ?? String(Math.floor(Date.now() / 1000) + 600));
+  params.set("ba_iat", extra?.ba_iat ?? String(Date.now()));
+  params.set("sig", await makeSignature(params.toString(), TEST_AUTH_SECRET));
+  return params.toString();
+}
+
+async function seedAccessToken(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+  scopes: string[],
+): Promise<string> {
+  if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as unknown as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+  const op = db.insert(schemaModule.auth_oauth_access_token).values({
+    id: `at_${Math.random().toString(36).slice(2)}`,
+    token: tokenHash,
+    clientId,
+    userId: authUserId,
+    referenceId: null,
+    expiresAt: new Date(Date.now() + 3600_000),
+    createdAt: new Date(),
+    scopes:
+      c.storage.betterAuthDialect === "pg" ? scopes : JSON.stringify(scopes),
+  });
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return tokenHash;
 }
 
 // ---------------------------------------------------------------------------
@@ -376,11 +434,14 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f2@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: { accept: "true", oauth_query: oauthQuery, client_id: clientId },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
@@ -402,6 +463,94 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(audits.data.length).toBe(0);
   });
 
+  it.each(["forged", "expired"] as const)(
+    "%s oauth_query causes no projection, audit, or token-revocation side effects",
+    async (failureMode) => {
+      ctx = await createTestContext({ authAllowSignup: true });
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(
+        ctx,
+        `invalid-query-${failureMode}@example.com`,
+      );
+      const wideScopes = ["openid", "core.note:read", "core.note:write"];
+
+      const firstQuery = await buildSignedOauthQuery(
+        clientId,
+        wideScopes.join(" "),
+      );
+      const first = await request(ctx.app, "POST", "/auth/authorize/decision", {
+        form: {
+          accept: "true",
+          oauth_query: firstQuery,
+          scopes: wideScopes,
+        },
+        headers: { cookie, origin: ORIGIN },
+      });
+      expect(first.status).toBe(302);
+
+      const beforeItems = await ctx.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      expect(beforeItems.data.length).toBe(1);
+      const grantBefore = beforeItems.data[0]!;
+      const authUserId = grantBefore.properties.user_id as string;
+      const tokenHash = await seedAccessToken(
+        ctx,
+        clientId,
+        authUserId,
+        wideScopes,
+      );
+      const storage = ctx.storage;
+      await waitForAudit(
+        () => storage.audit.list({ action: "auth.grant.created", limit: 10 }),
+        (result) => result.data.length === 1,
+      );
+
+      let invalidQuery: string;
+      if (failureMode === "expired") {
+        invalidQuery = await buildSignedOauthQuery(
+          clientId,
+          "openid core.note:read",
+          { exp: String(Math.floor(Date.now() / 1000) - 60) },
+        );
+      } else {
+        const params = new URLSearchParams(
+          await buildSignedOauthQuery(clientId, "openid core.note:read"),
+        );
+        params.set("state", "tampered-after-signing");
+        invalidQuery = params.toString();
+      }
+
+      const invalid = await request(
+        ctx.app,
+        "POST",
+        "/auth/authorize/decision",
+        {
+          form: {
+            accept: "true",
+            oauth_query: invalidQuery,
+            scopes: ["openid", "core.note:read"],
+          },
+          headers: { cookie, origin: ORIGIN },
+        },
+      );
+      expect(invalid.status).toBe(400);
+
+      const grantAfter = await ctx.storage.items.get(grantBefore.id);
+      expect(grantAfter?.version).toBe(grantBefore.version);
+      expect(grantAfter?.properties.scopes).toEqual(wideScopes);
+      expect(
+        await ctx.storage.oauthProvider?.validateAccessToken(tokenHash),
+      ).not.toBeNull();
+      const audits = await ctx.storage.audit.list({
+        action: "auth.grant.created",
+        limit: 10,
+      });
+      expect(audits.data.length).toBe(1);
+    },
+  );
+
   it("F1+F7: projection uses client_id from oauth_query (NOT the form's client_id) + audit row carries client_ip", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const realClientId = await seedClient(ctx);
@@ -410,7 +559,10 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     // Hostile form: oauth_query (the signed source-of-truth) names the
     // REAL client, but the form's client_id field claims a different one.
     // The projection MUST follow oauth_query, not the form.
-    const oauthQuery = buildOauthQuery(realClientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      realClientId,
+      "openid core.note:read",
+    );
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
@@ -418,13 +570,13 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: "ATTACKER_CONTROLLED_VALUE",
         scopes: ["openid", "core.note:read"],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
       peer: "203.0.113.42",
     });
-    // The proxy to /auth/oauth2/consent fails (bogus sig) — but the
-    // projection runs BEFORE the proxy. Expect a non-2xx but verify
-    // the projection landed correctly.
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(302);
+    expect(
+      new URL(res.headers.get("location") ?? "").searchParams.get("code"),
+    ).toBeTruthy();
 
     // Projection should exist for the REAL client_id (from oauth_query),
     // not "ATTACKER_CONTROLLED_VALUE".
@@ -458,7 +610,10 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f3@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     // First consent — projection gets created in active state.
     const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
@@ -468,10 +623,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read"],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    // Proxy 400 expected (bogus sig); projection runs before proxy.
-    expect(r1.status).toBeGreaterThanOrEqual(400);
+    expect(r1.status).toBe(302);
     let items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
@@ -505,9 +659,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read"],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(r2.status).toBeGreaterThanOrEqual(400);
+    expect(r2.status).toBe(302);
 
     const after = await ctx.storage.items.get(grantId);
     expect(after).not.toBeNull();
@@ -529,7 +683,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f4@example.com");
 
-    const oauthQuery = buildOauthQuery(
+    const oauthQuery = await buildSignedOauthQuery(
       clientId,
       "openid core.note:read core.note:write core.task:read",
     );
@@ -546,9 +700,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
           "core.task:read",
         ],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(r1.status).toBeGreaterThanOrEqual(400);
+    expect(r1.status).toBe(302);
 
     // Look up authUserId from the projection.
     const items1 = await ctx.storage.items.list({
@@ -612,9 +766,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read"], // narrowed
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(r2.status).toBeGreaterThanOrEqual(400);
+    expect(r2.status).toBe(302);
 
     // F4 — the wider-scope access token must be revoked.
     const afterRow =
@@ -627,7 +781,10 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f4-same@example.com");
 
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
     const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
@@ -635,9 +792,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read"],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(r1.status).toBeGreaterThanOrEqual(400);
+    expect(r1.status).toBe(302);
 
     const items1 = await ctx.storage.items.list({
       type: "system.connection",
@@ -684,9 +841,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read"],
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(r2.status).toBeGreaterThanOrEqual(400);
+    expect(r2.status).toBe(302);
 
     // Token should survive — no narrowing happened.
     const after =
@@ -698,7 +855,10 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "f1-scope@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     // Form claims to approve a scope NOT in the signed set. It must
     // be dropped before projection.
@@ -709,9 +869,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         client_id: clientId,
         scopes: ["openid", "core.note:read", "core.note:write"], // last one is unsigned
       },
-      headers: { cookie },
+      headers: { cookie, origin: ORIGIN },
     });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(302);
 
     const items = await ctx.storage.items.list({
       type: "system.connection",
@@ -740,7 +900,10 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-origin@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
@@ -765,7 +928,10 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-referer@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
@@ -790,7 +956,10 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-same@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
@@ -801,10 +970,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
       },
       headers: { cookie, origin: ORIGIN },
     });
-    // Passes the guard, reaches the proxy, which 4xxs on the bogus sig —
-    // but the projection (which runs before the proxy) lands, proving the
-    // request was NOT rejected by the Origin guard.
-    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(302);
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
@@ -820,7 +986,10 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-cors@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
@@ -831,7 +1000,7 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
       },
       headers: { cookie, origin: allowedOrigin },
     });
-    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(302);
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
@@ -843,7 +1012,10 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "csrf-absent@example.com");
-    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
 
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
@@ -856,17 +1028,16 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
     });
 
     // This handler's own guard rejects only a *present, non-allowlisted*
-    // origin, so the request gets through it — the projection landing
-    // proves that. Better Auth is the layer that refuses an origin-less
-    // cookie-bearing POST, and this handler deliberately forwards the
-    // request's own headers so it can. (The consent-skip path is the
-    // exception: a top-level navigation has no origin to forward, so it
-    // stamps the issuer's own. See `routes/forward-headers.ts`.)
+    // origin, so the request reaches Better Auth. Better Auth refuses the
+    // origin-less cookie-bearing POST, and that refusal must leave no grant
+    // projection behind. (The consent-skip GET path is the exception: a
+    // top-level navigation has no origin to forward, so it stamps the
+    // issuer's own. See `routes/forward-headers.ts`.)
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
-    expect(items.data.length).toBe(1);
+    expect(items.data.length).toBe(0);
     expect(res.status).toBe(403);
   });
 });

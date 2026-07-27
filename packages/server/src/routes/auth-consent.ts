@@ -35,13 +35,14 @@
  *     never a rendered page
  *   - renders via the existing `renderConsentScreen` otherwise
  *
- * The decision handler (`POST /auth/authorize/decision`) projects the
- * `system.connection { kind: "app" }` row + emits `auth.grant.created`,
- * then proxies to `/auth/oauth2/consent` with `{ accept, scope?,
- * oauth_query }`. The plugin verifies the sig, upserts its own
- * `oauthConsent` row, mints the code, and returns a JSON redirect
- * body `{ redirect: true, url: "<redirect_uri>?code=..." }` which we
- * forward to the browser as a 302.
+ * The decision handler (`POST /auth/authorize/decision`) proxies to
+ * `/auth/oauth2/consent` with `{ accept, scope?, oauth_query }`. The
+ * plugin verifies the sig, upserts its own `oauthConsent` row, mints the
+ * code, and returns a JSON redirect body
+ * `{ redirect: true, url: "<redirect_uri>?code=..." }`. Only after that
+ * redirect is confirmed as a code-bearing callback to the registered
+ * client does the handler project the `system.connection { kind: "app" }`
+ * row and emit `auth.grant.created`.
  *
  * Auth gating: the plugin only redirects here when the user is already
  * signed in (it redirects to `loginPage: "/auth/sign-in"` first). If
@@ -413,9 +414,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
   // ---------------------------------------------------------------------
   // POST /auth/authorize/decision — Marfa-owned decision handler that
-  // proxies to the plugin's /oauth2/consent endpoint, writing the
-  // system.connection projection + audit row deterministically BEFORE
-  // the plugin handles the rest of the flow.
+  // proxies to the plugin's /oauth2/consent endpoint, then writes the
+  // system.connection projection + audit row only after the plugin has
+  // returned a verified, code-bearing callback to the registered client.
   //
   // The plugin's /oauth2/consent body shape (verified in source
   // @better-auth/oauth-provider@1.6.13):
@@ -429,12 +430,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   // This explicit handler:
   //   1. reads `accept` + `client_id` + `oauth_query` + selected
   //      `scopes` from the form
-  //   2. projects `system.connection { kind: "app" }` (insert OR update
-  //      on re-consent) + emits `auth.grant.created` audit row
-  //   3. POSTs `{ accept, scope, oauth_query }` to /auth/oauth2/consent
+  //   2. POSTs `{ accept, scope, oauth_query }` to /auth/oauth2/consent
   //      (JSON body — the plugin's `allowedMediaTypes` defaults to JSON
   //      for this endpoint)
-  //   4. forwards the resulting redirect (302 OR JSON
+  //   3. confirms that an accepted decision produced a code-bearing
+  //      redirect to one of the client's registered callbacks
+  //   4. projects `system.connection { kind: "app" }` (insert OR update
+  //      on re-consent) + emits `auth.grant.created` audit row
+  //   5. forwards the resulting redirect (302 OR JSON
   //      `{redirect, url}`) to the browser as a real 302
   // ---------------------------------------------------------------------
   app.post("/authorize/decision", async (c) => {
@@ -478,6 +481,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text("Missing required form field: oauth_query", 400);
     }
 
+    // The plugin checks the signed query at the proxy hop too, but every
+    // Marfa-owned side effect below must be gated independently. Rejecting
+    // here also avoids relying on the shape of a plugin error response to
+    // decide whether it is safe to project or revoke anything.
+    if (!(await verifySignedQuery(deps.auth, oauthQuery))) {
+      return c.text("Invalid or expired authorize request signature", 400);
+    }
+
     // Parse `client_id` + `scope` from the verified `oauth_query`, NOT
     // from form fields. The plugin signed the oauth_query — those values
     // are tamper-evident. Trusting the form's client_id would let a
@@ -489,6 +500,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
     if (!clientId) {
       return c.text("oauth_query missing client_id", 400);
+    }
+
+    const client = await resolveClient(deps.storage, clientId);
+    if (!client) {
+      return c.text(`Unknown client: ${clientId}`, 404);
     }
 
     // Form-supplied scopes are the user's per-row checkbox state.
@@ -514,11 +530,32 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const scopeStr = formScopes.join(" ");
 
-    // Project system.connection + emit audit BEFORE proxying to the
-    // plugin. Best-effort — a projection failure must not block the
-    // user-facing consent flow (OAuth token issuance still succeeds via
-    // the plugin; only the /security grant listing would be missing).
-    if (accept) {
+    // Forward to the plugin's /oauth2/consent endpoint and hand the
+    // (normalized) result to the browser. Shared with the GET handler's
+    // consent-skip path.
+    const proxyResp = await proxyConsentDecision(
+      deps.auth,
+      c.req.url,
+      c.req.raw.headers,
+      {
+        accept,
+        // Forward the user's narrowed scope set so the plugin issues a
+        // token matching what they actually approved (not the full
+        // originally-requested set).
+        scope: accept && scopeStr ? scopeStr : undefined,
+        oauthQuery,
+      },
+    );
+
+    // A valid signed query is necessary but not sufficient: the plugin can
+    // still refuse a disabled client, an invalid redirect, or a flow that
+    // requires fresh interaction. Projection, audit, and narrowing-token
+    // revocation are consent-success side effects, so none may happen until
+    // a code actually reaches the client's registered callback.
+    if (
+      accept &&
+      classifyProxyOutcome(proxyResp, client.redirectUris) === "code"
+    ) {
       try {
         await projectGrantOnConsent(deps.storage, {
           authUserId: session.user.id,
@@ -534,17 +571,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       }
     }
 
-    // Forward to the plugin's /oauth2/consent endpoint and hand the
-    // (normalized) result to the browser. Shared with the GET handler's
-    // consent-skip path.
-    return proxyConsentDecision(deps.auth, c.req.url, c.req.raw.headers, {
-      accept,
-      // Forward the user's narrowed scope set so the plugin issues a
-      // token matching what they actually approved (not the full
-      // originally-requested set).
-      scope: accept && scopeStr ? scopeStr : undefined,
-      oauthQuery,
-    });
+    return proxyResp;
   });
 
   return app;
@@ -724,6 +751,93 @@ function isRegisteredRedirectUri(
  */
 type ProxyOutcome = "code" | "client_error" | "interaction" | "rejected";
 
+// These are the query parameters this OAuth Provider implementation adds
+// to a registered redirect URI. Removing any other parameter would let a
+// callback with missing or changed fixed registration data pass as the
+// registered URI.
+const OAUTH_RESPONSE_PARAMS = new Set([
+  "code",
+  "error",
+  "error_description",
+  "iss",
+  "state",
+]);
+
+/**
+ * Match a returned OAuth callback to a registered redirect URI while
+ * ignoring only the response parameters the authorization server adds.
+ *
+ * `URL.origin` cannot represent native custom schemes (it is the literal
+ * string `"null"` for all of them), so scheme, authority, and path are
+ * compared directly. Fixed registered query parameters remain load-bearing:
+ * the returned callback must contain the same key/value multiset after the
+ * OAuth response fields are removed.
+ */
+function isRegisteredResponseRedirect(
+  registeredRedirectUris: readonly string[],
+  candidate: string,
+): boolean {
+  let returned: URL;
+  try {
+    returned = new URL(candidate);
+  } catch {
+    return false;
+  }
+
+  return registeredRedirectUris.some((entry) => {
+    let registered: URL;
+    try {
+      registered = new URL(entry);
+    } catch {
+      return false;
+    }
+
+    const loopback =
+      registered.hostname === "127.0.0.1" ||
+      registered.hostname === "::1" ||
+      registered.hostname === "[::1]";
+    if (
+      registered.protocol !== returned.protocol ||
+      registered.username !== returned.username ||
+      registered.password !== returned.password ||
+      registered.hostname !== returned.hostname ||
+      (!loopback && registered.port !== returned.port) ||
+      registered.pathname !== returned.pathname ||
+      registered.hash !== returned.hash
+    ) {
+      return false;
+    }
+
+    const registeredQuery = [...registered.searchParams.entries()].sort(
+      compareQueryEntry,
+    );
+    const returnedQuery = [...returned.searchParams.entries()]
+      .filter(([key]) => !OAUTH_RESPONSE_PARAMS.has(key))
+      .sort(compareQueryEntry);
+    return queryEntriesEqual(registeredQuery, returnedQuery);
+  });
+}
+
+function compareQueryEntry(
+  a: readonly [string, string],
+  b: readonly [string, string],
+): number {
+  return a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0]);
+}
+
+function queryEntriesEqual(
+  a: readonly (readonly [string, string])[],
+  b: readonly (readonly [string, string])[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every(([key, value], index) => {
+      const other = b[index];
+      return other?.[0] === key && other[1] === value;
+    })
+  );
+}
+
 function classifyProxyOutcome(
   response: Response,
   registeredRedirectUris: readonly string[],
@@ -739,11 +853,7 @@ function classifyProxyOutcome(
     // callback (registered redirect URIs are absolute).
     return "interaction";
   }
-  const withoutQuery = `${target.origin}${target.pathname}`;
-  if (
-    !isRegisteredRedirectUri(registeredRedirectUris, withoutQuery) &&
-    !isRegisteredRedirectUri(registeredRedirectUris, location)
-  ) {
+  if (!isRegisteredResponseRedirect(registeredRedirectUris, location)) {
     return "interaction";
   }
   if (target.searchParams.get("code")) return "code";

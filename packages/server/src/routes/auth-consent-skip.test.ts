@@ -92,7 +92,10 @@ async function betterAuthSchema(c: TestContext) {
 
 /** Seed an `auth_oauth_client` row directly (same shape the plugin's DCR
  *  endpoint would write). Public client, PKCE-bound, one callback URI. */
-async function seedClient(c: TestContext): Promise<string> {
+async function seedClient(
+  c: TestContext,
+  redirectUri = CALLBACK,
+): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
   if (!c.storage.betterAuthDb) {
@@ -112,8 +115,8 @@ async function seedClient(c: TestContext): Promise<string> {
   // SQLite stays on `text` with JSON-serialized arrays.
   const redirectUris: unknown =
     c.storage.betterAuthDialect === "pg"
-      ? [CALLBACK]
-      : JSON.stringify([CALLBACK]);
+      ? [redirectUri]
+      : JSON.stringify([redirectUri]);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -251,8 +254,11 @@ async function grantFirstConsent(
   cookie: string,
   scope: string,
   scopes: string[],
+  redirectUri = CALLBACK,
 ): Promise<string> {
-  const authorizeRes = await beginAuthorize(c, clientId, scope, cookie);
+  const authorizeRes = await beginAuthorize(c, clientId, scope, cookie, {
+    redirect_uri: redirectUri,
+  });
   expect(authorizeRes.status).toBe(302);
   const location = authorizeRes.headers.get("location") ?? "";
   expect(location).toContain("/auth/authorize?");
@@ -264,7 +270,7 @@ async function grantFirstConsent(
   });
   expect(decisionRes.status).toBe(302);
   const cbLocation = decisionRes.headers.get("location") ?? "";
-  expect(cbLocation.startsWith(CALLBACK)).toBe(true);
+  expectCallbackBase(cbLocation, redirectUri);
   expect(new URL(cbLocation).searchParams.get("code")).toBeTruthy();
   return signedQuery;
 }
@@ -299,10 +305,27 @@ function authorizeFields(
   };
 }
 
-function expectCodeRedirect(res: Response): void {
+function expectCallbackBase(location: string, registeredRedirectUri: string) {
+  const actual = new URL(location);
+  const registered = new URL(registeredRedirectUri);
+  expect(actual.protocol).toBe(registered.protocol);
+  expect(actual.username).toBe(registered.username);
+  expect(actual.password).toBe(registered.password);
+  expect(actual.host).toBe(registered.host);
+  expect(actual.pathname).toBe(registered.pathname);
+  expect(actual.hash).toBe(registered.hash);
+  for (const [key, value] of registered.searchParams) {
+    expect(actual.searchParams.getAll(key)).toContain(value);
+  }
+}
+
+function expectCodeRedirect(
+  res: Response,
+  registeredRedirectUri = CALLBACK,
+): void {
   expect(res.status).toBe(302);
   const location = res.headers.get("location") ?? "";
-  expect(location.startsWith(CALLBACK)).toBe(true);
+  expectCallbackBase(location, registeredRedirectUri);
   expect(new URL(location).searchParams.get("code")).toBeTruthy();
   expect(new URL(location).searchParams.get("error")).toBeNull();
 }
@@ -384,6 +407,36 @@ describe("GET /auth/authorize (consent skip)", () => {
     expectCodeRedirect(res);
     expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
   });
+
+  it.each([
+    ["fixed-query", `${CALLBACK}?channel=stable`],
+    ["custom-scheme", "marfa-test://oauth/callback?channel=native"],
+  ] as const)(
+    "classifies a code callback for a %s registered redirect URI",
+    async (kind, redirectUri) => {
+      ctx = await createTestContext({ authAllowSignup: true });
+      const clientId = await seedClient(ctx, redirectUri);
+      const cookie = await signInUser(ctx, `skip-callback-${kind}@example.com`);
+      const scope = "openid core.note:read";
+
+      const signedQuery = await grantFirstConsent(
+        ctx,
+        clientId,
+        cookie,
+        scope,
+        ["openid", "core.note:read"],
+        redirectUri,
+      );
+      const res = await landOnConsentPage(ctx, signedQuery, { cookie });
+
+      expectCodeRedirect(res, redirectUri);
+      const projected = await ctx.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      expect(projected.data.length).toBe(1);
+    },
+  );
 
   it("REGRESSION: skips with no Referer at all (magic link, Referrer-Policy: no-referrer)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
@@ -761,6 +814,55 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
     expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
     expectNoStore(res);
   });
+
+  it.each([
+    ["fixed-query", `${CALLBACK}?channel=stable`],
+    ["custom-scheme", "marfa-test://oauth/callback?channel=native"],
+  ] as const)(
+    "classifies a prompt=none provider error for a %s registered redirect URI",
+    async (kind, redirectUri) => {
+      ctx = await createTestContext({ authAllowSignup: true });
+      const clientId = await seedClient(ctx, redirectUri);
+      const cookie = await signInUser(
+        ctx,
+        `skip-none-callback-${kind}@example.com`,
+      );
+      const scope = "openid core.note:read";
+      await grantFirstConsent(
+        ctx,
+        clientId,
+        cookie,
+        scope,
+        ["openid", "core.note:read"],
+        redirectUri,
+      );
+
+      // The standing grant covers the request, so the route takes the
+      // proxy path. Empty PKCE fields make the provider return its own
+      // `invalid_request` callback. Correct callback classification must
+      // forward that error unchanged rather than synthesizing the
+      // `interaction_required` fallback for prompt=none.
+      const signedQuery = await mintSignedQuery(
+        authorizeFields(clientId, scope, {
+          redirect_uri: redirectUri,
+          state: `none-${kind}`,
+          prompt: "none",
+          code_challenge: "",
+          code_challenge_method: "",
+        }),
+      );
+
+      const res = await landOnConsentPage(ctx, signedQuery, { cookie });
+      expect(res.status).toBe(302);
+      const location = res.headers.get("location") ?? "";
+      expectCallbackBase(location, redirectUri);
+      const callback = new URL(location);
+      expect(callback.searchParams.get("error")).toBe("invalid_request");
+      expect(callback.searchParams.get("state")).toBe(`none-${kind}`);
+      expect(callback.searchParams.get("code")).toBeNull();
+      expectNoStore(res);
+    },
+  );
 
   it("with no session, returns error=login_required to the client instead of rendering sign-in", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
