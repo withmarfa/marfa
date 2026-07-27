@@ -139,6 +139,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id") ?? "";
+    const requestedRedirectUri = url.searchParams.get("redirect_uri");
     const scopeParam = url.searchParams.get("scope") ?? "";
     // The plugin signs the entire query string and expects it returned
     // verbatim. We preserve the original `search` (minus leading `?`)
@@ -324,7 +325,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         requestedScopes: scopeLiterals,
       });
 
-      const outcome = classifyProxyOutcome(proxyResp, client.redirectUris);
+      const outcome = classifyProxyOutcome(proxyResp, requestedRedirectUri);
 
       if (outcome === "code") {
         // The projected grant record is deliberately untouched on reuse:
@@ -496,6 +497,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // the user is approving.
     const signedParams = new URLSearchParams(oauthQuery);
     const clientId = signedParams.get("client_id");
+    const requestedRedirectUri = signedParams.get("redirect_uri");
     const signedScopeStr = signedParams.get("scope") ?? "";
     const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
     if (!clientId) {
@@ -554,7 +556,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // a code actually reaches the client's registered callback.
     if (
       accept &&
-      classifyProxyOutcome(proxyResp, client.redirectUris) === "code"
+      classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code"
     ) {
       try {
         await projectGrantOnConsent(deps.storage, {
@@ -876,7 +878,7 @@ function hasAddedResponseParam(
 
 function classifyProxyOutcome(
   response: Response,
-  registeredRedirectUris: readonly string[],
+  requestedRedirectUri: string | null,
 ): ProxyOutcome {
   if (response.status !== 302) return "rejected";
   const location = response.headers.get("location");
@@ -889,10 +891,9 @@ function classifyProxyOutcome(
     // callback (registered redirect URIs are absolute).
     return "interaction";
   }
-  const registered = findRegisteredResponseRedirect(
-    registeredRedirectUris,
-    location,
-  );
+  const registered = requestedRedirectUri
+    ? findRegisteredResponseRedirect([requestedRedirectUri], location)
+    : undefined;
   if (!registered) {
     return "interaction";
   }

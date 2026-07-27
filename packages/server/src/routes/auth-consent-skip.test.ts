@@ -102,10 +102,10 @@ async function betterAuthSchema(c: TestContext) {
 }
 
 /** Seed an `auth_oauth_client` row directly (same shape the plugin's DCR
- *  endpoint would write). Public client, PKCE-bound, one callback URI. */
+ *  endpoint would write). Public client, PKCE-bound. */
 async function seedClient(
   c: TestContext,
-  redirectUri = CALLBACK,
+  redirectUri: string | readonly string[] = CALLBACK,
 ): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -124,10 +124,12 @@ async function seedClient(
   const now = new Date();
   // PG has native `text[]` columns for the plugin's `string[]` fields;
   // SQLite stays on `text` with JSON-serialized arrays.
+  const registeredRedirectUris =
+    typeof redirectUri === "string" ? [redirectUri] : [...redirectUri];
   const redirectUris: unknown =
     c.storage.betterAuthDialect === "pg"
-      ? [redirectUri]
-      : JSON.stringify([redirectUri]);
+      ? registeredRedirectUris
+      : JSON.stringify(registeredRedirectUris);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -934,6 +936,48 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       expectNoStore(res);
     },
   );
+
+  it("uses the signed redirect URI when registered callbacks differ only by response fields", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const firstRedirect = `${CALLBACK}?channel=stable&code=fixed-first`;
+    const requestedRedirect = `${CALLBACK}?channel=stable&code=fixed-second`;
+    const clientId = await seedClient(ctx, [firstRedirect, requestedRedirect]);
+    const cookie = await signInUser(
+      ctx,
+      "skip-none-multiple-reserved-callbacks@example.com",
+    );
+    const scope = "openid core.note:read";
+    await grantFirstConsent(
+      ctx,
+      clientId,
+      cookie,
+      scope,
+      ["openid", "core.note:read"],
+      requestedRedirect,
+    );
+
+    const signedQuery = await mintSignedQuery(
+      authorizeFields(clientId, scope, {
+        redirect_uri: requestedRedirect,
+        prompt: "none",
+        code_challenge: "",
+        code_challenge_method: "",
+      }),
+    );
+    const res = await landOnConsentPage(ctx, signedQuery, { cookie });
+
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expectCallbackBase(location, requestedRedirect);
+    expect(addedResponseValues(location, requestedRedirect, "error")).toContain(
+      "invalid_request",
+    );
+    expect(
+      addedResponseValues(location, requestedRedirect, "code"),
+    ).toHaveLength(0);
+    expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
+    expectNoStore(res);
+  });
 
   it("with no session, returns error=login_required to the client instead of rendering sign-in", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
