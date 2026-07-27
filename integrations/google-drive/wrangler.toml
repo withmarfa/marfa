@@ -14,6 +14,18 @@ main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are required. Wrangler defaults `preview_urls` from the
+# same "are there routes?" test `workers_dev` defaults from, not from
+# `workers_dev` itself, so setting only the first leaves per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames serving the Worker.
+workers_dev = false
+preview_urls = false
+
 [vars]
 INTEGRATION_NAME = "google.drive"
 MANIFEST_CRON = "*/10 * * * *"
@@ -30,6 +42,8 @@ new_sqlite_classes = ["PerConnectionState"]
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "marfa-integration-google-drive-staging"
+workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.drive"
@@ -84,6 +98,8 @@ dead_letter_queue = "marfa-webhook-receipt-google-drive-staging-dlq"
 # ---- Prod -----------------------------------------------------------------
 [env.prod]
 name = "marfa-integration-google-drive-prod"
+workers_dev = false
+preview_urls = false
 
 [env.prod.vars]
 INTEGRATION_NAME = "google.drive"

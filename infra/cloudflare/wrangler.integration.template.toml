@@ -10,14 +10,28 @@
 #     name)
 #
 # The control plane (wrangler.control.toml) and per-Integration Workers
-# share the same Cloudflare account but no other state — every call
-# between them goes through the public HTTPS surface.
+# share the same Cloudflare account but no other state. Calls from the
+# control plane into a Worker go over a Service Binding declared in
+# wrangler.control.toml, and carry the runtime broker key — the Worker
+# gates its whole fetch surface on it.
 
 name = "marfa-integration-EXAMPLE"
 main = "../../integrations/EXAMPLE/src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "${CLOUDFLARE_ACCOUNT_ID}"
+
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are required. Wrangler defaults `preview_urls` from the
+# same "are there routes?" test `workers_dev` defaults from, not from
+# `workers_dev` itself, so setting only the first leaves per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames serving the Worker.
+workers_dev = false
+preview_urls = false
 
 [vars]
 INTEGRATION_NAME = "EXAMPLE"
@@ -66,11 +80,15 @@ ENVIRONMENT = "dev"
 # ---- Staging / Prod ------------------------------------------------------
 [env.staging]
 name = "marfa-integration-EXAMPLE-staging"
+workers_dev = false
+preview_urls = false
 [env.staging.vars]
 ENVIRONMENT = "staging"
 
 [env.prod]
 name = "marfa-integration-EXAMPLE-prod"
+workers_dev = false
+preview_urls = false
 [env.prod.vars]
 ENVIRONMENT = "prod"
 

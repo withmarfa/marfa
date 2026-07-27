@@ -10,6 +10,18 @@ compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
 
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are required. Wrangler defaults `preview_urls` from the
+# same "are there routes?" test `workers_dev` defaults from, not from
+# `workers_dev` itself, so setting only the first leaves per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames serving the Worker.
+workers_dev = false
+preview_urls = false
+
 [vars]
 INTEGRATION_NAME = "withmarfa.rss-watcher"
 MANIFEST_CRON = "0 * * * *"
@@ -26,6 +38,8 @@ new_sqlite_classes = ["PerConnectionState"]
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "marfa-integration-rss-watcher-staging"
+workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 INTEGRATION_NAME = "withmarfa.rss-watcher"
@@ -62,6 +76,8 @@ dead_letter_queue = "marfa-scheduled-poll-rss-watcher-staging-dlq"
 # Mirrors staging. Keep in sync if you change queue topology.
 [env.prod]
 name = "marfa-integration-rss-watcher-prod"
+workers_dev = false
+preview_urls = false
 
 [env.prod.vars]
 INTEGRATION_NAME = "withmarfa.rss-watcher"
