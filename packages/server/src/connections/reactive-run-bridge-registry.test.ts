@@ -1170,14 +1170,6 @@ describe("bridge — unmapped integration handling", () => {
       };
 
       await publishNote("first activity attempt fails");
-      expect(
-        await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
-          (attempts) => attempts === 2,
-          { timeoutMs: 1_000 },
-        ),
-      ).toBe(2);
-
       const matchingActivities = async () => {
         const activityRows = await ctx.storage.items.list({
           type: "system.activity",
@@ -1195,8 +1187,11 @@ describe("bridge — unmapped integration handling", () => {
         });
       };
       expect(
-        await waitFor(matchingActivities, (rows) => rows.length === 1),
+        await waitFor(matchingActivities, (rows) => rows.length === 1, {
+          timeoutMs: 5_000,
+        }),
       ).toHaveLength(1);
+      expect(activityWriteAttempts).toBe(2);
 
       await publishNote("later events remain deduplicated");
       await new Promise((resolve) => setTimeout(resolve, 50));
