@@ -36,14 +36,19 @@ afterEach(() => {
 const CONTROL_PLANE_URL = "https://runtime.test";
 const BROKER_KEY = "broker-key-test";
 
-function scheduledManifest(name: string): IntegrationManifest {
+function scheduledManifest(
+  name: string,
+  triggers: IntegrationManifest["triggers"] = [
+    { type: "schedule", config: { cron: "0 * * * *" } },
+  ],
+): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
     publisher: "Acme",
     description: "scheduled uninstall test",
     direction: "both",
-    triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
+    triggers,
     target_types: ["core.note"],
     runtime_compatibility: ["hosted"],
     bidirectional_handling: {
@@ -58,7 +63,9 @@ function scheduledManifest(name: string): IntegrationManifest {
   };
 }
 
-async function installScheduled(): Promise<{
+async function installScheduled(
+  triggers?: IntegrationManifest["triggers"],
+): Promise<{
   apiKeyId: string;
   connectionId: string;
   manifestName: string;
@@ -69,7 +76,7 @@ async function installScheduled(): Promise<{
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const manifestName = `acme.scheduled-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
-  const manifest = scheduledManifest(manifestName);
+  const manifest = scheduledManifest(manifestName, triggers);
 
   const integration = await ctx.storage.items.create(
     {
@@ -143,10 +150,28 @@ function stubControlPlane(
 }
 
 function okDisarm(): Response {
-  return new Response(JSON.stringify({ ok: true, dispatched: true }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      dispatched: true,
+      status: 200,
+      result: { ok: true, disarmed: true, previous_next_run_at_ms: 1 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+/** Count the action_required activities raised for one connection. */
+async function actionRequiredFor(connectionId: string): Promise<number> {
+  const activities = await ctx.storage.items.list({
+    type: "system.activity",
+    limit: 200,
   });
+  return activities.data.filter(
+    (item) =>
+      item.properties.connection_id === connectionId &&
+      item.properties.severity === "action_required",
+  ).length;
 }
 
 describe("performUninstall — schedule disarm", () => {
@@ -159,6 +184,7 @@ describe("performUninstall — schedule disarm", () => {
       apiKeyId: installed.apiKeyId,
       tenantId: undefined,
       connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
       runtimeBrokerKey: BROKER_KEY,
     });
@@ -174,6 +200,84 @@ describe("performUninstall — schedule disarm", () => {
     );
     expect(call!.authorization).toBe(`Bearer ${BROKER_KEY}`);
     expect(call!.body).toEqual({ integration_name: installed.manifestName });
+  });
+
+  it("does not claim success when the Worker answered from a catch-all", async () => {
+    // The exact shape a Worker still on an older deploy produces: the
+    // control plane dispatched, the Worker answered 200 from a route it
+    // does not have, and nothing in the envelope says an alarm was
+    // cancelled. Only `result.disarmed` attests that the Durable Object
+    // ran deleteAlarm(); its absence is a failure, not a success.
+    const installed = await installScheduled();
+    const captured: CapturedCall[] = [];
+    stubControlPlane(
+      captured,
+      () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            dispatched: true,
+            status: 200,
+            integration_name: installed.manifestName,
+            connection_id: installed.connectionId,
+            result: {
+              ok: true,
+              integration: installed.manifestName,
+              message: "Per-Integration Worker. Queue + DO traffic only;",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      tenantId: undefined,
+      connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
+      controlPlaneUrl: CONTROL_PLANE_URL,
+      runtimeBrokerKey: BROKER_KEY,
+    });
+
+    expect(result.schedules_disarmed).toBe(false);
+    expect(result.schedule_disarm_error).toMatch(/disarm/i);
+    expect(await actionRequiredFor(installed.connectionId)).toBe(1);
+  });
+
+  it("accepts a no-Worker integration reporting nothing to dispatch", async () => {
+    // The control plane short-circuits for an in-tree integration that
+    // deploys no Worker: there is no Durable Object, so there is no
+    // alarm and no `result` to attest one. That is genuine success and
+    // must survive the stricter assertion.
+    const installed = await installScheduled();
+    const captured: CapturedCall[] = [];
+    stubControlPlane(
+      captured,
+      () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            dispatched: false,
+            reason: "no_worker",
+            integration_name: installed.manifestName,
+            connection_id: installed.connectionId,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      tenantId: undefined,
+      connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
+      controlPlaneUrl: CONTROL_PLANE_URL,
+      runtimeBrokerKey: BROKER_KEY,
+    });
+
+    expect(result.schedules_disarmed).toBe(true);
+    expect(result.schedule_disarm_error).toBeUndefined();
+    expect(await actionRequiredFor(installed.connectionId)).toBe(0);
   });
 
   it("records a disarm failure loudly instead of silently completing", async () => {
@@ -192,6 +296,7 @@ describe("performUninstall — schedule disarm", () => {
       apiKeyId: installed.apiKeyId,
       tenantId: undefined,
       connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
       runtimeBrokerKey: BROKER_KEY,
     });
@@ -227,7 +332,7 @@ describe("performUninstall — schedule disarm", () => {
     expect(auditRows.data[0]?.details.schedules_disarmed).toBe(false);
   });
 
-  it("skips the disarm step when no control plane is configured", async () => {
+  it("skips the disarm step on the local substrate", async () => {
     const installed = await installScheduled();
     const captured: CapturedCall[] = [];
     stubControlPlane(captured, okDisarm);
@@ -236,6 +341,7 @@ describe("performUninstall — schedule disarm", () => {
       apiKeyId: installed.apiKeyId,
       tenantId: undefined,
       connectionId: installed.connectionId,
+      integrationRuntime: "local",
     });
 
     // Local-substrate deployments have no control plane; the schedule
@@ -246,5 +352,56 @@ describe("performUninstall — schedule disarm", () => {
     expect(captured.filter((c) => c.url.includes("/disarm-schedule"))).toEqual(
       [],
     );
+    expect(await actionRequiredFor(installed.connectionId)).toBe(0);
+  });
+
+  it("fails loudly on the hosted substrate when the control-plane coordinates are missing", async () => {
+    // A hosted deployment that has lost a secret is broken, not local.
+    // Inferring the substrate from the presence of the coordinates makes
+    // the two indistinguishable, so the alarm survives the uninstall and
+    // the response says everything went fine.
+    const installed = await installScheduled();
+    const captured: CapturedCall[] = [];
+    stubControlPlane(captured, okDisarm);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      tenantId: undefined,
+      connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
+    });
+
+    expect(result.schedules_disarmed).toBe(false);
+    expect(result.schedule_disarm_error).toMatch(/MARFA_RUNTIME_CONTROL_URL/);
+    expect(captured.filter((c) => c.url.includes("/disarm-schedule"))).toEqual(
+      [],
+    );
+    expect(await actionRequiredFor(installed.connectionId)).toBe(1);
+  });
+
+  it("does not dispatch a disarm for a connection with no schedule trigger", async () => {
+    // Install only arms a schedule when the manifest declares one, so
+    // uninstall has to gate the same way. Firing unconditionally means a
+    // webhook-only integration collects a 503 and an action_required
+    // activity for an alarm that never existed.
+    const installed = await installScheduled([{ type: "webhook" }]);
+    const captured: CapturedCall[] = [];
+    stubControlPlane(captured, okDisarm);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      tenantId: undefined,
+      connectionId: installed.connectionId,
+      integrationRuntime: "hosted",
+      controlPlaneUrl: CONTROL_PLANE_URL,
+      runtimeBrokerKey: BROKER_KEY,
+    });
+
+    expect(result.schedules_disarmed).toBe(false);
+    expect(result.schedule_disarm_error).toBeUndefined();
+    expect(captured.filter((c) => c.url.includes("/disarm-schedule"))).toEqual(
+      [],
+    );
+    expect(await actionRequiredFor(installed.connectionId)).toBe(0);
   });
 });

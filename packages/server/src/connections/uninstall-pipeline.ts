@@ -19,7 +19,9 @@
  *   3. Disarm the connection's hosted-substrate schedule so its
  *      per-Connection alarm stops firing. Same place as credential
  *      revocation because it is the same job: cutting the connection's
- *      ability to keep doing work.
+ *      ability to keep doing work. Applies only on the `hosted`
+ *      substrate, and only to a connection whose install-time triggers
+ *      include a schedule.
  *   4. Delete the `connection_oauth_tokens` row if present (the upstream
  *      OAuth tokens cached for the proxy).
  *   5. Revoke every active `connection_leased_tokens` row.
@@ -52,10 +54,27 @@ export interface UninstallInput {
   /** Resolved client IP. Threaded into the audit row. */
   clientIp?: string | null;
   /**
+   * Which integrations substrate this deployment runs. The schedule-
+   * disarm step only applies to `hosted`: the local scheduler's walker
+   * gates on connection state, so a revoked connection stops being
+   * scheduled with nothing to cancel.
+   *
+   * This is the authoritative switch, deliberately separate from the
+   * coordinates below. Deriving the substrate from whether the
+   * coordinates happen to be set means a hosted deployment missing a
+   * secret is silently treated as a self-host: every disarm skipped,
+   * every alarm left ticking, and a result shape identical to a correct
+   * self-host's.
+   *
+   * Optional so existing callers and test fixtures keep compiling;
+   * absent behaves as `local`, matching the server's own default.
+   */
+  integrationRuntime?: "hosted" | "local";
+  /**
    * Runtime-control plane URL and broker key, for the schedule-disarm
-   * step. Both are `hosted`-substrate concerns; on the `local` substrate
-   * they are absent and the step is skipped, because the local
-   * scheduler's walker already gates on connection state.
+   * step. Required when `integrationRuntime` is `hosted`; a hosted
+   * deployment missing either one fails the step loudly rather than
+   * skipping it.
    */
   controlPlaneUrl?: string;
   runtimeBrokerKey?: string;
@@ -75,9 +94,10 @@ export interface UninstallResult {
   /** Number of `inbound_webhooks` subscriptions disabled. */
   inbound_webhooks_disabled: number;
   /** True when the connection's hosted-substrate schedule alarm was
-   *  cancelled. False when there was no control plane configured (the
-   *  local substrate) or when the disarm call failed — the two are
-   *  distinguished by `schedule_disarm_error`. */
+   *  cancelled. False when there was nothing to cancel (the local
+   *  substrate, or a connection with no schedule trigger) and false when
+   *  the disarm was attempted and failed — the two are distinguished by
+   *  `schedule_disarm_error`. */
   schedules_disarmed: boolean;
   /** Present only when the disarm attempt ran and failed. An operator
    *  should re-run the disarm; see the emitted `action_required`
@@ -173,6 +193,8 @@ export async function performUninstall(
     connectionId: input.connectionId,
     tenantId: input.tenantId,
     integrationRef: integrationRefForDisarm,
+    hasScheduleTrigger: connectionHasScheduleTrigger(connection.properties),
+    integrationRuntime: input.integrationRuntime ?? "local",
     controlPlaneUrl: input.controlPlaneUrl,
     runtimeBrokerKey: input.runtimeBrokerKey,
   });
@@ -302,6 +324,73 @@ interface DisarmOutcome {
 }
 
 /**
+ * Does this connection's install-time trigger set include a schedule?
+ *
+ * Install only arms an alarm for a manifest declaring a `schedule`
+ * trigger, and stamps that trigger set onto the connection, so uninstall
+ * can gate symmetrically instead of dispatching for connections that
+ * never had an alarm.
+ *
+ * A connection with no readable `triggers` property is treated as
+ * possibly-scheduled: an unnecessary disarm is idempotent, a skipped one
+ * leaves an alarm running forever.
+ */
+function connectionHasScheduleTrigger(
+  properties: Record<string, unknown>,
+): boolean {
+  const triggers = properties.triggers;
+  if (!Array.isArray(triggers)) return true;
+  return triggers.some(
+    (t) =>
+      typeof t === "object" &&
+      t !== null &&
+      (t as { type?: unknown }).type === "schedule",
+  );
+}
+
+/**
+ * The control plane's disarm envelope. `dispatched: false` is the
+ * short-circuit for an integration that deploys no Worker; when it did
+ * dispatch, `result.disarmed` is the Durable Object's own attestation
+ * that `deleteAlarm()` ran.
+ */
+interface DisarmDispatchEnvelope {
+  ok?: boolean;
+  dispatched?: boolean;
+  result?: { disarmed?: boolean } | null;
+}
+
+/**
+ * Decide whether a 2xx disarm envelope actually attests a cancelled
+ * alarm. Returns a failure string, or `undefined` when the teardown is
+ * genuine.
+ *
+ * The assertion is on `result.disarmed`, not on the status or the
+ * envelope's own `ok`. A Worker that has no disarm route still answers
+ * on its hostname, and a Worker answering from a generic handler
+ * produces a 2xx the rest of the chain happily relays as success. Only
+ * the Durable Object writes `disarmed`, and it writes it after
+ * `deleteAlarm()` has run, so it is the one field that cannot be
+ * produced by a Worker that did nothing.
+ *
+ * `dispatched: false` is the exception: the control plane short-circuits
+ * for an integration that deploys no Worker, where there is no Durable
+ * Object to attest anything and nothing to tear down.
+ */
+function verifyDisarmEnvelope(
+  body: DisarmDispatchEnvelope,
+): string | undefined {
+  if (body.ok === false) {
+    return "control plane reported the disarm dispatch failed";
+  }
+  if (body.dispatched === false) return undefined;
+  if (body.result?.disarmed !== true) {
+    return "control plane returned success but the Worker did not attest the alarm was disarmed (no result.disarmed) — the integration Worker may predate the disarm route";
+  }
+  return undefined;
+}
+
+/**
  * Ask the runtime-control plane to cancel a connection's schedule alarm.
  *
  * Never throws: the caller is mid-teardown and a throw here would strand
@@ -315,16 +404,26 @@ async function disarmConnectionSchedule(
     connectionId: string;
     tenantId?: string;
     integrationRef?: string;
+    hasScheduleTrigger: boolean;
+    integrationRuntime: "hosted" | "local";
     controlPlaneUrl?: string;
     runtimeBrokerKey?: string;
   },
 ): Promise<DisarmOutcome> {
-  const controlPlaneUrl = args.controlPlaneUrl;
-  const brokerKey = args.runtimeBrokerKey;
-  if (!controlPlaneUrl || !brokerKey) {
+  if (args.integrationRuntime !== "hosted") {
     // Local substrate — no Durable Object alarms exist to cancel.
     return { disarmed: false };
   }
+  if (!args.hasScheduleTrigger) {
+    // Nothing was ever armed for this connection. Dispatching anyway
+    // earns a 503 for any integration outside the in-tree Worker set and
+    // raises an action_required activity about an alarm that never
+    // existed.
+    return { disarmed: false };
+  }
+
+  const controlPlaneUrl = args.controlPlaneUrl;
+  const brokerKey = args.runtimeBrokerKey;
 
   let integrationName: string | undefined;
   if (args.integrationRef) {
@@ -340,10 +439,20 @@ async function disarmConnectionSchedule(
     }
   }
 
-  const url = `${controlPlaneUrl.replace(/\/$/, "")}/connections/${args.connectionId}/disarm-schedule`;
+  const url =
+    controlPlaneUrl && brokerKey
+      ? `${controlPlaneUrl.replace(/\/$/, "")}/connections/${args.connectionId}/disarm-schedule`
+      : null;
   let failure: string | undefined;
 
-  if (!integrationName) {
+  if (!url || !brokerKey) {
+    // Hosted, but the runtime-control coordinates are missing. The alarm
+    // is real and still ticking; reporting a clean skip here would hide a
+    // broken deployment behind the same result a correct self-host
+    // produces.
+    failure =
+      "hosted substrate is missing runtime-control coordinates (MARFA_RUNTIME_CONTROL_URL / MARFA_RUNTIME_BROKER_KEY); the schedule alarm is still armed";
+  } else if (!integrationName) {
     failure = "connection has no resolvable integration manifest name";
   } else {
     try {
@@ -359,10 +468,8 @@ async function disarmConnectionSchedule(
         const body = await res.text();
         failure = `control plane returned ${String(res.status)}: ${body.slice(0, 256)}`;
       } else {
-        const body = (await res.json()) as { ok?: boolean };
-        if (body.ok === false) {
-          failure = "control plane reported the disarm dispatch failed";
-        }
+        const body = (await res.json()) as DisarmDispatchEnvelope;
+        failure = verifyDisarmEnvelope(body);
       }
     } catch (err) {
       failure =

@@ -77,21 +77,54 @@ export interface IntegrationWorkerExport<E> {
 }
 
 /**
+ * Error codes the lease broker emits to say a Connection can never run
+ * again, paired with the status each is expected to arrive on.
+ *
+ * Both halves have to agree before the verdict is terminal. Status alone
+ * is not enough: the control plane answers 404 from its catch-all
+ * `notFound` handler for every unmatched path, so a misconfigured
+ * `MARFA_RUNTIME_CONTROL_URL` or a renamed lease route would otherwise
+ * read as "this Connection is gone" for every healthy Connection on its
+ * first tick. Code alone is not enough either, since a cached or proxied
+ * body can carry one on a status that contradicts it.
+ */
+const TERMINAL_LEASE_ERRORS: Record<string, number> = {
+  connection_not_found: 404,
+  connection_not_active: 403,
+};
+
+/** Pull the `error` code out of a broker error body, if it has one. */
+function leaseErrorCode(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const code = parsed.error;
+      return typeof code === "string" ? code : null;
+    }
+  } catch {
+    // Non-JSON bodies (an HTML error page from a proxy or WAF) carry no
+    // verdict. Falling through to null keeps them transient.
+  }
+  return null;
+}
+
+/**
  * Mint a runtime credential by calling the control plane's lease
  * broker. Cached on the per-Connection DO for ≤ 5 min by the SDK
  * caller — this function unconditionally hits the broker.
  *
- * 404 and 403 from the broker mean the Connection is gone or no longer
- * active. Those are surfaced as `ConnectionGoneError` so the consumer
- * can tell "this will never work again" apart from "the broker is
- * having a bad minute", which is the difference between tearing the
- * schedule down and backing off.
+ * A terminal verdict from the broker is surfaced as `ConnectionGoneError`
+ * so the consumer can tell "this will never work again" apart from "the
+ * broker is having a bad minute", which is the difference between tearing
+ * the schedule down and backing off. Anything unrecognized is transient:
+ * a disarm is unrecoverable without operator action (nothing re-arms a
+ * schedule automatically), so the asymmetry has to favor retrying.
  */
 async function mintCredentialViaBroker(
   env: IntegrationWorkerEnv,
   connectionId: string,
 ): Promise<RuntimeCredential> {
-  const url = `${env.MARFA_RUNTIME_CONTROL_URL}/lease/${connectionId}/runtime`;
+  const url = `${env.MARFA_RUNTIME_CONTROL_URL}/lease/${encodeURIComponent(connectionId)}/runtime`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -101,9 +134,10 @@ async function mintCredentialViaBroker(
   });
   if (!res.ok) {
     const body = await res.text();
-    if (res.status === 404 || res.status === 403) {
+    const code = leaseErrorCode(body);
+    if (code !== null && TERMINAL_LEASE_ERRORS[code] === res.status) {
       throw new ConnectionGoneError(
-        `lease broker reports connection ${connectionId} unusable (${String(res.status)}): ${body.slice(0, 256)}`,
+        `lease broker reports connection ${connectionId} unusable (${code}, ${String(res.status)}): ${body.slice(0, 256)}`,
         res.status,
       );
     }
@@ -223,12 +257,20 @@ export function createIntegrationWorker<
         const consumerEnv = buildConsumerEnv(env, config);
         return verifyHandler(consumerEnv, request);
       }
-      return Response.json({
-        ok: true,
-        integration: config.integrationName,
-        message:
-          "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule, /disarm-schedule and /verify.",
-      });
+      // Unmatched paths are 404, never a success envelope. A Worker
+      // predating a route still resolves and answers, so a 200 catch-all
+      // would report "done" for work this deployment cannot do yet — and
+      // every caller up the chain would believe it.
+      return Response.json(
+        {
+          ok: false,
+          error: "not_found",
+          integration: config.integrationName,
+          message:
+            "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule, /disarm-schedule and /verify.",
+        },
+        { status: 404 },
+      );
     },
     async queue(batch: MessageBatch<QueueMessage>, env: E) {
       const consumerEnv = buildConsumerEnv(env, config);

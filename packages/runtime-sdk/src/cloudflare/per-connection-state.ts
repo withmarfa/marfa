@@ -148,9 +148,9 @@ export class PerConnectionState implements DurableObject {
    *
    * The tombstone matters as much as the cancellation. `deleteAlarm()`
    * does not interrupt an `alarm()` invocation that is already running,
-   * so without a persisted marker that in-flight handler would re-arm
-   * and undo the teardown. `alarm()` reads the tombstone before doing
-   * anything, which closes the window.
+   * and that invocation ends by re-arming, so cancellation on its own
+   * would be undone moments later. The persisted marker is what makes
+   * the teardown stick; see `alarm()` for where it is read.
    */
   async disarmSchedule(
     reason: string,
@@ -174,6 +174,14 @@ export class PerConnectionState implements DurableObject {
    * A disarmed schedule neither enqueues nor re-arms. Because the alarm
    * re-arms itself, the tombstone check is the only thing standing
    * between a torn-down Connection and a schedule that runs forever.
+   *
+   * The tombstone is read twice, and the second read is the load-bearing
+   * one. Awaiting the queue send opens the Durable Object's input gate,
+   * so a disarm can be delivered while this handler is suspended there;
+   * re-arming on the strength of the first read alone would resurrect
+   * the schedule the disarm just cancelled. Re-checking after the send
+   * bounds the damage to the single message already in flight, which the
+   * consumer discards when the Connection's lease fails.
    */
   async alarm(): Promise<void> {
     if (!this.env.MANIFEST_CRON || !this.env.SCHEDULED_POLL_QUEUE) {
@@ -190,6 +198,12 @@ export class PerConnectionState implements DurableObject {
       scheduled_for_ms: Date.now(),
     };
     await this.env.SCHEDULED_POLL_QUEUE.send(message);
+    if (await this.core.getScheduleDisarmed()) {
+      // A disarm landed while the send was in flight. Leave the alarm
+      // cancelled and the next-run marker cleared, exactly as the disarm
+      // left them.
+      return;
+    }
     const next = computeNextRunAt(this.env.MANIFEST_CRON, Date.now());
     await this.state.storage.setAlarm(next);
     await this.core.setNextRunAt(next);

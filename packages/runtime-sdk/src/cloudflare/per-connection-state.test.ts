@@ -115,7 +115,7 @@ describe("PerConnectionState alarm lifecycle", () => {
     expect(fake.currentAlarm()).toBeNull();
   });
 
-  it("stops re-arming once disarmed, even if an alarm still fires", async () => {
+  it("neither enqueues nor re-arms once disarmed", async () => {
     const fake = fakeDurableObjectState("conn_e");
     const sent: ScheduleMessage[] = [];
     const doInstance = new PerConnectionState(fake.state, envWithQueue(sent));
@@ -123,12 +123,46 @@ describe("PerConnectionState alarm lifecycle", () => {
     await doInstance.armSchedule();
     await doInstance.disarmSchedule("connection_gone");
 
-    // A tick already in flight when the disarm landed must not resurrect
-    // the schedule — this is the property that makes an orphaned alarm
-    // self-limiting rather than immortal.
+    // An alarm that fires after the disarm has fully landed reads the
+    // tombstone first and stops there. This is the ordinary case; the
+    // mid-flight interleaving is covered separately below.
     await doInstance.alarm();
 
     expect(sent).toHaveLength(0);
+    expect(fake.currentAlarm()).toBeNull();
+  });
+
+  it("does not re-arm when a disarm lands mid-tick, during the queue send", async () => {
+    const fake = fakeDurableObjectState("conn_e2");
+    const sent: ScheduleMessage[] = [];
+    // Awaiting the queue send opens the Durable Object's input gate, so
+    // an inbound disarm can be delivered while `alarm()` is suspended
+    // there. Reading the tombstone only at the top of `alarm()` misses
+    // it, and the re-arm at the end resurrects the schedule the disarm
+    // just tore down. Driving the disarm from inside `send` reproduces
+    // exactly that interleaving. The holder breaks the cycle between the
+    // env (which the DO needs) and the DO (which `send` needs).
+    const holder: { instance?: PerConnectionState } = {};
+    const env: PerConnectionAlarmEnv = {
+      INTEGRATION_NAME: "withmarfa.rss-watcher",
+      MANIFEST_CRON: "0 * * * *",
+      SCHEDULED_POLL_QUEUE: {
+        send: async (message: ScheduleMessage) => {
+          sent.push(message);
+          await holder.instance?.disarmSchedule("uninstall");
+        },
+      } as unknown as Queue<ScheduleMessage>,
+    };
+    const doInstance = new PerConnectionState(fake.state, env);
+    holder.instance = doInstance;
+
+    await doInstance.armSchedule();
+    await doInstance.alarm();
+
+    // One already-sent message is the accepted cost — it was in flight
+    // before the disarm arrived, and the consumer drops it when the
+    // lease fails. What must not survive is the alarm itself.
+    expect(sent).toHaveLength(1);
     expect(fake.currentAlarm()).toBeNull();
   });
 

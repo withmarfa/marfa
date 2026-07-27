@@ -134,17 +134,22 @@ async function handleScheduleDispatch(
   } catch {
     parsed = { raw: text };
   }
-  return c.json(
-    {
-      ok: res.ok,
-      dispatched: true,
-      status: res.status,
-      integration_name: integrationName,
-      connection_id: connectionId,
-      result: parsed,
-    },
-    res.ok ? 200 : 502,
-  );
+  const envelope = {
+    ok: res.ok,
+    dispatched: true,
+    status: res.status,
+    integration_name: integrationName,
+    connection_id: connectionId,
+    result: parsed,
+  };
+  if (!res.ok) {
+    // Package convention: every error carries an `error` code. Without
+    // one, a caller matching on the code has to fall back to sniffing
+    // the status, which is exactly the guesswork the convention exists
+    // to remove. The Worker's own response stays on `result`.
+    return c.json({ error: "dispatch_failed", ...envelope }, 502);
+  }
+  return c.json(envelope, 200);
 }
 
 /**

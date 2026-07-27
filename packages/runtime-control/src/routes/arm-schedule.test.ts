@@ -158,6 +158,55 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("reports failure with an error code when the Worker has no disarm route", async () => {
+    // A Worker deployed before the disarm route existed answers its
+    // catch-all. That must not read as a completed disarm anywhere in
+    // the chain, and the failure needs a code a caller can match on.
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(
+      calls,
+      () =>
+        new Response(
+          JSON.stringify({ ok: false, error: "not_found", integration: "x" }),
+          { status: 404, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/disarm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+
+    expect(res.status).toBe(502);
+    const body = await res.json<{
+      error: string;
+      ok: boolean;
+      result: { disarmed?: boolean };
+    }>();
+    expect(body.error).toBe("dispatch_failed");
+    expect(body.ok).toBe(false);
+    expect(body.result.disarmed).toBeUndefined();
+  });
+
+  it("passes the Worker's disarmed attestation through on success", async () => {
+    // `result.disarmed` is the only field that attests the Durable
+    // Object actually ran deleteAlarm(); the server asserts on it, so
+    // the control plane must not drop or synthesize it.
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, okResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/disarm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ result: { disarmed: boolean } }>();
+    expect(body.result.disarmed).toBe(true);
+  });
+
   it("surfaces a missing service binding as 503", async () => {
     const env = {
       MARFA_API_URL: "https://staging.test",

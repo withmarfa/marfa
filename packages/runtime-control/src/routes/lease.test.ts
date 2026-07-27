@@ -103,6 +103,98 @@ describe("POST /lease/:connection_id/runtime", () => {
     expect(body.extension_permissions).toEqual({ "*": "write" });
   });
 
+  /**
+   * Terminal-vs-transient classification starts here. The Worker reads
+   * the `error` code off this body to decide whether to tear a
+   * Connection's schedule down, so flattening every mint failure to 502
+   * (or emitting an unlabelled 404) would make a deleted Connection
+   * indistinguishable from a cold server — and nothing re-arms a
+   * schedule that was torn down by mistake.
+   */
+  function stubMintStatus(status: number, message: string): typeof fetch {
+    return (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.endsWith("/system/runtime-credentials")) {
+        return Promise.resolve(new Response(message, { status }));
+      }
+      return Promise.resolve(new Response("unexpected", { status: 500 }));
+    };
+  }
+
+  it("labels a missing connection 404 connection_not_found", async () => {
+    globalThis.fetch = stubMintStatus(404, "no such connection");
+    const res = await buildApp().request(
+      "/lease/conn_missing/runtime",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(404);
+    const json = await res.json<{ error: string; connection_id: string }>();
+    expect(json.error).toBe("connection_not_found");
+    expect(json.connection_id).toBe("conn_missing");
+  });
+
+  it("labels an inactive connection 403 connection_not_active", async () => {
+    globalThis.fetch = stubMintStatus(403, "connection revoked");
+    const res = await buildApp().request(
+      "/lease/conn_revoked/runtime",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(403);
+    const json = await res.json<{ error: string; connection_id: string }>();
+    expect(json.error).toBe("connection_not_active");
+    expect(json.connection_id).toBe("conn_revoked");
+  });
+
+  it("keeps a server-side failure transient as 502 mint_failed", async () => {
+    globalThis.fetch = stubMintStatus(500, "database unavailable");
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(502);
+    const json = await res.json<{ error: string }>();
+    expect(json.error).toBe("mint_failed");
+  });
+
+  it("answers an unrouted path with a plain not_found, distinct from the lease verdicts", async () => {
+    // The catch-all is why status alone can't carry the verdict: a
+    // misconfigured control-plane URL lands here with a 404 that means
+    // "no such route", not "no such connection".
+    const res = await buildApp().request(
+      "/lease/conn_x/runtym",
+      { method: "POST" },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(404);
+    const json = await res.json<{ error: string }>();
+    expect(json.error).toBe("not_found");
+    expect(json.error).not.toBe("connection_not_found");
+  });
+
   it("returns 503 when MARFA_API_URL is unset", async () => {
     const app = buildApp();
     const env = {

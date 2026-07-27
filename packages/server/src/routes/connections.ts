@@ -357,7 +357,23 @@ const previewEventRoute = createRoute({
   },
 });
 
-export function connectionRoutes(storage: Storage, salt: string) {
+export interface ConnectionRoutesOptions {
+  /**
+   * Which integrations substrate this deployment runs, from
+   * `AppConfig.integrationRuntime`. The uninstall pipeline needs the
+   * declared value rather than an inference from whether the
+   * runtime-control coordinates happen to be present, so a hosted
+   * deployment that has lost a secret fails loudly instead of quietly
+   * behaving like a self-host.
+   */
+  integrationRuntime: "hosted" | "local";
+}
+
+export function connectionRoutes(
+  storage: Storage,
+  salt: string,
+  options: ConnectionRoutesOptions,
+) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
@@ -580,8 +596,9 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const clientIp = c.var.clientIp;
 
     try {
-      // Hosted-substrate coordinates for the schedule-disarm step. Unset
-      // on local-substrate deployments, where the pipeline skips it.
+      // Hosted-substrate coordinates for the schedule-disarm step. The
+      // substrate itself comes from config, not from whether these are
+      // set — see ConnectionRoutesOptions.
       const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
       const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
       const result = await performUninstall(storage, {
@@ -589,6 +606,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
         tenantId,
         connectionId,
         clientIp,
+        integrationRuntime: options.integrationRuntime,
         ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
         ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
       });

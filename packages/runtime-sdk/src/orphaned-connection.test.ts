@@ -12,7 +12,12 @@ import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";
 import { registerScheduleHandler, _resetHandlers } from "./handlers.js";
 import { createInMemoryStorage } from "./in-memory-storage.js";
 import { ConnectionGoneError } from "./errors.js";
-import type { QueueMessage, ScheduleMessage } from "./types.js";
+import type {
+  ItemEventMessage,
+  QueueMessage,
+  ScheduleMessage,
+  WebhookMessage,
+} from "./types.js";
 
 interface TestMessage<T> {
   readonly body: T;
@@ -52,6 +57,26 @@ const SCHED = (): ScheduleMessage => ({
   integration_name: "demo",
   connection_id: "conn_gone",
   scheduled_for_ms: 1000,
+});
+
+const HOOK = (): WebhookMessage => ({
+  kind: "webhook",
+  integration_name: "demo",
+  connection_id: "conn_gone",
+  delivery_id: "dlv_1",
+  headers: {},
+  body_base64: "",
+  verified_at_ms: 1000,
+});
+
+const ITEM_EVENT = (): ItemEventMessage => ({
+  kind: "item-event",
+  integration_name: "demo",
+  connection_id: "conn_gone",
+  event_type: "item.created",
+  item_id: "itm_1",
+  cycle: { originating_connection_id: null, hop_count: 0 },
+  payload: {},
 });
 
 function makeGoneEnv(disarmed: string[]): ConsumerEnvironment {
@@ -129,5 +154,31 @@ describe("orphaned connection", () => {
 
     await expect(consumeBatch(env, [msg])).resolves.toBeDefined();
     expect(msg.acked).toBe(true);
+  });
+
+  it("does not disarm on a webhook message", async () => {
+    // A webhook can arrive long after it was produced, and its verdict
+    // says nothing about the schedule. Tearing the alarm down on the
+    // strength of one is a live Connection losing its schedule to a
+    // stale delivery.
+    const disarmed: string[] = [];
+    const env = makeGoneEnv(disarmed);
+    const msg = makeMsg(HOOK());
+
+    await consumeBatch(env, [msg]);
+
+    expect(msg.acked).toBe(true);
+    expect(disarmed).toEqual([]);
+  });
+
+  it("does not disarm on an item-event message", async () => {
+    const disarmed: string[] = [];
+    const env = makeGoneEnv(disarmed);
+    const msg = makeMsg(ITEM_EVENT());
+
+    await consumeBatch(env, [msg]);
+
+    expect(msg.acked).toBe(true);
+    expect(disarmed).toEqual([]);
   });
 });
