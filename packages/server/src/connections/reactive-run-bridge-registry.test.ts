@@ -1178,12 +1178,12 @@ describe("bridge — unmapped integration handling", () => {
         ),
       ).toBe(2);
 
-      const activityRows = await ctx.storage.items.list({
-        type: "system.activity",
-        limit: 100,
-      });
-      expect(
-        activityRows.data.filter((row) => {
+      const matchingActivities = async () => {
+        const activityRows = await ctx.storage.items.list({
+          type: "system.activity",
+          limit: 100,
+        });
+        return activityRows.data.filter((row) => {
           const properties = row.properties as {
             connection_id?: string;
             summary?: string;
@@ -1192,7 +1192,10 @@ describe("bridge — unmapped integration handling", () => {
             properties.connection_id === connUnmapped &&
             properties.summary?.includes(integrationName)
           );
-        }),
+        });
+      };
+      expect(
+        await waitFor(matchingActivities, (rows) => rows.length === 1),
       ).toHaveLength(1);
 
       await publishNote("later events remain deduplicated");
