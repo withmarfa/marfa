@@ -654,6 +654,49 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     },
   );
 
+  it("stamps Cache-Control: no-store on the redirect it hands back, accepted or refused", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "decision-no-store@example.com");
+
+    // The accepted decision is the primary code-bearing redirect on the
+    // whole auth surface: its `Location` carries a single-use
+    // authorization code, which is exactly what `withNoStore` documents
+    // itself as existing for.
+    const accepted = await request(
+      ctx.app,
+      "POST",
+      "/auth/authorize/decision",
+      {
+        form: {
+          accept: "true",
+          oauth_query: await buildSignedOauthQuery(clientId, "openid"),
+          scopes: ["openid"],
+        },
+        headers: { cookie, origin: ORIGIN },
+      },
+    );
+    expect(accepted.status).toBe(302);
+    expect(
+      new URL(accepted.headers.get("location") ?? "").searchParams.get("code"),
+    ).toBeTruthy();
+    expect(accepted.headers.get("cache-control") ?? "").toContain("no-store");
+    expect(accepted.headers.get("pragma")).toBe("no-cache");
+
+    // The refused one carries no code, and is stamped for the same reason
+    // every other auth response is. Stamping one exit and not the other
+    // is how the exception gets missed.
+    const denied = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "false",
+        oauth_query: await buildSignedOauthQuery(clientId, "openid"),
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(denied.headers.get("cache-control") ?? "").toContain("no-store");
+    expect(denied.headers.get("pragma")).toBe("no-cache");
+  });
+
   it("F1+F7: projection uses client_id from oauth_query (NOT the form's client_id) + audit row carries client_ip", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const realClientId = await seedClient(ctx);

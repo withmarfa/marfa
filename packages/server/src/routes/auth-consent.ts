@@ -670,11 +670,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         // narrowing-token revocation are consent-success side effects, so
         // none may happen until a code actually reaches the client's
         // registered callback.
+        //
+        // Either way the response is stamped no-store on its way out. The
+        // accepted one carries a single-use code in its `Location`, which
+        // is reason enough on its own; the refused one is stamped for the
+        // same reason every other auth surface is, and stamping one exit
+        // and not the other is how the exception gets missed.
         if (
           !accept ||
           classifyProxyOutcome(proxyResp, requestedRedirectUri) !== "code"
         ) {
-          return proxyResp;
+          return withNoStore(proxyResp);
         }
 
         try {
@@ -708,7 +714,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           });
         }
 
-        return proxyResp;
+        return withNoStore(proxyResp);
       },
     );
   });
