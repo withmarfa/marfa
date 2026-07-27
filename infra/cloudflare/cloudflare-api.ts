@@ -58,6 +58,36 @@ export class CloudflareClient {
     return envelope?.result;
   }
 
+  // ---- Workers ----------------------------------------------------------
+  /**
+   * Whether a deployed Worker serves a `workers.dev` hostname, and
+   * whether it serves per-version Preview URLs.
+   *
+   * These are account-side settings, not config: `wrangler deploy`
+   * pushes them, so a `wrangler.toml` saying `workers_dev = false` has
+   * no effect on the live Worker until the next deploy. Reading them
+   * back is the only way to know a hostname is actually gone.
+   *
+   * Returns undefined when the script does not exist in this account,
+   * which is a legitimate state (never deployed, or a name that only
+   * exists in another environment).
+   */
+  async getWorkerSubdomain(
+    scriptName: string,
+  ): Promise<{ enabled: boolean; previews_enabled: boolean } | undefined> {
+    try {
+      return await this.request<{
+        enabled: boolean;
+        previews_enabled: boolean;
+      }>(
+        `/accounts/${this.opts.accountId}/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`,
+      );
+    } catch (err) {
+      if ((err as CloudflareApiError).status === 404) return undefined;
+      throw err;
+    }
+  }
+
   // ---- Queues -----------------------------------------------------------
   async listQueues(): Promise<{ queue_id: string; queue_name: string }[]> {
     const r = await this.request<{ queue_id: string; queue_name: string }[]>(
