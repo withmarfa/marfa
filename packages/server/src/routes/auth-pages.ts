@@ -51,6 +51,7 @@ import {
 import { setNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
+import { log } from "../middleware/logger.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
 
@@ -58,6 +59,15 @@ import type { EvaluatePendingDeletion } from "../middleware/account-deletion-gua
  * Flip a projected `system.connection { kind: "app" }` grant to revoked
  * and cascade through the OAuth Provider plugin's tables (access tokens,
  * refresh tokens, and the consent row itself).
+ *
+ * **The cascade runs first, and a failure aborts the whole thing.** A
+ * revocation that cannot drop the tokens is a revocation that did not
+ * happen — the app keeps working for the rest of every token's lifetime.
+ * Writing "revoked" onto the record first would leave `/auth/security`
+ * describing access the user no longer has while that access still
+ * works: a comforting record of a change nobody made. Leaving the record
+ * alone keeps it true, and the caller turns the throw into a visible
+ * failure the user can retry.
  *
  * Runs under the consent lock for the (client, user) pair. The silent
  * re-authorization path on `GET /auth/authorize` reads the standing
@@ -77,6 +87,16 @@ async function revokeProjectedGrant(
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
+    if (
+      opts.clientId &&
+      opts.authUserId &&
+      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
+    ) {
+      await storage.oauthProvider.revokeTokensForGrant(
+        opts.clientId,
+        opts.authUserId,
+      );
+    }
     await storage.items.update(
       opts.itemId,
       {
@@ -88,16 +108,6 @@ async function revokeProjectedGrant(
       },
       opts.tenantId,
     );
-    if (
-      opts.clientId &&
-      opts.authUserId &&
-      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
-    ) {
-      await storage.oauthProvider.revokeTokensForGrant(
-        opts.clientId,
-        opts.authUserId,
-      );
-    }
   };
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the
@@ -1681,13 +1691,25 @@ export function authRoutes(
       typeof props.client_id === "string" ? props.client_id : undefined;
     const authUserId =
       typeof props.user_id === "string" ? props.user_id : undefined;
-    await revokeProjectedGrant(storage, {
-      itemId: id,
-      properties: props,
-      tenantId,
-      clientId,
-      authUserId,
-    });
+    try {
+      await revokeProjectedGrant(storage, {
+        itemId: id,
+        properties: props,
+        tenantId,
+        clientId,
+        authUserId,
+      });
+    } catch (err) {
+      // The cascade refused, so nothing was revoked and the record still
+      // describes the access the app really has. Say so: a redirect
+      // reading "App access revoked" would be the one thing worse than
+      // the failure itself.
+      log("error", "security page: grant revoke failed", {
+        client_id: clientId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return c.redirect("/auth/security?notice=grant_revoke_failed", 302);
+    }
     // Emit the audit row (same shape as DELETE /grants/:id).
     void storage.audit.log({
       tenant_id: tenantId ?? null,
@@ -2456,6 +2478,10 @@ function parseNotice(
       grant_not_found: {
         kind: "error",
         text: "That app was already revoked or no longer exists.",
+      },
+      grant_revoke_failed: {
+        kind: "error",
+        text: "Couldn't revoke that app's access, so nothing was changed. Try again in a moment.",
       },
       session_revoked: {
         kind: "success",
