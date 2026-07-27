@@ -630,9 +630,7 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
     // The decision handler treats a zero-scope accept as a deny; the two
     // handlers must not disagree about whether asking for nothing is
     // something the server silently approves.
-    const signedQuery = await mintSignedQuery(
-      authorizeFields(clientId, ""),
-    );
+    const signedQuery = await mintSignedQuery(authorizeFields(clientId, ""));
     const res = await landOnConsentPage(ctx, signedQuery, { cookie });
     expectRendersConsent(res, await res.text());
     expect(await countAudit(ctx, "auth.grant.reused")).toBe(0);
@@ -735,8 +733,9 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
 
     const res = await landOnConsentPage(ctx, signedQuery, { cookie });
     expectCodeRedirect(res);
-    expect(new URL(res.headers.get("location") ?? "").searchParams.get("state"))
-      .toBe("none-state");
+    expect(
+      new URL(res.headers.get("location") ?? "").searchParams.get("state"),
+    ).toBe("none-state");
   });
 
   it("without a covering grant, redirects with error=consent_required and never renders", async () => {
