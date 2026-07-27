@@ -1263,7 +1263,14 @@ function holdSilentFlowAfterReadingGrant(c: TestContext): {
   };
 }
 
-/** Let the concurrent request get well clear of the gate before opening it. */
+/**
+ * How long the competing request gets before the parked one is released.
+ * It does not get clear of the gate — the lock is what it parks on, and
+ * it stays parked until the holder returns. The wait is only there to
+ * make the ordering deterministic: without it the competing request might
+ * not have reached the lock at all before the holder finishes, and the
+ * test would exercise two requests that never overlapped.
+ */
 const RACE_SETTLE_MS = 150;
 
 describe("GET /auth/authorize (consent skip) — concurrent grant changes", () => {

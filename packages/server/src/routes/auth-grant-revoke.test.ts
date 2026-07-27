@@ -1,15 +1,22 @@
 /**
  * What revoking an app's grant has to guarantee.
  *
- * **A revoke that cannot revoke does not claim it did.** The cascade
- * through the plugin's token tables runs before the projection is
- * rewritten, so a failure leaves the record saying "active" — which is
- * the truth, because the tokens are still live. The inverse order
- * produces the one state worse than the failure: a security page showing
- * revoked access that still works.
+ * Two properties, both about the relationship between the record on
+ * `/auth/security` and the access it describes:
  *
- * The device flow is the vehicle because it is the shortest path to a
- * real projected grant: initiate, approve, and the
+ *   - **A revoke that cannot revoke does not claim it did.** The cascade
+ *     through the plugin's token tables runs before the projection is
+ *     rewritten, so a failure leaves the record saying "active" — which
+ *     is the truth, because the tokens are still live. The inverse order
+ *     produces the one state worse than the failure: a security page
+ *     showing revoked access that still works.
+ *   - **The device-consent approval serializes with it.** Approving on a
+ *     device is a fourth writer of the same standing grant, and left
+ *     outside the consent lock its read-modify-write can straddle a whole
+ *     revoke and put the grant back to active afterwards.
+ *
+ * The device flow is the vehicle for both because it is the shortest path
+ * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists with the right tenant.
  */
 import { describe, it, expect, afterEach } from "vitest";
@@ -206,5 +213,72 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
     expect(
       await c.storage.oauthProvider?.validateAccessToken(tokenHash),
     ).not.toBeNull();
+  });
+});
+
+describe("POST /auth/device/consent — the approval serializes with a revoke", () => {
+  it("REGRESSION: an approval in flight cannot put back a grant revoked while it ran", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "device-vs-revoke@example.com");
+
+    // A standing grant for the client, so there is something to revoke
+    // and the second approval takes the update-in-place branch.
+    const first = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, first, cookie)).status).toBe(200);
+    const grant = await onlyGrant(c);
+
+    // Park the second approval between resolving the projection and
+    // writing it — the window the lock has to cover.
+    const provider = c.storage.oauthProvider!;
+    const resolveGrantItemId = provider.findGrantItemId.bind(provider);
+    let reachedRead!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      reachedRead = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked = false;
+    provider.findGrantItemId = async (opts) => {
+      const id = await resolveGrantItemId(opts);
+      if (!parked) {
+        parked = true;
+        reachedRead();
+        await gate;
+      }
+      return id;
+    };
+
+    const second = await initiateDeviceFlow(c, clientId, "core.task:write");
+    const approving = approveDeviceFlow(c, second, cookie);
+    await reached;
+
+    // Meanwhile the user revokes the app from /auth/security.
+    const revoking = request(c.app, "POST", `/auth/grants/${grant.id}/revoke`, {
+      headers: { origin: ORIGIN, cookie },
+    });
+    // Long enough for the revoke to reach the lock. It does not get past
+    // it — that is the point — but without the wait the two requests
+    // might never have overlapped and the test would prove nothing.
+    await new Promise((r) => setTimeout(r, 150));
+    release();
+
+    const [approveRes, revokeRes] = await Promise.all([approving, revoking]);
+    expect(approveRes.status).toBe(200);
+    expect(revokeRes.headers.get("location") ?? "").toContain(
+      "notice=grant_revoked",
+    );
+
+    // The revoke ran second and is what the record has to reflect. With
+    // the approval's read-modify-write outside the lock it lands after
+    // the whole cascade instead, and the grant is active again with
+    // `revoked_at` cleared — an app the user just disconnected, showing
+    // as connected.
+    const after = await c.storage.items.get(grant.id);
+    expect(after?.properties.status).toBe("revoked");
+    expect(after?.properties.revoked_at).toBeTruthy();
   });
 });

@@ -2111,13 +2111,28 @@ export function authRoutes(
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
-    // Approve: upsert the system.connection projection and flip the device-code row.
-    const grant = await createUserAppGrant(
-      storage,
-      sessionResult.session.user,
+    // Approve: upsert the system.connection projection and flip the
+    // device-code row.
+    //
+    // The upsert resolves the projection, reads it, and writes it back
+    // active with this request's scopes — a read-modify-write on the same
+    // record the consent decision, the silent re-authorization, and the
+    // revoke path all write, so it takes the same lock they do. Left
+    // outside it, a revoke running concurrently can land its whole
+    // cascade between this read and this write, and the write then puts
+    // the grant back to active with `revoked_at` cleared: an end state
+    // neither ordering of the two user actions would produce.
+    const grant = await withConsentLock(
       row.client_id,
-      row.scopes,
-      "marfa/oauth/device",
+      sessionResult.session.user.id,
+      () =>
+        createUserAppGrant(
+          storage,
+          sessionResult.session.user,
+          row.client_id,
+          row.scopes,
+          "marfa/oauth/device",
+        ),
     );
     const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {

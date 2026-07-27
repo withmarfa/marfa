@@ -1,15 +1,21 @@
 /**
  * Serializes writes to a user's standing OAuth grant for one client.
  *
- * Three flows write the same (client, user) grant: the interactive
+ * Four flows write the same (client, user) grant: the interactive
  * consent decision, the silent re-authorization on `GET /auth/authorize`,
- * and grant revocation. The silent one is why this exists. It reads the
- * standing grant, lets the OAuth Provider plugin narrow the stored scopes
- * to whatever the client asked for this time, then writes the standing
- * set back. That read and that write straddle an entire proxy round trip,
- * so without serialization a narrowing or a revocation committed in
- * between is overwritten by a restoration computed before it happened,
- * and a permission the user just took away comes back.
+ * the device-flow consent approval, and grant revocation. The silent one
+ * is why this exists. It reads the standing grant, lets the OAuth
+ * Provider plugin narrow the stored scopes to whatever the client asked
+ * for this time, then writes the standing set back. That read and that
+ * write straddle an entire proxy round trip, so without serialization a
+ * narrowing or a revocation committed in between is overwritten by a
+ * restoration computed before it happened, and a permission the user
+ * just took away comes back.
+ *
+ * Every flow that writes the record takes the lock, not just the one
+ * with the widest window: a writer outside it can still land inside
+ * another's read-modify-write and leave a state no ordering of the two
+ * user actions would produce.
  *
  * A mutex, not a lease: a caller waits its turn rather than being told to
  * go away, because every one of these flows is a user action that has to
