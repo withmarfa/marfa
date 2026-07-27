@@ -311,6 +311,37 @@ describe("resolveTypePermission", () => {
       }),
     ).toBe("write");
   });
+
+  // Parent-inclusion is what makes a grant of `core.media.*` reach
+  // `core.media`, and the same rule makes a denial of `core.secret.*` reach
+  // `core.secret`. Both are the pattern doing one job, but the deny direction
+  // is the one a map author has to think about.
+  it("denies the subtree root when the subtree is denied", () => {
+    expect(
+      resolveTypePermission("core.secret", {
+        "*": "write",
+        "core.secret.*": "none",
+      }),
+    ).toBe("none");
+  });
+
+  it("grants the subtree root when the subtree is granted", () => {
+    expect(
+      resolveTypePermission("core.media", {
+        "core.media.*": "read",
+      }),
+    ).toBe("read");
+  });
+
+  it("lets an explicit entry for the root override the subtree denial", () => {
+    expect(
+      resolveTypePermission("core.secret", {
+        "*": "write",
+        "core.secret.*": "none",
+        "core.secret": "read",
+      }),
+    ).toBe("read");
+  });
 });
 
 describe("isValidHandle", () => {
