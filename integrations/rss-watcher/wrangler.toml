@@ -15,10 +15,13 @@ compatibility_flags = ["nodejs_compat"]
 # a hostname. A `workers.dev` name would therefore only ever serve
 # unsolicited traffic.
 #
-# Both keys are required. Wrangler defaults `preview_urls` from the
-# same "are there routes?" test `workers_dev` defaults from, not from
-# `workers_dev` itself, so setting only the first leaves per-version
-# `<version>-<name>.<subdomain>.workers.dev` hostnames serving the Worker.
+# Both keys are stated because `preview_urls` has no dependable
+# default. Wrangler's deploy path resolves none locally: an unset
+# value is dropped from the request body and the API decides. Its
+# config schema documents a default of `false`, and the helper it
+# mocks that API with computes a third answer. Left unset, per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames can keep
+# serving the Worker.
 workers_dev = false
 preview_urls = false
 
