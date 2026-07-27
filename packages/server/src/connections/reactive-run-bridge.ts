@@ -90,6 +90,7 @@ interface SubscriberFailureState {
 }
 
 interface UnmappedActivityState {
+  entry: SubscriptionEntry;
   reported: boolean;
   inFlight: Promise<void> | null;
   retryTimer: ReturnType<typeof setTimeout> | null;
@@ -373,17 +374,22 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   let drainerExit: Promise<void> | null = null;
 
   const clearUnmappedStateIfUnused = (entry: SubscriptionEntry): void => {
-    const stillUsed = Array.from(subscriptions.values()).some(
+    const replacement = Array.from(subscriptions.values()).find(
       (candidate) =>
         candidate.integration_name === entry.integration_name &&
         candidate.tenant_id === entry.tenant_id,
     );
-    if (stillUsed) return;
     const key = unmappedActivityKey(
       entry.tenant_id ?? undefined,
       entry.integration_name,
     );
     const state = unmappedActivityStates.get(key);
+    if (replacement) {
+      if (state?.entry.connection_id === entry.connection_id) {
+        state.entry = replacement;
+      }
+      return;
+    }
     if (state?.retryTimer) clearTimeout(state.retryTimer);
     unmappedActivityStates.delete(key);
   };
@@ -713,6 +719,7 @@ function handleUnmappedIntegration(
   let state = states.get(key);
   if (!state) {
     state = {
+      entry,
       reported: false,
       inFlight: null,
       retryTimer: null,
@@ -720,6 +727,11 @@ function handleUnmappedIntegration(
       retryAfter: 0,
     };
     states.set(key, state);
+  } else {
+    // A tenant can have several Connections for the same Integration. Keep a
+    // live representative so a later retry never attributes the alert to a
+    // Connection that was removed while the first write was in flight.
+    state.entry = entry;
   }
 
   const now = config.unmappedActivityNow?.() ?? Date.now();
@@ -746,6 +758,7 @@ function handleUnmappedIntegration(
         `[reactive-run-bridge] unmapped-integration activity write failed for ${entry.integration_name}:`,
         err instanceof Error ? err.message : String(err),
       );
+      if (states.get(key) !== state) return;
       if (state.retryTimer) clearTimeout(state.retryTimer);
       state.retryTimer = setTimeout(() => {
         state.retryTimer = null;
@@ -755,7 +768,7 @@ function handleUnmappedIntegration(
           return;
         }
         void handleUnmappedIntegration(
-          entry,
+          state.entry,
           tenantId,
           states,
           config,

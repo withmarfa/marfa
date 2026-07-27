@@ -14,7 +14,7 @@
  *     queue receives one message per subscribing connection (and zero
  *     for connections that don't subscribe).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -1199,6 +1199,167 @@ describe("bridge — unmapped integration handling", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(activityWriteAttempts).toBe(2);
     } finally {
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("does not arm a retry after stop retires an in-flight write", async () => {
+    const integrationName = "acme.unmapped-stop-during-write";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 43,
+      unmappedActivityRetryMaxMs: 43,
+    });
+    expect(bridge).not.toBeNull();
+
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "stop while alert write is pending" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      const stopping = bridge!.stop();
+      rejectWrite(new Error("storage closed during bridge shutdown"));
+      await stopping;
+
+      expect(
+        timeoutSpy.mock.calls.filter(([, delay]) => delay === 43),
+      ).toHaveLength(0);
+    } finally {
+      timeoutSpy.mockRestore();
+      rejectWrite(new Error("test cleanup"));
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("reattributes a shared-integration retry when its connection is removed", async () => {
+    const integrationName = "acme.unmapped-retry-reattribution";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const firstConnection = await createConnection({
+      integrationRef: integrationId,
+    });
+    const removedConnection = await createConnection({
+      integrationRef: integrationId,
+    });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 20,
+      unmappedActivityRetryMaxMs: 20,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "shared integration retry" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      const removed = await ctx.storage.items.transition(
+        removedConnection,
+        "revoked",
+      );
+      await publish({ type: "state_changed", item: removed });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      rejectWrite(new Error("first alert write failed"));
+
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 2,
+        ),
+      ).toBe(2);
+      const activities = await ctx.storage.items.list({
+        type: "system.activity",
+        limit: 100,
+      });
+      const activity = activities.data.find((row) => {
+        const properties = row.properties as { summary?: string };
+        return properties.summary?.includes(integrationName);
+      });
+      expect(activity?.properties).toMatchObject({
+        connection_id: firstConnection,
+      });
+    } finally {
+      rejectWrite(new Error("test cleanup"));
       ctx.storage.items.create = originalCreate;
       await bridge!.stop();
     }
