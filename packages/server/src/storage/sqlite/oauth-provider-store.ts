@@ -27,6 +27,7 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPublicClient } from "../oauth-client-trust.js";
+import { sameScopeSet } from "../consent-scopes.js";
 
 export class SqliteOauthProviderStore implements OauthProviderStore {
   constructor(private db: DrizzleDb) {}
@@ -399,14 +400,20 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * the write that repairs it can never address different rows.
    * `updated_at` is deliberately left alone: bumping it would reorder the
    * "most recent" selection this method just resolved.
+   *
+   * The `expectedScopes` guard rides into the UPDATE's WHERE clause as the
+   * raw stored value, so the row is only rewritten if it still holds what
+   * the caller thinks it does. A grant narrowed or revoked while the
+   * caller was deciding is left as the user left it.
    */
   async setConsentScopes(
     clientId: string,
     authUserId: string,
     scopes: readonly string[],
+    expectedScopes: readonly string[],
   ): Promise<boolean> {
     const rows = await this.db
-      .select({ id: auth_oauth_consent.id })
+      .select({ id: auth_oauth_consent.id, scopes: auth_oauth_consent.scopes })
       .from(auth_oauth_consent)
       .where(
         and(
@@ -416,12 +423,31 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       )
       .orderBy(desc(auth_oauth_consent.updatedAt))
       .limit(1);
-    const id = rows[0]?.id;
-    if (!id) return false;
-    await this.db
+    const row = rows[0];
+    if (!row) return false;
+    const current = safeJsonParse<unknown>(
+      row.scopes,
+      [],
+      "auth_oauth_consent.scopes",
+    );
+    if (!Array.isArray(current)) return false;
+    if (
+      !sameScopeSet(
+        current.filter((s): s is string => typeof s === "string"),
+        expectedScopes,
+      )
+    ) {
+      return false;
+    }
+    const result = await this.db
       .update(auth_oauth_consent)
       .set({ scopes: JSON.stringify([...scopes]) })
-      .where(eq(auth_oauth_consent.id, id));
-    return true;
+      .where(
+        and(
+          eq(auth_oauth_consent.id, row.id),
+          eq(auth_oauth_consent.scopes, row.scopes),
+        ),
+      );
+    return result.rowsAffected > 0;
   }
 }

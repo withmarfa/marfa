@@ -25,6 +25,7 @@ import {
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import { isPublicClient } from "../oauth-client-trust.js";
+import { sameScopeSet } from "../consent-scopes.js";
 
 export class PgOauthProviderStore implements OauthProviderStore {
   constructor(private db: PgDb) {}
@@ -382,14 +383,20 @@ export class PgOauthProviderStore implements OauthProviderStore {
    * the write that repairs it can never address different rows.
    * `updated_at` is deliberately left alone: bumping it would reorder the
    * "most recent" selection this method just resolved.
+   *
+   * The `expectedScopes` guard rides into the UPDATE's WHERE clause as the
+   * array the row currently holds, so the row is only rewritten if it
+   * still holds what the caller thinks it does. A grant narrowed or
+   * revoked while the caller was deciding is left as the user left it.
    */
   async setConsentScopes(
     clientId: string,
     authUserId: string,
     scopes: readonly string[],
+    expectedScopes: readonly string[],
   ): Promise<boolean> {
     const rows = await this.db
-      .select({ id: auth_oauth_consent.id })
+      .select({ id: auth_oauth_consent.id, scopes: auth_oauth_consent.scopes })
       .from(auth_oauth_consent)
       .where(
         and(
@@ -399,12 +406,22 @@ export class PgOauthProviderStore implements OauthProviderStore {
       )
       .orderBy(desc(auth_oauth_consent.updatedAt))
       .limit(1);
-    const id = rows[0]?.id;
-    if (!id) return false;
-    await this.db
+    const row = rows[0];
+    if (!row || !Array.isArray(row.scopes)) return false;
+    const current = row.scopes.filter(
+      (s): s is string => typeof s === "string",
+    );
+    if (!sameScopeSet(current, expectedScopes)) return false;
+    const updated = await this.db
       .update(auth_oauth_consent)
       .set({ scopes: [...scopes] })
-      .where(eq(auth_oauth_consent.id, id));
-    return true;
+      .where(
+        and(
+          eq(auth_oauth_consent.id, row.id),
+          eq(auth_oauth_consent.scopes, row.scopes),
+        ),
+      )
+      .returning({ id: auth_oauth_consent.id });
+    return updated.length > 0;
   }
 }

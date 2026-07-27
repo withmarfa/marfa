@@ -1051,6 +1051,14 @@ function buildPromptNoneErrorRedirect(
  * row disagrees with the projection should not outlive the request. A
  * failure logs and leaves the narrowed row; the alternative (failing the
  * authorization) would be worse for a user whose code is already minted.
+ *
+ * `priorScopes` was read before the plugin ran, so the restoration is
+ * only correct while nothing else has touched the grant since. Passing
+ * `requestedScopes` as the expected current value is what makes that
+ * conditional: the store refuses to write unless the row still holds
+ * exactly what the plugin was told to put there, so a narrowing or a
+ * revocation that landed in between is left alone rather than undone by
+ * a set the user has already moved past.
  */
 async function preserveBroaderGrant(
   storage: Storage,
@@ -1066,11 +1074,17 @@ async function preserveBroaderGrant(
   if (!narrowed) return;
   if (typeof storage.oauthProvider?.setConsentScopes !== "function") return;
   try {
-    await storage.oauthProvider.setConsentScopes(
+    const restored = await storage.oauthProvider.setConsentScopes(
       opts.clientId,
       opts.authUserId,
       opts.priorScopes,
+      opts.requestedScopes,
     );
+    if (!restored) {
+      log("info", "consent skip: standing grant changed, restore declined", {
+        client_id: opts.clientId,
+      });
+    }
   } catch (err) {
     log("warn", "consent skip: restoring the prior consent scopes failed", {
       client_id: opts.clientId,
