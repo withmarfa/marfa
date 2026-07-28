@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { ErrorCode } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import {
   MarfaServerClient,
@@ -19,6 +20,13 @@ import { brokerAuthFailure } from "../broker-auth.js";
  *     integration Worker calls this on every queue message; the
  *     per-Connection DO caches the result with TTL ≤ 5 min so the
  *     broker isn't hit on the hot path.
+ *
+ *     A mint refusal is classified by the server's error CODE, not its
+ *     status: only `connection_not_found` / `connection_not_active`
+ *     are about the Connection itself and pass through as terminal.
+ *     Everything else — including a 403 that means the broker key
+ *     isn't a platform credential — is `mint_failed` 502, which the
+ *     Worker retries.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
  *     Not yet implemented. Returns 501 until install-time manifest
@@ -92,12 +100,27 @@ export function registerLeaseRoutes(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Pass a permanent verdict through with its own status instead of
-      // flattening everything to 502. The Worker branches on this: 404
-      // and 403 mean the Connection can never run again, so it tears the
-      // schedule down; anything else it retries. Collapsing them made a
-      // deleted Connection indistinguishable from a cold server.
+      // flattening everything to 502. The Worker branches on this: a
+      // terminal verdict means the Connection can never run again, so it
+      // tears the schedule down; anything else it retries. Collapsing
+      // them made a deleted Connection indistinguishable from a cold
+      // server.
+      //
+      // The server's error CODE decides, not its status. Status is only
+      // the cross-check. Both statuses below are shared with route-level
+      // failures that are not about any Connection: 403 also answers
+      // "this credential is not a platform credential", and 404 also
+      // answers "no such route". Classifying on status alone means one
+      // mis-scoped `MARFA_RUNTIME_BROKER_KEY`, or one wrong
+      // `MARFA_API_URL`, hands every Connection in every tenant a
+      // terminal verdict on its next tick — and a torn-down schedule
+      // only comes back through a per-Connection arm by an operator.
+      // The asymmetry has to favor retrying.
       if (err instanceof RuntimeCredentialMintError) {
-        if (err.status === 404) {
+        if (
+          err.status === 404 &&
+          err.code === (ErrorCode.CONNECTION_NOT_FOUND as string)
+        ) {
           return c.json(
             {
               error: "connection_not_found",
@@ -107,7 +130,10 @@ export function registerLeaseRoutes(
             404,
           );
         }
-        if (err.status === 403) {
+        if (
+          err.status === 403 &&
+          err.code === (ErrorCode.CONNECTION_NOT_ACTIVE as string)
+        ) {
           return c.json(
             {
               error: "connection_not_active",

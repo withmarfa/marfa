@@ -20,6 +20,7 @@ const CONNECTION_ID = "conn_schedule";
 interface BindingCall {
   url: string;
   method: string;
+  authorization: string | null;
 }
 
 function buildEnvWithBinding(
@@ -31,7 +32,11 @@ function buildEnvWithBinding(
     MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
     INTEGRATION_RSS_WATCHER: {
       fetch(request: Request): Promise<Response> {
-        calls.push({ url: request.url, method: request.method });
+        calls.push({
+          url: request.url,
+          method: request.method,
+          authorization: request.headers.get("authorization"),
+        });
         return Promise.resolve(response());
       },
     },
@@ -84,6 +89,27 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
     expect(calls[0]!.method).toBe("POST");
     expect(calls[0]!.url).toContain("/disarm-schedule");
     expect(calls[0]!.url).toContain(`connection_id=${CONNECTION_ID}`);
+  });
+
+  /**
+   * The per-Integration Worker authenticates its whole fetch surface on
+   * the broker key. A headerless dispatch is refused there, and the
+   * uninstall pipeline reads the refusal as "the alarm was not
+   * cancelled" — leaving a schedule ticking on a revoked connection,
+   * which is the exact failure the disarm route exists to prevent.
+   */
+  it("carries the broker key on the outbound disarm dispatch", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, okResponse);
+    await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/disarm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
   });
 
   it("rejects a request without the broker key", async () => {
@@ -245,5 +271,23 @@ describe("POST /connections/:connection_id/arm-schedule", () => {
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain("/arm-schedule");
+  });
+
+  it("carries the broker key on the outbound arm dispatch", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(
+      calls,
+      () =>
+        new Response(JSON.stringify({ ok: true, next_run_at_ms: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    await post(buildApp(), env, `/connections/${CONNECTION_ID}/arm-schedule`, {
+      integration_name: "withmarfa.rss-watcher",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
   });
 });

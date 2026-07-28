@@ -123,7 +123,18 @@ describe("POST /lease/:connection_id/runtime", () => {
    * indistinguishable from a cold server — and nothing re-arms a
    * schedule that was torn down by mistake.
    */
-  function stubMintStatus(status: number, message: string): typeof fetch {
+  function stubMintStatus(
+    status: number,
+    message: string,
+    code?: string,
+  ): typeof fetch {
+    // Marfa's structured error shape — `{ error: { code, message } }`.
+    // Omitting `code` produces a bare-text body, standing in for a proxy
+    // or WAF page that carries no verdict at all.
+    const payload =
+      code === undefined
+        ? message
+        : JSON.stringify({ error: { code, message } });
     return (input: RequestInfo | URL) => {
       const url =
         typeof input === "string"
@@ -132,14 +143,18 @@ describe("POST /lease/:connection_id/runtime", () => {
             ? input.toString()
             : input.url;
       if (url.endsWith("/system/runtime-credentials")) {
-        return Promise.resolve(new Response(message, { status }));
+        return Promise.resolve(new Response(payload, { status }));
       }
       return Promise.resolve(new Response("unexpected", { status: 500 }));
     };
   }
 
   it("labels a missing connection 404 connection_not_found", async () => {
-    globalThis.fetch = stubMintStatus(404, "no such connection");
+    globalThis.fetch = stubMintStatus(
+      404,
+      "no such connection",
+      "connection_not_found",
+    );
     const res = await buildApp().request(
       "/lease/conn_missing/runtime",
       {
@@ -157,7 +172,11 @@ describe("POST /lease/:connection_id/runtime", () => {
   });
 
   it("labels an inactive connection 403 connection_not_active", async () => {
-    globalThis.fetch = stubMintStatus(403, "connection revoked");
+    globalThis.fetch = stubMintStatus(
+      403,
+      "connection revoked",
+      "connection_not_active",
+    );
     const res = await buildApp().request(
       "/lease/conn_revoked/runtime",
       {
@@ -172,6 +191,94 @@ describe("POST /lease/:connection_id/runtime", () => {
     const json = await res.json<{ error: string; connection_id: string }>();
     expect(json.error).toBe("connection_not_active");
     expect(json.connection_id).toBe("conn_revoked");
+  });
+
+  /**
+   * The fleet-wide failure mode. `MARFA_RUNTIME_BROKER_KEY` rotated to a
+   * valid but tenant-scoped admin key — exactly what
+   * `POST /admin/tenants/{id}/keys` mints — makes the server refuse every
+   * mint with 403 `forbidden`. That is a global authorization failure, not
+   * a verdict on any connection. Classifying it as terminal deschedules
+   * every scheduled connection in every tenant within one cron period,
+   * recoverable only one connection at a time; classifying it as transient
+   * costs retries until an operator fixes the key.
+   */
+  it("keeps a platform-credential refusal transient even though it is a 403", async () => {
+    globalThis.fetch = stubMintStatus(
+      403,
+      "Runtime credential minting requires a platform credential (is_platform: true)",
+      "forbidden",
+    );
+    const res = await buildApp().request(
+      "/lease/conn_healthy/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(502);
+    const json = await res.json<{ error: string }>();
+    expect(json.error).toBe("mint_failed");
+    expect(json.error).not.toBe("connection_not_active");
+  });
+
+  it("keeps a 404 that is not connection-specific transient", async () => {
+    // A wrong `MARFA_API_URL` reaches something that 404s the path. That
+    // is a routing miss, not a missing connection, and it would otherwise
+    // hand every connection the same terminal verdict.
+    globalThis.fetch = stubMintStatus(404, "not found", "not_found");
+    const res = await buildApp().request(
+      "/lease/conn_healthy/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(502);
+    expect((await res.json<{ error: string }>()).error).toBe("mint_failed");
+  });
+
+  it("keeps a bodyless 403 transient", async () => {
+    // A WAF or proxy page carries no code, so there is no verdict to read.
+    globalThis.fetch = stubMintStatus(403, "<html>blocked</html>");
+    const res = await buildApp().request(
+      "/lease/conn_healthy/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(502);
+    expect((await res.json<{ error: string }>()).error).toBe("mint_failed");
+  });
+
+  it("keeps a connection code arriving on a contradicting status transient", async () => {
+    globalThis.fetch = stubMintStatus(
+      500,
+      "connection revoked",
+      "connection_not_active",
+    );
+    const res = await buildApp().request(
+      "/lease/conn_healthy/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+
+    expect(res.status).toBe(502);
+    expect((await res.json<{ error: string }>()).error).toBe("mint_failed");
   });
 
   it("keeps a server-side failure transient as 502 mint_failed", async () => {

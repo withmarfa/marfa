@@ -180,8 +180,15 @@ export class PerConnectionState implements DurableObject {
    * so a disarm can be delivered while this handler is suspended there;
    * re-arming on the strength of the first read alone would resurrect
    * the schedule the disarm just cancelled. Re-checking after the send
-   * bounds the damage to the single message already in flight, which the
-   * consumer discards when the Connection's lease fails.
+   * bounds the damage to the single message already in flight.
+   *
+   * That message is not always harmless. When the disarm came from an
+   * uninstall the Connection is on its way to `revoked`, its lease fails
+   * terminally and the consumer drops the message. When it came from an
+   * operator disarming a healthy Connection, the lease succeeds and the
+   * message runs one real sync after the schedule was meant to stop. The
+   * alarm still stays cancelled either way, so the bound holds at one
+   * message — it just isn't always a no-op.
    */
   async alarm(): Promise<void> {
     if (!this.env.MANIFEST_CRON || !this.env.SCHEDULED_POLL_QUEUE) {

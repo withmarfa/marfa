@@ -27,21 +27,56 @@ export interface InboundSubscription {
 }
 
 /**
- * A runtime-credential mint that failed, carrying the server's status.
+ * A runtime-credential mint that failed, carrying the server's status
+ * **and** the error code parsed out of its body.
  *
- * The status is the whole point: 404 (no such Connection) and 403
- * (Connection revoked or otherwise inactive) are permanent, while 5xx
- * and transport errors are worth retrying. Callers that collapse the
- * two treat a cold container the same as a deleted Connection.
+ * Both halves are needed to classify the failure. Status alone cannot:
+ * the server answers 403 both for "this Connection is revoked" (terminal,
+ * and specific to one Connection) and for "your credential is not a
+ * platform credential" (a global authorization failure that says nothing
+ * about any Connection). Reading the second as the first turns one
+ * mis-scoped broker key into a permanent teardown of every schedule the
+ * broker serves. The code disambiguates; the status guards against a
+ * cached or proxied body carrying a code its status contradicts.
  */
 export class RuntimeCredentialMintError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    /** `error.code` from the server's body, or null when unparseable. */
+    public readonly code: string | null = null,
   ) {
     super(message);
     this.name = "RuntimeCredentialMintError";
   }
+}
+
+/**
+ * Pull the error code out of a Marfa error body.
+ *
+ * The server's structured shape is `{ error: { code, message } }`. The
+ * flat `{ error: "<code>" }` form is accepted too because the OAuth
+ * surfaces emit it for RFC compliance and a future mint-adjacent route
+ * could reuse it; both are read as the code the server chose. Anything
+ * else (an HTML error page from a proxy or WAF, an empty body) yields
+ * null, which classifies as transient.
+ */
+function parseErrorCode(text: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || !("error" in parsed)) {
+      return null;
+    }
+    const err = (parsed as { error: unknown }).error;
+    if (typeof err === "string") return err;
+    if (err && typeof err === "object" && "code" in err) {
+      const code = (err as { code: unknown }).code;
+      return typeof code === "string" ? code : null;
+    }
+  } catch {
+    // Non-JSON body — no verdict to read.
+  }
+  return null;
 }
 
 export interface MintedRuntimeCredential {
@@ -229,6 +264,7 @@ export class MarfaServerClient {
       throw new RuntimeCredentialMintError(
         `Runtime credential mint failed: ${String(res.status)} ${res.statusText} ${text}`,
         res.status,
+        parseErrorCode(text),
       );
     }
     return res.json<MintedRuntimeCredential>();

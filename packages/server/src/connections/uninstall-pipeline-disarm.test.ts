@@ -244,11 +244,14 @@ describe("performUninstall — schedule disarm", () => {
     expect(await actionRequiredFor(installed.connectionId)).toBe(1);
   });
 
-  it("accepts a no-Worker integration reporting nothing to dispatch", async () => {
+  it("reports nothing-to-cancel, not a cancellation, for a no-Worker integration", async () => {
     // The control plane short-circuits for an in-tree integration that
     // deploys no Worker: there is no Durable Object, so there is no
-    // alarm and no `result` to attest one. That is genuine success and
-    // must survive the stricter assertion.
+    // alarm and no `result` to attest one. That is not a failure — but
+    // it is not a cancellation either, and reporting `true` would make
+    // the flag mean "we asked" here and "an alarm stopped" everywhere
+    // else, including on the local substrate, which reports `false` for
+    // the same nothing-to-cancel condition.
     const installed = await installScheduled();
     const captured: CapturedCall[] = [];
     stubControlPlane(
@@ -275,7 +278,7 @@ describe("performUninstall — schedule disarm", () => {
       runtimeBrokerKey: BROKER_KEY,
     });
 
-    expect(result.schedules_disarmed).toBe(true);
+    expect(result.schedules_disarmed).toBe(false);
     expect(result.schedule_disarm_error).toBeUndefined();
     expect(await actionRequiredFor(installed.connectionId)).toBe(0);
   });
@@ -379,11 +382,15 @@ describe("performUninstall — schedule disarm", () => {
     expect(await actionRequiredFor(installed.connectionId)).toBe(1);
   });
 
-  it("does not dispatch a disarm for a connection with no schedule trigger", async () => {
-    // Install only arms a schedule when the manifest declares one, so
-    // uninstall has to gate the same way. Firing unconditionally means a
-    // webhook-only integration collects a 503 and an action_required
-    // activity for an alarm that never existed.
+  it("dispatches even when the connection's install-time triggers carry no schedule", async () => {
+    // The stamped triggers are a snapshot of the manifest at install
+    // time. Whether an alarm exists depends on the deployed Worker's
+    // MANIFEST_CRON and on whether an arm ever ran, and those diverge:
+    // an integration ships webhook-only, connections are stamped
+    // accordingly, a later version adds a schedule trigger and is
+    // redeployed, and an operator arms an existing connection through
+    // the documented retry path. Gating on the snapshot skips the disarm
+    // for exactly that connection and leaves its alarm ticking forever.
     const installed = await installScheduled([{ type: "webhook" }]);
     const captured: CapturedCall[] = [];
     stubControlPlane(captured, okDisarm);
@@ -397,11 +404,11 @@ describe("performUninstall — schedule disarm", () => {
       runtimeBrokerKey: BROKER_KEY,
     });
 
-    expect(result.schedules_disarmed).toBe(false);
+    const call = captured.find((c) => c.url.includes("/disarm-schedule"));
+    expect(call).toBeDefined();
+    expect(call!.body).toEqual({ integration_name: installed.manifestName });
+    expect(result.schedules_disarmed).toBe(true);
     expect(result.schedule_disarm_error).toBeUndefined();
-    expect(captured.filter((c) => c.url.includes("/disarm-schedule"))).toEqual(
-      [],
-    );
     expect(await actionRequiredFor(installed.connectionId)).toBe(0);
   });
 });

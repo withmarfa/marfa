@@ -160,7 +160,7 @@ const UninstallResultSchema = z.object({
   schedules_disarmed: z
     .boolean()
     .describe(
-      "Whether the connection's hosted-substrate schedule alarm was cancelled. False on deployments with no runtime control plane, and on a failed disarm — check `schedule_disarm_error` to tell them apart.",
+      "Whether a schedule alarm was actually cancelled for this connection. False when there was nothing to cancel — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed disarm; check `schedule_disarm_error` to tell those apart.",
     ),
   schedule_disarm_error: z
     .string()

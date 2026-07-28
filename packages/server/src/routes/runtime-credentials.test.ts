@@ -79,6 +79,11 @@ describe("POST /system/runtime-credentials", () => {
       },
     });
     expect(res.status).toBe(404);
+    const body = (await res.json()) as ErrorResponse;
+    // Connection-specific, not the generic `not_found` a misrouted
+    // request would produce — the broker reads this code as "tear the
+    // schedule down", so a routing miss must not be able to forge it.
+    expect(body.error.code).toBe("connection_not_found");
   });
 
   it("refuses to mint for a revoked connection", async () => {
@@ -99,6 +104,70 @@ describe("POST /system/runtime-credentials", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as ErrorResponse;
     expect(body.error.message).toMatch(/revoked/i);
+    expect(body.error.code).toBe("connection_not_active");
+  });
+
+  /**
+   * The two 403s this route can return mean opposite things to the lease
+   * broker: a revoked connection is a terminal per-connection verdict
+   * that tears its schedule down for good, while a non-platform caller is
+   * a global authorization failure that says nothing about any
+   * connection. `MARFA_RUNTIME_BROKER_KEY` rotated to a valid but
+   * tenant-scoped admin key produces the second for every connection in
+   * every tenant, so if the two share a code the whole scheduled fleet
+   * deschedules itself within one cron period, recoverable only one
+   * connection at a time.
+   */
+  it("separates the connection-state 403 from the platform-credential 403 by code", async () => {
+    const connectionId = await createActiveConnection();
+    await ctx.storage.items.transition(connectionId, "revoked", undefined);
+    const revoked = await request(
+      ctx.app,
+      "POST",
+      "/system/runtime-credentials",
+      {
+        key: ctx.adminKey,
+        body: {
+          connection_id: connectionId,
+          label: "revoked",
+          source: `revoked-${connectionId}`,
+        },
+      },
+    );
+
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const tenantScopedRaw = `marfa_k1_tenant_admin_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `tenant-admin-${suffix}`,
+        source: `tenant-admin-source-${suffix}`,
+        role: "admin",
+        type_permissions: { "*": "write" },
+        is_platform: false,
+      },
+      hashApiKey(tenantScopedRaw, "test-salt"),
+    );
+    const nonPlatform = await request(
+      ctx.app,
+      "POST",
+      "/system/runtime-credentials",
+      {
+        key: tenantScopedRaw,
+        body: {
+          connection_id: connectionId,
+          label: "non-platform",
+          source: `non-platform-${suffix}`,
+        },
+      },
+    );
+
+    expect(revoked.status).toBe(403);
+    expect(nonPlatform.status).toBe(403);
+    const revokedBody = (await revoked.json()) as ErrorResponse;
+    const nonPlatformBody = (await nonPlatform.json()) as ErrorResponse;
+    expect(revokedBody.error.code).toBe("connection_not_active");
+    expect(nonPlatformBody.error.code).toBe("forbidden");
+    expect(nonPlatformBody.error.code).not.toBe(revokedBody.error.code);
   });
 
   it("rejects callers without is_platform: true", async () => {

@@ -239,6 +239,25 @@ export function registerVerifyRoute(
       );
     }
 
+    // The per-Integration Worker authenticates its whole fetch surface on
+    // the broker key, so the dispatch below carries it. Checked here
+    // rather than alongside MARFA_API_URL at the top of the route: the
+    // upstream lookups deliberately travel on the operator's own bearer,
+    // so the broker key is a dispatch-time requirement only, and checking
+    // it earlier would answer "misconfigured" to callers whose request
+    // was going to fail its auth or connection lookup anyway.
+    const brokerKey = c.env.MARFA_RUNTIME_BROKER_KEY;
+    if (!brokerKey) {
+      return c.json(
+        {
+          error: "control_plane_misconfigured",
+          message:
+            "MARFA_RUNTIME_BROKER_KEY must be set to dispatch to an integration Worker.",
+        },
+        503,
+      );
+    }
+
     // Dispatch timestamp — used to scope the activity poll to rows
     // emitted by THIS verify run. Tightened by 1 second to absorb
     // clock skew between the control plane and the server.
@@ -250,7 +269,10 @@ export function registerVerifyRoute(
       dispatchRes = await binding.fetch(
         new Request("https://integration.invalid/verify", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${brokerKey}`,
+          },
           body: JSON.stringify({ envelope }),
         }),
       );

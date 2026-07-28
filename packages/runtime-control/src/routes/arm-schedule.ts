@@ -114,8 +114,17 @@ async function handleScheduleDispatch(
   }
   let res: Response;
   try {
+    // The per-Integration Worker authenticates its whole fetch surface on
+    // the broker key. Without this header the dispatch is refused and the
+    // uninstall pipeline reads the refusal as "the alarm could not be
+    // cancelled" — a schedule left ticking on a revoked connection.
+    // `MARFA_RUNTIME_BROKER_KEY` is proven non-empty by the 503 guard at
+    // the top of this handler.
     res = await binding.fetch(
-      new Request(inner.toString(), { method: "POST" }),
+      new Request(inner.toString(), {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.MARFA_RUNTIME_BROKER_KEY}` },
+      }),
     );
   } catch (err) {
     return c.json(
