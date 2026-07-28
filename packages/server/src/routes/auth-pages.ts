@@ -11,8 +11,11 @@ import {
   scopesToTypePermissions,
   isValidHandle,
   isReservedHandle,
+  canGrantRole,
+  GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
 } from "@withmarfa/shared";
+import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -1048,7 +1051,10 @@ export function authRoutes(
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string")
       .filter((s) => isValidScope(s));
-    if (scopes.length === 0) {
+    // Full access carries its own grant and needs no ticked scopes, so it is
+    // resolved before the "pick at least one" guard rather than after it.
+    const wantsFullAccess = formData.get("full_access") === "on";
+    if (scopes.length === 0 && !wantsFullAccess) {
       const keys = await listTenantKeys(tenantId);
       return c.html(
         renderKeysPage({
@@ -1061,14 +1067,42 @@ export function authRoutes(
         }),
       );
     }
-    const typePermissions = scopesToTypePermissions(scopes);
-    const hasWrite = scopes.some((s) => s.endsWith(":write"));
+    // "Full access" asks for a credential that can fill the owner's whole
+    // space — seeding it, migrating into it, restoring a backup. That case had
+    // no self-serve route at all before, so it had to be handed a
+    // platform-minted key by an operator, which is the dependency the
+    // tenant-admin role exists to remove. It asks at the owner's OWN role;
+    // `canGrantRole` at the mint is what stops it exceeding them.
+    const fullAccess = wantsFullAccess;
+    const requestedRole: MarfaRole = fullAccess ? userRow.role : "member";
+
+    const hasWrite = fullAccess || scopes.some((s) => s.endsWith(":write"));
     const hasRead = scopes.some((s) => s.endsWith(":read"));
-    const accessSummary = hasWrite
-      ? "read and write your content"
+
+    const typePermissions = fullAccess
+      ? { [GLOBAL_TYPE_WILDCARD]: "write" as const }
+      : scopesToTypePermissions(scopes);
+
+    // Edge permissions mirror the level the owner picked. The wildcard rather
+    // than an enumerated set is deliberate: a space's edge types include any
+    // the tenant registers at runtime, so a set fixed at mint time would
+    // silently omit every edge type created after it. This is narrower than it
+    // reads — an edge mutation dual-gates on the source item's type too.
+    const edgeLevel: "read" | "write" | null = hasWrite
+      ? "write"
       : hasRead
-        ? "read your content"
-        : "access your content";
+        ? "read"
+        : null;
+    const edgePermissions: Record<string, "read" | "write"> = edgeLevel
+      ? { [GLOBAL_TYPE_WILDCARD]: edgeLevel }
+      : {};
+    const accessSummary = fullAccess
+      ? "read and write everything in your space"
+      : hasWrite
+        ? "read and write your content"
+        : hasRead
+          ? "read your content"
+          : "access your content";
 
     const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
     const stored = await storage.keys.create(
@@ -1077,11 +1111,22 @@ export function authRoutes(
         // The label doubles as the key's `source` — the provenance stamped
         // onto items written with it, surfaced back to the owner.
         source: label,
-        // A self-serve key carries only the permissions the owner picked: a
-        // scoped `member` key, never a blanket tenant admin.
-        role: "member",
+        // A self-serve key carries only the permissions the owner picked, and
+        // never more authority than the owner has. `canGrantRole` is the same
+        // ceiling `POST /keys` enforces, so the lattice has one implementation
+        // rather than a second one that can drift out of step with it.
+        role: canGrantRole(userRow.role, requestedRole)
+          ? requestedRole
+          : "member",
         is_platform: false,
         type_permissions: typePermissions,
+        // Edges are the substance of the data model, so a key that cannot
+        // write them cannot seed, migrate or restore a space — which is what
+        // left an account owner unable to fill their own space at all. This is
+        // narrower than it looks: an edge mutation dual-gates on the source
+        // item's type as well as the edge type, so a key scoped to notes can
+        // still only build edges out of notes.
+        edge_permissions: edgePermissions,
       },
       hashApiKey(rawKey, salt),
       tenantId,

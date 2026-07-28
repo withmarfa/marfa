@@ -60,12 +60,17 @@ export interface KeysPageParams {
  */
 const KEY_CONTENT_TYPES: readonly { label: string; type: string }[] = [
   { label: "Notes", type: "core.note" },
+  { label: "Messages", type: "core.message" },
   { label: "Tasks", type: "core.task" },
   { label: "Bookmarks", type: "core.bookmark" },
   { label: "Highlights", type: "core.highlight" },
   { label: "Calendar", type: "core.event" },
   { label: "Contacts", type: "core.entity.person" },
-  { label: "Files", type: "core.file" },
+  // Subtree, not the bare identifier. `core.file` alone is an exact match, so
+  // it would grant nothing on `core.file.image` while reading to the person
+  // ticking it as though it covered every file. `core.file.*` matches the
+  // parent and its descendants both.
+  { label: "Files", type: "core.file.*" },
 ];
 
 const MONTHS = [
@@ -204,6 +209,16 @@ export function renderKeysPage(params: KeysPageParams): string {
           <div class="t-soft">
             ${permissionGroup("read", "Read your content", "Your notes, tasks, bookmarks, and more.", "read")}
             ${permissionGroup("write", "Write your content", "Add, edit, and organize what's in your space.", "write")}
+          </div>
+        </div>
+        <div>
+          <p class="lsec" style="margin-top:2px">Everything in your space</p>
+          <p class="field__hint" style="margin:0 0 10px">For moving a whole space in or out: importing an existing library, migrating between instances, or restoring a backup. Covers every kind of content and every connection between them, including any added later. Leave it off for a key you are giving to an app.</p>
+          <div class="t-soft">
+            <div class="subrow">
+              <span>Full access</span>
+              <label class="sw"><input type="checkbox" name="full_access"><span class="tk"></span></label>
+            </div>
           </div>
         </div>
         <div class="actions">

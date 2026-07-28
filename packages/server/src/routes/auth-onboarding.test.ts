@@ -225,3 +225,125 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
     expect(itemsRes.status).toBe(401);
   });
 });
+
+/**
+ * A person who signs up owns their space, and until this landed they could not
+ * fill it. The self-serve console minted a `member` key carrying only
+ * `type_permissions` and never set `edge_permissions`, so a self-serve key
+ * writing an edge got `403 edge_permission_denied`. Edges are the substance of
+ * the data model, so that key could not seed, migrate or restore a space, and
+ * every seeding job had to be done for the owner by an operator holding a
+ * platform credential — the exact dependency the tenant_admin role exists to
+ * remove.
+ *
+ * The ceiling is the other half and is not optional: a self-serve credential
+ * must never exceed the owner's own role, so both directions are pinned here.
+ */
+describe("self-serve keys can fill their own space", () => {
+  async function ownerCookie(tc: TestContext, email: string): Promise<string> {
+    await request(tc.app, "POST", "/auth/sign-up/email", {
+      body: { email, password: "correct horse battery", name: "Owner" },
+      headers: { origin: ORIGIN },
+    });
+    await markEmailVerified(tc.storage, email);
+    const cookie = await signIn(tc, email, "correct horse battery");
+    expect(cookie).toBeTruthy();
+    return cookie ?? "";
+  }
+
+  it("mints a key that can write an edge, not just an item", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "edges@example.com");
+
+    const mintRes = await request(ctx.app, "POST", "/auth/keys", {
+      form: { label: "seeder", scopes: "core.note:write" },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(mintRes.status).toBe(200);
+    const rawKey = extractRawKey(await mintRes.text());
+    expect(rawKey).toBeTruthy();
+    const key = rawKey ?? "";
+
+    const a = await request(ctx.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties: { body: "one" } },
+    });
+    const b = await request(ctx.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties: { body: "two" } },
+    });
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    const aId = ((await a.json()) as { item: { id: string } }).item.id;
+    const bId = ((await b.json()) as { item: { id: string } }).item.id;
+
+    // This is the assertion the whole ticket turns on. Before the fix it was
+    // 403 edge_permission_denied — "Missing edge.references:write permission".
+    const edgeRes = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: { source_id: aId, target_id: bId, edge_type: "references" },
+    });
+    // Surface the server's own error on failure; a bare status makes a
+    // permission refusal and a malformed request look identical.
+    expect(
+      edgeRes.status,
+      `POST /edges -> ${String(edgeRes.status)}: ${await edgeRes.clone().text()}`,
+    ).toBe(201);
+  });
+
+  it("grants full access at the owner's own role and never above it", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "full@example.com");
+
+    const mintRes = await request(ctx.app, "POST", "/auth/keys", {
+      form: { label: "migration", full_access: "on" },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(mintRes.status).toBe(200);
+    const rawKey = extractRawKey(await mintRes.text());
+    expect(rawKey).toBeTruthy();
+
+    const minted = (await ctx.storage.keys.list()).find(
+      (k) => k.label === "migration",
+    );
+    expect(minted).toBeTruthy();
+
+    // Sideways, never up. A sign-up owns their space as tenant_admin, so full
+    // access lands exactly there — and `admin` (platform authority, bounded by
+    // no tenant at all) stays unreachable from a self-serve form whatever the
+    // form says.
+    expect(minted?.role).toBe("tenant_admin");
+    expect(minted?.is_platform).toBe(false);
+
+    // And it can actually do the job it exists for.
+    const noteRes = await request(ctx.app, "POST", "/items", {
+      key: rawKey ?? "",
+      body: { type: "core.note", properties: { body: "seeded" } },
+    });
+    expect(noteRes.status).toBe(201);
+  });
+
+  it("keeps a scoped key at member even though the owner is higher", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "scoped@example.com");
+
+    await request(ctx.app, "POST", "/auth/keys", {
+      form: { label: "read only", scopes: "core.note:read" },
+      headers: { origin: ORIGIN, cookie },
+    });
+    const minted = (await ctx.storage.keys.list()).find(
+      (k) => k.label === "read only",
+    );
+    // Not ticking full access must not quietly inherit the owner's authority.
+    expect(minted?.role).toBe("member");
+  });
+});
