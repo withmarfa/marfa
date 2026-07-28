@@ -1857,6 +1857,13 @@ export interface CoordinationStore {
    * holds it. Connection mint and uninstall use this to serialize lifecycle
    * decisions across server instances; unlike a background-job lock, either
    * operation must eventually run and re-check state under the same lock.
+   *
+   * `fn` runs outside whatever the implementation uses to hold the lock, on
+   * the connection the storage layer would normally use. An implementation
+   * must not assume it can bracket `fn` in its own transaction: callers open
+   * transactions of their own. The Postgres implementation is transaction-
+   * scoped for the pooler reasons in `pg/coordination-store.ts`, so a lock
+   * held here survives exactly as long as this call and no longer.
    */
   withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
 }
