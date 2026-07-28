@@ -16,6 +16,14 @@ on:
   # generated-artifact drift (types registry, openapi.json) before merging
   # a PR that touches schema or shared-type sources. See marfa/CLAUDE.md for
   # when to fire this.
+  #
+  # Three jobs need a `postgres:17` service container, which the self-hosted
+  # runners cannot provide, so they are the only ones billed to the hosted
+  # allowance. They are gated on the `RUN_HOSTED_CI` repository variable and
+  # are off by default: `pnpm test:pg` covers the same ground locally against
+  # a throwaway container, so the marginal signal per pull request did not
+  # justify the spend. Set the variable to `true` to turn them back on, which
+  # is what the release pass does before shipping.
   workflow_dispatch:
 
 concurrency:
@@ -95,7 +103,7 @@ jobs:
   # needs a services: container (Linux-only — same constraint as ci-pg).
   schema-sql-freshness:
     name: SCHEMA_SQL generator freshness
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.RUN_HOSTED_CI == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -233,7 +241,7 @@ jobs:
 
   ci-pg:
     name: CI (Postgres)
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -324,7 +332,7 @@ jobs:
 
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
