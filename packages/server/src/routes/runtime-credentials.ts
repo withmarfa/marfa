@@ -21,6 +21,13 @@
  * Permission maps are projected server-side from the Connection's persisted
  * Integration manifest. The control plane cannot request broader reach.
  *
+ * `integration_name` is the identity the control plane authenticated its
+ * caller as, not a value the caller chose. This route checks it against
+ * the manifest persisted on the Connection, so an integration Worker
+ * cannot lease a Connection installed for a different integration even
+ * if it learns the id. The check lives here rather than only in the
+ * control plane because this is the party that holds the manifest.
+ *
  * Caller authentication: `is_platform: true` required. Rejected
  * otherwise.
  */
@@ -32,13 +39,18 @@ import { requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import {
+  runtimeCredentialItemSource,
+  withConnectionLifecycleLock,
+} from "../connections/lifecycle-lock.js";
 import {
   buildEdgePermissions,
   buildExtensionPermissions,
   buildTypePermissions,
 } from "../connections/manifest-permissions.js";
 import {
+  assertConnectionBelongsToIntegration,
+  assertMintableTenantScope,
   resolveRuntimeCredentialManifest,
   revokeSupersededRuntimeCredentials,
 } from "../connections/runtime-credential-lifecycle.js";
@@ -53,9 +65,15 @@ const RuntimeCredentialRequestSchema = z.object({
   /** Connection this credential is bound to. The extension gate keys
    *  off this value; cross-tenant misuse is rejected at the gate. */
   connection_id: z.string().min(1),
+  /** Integration the control plane authenticated its caller as. Checked
+   *  against the manifest persisted on the Connection; a mismatch is a
+   *  403. Required, so a caller cannot opt out of the check by omitting
+   *  it. */
+  integration_name: z.string().min(1).max(200),
   /** Display label for the credential (audit log + UI). */
   label: z.string().min(1).max(200),
-  /** Stamped onto items written by this credential. */
+  /** Stamped onto the credential for display. Item provenance uses the
+   *  Connection-stable `item_source` instead, which does not rotate. */
   source: z.string().min(1).max(200),
   /** Lease TTL in seconds. Default 600 (10 min). Min 60, max 3600. */
   ttl_seconds: z.number().int().min(60).max(3600).optional(),
@@ -358,7 +376,11 @@ const lookupInboundWebhooksRoute = createRoute({
   },
 });
 
-export function runtimeCredentialRoutes(storage: Storage, salt: string) {
+export function runtimeCredentialRoutes(
+  storage: Storage,
+  salt: string,
+  authMode: "hosted" | "keys",
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createRuntimeCredentialRoute, async (c) => {
@@ -372,107 +394,135 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    // Refuse to mint for non-active connections — the lease broker calls this
-    // on every cache miss, so this gate cuts all downstream paths on revocation.
-    //
-    // Both refusals below carry connection-specific codes rather than the
-    // generic `not_found` / `forbidden` they share a status with. The broker
-    // treats a per-connection refusal as terminal and permanently tears the
-    // connection's schedule down; nothing re-arms it without an operator. So
-    // the two refusals here must be distinguishable from the route-level
-    // failures that share their status — a misrouted request (404) and a
-    // caller lacking `is_platform` (403) — or one misconfiguration silently
-    // deschedules every connection that reaches this endpoint.
-    const connection = await storage.items.get(body.connection_id);
-    if (connection?.type !== "system.connection") {
-      throw new MarfaError(
-        ErrorCode.CONNECTION_NOT_FOUND,
-        `Connection ${body.connection_id} not found`,
-      );
-    }
-    if (connection.state !== "active") {
-      throw new MarfaError(
-        ErrorCode.CONNECTION_NOT_ACTIVE,
-        `Connection ${body.connection_id} is ${connection.state}; cannot mint runtime credential`,
-      );
-    }
-
-    const connectionProperties = connection.properties as { kind?: string };
-    if (connectionProperties.kind !== "integration") {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Connection ${body.connection_id} is not of kind integration`,
-      );
-    }
-
-    const ttlSeconds = body.ttl_seconds ?? 600;
-    const ttlMs = ttlSeconds * 1000;
-    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-
-    const rawKey = generateRawKey();
-    const keyHash = hashApiKey(rawKey, salt);
-
-    const manifest = await resolveRuntimeCredentialManifest(
-      storage,
-      connection,
-    );
-
-    const stored = await storage.keys.createRuntimeCredential(
-      {
-        label: body.label.trim(),
-        source: body.source.trim(),
-        role: "member",
-        type_permissions: buildTypePermissions(manifest),
-        extension_permissions: buildExtensionPermissions(manifest),
-        edge_permissions: buildEdgePermissions(manifest),
-        connection_id: body.connection_id,
-        expires_at: expiresAt,
-        // `source` rotates on every mint, so it cannot carry provenance.
-        // `item_source` stays stable for the Connection's lifetime, which
-        // is what keeps `(source, source_id)` upsert identity intact
-        // across a credential refresh.
-        item_source: runtimeCredentialItemSource(body.connection_id),
-      },
-      keyHash,
-      // The connection's tenant, never the caller's. The broker
-      // authenticates with a platform credential that carries no tenant,
-      // so stamping the caller would leave the credential tenant-less —
-      // which reads as "platform tier" to the RLS policies and to the
-      // storage layer's tenant predicate, handing an integration built
-      // for one tenant reach into all of them.
-      connection.tenant_id ?? undefined,
-    );
-
-    await revokeSupersededRuntimeCredentials(
+    // Every gate below reads Connection state, and a mint is only correct
+    // for as long as that state holds. Uninstall takes the same
+    // per-Connection lock before it revokes credentials and flips the
+    // Connection to `revoked`, so serializing here is what stops a mint
+    // that passed the state check from landing a live credential behind
+    // an uninstall that has already swept. The state read has to be
+    // inside the lock too: a read taken before acquiring it is a
+    // snapshot of a decision someone else may already have overturned.
+    const minted = await withConnectionLifecycleLock(
       storage,
       body.connection_id,
-      connection.tenant_id ?? undefined,
-      stored.id,
-      ttlMs,
-    );
+      async () => {
+        // Refuse to mint for non-active connections — the lease broker calls
+        // this on every cache miss, so this gate cuts all downstream paths on
+        // revocation.
+        //
+        // Both refusals below carry connection-specific codes rather than the
+        // generic `not_found` / `forbidden` they share a status with. The
+        // broker treats a per-connection refusal as terminal and permanently
+        // tears the connection's schedule down; nothing re-arms it without an
+        // operator. So the two refusals here must be distinguishable from the
+        // route-level failures that share their status — a misrouted request
+        // (404) and a caller lacking `is_platform` (403) — or one
+        // misconfiguration silently deschedules every connection that reaches
+        // this endpoint.
+        const connection = await storage.items.get(body.connection_id);
+        if (connection?.type !== "system.connection") {
+          throw new MarfaError(
+            ErrorCode.CONNECTION_NOT_FOUND,
+            `Connection ${body.connection_id} not found`,
+          );
+        }
+        if (connection.state !== "active") {
+          throw new MarfaError(
+            ErrorCode.CONNECTION_NOT_ACTIVE,
+            `Connection ${body.connection_id} is ${connection.state}; cannot mint runtime credential`,
+          );
+        }
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      tenant_id: connection.tenant_id ?? null,
-      key_id: apiKey.id,
-      action: "runtime_credential.create",
-      resource_type: "api_key",
-      resource_id: stored.id,
-      details: {
-        connection_id: body.connection_id,
-        ttl_seconds: ttlSeconds,
+        const connectionProperties = connection.properties as { kind?: string };
+        if (connectionProperties.kind !== "integration") {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Connection ${body.connection_id} is not of kind integration`,
+          );
+        }
+
+        assertMintableTenantScope(connection, authMode);
+        await assertConnectionBelongsToIntegration(
+          storage,
+          connection,
+          body.integration_name,
+        );
+
+        const ttlSeconds = body.ttl_seconds ?? 600;
+        const ttlMs = ttlSeconds * 1000;
+        const expiresAt = new Date(
+          Date.now() + ttlSeconds * 1000,
+        ).toISOString();
+
+        const rawKey = generateRawKey();
+        const keyHash = hashApiKey(rawKey, salt);
+
+        const manifest = await resolveRuntimeCredentialManifest(
+          storage,
+          connection,
+        );
+
+        const stored = await storage.keys.createRuntimeCredential(
+          {
+            label: body.label.trim(),
+            source: body.source.trim(),
+            role: "member",
+            type_permissions: buildTypePermissions(manifest),
+            extension_permissions: buildExtensionPermissions(manifest),
+            edge_permissions: buildEdgePermissions(manifest),
+            connection_id: body.connection_id,
+            expires_at: expiresAt,
+            // `source` rotates on every mint, so it cannot carry provenance.
+            // `item_source` stays stable for the Connection's lifetime, which
+            // is what keeps `(source, source_id)` upsert identity intact
+            // across a credential refresh.
+            item_source: runtimeCredentialItemSource(body.connection_id),
+          },
+          keyHash,
+          // The connection's tenant, never the caller's. The broker
+          // authenticates with a platform credential that carries no tenant,
+          // so stamping the caller would leave the credential tenant-less —
+          // which reads as "platform tier" to the RLS policies and to the
+          // storage layer's tenant predicate, handing an integration built
+          // for one tenant reach into all of them.
+          connection.tenant_id ?? undefined,
+        );
+
+        await revokeSupersededRuntimeCredentials(
+          storage,
+          body.connection_id,
+          connection.tenant_id ?? undefined,
+          stored.id,
+          ttlMs,
+        );
+
+        void storage.audit.log({
+          client_ip: c.get("clientIp") ?? null,
+          tenant_id: connection.tenant_id ?? null,
+          key_id: apiKey.id,
+          action: "runtime_credential.create",
+          resource_type: "api_key",
+          resource_id: stored.id,
+          details: {
+            connection_id: body.connection_id,
+            integration_name: body.integration_name,
+            ttl_seconds: ttlSeconds,
+          },
+        });
+
+        return { stored, rawKey, expiresAt };
       },
-    });
+    );
 
     return c.json(
       {
-        id: stored.id,
-        api_key: rawKey,
+        id: minted.stored.id,
+        api_key: minted.rawKey,
         connection_id: body.connection_id,
-        label: stored.label,
-        source: stored.source,
-        expires_at: expiresAt,
-        created_at: stored.created_at,
+        label: minted.stored.label,
+        source: minted.stored.source,
+        expires_at: minted.expiresAt,
+        created_at: minted.stored.created_at,
       },
       201,
     );

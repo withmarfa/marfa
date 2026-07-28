@@ -180,6 +180,7 @@ describe("mintLocalRuntimeCredential — direction is not an access level", () =
         ctx.storage,
         TEST_API_KEY_SALT,
         connectionId,
+        "keys",
       );
 
       const res = await request(ctx.app, "POST", "/items", {
@@ -199,6 +200,7 @@ describe("mintLocalRuntimeCredential — own-connection read", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     // Handlers resolve properties.configuration this way on every run.
@@ -216,6 +218,7 @@ describe("mintLocalRuntimeCredential — own-connection read", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       mine,
+      "keys",
     );
 
     // The carve-out is per-item, not a tenant-wide system.connection grant:
@@ -235,6 +238,7 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -251,6 +255,7 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     // MANIFEST targets only core.note — a core.task write must be refused.
@@ -268,6 +273,7 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     // MANIFEST declares neither system.activity nor system.connection;
@@ -300,6 +306,7 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -320,6 +327,7 @@ describe("mintLocalRuntimeCredential — expiry enforcement", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       -60_000,
     );
     expect(new Date(cred.expires_at).getTime()).toBeLessThan(Date.now());
@@ -338,6 +346,7 @@ describe("mintLocalRuntimeCredential — expiry enforcement", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -360,6 +369,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       -60_000,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -368,6 +378,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       TTL_MS,
     );
 
@@ -383,6 +394,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       TTL_MS,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -391,6 +403,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       TTL_MS,
     );
 
@@ -407,6 +420,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       TTL_MS,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -420,6 +434,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
+      "keys",
       TTL_MS,
     );
 

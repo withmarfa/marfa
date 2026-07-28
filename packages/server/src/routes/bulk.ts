@@ -34,6 +34,8 @@ import {
   requireAdmin,
   requireAuth,
   requireTypeAccess,
+  requireActivityAttribution,
+  itemProvenanceSource,
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
@@ -461,8 +463,14 @@ async function processBulkItem(
      * bypass; a member must hold write on the item's type. Throws
      * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
      * outcome in best-effort mode and aborts the batch in atomic mode.
+     *
+     * Takes the whole item rather than its type because authorization
+     * here is not a function of the type alone: a `system.activity` row
+     * written by a runtime credential is also checked against whose
+     * activity it claims to be. Passing the item is what keeps both
+     * call sites covered by construction rather than by remembering.
      */
-    checkWrite: (type: string) => void;
+    checkWrite: (raw: { type: string; properties?: unknown }) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -498,7 +506,7 @@ async function processBulkItem(
   };
 
   try {
-    checkWrite(raw.type);
+    checkWrite(raw);
   } catch (err) {
     if (err instanceof MarfaError) {
       return {
@@ -641,8 +649,9 @@ export function bulkRoutes(storage: Storage) {
     // permissions; a member must hold write on each item's type. tenant
     // scoping is threaded through every storage call below via `tenantId`.
     requireAuth(c);
-    const checkWrite = (type: string): void => {
-      requireTypeAccess(c, type, "write");
+    const checkWrite = (raw: { type: string; properties?: unknown }): void => {
+      requireTypeAccess(c, raw.type, "write");
+      requireActivityAttribution(c.get("apiKey"), raw.type, raw.properties);
     };
 
     const body = c.req.valid("json");
@@ -660,7 +669,7 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const tenantId = c.get("apiKey")?.tenant_id;
-    const stampedSource = c.get("apiKey")?.source;
+    const stampedSource = itemProvenanceSource(c.get("apiKey"));
 
     if (items.length === 0) {
       return c.json(
@@ -705,7 +714,7 @@ export function bulkRoutes(storage: Storage) {
         // Authorize the write up-front so an unauthorized type aborts the
         // batch before any row lands (SQLite can't roll back async txns).
         try {
-          checkWrite(raw.type);
+          checkWrite(raw);
         } catch (err) {
           if (err instanceof MarfaError) {
             throw new MarfaError(

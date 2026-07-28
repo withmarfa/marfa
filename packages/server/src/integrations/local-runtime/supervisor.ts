@@ -67,6 +67,10 @@ export function sanitizeQueueName(name: string): string {
 export interface SupervisorConfig {
   apiUrl: string;
   apiKeySalt: string;
+  /** Whether this deployment has tenants. Threaded into the mint so a
+   *  Connection with no tenant cannot produce a platform-tier credential
+   *  on a multi-tenant instance. */
+  authMode: "hosted" | "keys";
   registrations: LocalIntegrationRegistration[];
   executor: Executor;
   /** Optional pg-boss handle. Tests omit this and call
@@ -120,6 +124,7 @@ export function createSupervisor(
           storage,
           config.apiKeySalt,
           message.connection_id,
+          config.authMode,
         );
         const state = await readConnectionRuntimeState(
           storage,
@@ -215,6 +220,7 @@ export function createSupervisor(
         storage,
         config.apiKeySalt,
         message.connection_id,
+        config.authMode,
       );
       const client = new ConnectionClient({
         apiUrl: config.apiUrl,
@@ -256,6 +262,7 @@ export function createSupervisor(
         storage,
         config.apiKeySalt,
         message.connection_id,
+        config.authMode,
       );
       const client = new ConnectionClient({
         apiUrl: config.apiUrl,

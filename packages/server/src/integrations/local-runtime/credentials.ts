@@ -26,7 +26,10 @@
 import { randomBytes } from "node:crypto";
 import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
 import { hashApiKey } from "../../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../../connections/lifecycle-lock.js";
+import {
+  runtimeCredentialItemSource,
+  withConnectionLifecycleLock,
+} from "../../connections/lifecycle-lock.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   buildEdgePermissions,
@@ -34,6 +37,7 @@ import {
   buildTypePermissions,
 } from "../../connections/manifest-permissions.js";
 import {
+  assertMintableTenantScope,
   resolveRuntimeCredentialManifest,
   revokeSupersededRuntimeCredentials,
 } from "../../connections/runtime-credential-lifecycle.js";
@@ -99,85 +103,109 @@ export async function mintLocalRuntimeCredential(
   storage: Storage,
   salt: string,
   connectionId: string,
+  authMode: "hosted" | "keys",
   ttlMs = DEFAULT_TTL_MS,
 ): Promise<RuntimeCredential> {
-  const connection = await storage.items.get(connectionId);
-  if (connection?.type !== "system.connection") {
-    throw new Error(`Connection ${connectionId} not found`);
-  }
-  if (connection.state !== "active") {
-    throw new Error(
-      `Connection ${connectionId} is ${connection.state}; cannot mint runtime credential`,
+  // Same per-Connection lock the uninstall pipeline takes, for the same
+  // reason it matters on the hosted mint: the state check below decides
+  // whether a credential may exist, and uninstall is the thing that can
+  // change the answer. The dispatch lock the supervisor already holds is
+  // a different key and does not serialize against uninstall. Taking the
+  // lifecycle lock inside the dispatch lock is a fixed order with no
+  // cycle — uninstall takes only the lifecycle lock.
+  return withConnectionLifecycleLock(storage, connectionId, async () => {
+    const connection = await storage.items.get(connectionId);
+    if (connection?.type !== "system.connection") {
+      throw new Error(`Connection ${connectionId} not found`);
+    }
+    if (connection.state !== "active") {
+      throw new Error(
+        `Connection ${connectionId} is ${connection.state}; cannot mint runtime credential`,
+      );
+    }
+    const props = connection.properties as ConnectionProperties;
+    if (props.kind !== "integration") {
+      throw new Error(
+        `Connection ${connectionId} is not of kind integration (got ${props.kind ?? "undefined"})`,
+      );
+    }
+
+    // A tenant-less credential is the platform tier, not a narrow one. The
+    // rule is the substrate's, not the transport's, so it applies to the
+    // in-process mint exactly as it does to the HTTP one.
+    //
+    // The caller-vs-manifest binding the hosted mint applies has no
+    // counterpart here: there is no caller to bind to. The hosted check
+    // exists because an integration Worker is a separate principal that
+    // states which integration it is; this mint is called by the
+    // supervisor in the same process, from a dispatch it routed itself.
+    assertMintableTenantScope(connection, authMode);
+
+    // Resolve the manifest so the credential carries exactly the reach the
+    // Integration declared at registration — the same translation the
+    // hosted install pipeline applies. No manifest means no reach beyond
+    // the credential's own `connection.runtime` subtree: minting wide on a
+    // resolution failure would silently hand out the whole tenant.
+    const manifest = await resolveRuntimeCredentialManifest(
+      storage,
+      connection,
     );
-  }
-  const props = connection.properties as ConnectionProperties;
-  if (props.kind !== "integration") {
-    throw new Error(
-      `Connection ${connectionId} is not of kind integration (got ${props.kind ?? "undefined"})`,
+
+    const rawKey = KEY_PREFIX + randomBytes(32).toString("hex");
+    const keyHash = hashApiKey(rawKey, salt);
+    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    // source is unique-checked per tenant; the random suffix prevents
+    // collisions within the credential's short TTL window.
+    const suffix = randomBytes(4).toString("hex");
+    const tenantId = connection.tenant_id ?? undefined;
+
+    const minted = await storage.keys.createRuntimeCredential(
+      {
+        label: `local-runtime ${connectionId}`,
+        source: `local-runtime:${connectionId}:${suffix}`,
+        role: "member",
+        type_permissions: buildTypePermissions(manifest),
+        extension_permissions: buildExtensionPermissions(manifest),
+        edge_permissions: buildEdgePermissions(manifest),
+        connection_id: connectionId,
+        expires_at: expiresAt,
+        // Stable across mints, unlike `source`, which carries a random
+        // suffix per credential. Keeps written items attributable to the
+        // Connection rather than to whichever credential happened to be
+        // live at the time.
+        item_source: runtimeCredentialItemSource(connectionId),
+      },
+      keyHash,
+      tenantId,
     );
-  }
 
-  // Resolve the manifest so the credential carries exactly the reach the
-  // Integration declared at registration — the same translation the
-  // hosted install pipeline applies. No manifest means no reach beyond
-  // the credential's own `connection.runtime` subtree: minting wide on a
-  // resolution failure would silently hand out the whole tenant.
-  const manifest = await resolveRuntimeCredentialManifest(storage, connection);
+    // Retire this connection's runtime credentials that are already past
+    // their own expiry. Expired is the right cutoff: the bearer gate
+    // already refuses those keys, so revoking one cannot break a dispatch
+    // that is still running — it would have been failing anyway. Rows
+    // predating expiry stamping carry no `expires_at`, so fall back to
+    // their age against the same TTL.
+    //
+    // An earlier revision waited a further TTL as a "grace for in-flight
+    // dispatches". That was decorative: expiry bites a full TTL before
+    // such a cutoff, so the window only ever spared credentials that were
+    // already dead. Since the TTL now exceeds the longest dispatch, an
+    // unexpired credential is by construction still usable and is spared.
+    //
+    // Best-effort — a supersede failure must not fail the dispatch that
+    // triggered the mint; the retention reaper is the backstop.
+    await revokeSupersededRuntimeCredentials(
+      storage,
+      connectionId,
+      tenantId,
+      minted.id,
+      ttlMs,
+    );
 
-  const rawKey = KEY_PREFIX + randomBytes(32).toString("hex");
-  const keyHash = hashApiKey(rawKey, salt);
-  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-  // source is unique-checked per tenant; the random suffix prevents collisions
-  // within the credential's short TTL window.
-  const suffix = randomBytes(4).toString("hex");
-  const tenantId = connection.tenant_id ?? undefined;
-
-  const minted = await storage.keys.createRuntimeCredential(
-    {
-      label: `local-runtime ${connectionId}`,
-      source: `local-runtime:${connectionId}:${suffix}`,
-      role: "member",
-      type_permissions: buildTypePermissions(manifest),
-      extension_permissions: buildExtensionPermissions(manifest),
-      edge_permissions: buildEdgePermissions(manifest),
-      connection_id: connectionId,
+    return {
+      api_key: rawKey,
       expires_at: expiresAt,
-      // Stable across mints, unlike `source`, which carries a random
-      // suffix per credential. Keeps written items attributable to the
-      // Connection rather than to whichever credential happened to be
-      // live at the time.
-      item_source: runtimeCredentialItemSource(connectionId),
-    },
-    keyHash,
-    tenantId,
-  );
-
-  // Retire this connection's runtime credentials that are already past
-  // their own expiry. Expired is the right cutoff: the bearer gate
-  // already refuses those keys, so revoking one cannot break a dispatch
-  // that is still running — it would have been failing anyway. Rows
-  // predating expiry stamping carry no `expires_at`, so fall back to
-  // their age against the same TTL.
-  //
-  // An earlier revision waited a further TTL as a "grace for in-flight
-  // dispatches". That was decorative: expiry bites a full TTL before
-  // such a cutoff, so the window only ever spared credentials that were
-  // already dead. Since the TTL now exceeds the longest dispatch, an
-  // unexpired credential is by construction still usable and is spared.
-  //
-  // Best-effort — a supersede failure must not fail the dispatch that
-  // triggered the mint; the retention reaper is the backstop.
-  await revokeSupersededRuntimeCredentials(
-    storage,
-    connectionId,
-    tenantId,
-    minted.id,
-    ttlMs,
-  );
-
-  return {
-    api_key: rawKey,
-    expires_at: expiresAt,
-    connection_id: connectionId,
-  };
+      connection_id: connectionId,
+    };
+  });
 }

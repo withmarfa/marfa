@@ -23,6 +23,8 @@ import {
   requireTenantAdmin,
   requireTypeAccess,
   isOwnConnectionRead,
+  itemProvenanceSource,
+  requireActivityAttribution,
   checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
@@ -895,7 +897,7 @@ export function itemRoutes(storage: Storage) {
     // Final fallback is `tier: "library"` — the curated layer is the
     // intended default when neither caller nor credential expresses intent.
     const credential = c.get("apiKey");
-    const stampedSource = credential?.source;
+    const stampedSource = itemProvenanceSource(credential);
 
     // Source allow-list: when configured for this type, the credential's
     // source must appear in the allowed list.
@@ -961,6 +963,11 @@ export function itemRoutes(storage: Storage) {
         typeof properties.connection_id === "string"
           ? properties.connection_id
           : undefined;
+      // A connector may only speak for itself. Checked before the
+      // feed-eligibility lookup below, which would otherwise read a
+      // sibling Connection's `feed_activity` toggle and let one
+      // connector decide where another's activity surfaces.
+      requireActivityAttribution(credential, type, properties);
       if (connectionId) {
         const connection = await storage.items.get(connectionId, tenantId);
         if (
@@ -1544,6 +1551,23 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+
+    // The row has to be this connector's both before and after the
+    // update. Before, or a connector could edit a sibling's activity —
+    // rewrite its summary, downgrade its severity — without ever naming
+    // a connection in the body. After, or it could re-attribute its own
+    // row to a sibling once the row exists. The merge below mirrors the
+    // shallow property merge the write performs, so a PATCH that leaves
+    // `connection_id` alone is judged on the value it will actually end
+    // up with rather than on the absence of the field.
+    requireActivityAttribution(c.get("apiKey"), item.type, item.properties);
+    requireActivityAttribution(
+      c.get("apiKey"),
+      item.type,
+      hasProperties
+        ? { ...item.properties, ...(body.properties as object) }
+        : item.properties,
+    );
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per tenant — the same constraint enforced at create time.
