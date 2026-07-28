@@ -35,6 +35,7 @@ import {
   requireAuth,
   requireTypeAccess,
   requireActivityAttribution,
+  permitsActivityAttribution,
   itemProvenanceSource,
   getTypeFilter,
 } from "../middleware/auth.js";
@@ -933,6 +934,32 @@ export function bulkRoutes(storage: Storage) {
     // for admin callers regardless.
     const allowedTypes = getTypeFilter(c);
 
+    // The type axis is not the only one a caller can be narrower than.
+    // `system.activity` sits in every runtime credential's type filter —
+    // that grant is what lets a connector report its own progress — so a
+    // filter naming the type matches every connector's rows in the
+    // tenant, and the worker applies the action to the frozen id list
+    // without re-deriving who may write what. One credential could
+    // rewrite, retier or revoke every sibling's activity in a single
+    // call. Narrowing rather than refusing, because that is the answer
+    // this route already gives on the type axis: a row the caller cannot
+    // write leaves the match set, instead of failing an action over
+    // thousands of rows it legitimately can.
+    //
+    // Judged on the row as it stands and, for `update_properties`, on the
+    // row the patch produces — the same two halves every other door
+    // checks. Before, or a connector edits a sibling's activity without
+    // naming a connection at all; after, or it re-points its own.
+    const callerKey = c.get("apiKey");
+    const patch = body.action === "update_properties" ? body.patch : undefined;
+    const mayAct = (item: Item): boolean =>
+      permitsActivityAttribution(callerKey, item.type, item.properties) &&
+      (patch === undefined ||
+        permitsActivityAttribution(callerKey, item.type, {
+          ...item.properties,
+          ...patch,
+        }));
+
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
@@ -953,6 +980,7 @@ export function bulkRoutes(storage: Storage) {
         cursor,
       });
       for (const item of page.data) {
+        if (!mayAct(item)) continue;
         matched.push(item);
         if (matched.length > cap) break;
       }

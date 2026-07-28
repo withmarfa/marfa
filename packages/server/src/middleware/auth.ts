@@ -715,32 +715,55 @@ export function itemProvenanceSource(
  * which is an operator acting deliberately rather than a connector
  * acting on its own.
  *
- * Called from each door that can write an item — create, bulk create,
- * and update — rather than folded into `checkTypeAccess`, which sees a
- * type but never a body. A door that skips it is the whole gap, so the
- * three call sites are pinned by tests that go through the routes.
+ * Called from each door that can write an item rather than folded into
+ * `checkTypeAccess`, which sees a type but never a body. A door that
+ * skips it is the whole gap, so every call site is pinned by tests that
+ * go through the routes — see `routes/item-write-doors.test.ts`, which
+ * asserts the doors agree rather than testing each of them separately.
  */
 export function requireActivityAttribution(
   key: ApiKey | undefined,
   type: string,
   properties: unknown,
 ): void {
-  if (key?.is_runtime_credential !== true) return;
-  if (type !== "system.activity") return;
-  const claimed =
-    properties && typeof properties === "object"
-      ? (properties as Record<string, unknown>).connection_id
-      : undefined;
-  // An absent `connection_id` is not a pass. The type requires the field,
-  // so omitting it is either a malformed row or an attempt to write one
-  // no attribution check can bind — and an unattributed activity row
-  // still lands in the operator surface.
-  if (claimed === key.connection_id) return;
+  if (permitsActivityAttribution(key, type, properties)) return;
+  const claimed = claimedConnectionId(properties);
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     "A runtime credential may only write activity for its own connection",
     { connection_id: typeof claimed === "string" ? claimed : null },
   );
+}
+
+/**
+ * The predicate behind `requireActivityAttribution`, for the one door
+ * that narrows rather than refuses.
+ *
+ * `POST /items/bulk-actions` takes a filter, not a list of rows, and its
+ * established answer to "the caller may not touch that" is to drop the
+ * row from the match set (`getTypeFilter` already narrows the same set by
+ * type). Throwing there would make one unreachable row fail an otherwise
+ * legitimate action over thousands, which is a worse answer than the one
+ * the route already gives for the type axis.
+ */
+export function permitsActivityAttribution(
+  key: ApiKey | undefined,
+  type: string,
+  properties: unknown,
+): boolean {
+  if (key?.is_runtime_credential !== true) return true;
+  if (type !== "system.activity") return true;
+  // An absent `connection_id` is not a pass. The type requires the field,
+  // so omitting it is either a malformed row or an attempt to write one
+  // no attribution check can bind — and an unattributed activity row
+  // still lands in the operator surface.
+  return claimedConnectionId(properties) === key.connection_id;
+}
+
+function claimedConnectionId(properties: unknown): unknown {
+  return properties && typeof properties === "object"
+    ? (properties as Record<string, unknown>).connection_id
+    : undefined;
 }
 
 /**
