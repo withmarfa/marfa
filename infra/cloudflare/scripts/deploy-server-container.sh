@@ -23,6 +23,22 @@
 #   - CLOUDFLARE_API_TOKEN     (token with Workers write on the target account)
 #   - CLOUDFLARE_ACCOUNT_ID    (marfa account id)
 #
+# ALSO REQUIRED for a hand-run deploy, and easy to miss because these are not
+# secrets and are not in the per-machine file: <ENV>_API_BASE_URL and
+# <ENV>_CORS_ORIGINS live as repository Actions variables, so CI has them and a
+# local shell does not. Their fallbacks resolve to a workers.dev URL, and that
+# does not fail — it deploys a server whose OAuth issuer and cookie domain are
+# wrong and whose CORS list holds a single origin, silently cutting off every
+# browser client. Export them from the repository first:
+#
+#   export STAGING_API_BASE_URL="$(gh variable list --repo withmarfa/marfa \
+#     --json name,value --jq '.[]|select(.name=="STAGING_API_BASE_URL")|.value')"
+#   export STAGING_CORS_ORIGINS="$(gh variable list --repo withmarfa/marfa \
+#     --json name,value --jq '.[]|select(.name=="STAGING_CORS_ORIGINS")|.value')"
+#
+# The rendered values are printed before the roll. Read them rather than
+# assuming, because a wrong one looks exactly like a healthy deploy.
+#
 # Migrate-before-deploy (canonical ordering: migrate-then-deploy):
 #   Unless SKIP_MIGRATE=1, this runs pending Drizzle migrations against the
 #   target env's DIRECT (unpooled) Neon URL BEFORE rolling the container. The
