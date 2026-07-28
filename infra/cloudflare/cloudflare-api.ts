@@ -24,6 +24,16 @@ export interface CloudflareClientOptions {
   accountId: string;
 }
 
+/**
+ * A deployed Worker's public-hostname settings: `enabled` is the
+ * `<name>.<subdomain>.workers.dev` hostname, `previews_enabled` the
+ * per-version `<version>-<name>.<subdomain>.workers.dev` ones.
+ */
+export interface WorkerSubdomain {
+  enabled: boolean;
+  previews_enabled: boolean;
+}
+
 export class CloudflareClient {
   constructor(private readonly opts: CloudflareClientOptions) {}
 
@@ -70,22 +80,43 @@ export class CloudflareClient {
    *
    * Returns undefined when the script does not exist in this account,
    * which is a legitimate state (never deployed, or a name that only
-   * exists in another environment).
+   * exists in another environment). A 404 is the only thing that means
+   * that: any other unreadable answer throws.
+   *
+   * Both flags are required rather than trusted. The caller decides a
+   * Worker is closed from `enabled || previews_enabled`, so a field
+   * this response stopped carrying would read as falsy and a live
+   * public hostname would be reported as closed — the one wrong answer
+   * a function that exists to verify a security property must not
+   * give. Today's API returns both, which is exactly why an absent one
+   * should be treated as "something changed, look at it" rather than
+   * quietly folded into a verdict.
    */
   async getWorkerSubdomain(
     scriptName: string,
-  ): Promise<{ enabled: boolean; previews_enabled: boolean } | undefined> {
+  ): Promise<WorkerSubdomain | undefined> {
+    let result: unknown;
     try {
-      return await this.request<{
-        enabled: boolean;
-        previews_enabled: boolean;
-      }>(
+      result = await this.request<unknown>(
         `/accounts/${this.opts.accountId}/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`,
       );
     } catch (err) {
       if ((err as CloudflareApiError).status === 404) return undefined;
       throw err;
     }
+    const flags = result as Partial<WorkerSubdomain> | null | undefined;
+    if (
+      typeof flags?.enabled !== "boolean" ||
+      typeof flags.previews_enabled !== "boolean"
+    ) {
+      throw new Error(
+        `subdomain settings for ${scriptName} came back without both flags: ${JSON.stringify(result)}`,
+      );
+    }
+    return {
+      enabled: flags.enabled,
+      previews_enabled: flags.previews_enabled,
+    };
   }
 
   // ---- Queues -----------------------------------------------------------

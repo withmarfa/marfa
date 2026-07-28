@@ -15,6 +15,11 @@ export default defineConfig({
       "packages/*",
       "integrations/*/vitest.config.ts",
       "integrations/*/email-worker/vitest.config.ts",
+      // The Cloudflare infra package carries the client behind the
+      // deployed-Worker-surface check. Named rather than globbed:
+      // `infra/*` would also sweep the nested server-container package,
+      // which has no tests and no vitest dependency.
+      "infra/cloudflare",
     ],
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template
