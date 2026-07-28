@@ -19,13 +19,22 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists with the right tenant.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForConsentLockDepth,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+
+// Every test here boots a server, signs a user up and in (two password
+// hashes), and drives at least one full device flow before it asserts
+// anything. That is a lot of real work to fit inside the default budget
+// on a machine running the rest of the suite beside it, and an overrun
+// reports as a timeout — a result that says nothing about the property
+// the test exists to check.
+vi.setConfig({ testTimeout: 45_000 });
 
 let ctx: TestContext | undefined;
 
@@ -260,10 +269,16 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     const revoking = request(c.app, "POST", `/auth/grants/${grant.id}/revoke`, {
       headers: { origin: ORIGIN, cookie },
     });
-    // Long enough for the revoke to reach the lock. It does not get past
-    // it — that is the point — but without the wait the two requests
-    // might never have overlapped and the test would prove nothing.
-    await new Promise((r) => setTimeout(r, 150));
+    // The revoke has to be queued on the lock before the approval is let
+    // go. It does not get past the lock — that is the point — but a revoke
+    // that arrives after the approval has already finished leaves the same
+    // end state as one that arrived in time, so waiting for the arrival is
+    // the only thing that tells the two apart.
+    await waitForConsentLockDepth(
+      clientId,
+      grant.properties.user_id as string,
+      2,
+    );
     release();
 
     const [approveRes, revokeRes] = await Promise.all([approving, revoking]);
