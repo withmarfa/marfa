@@ -325,6 +325,35 @@ describe("global type wildcard scope", () => {
   });
 });
 
+// The scope regex is a splitter, not the authority: its character class is
+// deliberately loose, and `isValidTypePattern` is what holds the scope grammar
+// and the type-identifier grammar together. Each of these clears the regex and
+// has to be refused by the pattern check, or a token is minted carrying a
+// permission-map key no real type can ever match.
+describe("parseScope defers to the type-pattern grammar", () => {
+  const REGEX_CLEARS_GRAMMAR_REJECTS = [
+    "core..note:read", // empty segment
+    "core.:read", // trailing dot
+    "note:read", // single segment
+    "core.no*te:read", // wildcard mid-identifier
+    "core.note.*.more:read", // wildcard mid-path
+    `core.${"n".repeat(200)}:read`, // over the length cap
+  ];
+
+  for (const scope of REGEX_CLEARS_GRAMMAR_REJECTS) {
+    it(`rejects ${scope}`, () => {
+      expect(parseScope(scope)).toBeNull();
+      expect(isValidScope(scope)).toBe(false);
+    });
+  }
+
+  it("still accepts the shapes the grammar allows", () => {
+    expect(parseScope("core.note:read")?.typePattern).toBe("core.note");
+    expect(parseScope("core.media.*:read")?.typePattern).toBe("core.media.*");
+    expect(parseScope("*:read")?.typePattern).toBe("*");
+  });
+});
+
 describe("metadata.edge_types sub-resource scope", () => {
   it("parses as a metadata sub-resource", () => {
     expect(parseScope("metadata.edge_types:write")).toEqual({

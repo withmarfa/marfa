@@ -139,6 +139,41 @@ describe("GET /types", () => {
   });
 });
 
+// The shipped set spans three families and all three are equally immutable:
+// they come from codegen, so a tenant editing one would change what the
+// identifier means for every other tenant and for items already written
+// against it. Naming a representative of each family here is what stops the
+// guard being narrowed back to the core family without a test noticing.
+describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () => {
+  const SHIPPED = [
+    ["core", "core.note"],
+    ["connector", "todoist.task"],
+    ["connector", "google.calendar.event"],
+    ["system", "system.connection"],
+  ] as const;
+
+  for (const [family, id] of SHIPPED) {
+    it(`refuses to update the ${family} type ${id}`, async () => {
+      const res = await request(ctx.app, "PUT", `/types/${id}`, {
+        key: ctx.adminKey,
+        body: { ...baseType, version: 2 },
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("core_type_immutable");
+    });
+
+    it(`refuses to delete the ${family} type ${id}`, async () => {
+      const res = await request(ctx.app, "DELETE", `/types/${id}`, {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("core_type_immutable");
+    });
+  }
+});
+
 describe("inheritance rule enforcement", () => {
   it("rejects a child type that reshapes an ancestor field with INHERITANCE_VIOLATION", async () => {
     // core.bookmark declares `body` as a string. A child that redeclares it
