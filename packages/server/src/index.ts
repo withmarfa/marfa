@@ -435,7 +435,20 @@ async function main() {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
 
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    // A second signal must not restart the sequence. The platform sends
+    // SIGTERM and then, shortly after, SIGKILL; some supervisors send SIGTERM
+    // twice. Re-entering would re-run every `stop()` and race two exits.
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void runShutdown();
+  };
+
+  async function runShutdown(): Promise<void> {
+    // Emitted before anything is torn down, so the record is in the telemetry
+    // pipeline as early as possible — everything below only shortens the time
+    // it has to get out.
     log("info", "Shutting down...");
     webhookConsumer.stop();
     webhookPoller.stop();
@@ -461,27 +474,92 @@ async function main() {
       void localRuntime.bridge.stop().catch(() => undefined);
       void localRuntime.runtime.stop().catch(() => undefined);
     }
-    server.close(() => {
-      storage
-        .close()
-        // Flush + shut down OpenTelemetry before exit so the final batch
-        // of logs/traces isn't lost on the ephemeral hosted container
-        // (scale-to-zero SIGTERM). No-op when OTel is disabled. Accessed
-        // via an inline cast rather than the ambient `declare global` so
-        // the per-entry .d.ts build stays typed.
-        .then(() =>
-          (
-            globalThis as {
-              __marfaOtelShutdown?: () => Promise<void>;
-            }
-          ).__marfaOtelShutdown?.(),
-        )
-        .then(() => process.exit(0))
-        .catch(() => process.exit(1));
-    });
-  };
+
+    let exitCode = 0;
+    try {
+      await withTimeout(closeServer(server), SHUTDOWN_STEP_TIMEOUT_MS);
+      await withTimeout(storage.close(), SHUTDOWN_STEP_TIMEOUT_MS);
+    } catch (error) {
+      log("warn", "Graceful shutdown did not complete", {
+        error: serializeError(error),
+      });
+      exitCode = 1;
+    }
+
+    // Flush and shut down OpenTelemetry before exit, unconditionally and
+    // whatever happened above. This is the step that decides whether the
+    // shutdown record exists at all: log records leave through a batching
+    // processor, so a process that exits without flushing takes its final
+    // batch with it. That loss is not cosmetic — a missing shutdown line is
+    // read downstream as a process that died rather than stopped, so an
+    // orderly scale-to-zero becomes indistinguishable from a crash.
+    //
+    // It runs outside the try above precisely because the failure path needs
+    // it most: a shutdown that timed out is a shutdown worth having a record
+    // of. No-op when OTel is disabled. Accessed via an inline cast rather than
+    // the ambient `declare global` so the per-entry .d.ts build stays typed.
+    const flushTelemetry = (
+      globalThis as { __marfaOtelShutdown?: () => Promise<void> }
+    ).__marfaOtelShutdown;
+    if (flushTelemetry) {
+      await withTimeout(flushTelemetry(), TELEMETRY_FLUSH_TIMEOUT_MS).catch(
+        () => undefined,
+      );
+    }
+
+    process.exit(exitCode);
+  }
+
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+}
+
+/**
+ * Every wait during shutdown is bounded, because the process is racing a
+ * SIGKILL it cannot see coming. An unbounded wait does not buy a cleaner
+ * stop — it spends the whole grace period on one step and then loses the
+ * telemetry flush to the kill, which is how a clean shutdown ends up looking
+ * like a crash.
+ *
+ * `server.close()` is the specific hazard. It resolves only once every
+ * connection has ended, and a keep-alive connection has not ended just
+ * because no request is in flight, so a single idle client can hold it open
+ * indefinitely. `closeIdleConnections()` below removes the common case; the
+ * timeout covers the rest.
+ */
+const SHUTDOWN_STEP_TIMEOUT_MS = 3_000;
+const TELEMETRY_FLUSH_TIMEOUT_MS = 2_000;
+
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`timed out after ${String(ms)}ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function closeServer(server: {
+  close: (cb?: (err?: Error) => void) => void;
+  closeIdleConnections?: () => void;
+}): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolvePromise();
+    });
+    // Stop waiting on sockets that are merely parked. In-flight requests still
+    // get to finish; idle keep-alive sockets are what would otherwise hold the
+    // close open for the whole grace period.
+    server.closeIdleConnections?.();
+  });
 }
 
 /**
