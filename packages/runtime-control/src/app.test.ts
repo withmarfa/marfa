@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
+import { deriveWorkerIdentityKey } from "@withmarfa/shared";
 import { buildApp, VERSION } from "./app.js";
 import type { ControlPlaneEnv } from "./env.js";
+
+const IDENTITY_ROOT = "worker-identity-root-test";
+const INTEGRATION = "withmarfa.rss-watcher";
 
 const TEST_ENV: ControlPlaneEnv = {
   MARFA_API_URL: "http://localhost:8602",
   MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker_test",
+  MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
   ENVIRONMENT: "test",
 };
 
@@ -74,7 +79,10 @@ describe("control plane app — base routes", () => {
       "/lease/conn_123/oauth/cap_calendar_read",
       {
         method: "POST",
-        headers: { authorization: "Bearer marfa_k1_broker_test" },
+        headers: {
+          authorization: `Bearer ${await deriveWorkerIdentityKey(IDENTITY_ROOT, INTEGRATION)}`,
+          "x-marfa-integration": INTEGRATION,
+        },
       },
       TEST_ENV,
     );

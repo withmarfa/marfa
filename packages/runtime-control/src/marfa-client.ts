@@ -242,11 +242,12 @@ export class MarfaServerClient {
 
   async mintRuntimeCredential(input: {
     connection_id: string;
+    /** Integration the lease route authenticated its caller as. The
+     *  server checks it against the manifest persisted on the
+     *  Connection, so a Worker cannot lease a sibling's Connection. */
+    integration_name: string;
     label: string;
     source: string;
-    type_permissions?: Record<string, "read" | "write" | "none">;
-    extension_permissions?: Record<string, "read" | "write">;
-    edge_permissions?: Record<string, "read" | "write">;
     ttl_seconds?: number;
   }): Promise<MintedRuntimeCredential> {
     const headers = new Headers(this.headers());

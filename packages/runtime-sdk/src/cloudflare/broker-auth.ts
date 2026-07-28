@@ -1,21 +1,23 @@
 import { isBrokerAuthorized } from "@withmarfa/shared";
 
 /**
- * Reject a caller that did not present the broker key. Returns the
- * refusal to hand back, or `null` when the caller is authorized.
+ * Reject a caller that did not present this Worker's identity key.
+ * Returns the refusal to hand back, or `null` when the caller is
+ * authorized.
  *
- * The Worker-shaped half of the same gate the control plane applies in
- * `@withmarfa/runtime-control`'s `brokerAuthFailure`: same name, same
- * `Response | null` contract, same rule (`isBrokerAuthorized` in
- * `@withmarfa/shared`). Two wrappers rather than one because the
- * runtimes differ — the control plane answers through a Hono context,
- * an integration Worker answers with a bare `Response`, and this
- * package must not take a Hono dependency it would ship into every
- * integration bundle.
+ * The Worker-shaped half of the same comparison the control plane
+ * applies: same `Response | null` contract, same rule
+ * (`isBrokerAuthorized` in `@withmarfa/shared`). Two wrappers rather
+ * than one because the runtimes differ — the control plane answers
+ * through a Hono context, an integration Worker answers with a bare
+ * `Response`, and this package must not take a Hono dependency it would
+ * ship into every integration bundle.
  *
  * The direction is the mirror of the lease broker: the Worker presents
- * this key when it mints a credential, the control plane presents it
- * when it dispatches here. One shared secret, checked both ways.
+ * this key when it mints a credential, the control plane derives the
+ * same value and presents it when it dispatches here. One secret per
+ * Worker, checked both ways — and not the platform broker key, which
+ * never reaches an integration Worker in either direction.
  *
  * A Service Binding authenticates by topology — only Workers in the
  * same account with the binding declared can reach the handler. That
@@ -34,20 +36,23 @@ import { isBrokerAuthorized } from "@withmarfa/shared";
  */
 export async function brokerAuthFailure(
   request: Request,
-  brokerKey: string | undefined,
+  identityKey: string | undefined,
 ): Promise<Response | null> {
-  if (!brokerKey) {
+  if (!identityKey) {
     return Response.json(
       {
         ok: false,
         error: "worker_misconfigured",
-        message: "MARFA_RUNTIME_BROKER_KEY must be set.",
+        message: "MARFA_WORKER_IDENTITY_KEY must be set.",
       },
       { status: 503 },
     );
   }
   if (
-    !(await isBrokerAuthorized(request.headers.get("authorization"), brokerKey))
+    !(await isBrokerAuthorized(
+      request.headers.get("authorization"),
+      identityKey,
+    ))
   ) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }

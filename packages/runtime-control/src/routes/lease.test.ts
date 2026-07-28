@@ -1,24 +1,32 @@
 /**
- * Lease route — pins two things.
+ * Lease route — pins three things.
  *
- * First, the auth gate. The route mints a real tenant-scoped credential
- * and the Worker is routed to public hostnames, so it must refuse a
- * caller that does not present the broker key. A Connection ID is not a
- * secret, so without the gate anyone who has seen one can mint against
- * it.
+ * First, the identity gate. The route mints a real tenant-scoped
+ * credential, so it must refuse a caller that cannot authenticate. A
+ * Connection ID is not a secret, so without the gate anyone who has seen
+ * one can mint against it. Authentication is per-Worker: a key derived
+ * from the caller's integration name, so proving you are one integration
+ * does not let you act as another.
  *
- * Second, the mint shape: the broker mints with **wildcard write on all
- * three permission axes** (`type_permissions`, `edge_permissions`,
- * `extension_permissions`). All three axes must be granted because
- * `edge_permissions` and `extension_permissions` both default to `{}`
- * and block the call — a credential with only `type_permissions` can
- * write items but silently fails every `createEdge` / extension write.
+ * Second, that the platform broker key is not accepted here. It is the
+ * credential that mints against any Connection in any tenant, and the
+ * whole point of the derived keys is that no integration Worker holds
+ * it — including a Worker still deployed with the old secret.
+ *
+ * Third, the mint trust boundary. The broker identifies the Connection
+ * and supplies lease metadata, but it never chooses permission maps: the
+ * Marfa server projects those from the Connection's persisted manifest,
+ * which is the only copy of the integration's declared reach that the
+ * caller cannot influence. The integration name the caller *proved* is
+ * forwarded so the server can check that manifest against it; a name
+ * from the request body never is.
  *
  * The test patches `globalThis.fetch` to capture the body the broker
  * POSTs to Marfa's `/system/runtime-credentials` endpoint, then asserts
- * all three permission maps are present and wildcard-write.
+ * what does and does not cross the control-plane boundary.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { deriveWorkerIdentityKey } from "@withmarfa/shared";
 import { buildApp } from "../app.js";
 import type { ControlPlaneEnv } from "../env.js";
 
@@ -62,17 +70,34 @@ function mockMarfaFetch(captured: FetchCall[]): typeof fetch {
   };
 }
 
+const IDENTITY_ROOT = "worker-identity-root-test";
+const INTEGRATION = "withmarfa.rss-watcher";
+const SIBLING = "google.calendar";
+
 function buildTestEnv(): ControlPlaneEnv {
   return {
     MARFA_API_URL: "https://staging.test",
     MARFA_RUNTIME_BROKER_KEY: "broker-key-test",
+    MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
   };
 }
 
-const AUTHORIZED_HEADERS = {
-  "content-type": "application/json",
-  authorization: "Bearer broker-key-test",
-};
+/** Headers a correctly-deployed integration Worker sends. */
+let AUTHORIZED_HEADERS: Record<string, string>;
+/** The bearer half of AUTHORIZED_HEADERS, for the cases that keep the
+ *  key and drop or change the integration header. */
+let AUTHORIZED_BEARER: string;
+let SIBLING_KEY: string;
+
+beforeAll(async () => {
+  AUTHORIZED_BEARER = `Bearer ${await deriveWorkerIdentityKey(IDENTITY_ROOT, INTEGRATION)}`;
+  AUTHORIZED_HEADERS = {
+    "content-type": "application/json",
+    authorization: AUTHORIZED_BEARER,
+    "x-marfa-integration": INTEGRATION,
+  };
+  SIBLING_KEY = await deriveWorkerIdentityKey(IDENTITY_ROOT, SIBLING);
+});
 
 describe("POST /lease/:connection_id/runtime", () => {
   let originalFetch: typeof fetch;
@@ -83,7 +108,7 @@ describe("POST /lease/:connection_id/runtime", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("mints with wildcard write on type_permissions, edge_permissions, AND extension_permissions", async () => {
+  it("leaves permission projection to the Marfa server", async () => {
     const captured: FetchCall[] = [];
     globalThis.fetch = mockMarfaFetch(captured);
     const app = buildApp();
@@ -105,14 +130,40 @@ describe("POST /lease/:connection_id/runtime", () => {
         c.url.endsWith("/system/runtime-credentials") && c.method === "POST",
     );
     expect(mintCall).toBeDefined();
-    const body = mintCall!.body as {
-      type_permissions: Record<string, string>;
-      edge_permissions: Record<string, string>;
-      extension_permissions: Record<string, string>;
-    };
-    expect(body.type_permissions).toEqual({ "*": "write" });
-    expect(body.edge_permissions).toEqual({ "*": "write" });
-    expect(body.extension_permissions).toEqual({ "*": "write" });
+    expect(mintCall!.body).toEqual({
+      connection_id: "conn_x",
+      // The name the caller proved, forwarded so the server can check it
+      // against the Connection's persisted manifest. No permission map
+      // crosses this boundary in either direction.
+      integration_name: INTEGRATION,
+      label: "test",
+      source: expect.stringMatching(/^runtime-conn_x-/),
+      ttl_seconds: 600,
+    });
+  });
+
+  it("forwards the proved integration, not one the body asked for", async () => {
+    // The body is caller-controlled. If a name from it could reach the
+    // server, the server-side manifest check would be checking the
+    // caller's claim against itself.
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({ label: "test", integration_name: SIBLING }),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(200);
+    const mintCall = captured.find((c) =>
+      c.url.endsWith("/system/runtime-credentials"),
+    );
+    expect(
+      (mintCall!.body as { integration_name: string }).integration_name,
+    ).toBe(INTEGRATION);
   });
 
   /**
@@ -363,13 +414,132 @@ describe("POST /lease/:connection_id/runtime", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: "Bearer not-the-broker-key",
+          authorization: "Bearer not-an-identity-key",
+          "x-marfa-integration": INTEGRATION,
         },
         body: JSON.stringify({ label: "test", ttl_seconds: 600 }),
       },
       buildTestEnv(),
     );
     expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+
+  /**
+   * The property the whole redesign exists for. Every Worker used to
+   * hold the same platform key, so any one of them could mint against
+   * any Connection. A Worker now holds a key derived from its own name
+   * and cannot compute a sibling's, so presenting a sibling's key while
+   * claiming to be itself — or claiming to be the sibling while holding
+   * only its own key — both fail.
+   */
+  it("refuses a Worker presenting another integration's key", async () => {
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${SIBLING_KEY}`,
+          "x-marfa-integration": INTEGRATION,
+        },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("refuses a Worker claiming a name it cannot prove", async () => {
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: {
+          ...AUTHORIZED_HEADERS,
+          "x-marfa-integration": SIBLING,
+        },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("refuses a caller that names no integration", async () => {
+    // The header selects which key to check against, so without it
+    // there is nothing to compare and no way to be authorized. Same 401
+    // as a wrong key: which header is missing is not something a caller
+    // that cannot authenticate should learn.
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: AUTHORIZED_BEARER,
+        },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("refuses the platform broker key, which no Worker should hold", async () => {
+    // A Worker deployed before the rotation still presents the old
+    // shared secret. It has to be refused rather than accepted for
+    // compatibility: accepting it is the defect, and the refusal is a
+    // retryable 401 rather than a terminal verdict, so a Worker in that
+    // state backs off until it is redeployed instead of tearing its
+    // schedule down.
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer broker-key-test",
+          "x-marfa-integration": INTEGRATION,
+        },
+        body: JSON.stringify({}),
+      },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("refuses every caller when the identity root is unset", async () => {
+    const captured: FetchCall[] = [];
+    globalThis.fetch = mockMarfaFetch(captured);
+    const res = await buildApp().request(
+      "/lease/conn_x/runtime",
+      {
+        method: "POST",
+        headers: AUTHORIZED_HEADERS,
+        body: JSON.stringify({}),
+      },
+      {
+        MARFA_API_URL: "https://staging.test",
+        MARFA_RUNTIME_BROKER_KEY: "broker-key-test",
+      },
+    );
+    expect(res.status).toBe(503);
+    expect((await res.json<{ error: string }>()).error).toBe(
+      "control_plane_misconfigured",
+    );
     expect(captured).toHaveLength(0);
   });
 });
@@ -382,6 +552,21 @@ describe("POST /lease/:connection_id/oauth/:capability_id", () => {
     const res = await buildApp().request(
       "/lease/conn_x/oauth/cap_calendar_read",
       { method: "POST" },
+      buildTestEnv(),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("refuses a Worker presenting another integration's key", async () => {
+    const res = await buildApp().request(
+      "/lease/conn_x/oauth/cap_calendar_read",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SIBLING_KEY}`,
+          "x-marfa-integration": INTEGRATION,
+        },
+      },
       buildTestEnv(),
     );
     expect(res.status).toBe(401);

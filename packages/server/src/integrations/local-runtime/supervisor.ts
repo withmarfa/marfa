@@ -32,7 +32,10 @@ import {
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
 import type { Storage } from "../../storage/interface.js";
-import { mintLocalRuntimeCredential } from "./credentials.js";
+import {
+  mintLocalRuntimeCredential,
+  DISPATCH_JOB_EXPIRY_SECONDS,
+} from "./credentials.js";
 import type { Executor } from "./executor.js";
 import {
   applyCursorDelta,
@@ -64,6 +67,10 @@ export function sanitizeQueueName(name: string): string {
 export interface SupervisorConfig {
   apiUrl: string;
   apiKeySalt: string;
+  /** Whether this deployment has tenants. Threaded into the mint so a
+   *  Connection with no tenant cannot produce a platform-tier credential
+   *  on a multi-tenant instance. */
+  authMode: "hosted" | "keys";
   registrations: LocalIntegrationRegistration[];
   executor: Executor;
   /** Optional pg-boss handle. Tests omit this and call
@@ -117,6 +124,7 @@ export function createSupervisor(
           storage,
           config.apiKeySalt,
           message.connection_id,
+          config.authMode,
         );
         const state = await readConnectionRuntimeState(
           storage,
@@ -212,6 +220,7 @@ export function createSupervisor(
         storage,
         config.apiKeySalt,
         message.connection_id,
+        config.authMode,
       );
       const client = new ConnectionClient({
         apiUrl: config.apiUrl,
@@ -253,6 +262,7 @@ export function createSupervisor(
         storage,
         config.apiKeySalt,
         message.connection_id,
+        config.authMode,
       );
       const client = new ConnectionClient({
         apiUrl: config.apiUrl,
@@ -285,9 +295,16 @@ export function createSupervisor(
       // Retries are opt-out in pg-boss 12 (default limit 2). Make the policy
       // explicit and dead-letter exhausted jobs so a persistently failing sync
       // surfaces to the operator instead of silently vanishing.
+      // `expireInSeconds` is pinned rather than inherited: the runtime
+      // credential minted per dispatch is sized to outlive this bound, and
+      // the local substrate cannot refresh a credential mid-run. Leaving it
+      // to a library default would let that default drift out from under the
+      // credential TTL and start killing long dispatches. Same value
+      // pg-boss uses today, so pinning changes no behavior.
       await boss.createQueue(QUEUE_NAME, {
         retryLimit: 3,
         retryBackoff: true,
+        expireInSeconds: DISPATCH_JOB_EXPIRY_SECONDS,
         deadLetter: DEAD_LETTER_QUEUE,
       });
       const batchSize = config.workerBatchSize ?? 4;

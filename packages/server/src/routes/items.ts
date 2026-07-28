@@ -22,6 +22,9 @@ import {
   requireAuth,
   requireTenantAdmin,
   requireTypeAccess,
+  isOwnConnectionRead,
+  itemProvenanceSource,
+  requireActivityAttribution,
   checkTypeAccess,
   requireEdgePermission,
   getTypeFilter,
@@ -894,7 +897,7 @@ export function itemRoutes(storage: Storage) {
     // Final fallback is `tier: "library"` — the curated layer is the
     // intended default when neither caller nor credential expresses intent.
     const credential = c.get("apiKey");
-    const stampedSource = credential?.source;
+    const stampedSource = itemProvenanceSource(credential);
 
     // Source allow-list: when configured for this type, the credential's
     // source must appear in the allowed list.
@@ -960,6 +963,11 @@ export function itemRoutes(storage: Storage) {
         typeof properties.connection_id === "string"
           ? properties.connection_id
           : undefined;
+      // A connector may only speak for itself. Checked before the
+      // feed-eligibility lookup below, which would otherwise read a
+      // sibling Connection's `feed_activity` toggle and let one
+      // connector decide where another's activity surfaces.
+      requireActivityAttribution(credential, type, properties);
       if (connectionId) {
         const connection = await storage.items.get(connectionId, tenantId);
         if (
@@ -1019,6 +1027,39 @@ export function itemRoutes(storage: Storage) {
         tenantId,
       );
       if (existing) {
+        // Authorize the update against the row it lands on, not the body
+        // that addressed it. Every gate above ran on `type`, which the
+        // caller chose and which this branch never writes — the update
+        // takes the resolved row's type as it stands. Naming a type the
+        // credential holds write on therefore admitted an edit to a row
+        // of any other type, and skipped every gate keyed on the real
+        // one, the attribution check included. These are the gates
+        // `PATCH /items/{id}` runs; running them here is what makes the
+        // two doors agree. The create path below keeps authorizing the
+        // claim, because there the claim is the row.
+        //
+        // Reachable at all because `item_source` fixed provenance to the
+        // Connection: a source that rotated with each mint could only
+        // ever resolve rows from the credential's own generation.
+        const credentialForUpdate = c.get("apiKey");
+        requireTypeAccess(c, existing.type, "write");
+        requireActivityAttribution(
+          credentialForUpdate,
+          existing.type,
+          existing.properties,
+        );
+        // Judged on the value the row ends up with. The merge mirrors the
+        // shallow property merge the storage layer performs, so a body
+        // that leaves `connection_id` alone is not read as claiming an
+        // absent one.
+        requireActivityAttribution(
+          credentialForUpdate,
+          existing.type,
+          body.properties !== undefined
+            ? { ...existing.properties, ...properties }
+            : existing.properties,
+        );
+
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
         // with the existing row's id. A 200 response carrying a different id
@@ -1383,7 +1424,12 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
-    requireTypeAccess(c, item.type, "read");
+    // A runtime credential reads its own Connection to resolve its
+    // configuration; that one row is admitted without a tenant-wide
+    // `system.connection` grant. See `isOwnConnectionRead`.
+    if (!isOwnConnectionRead(apiKey, item)) {
+      requireTypeAccess(c, item.type, "read");
+    }
 
     const includeSet = new Set(
       (c.req.query("include") ?? "")
@@ -1538,6 +1584,23 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+
+    // The row has to be this connector's both before and after the
+    // update. Before, or a connector could edit a sibling's activity —
+    // rewrite its summary, downgrade its severity — without ever naming
+    // a connection in the body. After, or it could re-attribute its own
+    // row to a sibling once the row exists. The merge below mirrors the
+    // shallow property merge the write performs, so a PATCH that leaves
+    // `connection_id` alone is judged on the value it will actually end
+    // up with rather than on the absence of the field.
+    requireActivityAttribution(c.get("apiKey"), item.type, item.properties);
+    requireActivityAttribution(
+      c.get("apiKey"),
+      item.type,
+      hasProperties
+        ? { ...item.properties, ...(body.properties as object) }
+        : item.properties,
+    );
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per tenant — the same constraint enforced at create time.

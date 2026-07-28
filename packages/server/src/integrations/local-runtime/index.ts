@@ -105,6 +105,7 @@ export async function tryStartLocalIntegrationRuntime(
   const runtime = createSupervisor(storage, {
     apiUrl,
     apiKeySalt: config.apiKeySalt,
+    authMode: config.authMode,
     registrations: options.registrations,
     executor,
     boss: options.boss,

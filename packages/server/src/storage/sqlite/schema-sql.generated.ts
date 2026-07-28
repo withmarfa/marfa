@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS \`api_keys\` (
 	\`created_at\` text NOT NULL,
 	\`revoked_at\` text,
 	\`last_used_at\` text
-, \`source\` text NOT NULL DEFAULT '', \`edge_permissions\` text NOT NULL DEFAULT '{}', \`default_tier\` text NOT NULL DEFAULT 'library', \`is_platform\` integer NOT NULL DEFAULT 0, \`metadata_permissions\` text NOT NULL DEFAULT '{}', \`is_runtime_credential\` integer NOT NULL DEFAULT 0, \`connection_id\` text);
+, \`source\` text NOT NULL DEFAULT '', \`edge_permissions\` text NOT NULL DEFAULT '{}', \`default_tier\` text NOT NULL DEFAULT 'library', \`is_platform\` integer NOT NULL DEFAULT 0, \`metadata_permissions\` text NOT NULL DEFAULT '{}', \`is_runtime_credential\` integer NOT NULL DEFAULT 0, \`connection_id\` text, \`expires_at\` text, \`item_source\` text);
 
 CREATE TABLE IF NOT EXISTS \`audit_log\` (
 	\`id\` text PRIMARY KEY NOT NULL,
@@ -427,6 +427,10 @@ CREATE TABLE IF NOT EXISTS "custom_edge_types" (
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_api_keys_connection_id\` ON \`api_keys\` (\`connection_id\`) WHERE \`connection_id\` IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS \`idx_api_keys_runtime_credential\`
+  ON \`api_keys\` (\`is_runtime_credential\`)
+  WHERE \`is_runtime_credential\`;
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_api_keys_source_per_tenant\`
   ON \`api_keys\` (\`tenant_id\`, \`source\`) WHERE revoked_at IS NULL;

@@ -567,7 +567,10 @@ export function createApp(
   );
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/credentials", credentialRoutes(storage));
-  app.route("/system", runtimeCredentialRoutes(storage, config.apiKeySalt));
+  app.route(
+    "/system",
+    runtimeCredentialRoutes(storage, config.apiKeySalt, config.authMode),
+  );
   app.route(
     "/integrations",
     integrationRoutes(storage, config.apiKeySalt, auth),

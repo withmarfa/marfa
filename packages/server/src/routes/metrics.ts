@@ -33,6 +33,10 @@ const MetricsResponseSchema = z.object({
   }),
   keys: z.object({
     total: z.number(),
+    runtime_credentials: z.object({
+      total: z.number(),
+      active: z.number(),
+    }),
   }),
   webhooks: z.object({
     total: z.number(),
@@ -48,7 +52,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. Platform-admin only: most counters are instance-wide rather than tenant-scoped, so a credential bound to a tenant is refused.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys of every kind; `keys.runtime_credentials` breaks out the machine-minted per-dispatch credentials, whose `total` includes revoked rows still awaiting hard delete and whose `active` excludes anything revoked or past its expiry. Platform-admin only: most counters are instance-wide rather than tenant-scoped, so a credential bound to a tenant is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -92,14 +96,21 @@ export function metricsRoutes(storage: Storage) {
       );
     }
 
-    const [itemStats, blobStats, keyCount, webhookCount, customTypeCount] =
-      await Promise.all([
-        storage.items.stats(undefined),
-        storage.blobs.count(),
-        storage.keys.count(),
-        storage.outboundWebhooks.count(),
-        storage.types.countCustom(),
-      ]);
+    const [
+      itemStats,
+      blobStats,
+      keyCount,
+      runtimeCredentialCounts,
+      webhookCount,
+      customTypeCount,
+    ] = await Promise.all([
+      storage.items.stats(undefined),
+      storage.blobs.count(),
+      storage.keys.count(),
+      storage.keys.countRuntimeCredentials(new Date().toISOString()),
+      storage.outboundWebhooks.count(),
+      storage.types.countCustom(),
+    ]);
 
     const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
 
@@ -121,6 +132,7 @@ export function metricsRoutes(storage: Storage) {
       },
       keys: {
         total: keyCount,
+        runtime_credentials: runtimeCredentialCounts,
       },
       webhooks: {
         total: webhookCount,

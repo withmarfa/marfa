@@ -2,11 +2,40 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // Seeded before the first metrics read: the route caches its response for
+  // a minute, so anything planted after that read would be invisible for the
+  // rest of the file.
+  await ctx.storage.keys.createRuntimeCredential(
+    {
+      label: "runtime-live",
+      source: "metrics-runtime-live",
+      role: "member",
+      type_permissions: {},
+      connection_id: "conn_metrics_live",
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: runtimeCredentialItemSource("conn_metrics_live"),
+    },
+    hashApiKey("marfa_k1_metrics_runtime_live", "test-salt"),
+  );
+  const expired = await ctx.storage.keys.createRuntimeCredential(
+    {
+      label: "runtime-retired",
+      source: "metrics-runtime-retired",
+      role: "member",
+      type_permissions: {},
+      connection_id: "conn_metrics_retired",
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: runtimeCredentialItemSource("conn_metrics_retired"),
+    },
+    hashApiKey("marfa_k1_metrics_runtime_retired", "test-salt"),
+  );
+  await ctx.storage.keys.revoke(expired.id);
 });
 
 afterAll(async () => {
@@ -78,6 +107,26 @@ describe("GET /metrics", () => {
 
     const sum = Object.values(body.items.by_state).reduce((a, b) => a + b, 0);
     expect(body.items.total).toBe(sum);
+  });
+
+  it("breaks out runtime credentials, revoked rows included in the total", async () => {
+    // The operator console reads this block to see the machine-minted fleet
+    // that `keys.total` hides behind an aggregate. `total` counts rows still
+    // in the table so accumulation stays visible after revocation; `active`
+    // is the live subset.
+    const res = await request(ctx.app, "GET", "/metrics", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      keys: {
+        total: number;
+        runtime_credentials: { total: number; active: number };
+      };
+    };
+
+    expect(body.keys.runtime_credentials.total).toBe(2);
+    expect(body.keys.runtime_credentials.active).toBe(1);
   });
 
   it("refuses a tenant-bound credential", async () => {

@@ -46,6 +46,13 @@ const KeyResponseSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   created_at: z.string(),
+  expires_at: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
+    ),
   last_used_at: z.string().nullable(),
 });
 
@@ -65,6 +72,13 @@ const KeyListItemSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   created_at: z.string(),
+  expires_at: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
+    ),
   last_used_at: z.string().nullable(),
 });
 
@@ -259,6 +273,13 @@ const KeyDetailSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   created_at: z.string(),
+  expires_at: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
+    ),
   last_used_at: z.string().nullable(),
 });
 

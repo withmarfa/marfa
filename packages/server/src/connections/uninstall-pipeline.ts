@@ -42,6 +42,7 @@
  * deliberately, not an arbitrary `system.*` writer.
  */
 import type { Storage } from "../storage/interface.js";
+import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
 
 export interface UninstallInput {
   /** The api_keys row id of the caller (audit trail). */
@@ -120,6 +121,15 @@ export class UninstallError extends Error {
 }
 
 export async function performUninstall(
+  storage: Storage,
+  input: UninstallInput,
+): Promise<UninstallResult> {
+  return withConnectionLifecycleLock(storage, input.connectionId, () =>
+    performUninstallLocked(storage, input),
+  );
+}
+
+async function performUninstallLocked(
   storage: Storage,
   input: UninstallInput,
 ): Promise<UninstallResult> {

@@ -34,6 +34,9 @@ import {
   requireAdmin,
   requireAuth,
   requireTypeAccess,
+  requireActivityAttribution,
+  permitsActivityAttribution,
+  itemProvenanceSource,
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
@@ -461,8 +464,35 @@ async function processBulkItem(
      * bypass; a member must hold write on the item's type. Throws
      * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
      * outcome in best-effort mode and aborts the batch in atomic mode.
+     *
+     * Takes the whole item rather than its type because authorization
+     * here is not a function of the type alone: a `system.activity` row
+     * written by a runtime credential is also checked against whose
+     * activity it claims to be. Passing the item is what keeps both
+     * call sites covered by construction rather than by remembering.
+     *
+     * Authorizes the *claim*, which is the whole story only on the
+     * create path, where the row that lands is the one the entry
+     * describes. An update is authorized by `checkUpdate` instead.
      */
-    checkWrite: (type: string) => void;
+    checkWrite: (raw: { type: string; properties?: unknown }) => void;
+    /**
+     * Authorization for the update half of an upsert, against the row
+     * being overwritten rather than the entry describing it.
+     *
+     * An entry that carries an `id` addresses a row directly, and the
+     * update ignores the entry's `type` entirely — the write lands on
+     * whatever type that row already is. Authorizing the claim therefore
+     * checks a type nothing is about to be written to: naming a type the
+     * credential does hold write on admits an update to a row of any
+     * other type, and skips every gate keyed on the real one. `PATCH
+     * /items/{id}` has no type in its body and so cannot make that
+     * mistake; this is what makes the two doors agree.
+     */
+    checkUpdate: (
+      existing: Item,
+      raw: { properties?: Record<string, unknown> },
+    ) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -476,7 +506,8 @@ async function processBulkItem(
     };
   }
 
-  const { mode, tenantId, stampedSource, atomic, checkWrite } = options;
+  const { mode, tenantId, stampedSource, atomic, checkWrite, checkUpdate } =
+    options;
 
   // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
   // recreates and needs a transaction so a validation failure rolls the
@@ -498,7 +529,7 @@ async function processBulkItem(
   };
 
   try {
-    checkWrite(raw.type);
+    checkWrite(raw);
   } catch (err) {
     if (err instanceof MarfaError) {
       return {
@@ -547,6 +578,22 @@ async function processBulkItem(
   // upsert + existing: update properties/tier/timestamp in place,
   // optionally reconciling edges.
   if (existing) {
+    // Authorize against the row about to be overwritten. The entry's own
+    // `type` was cleared for a create that is no longer happening.
+    try {
+      checkUpdate(existing, { properties: raw.properties });
+    } catch (err) {
+      if (err instanceof MarfaError) {
+        return {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: { code: err.code, message: err.message },
+        };
+      }
+      throw err;
+    }
+
     const updated = await storage.items.update(
       existing.id,
       {
@@ -641,8 +688,32 @@ export function bulkRoutes(storage: Storage) {
     // permissions; a member must hold write on each item's type. tenant
     // scoping is threaded through every storage call below via `tenantId`.
     requireAuth(c);
-    const checkWrite = (type: string): void => {
-      requireTypeAccess(c, type, "write");
+    const checkWrite = (raw: { type: string; properties?: unknown }): void => {
+      requireTypeAccess(c, raw.type, "write");
+      requireActivityAttribution(c.get("apiKey"), raw.type, raw.properties);
+    };
+    // The update half of an upsert, judged on the target row. Mirrors
+    // `PATCH /items/{id}` gate for gate, because the two are the same
+    // operation reached through different doors: the row's real type
+    // decides the type gate, and the attribution check runs on the row
+    // both as it stands and as it will stand. Before, so a connector
+    // cannot edit a sibling's activity without naming a connection at
+    // all; after, so it cannot re-point its own. The merge mirrors the
+    // shallow property merge the storage layer performs.
+    const checkUpdate = (
+      existing: Item,
+      raw: { properties?: Record<string, unknown> },
+    ): void => {
+      const key = c.get("apiKey");
+      requireTypeAccess(c, existing.type, "write");
+      requireActivityAttribution(key, existing.type, existing.properties);
+      requireActivityAttribution(
+        key,
+        existing.type,
+        raw.properties !== undefined
+          ? { ...existing.properties, ...raw.properties }
+          : existing.properties,
+      );
     };
 
     const body = c.req.valid("json");
@@ -660,7 +731,7 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const tenantId = c.get("apiKey")?.tenant_id;
-    const stampedSource = c.get("apiKey")?.source;
+    const stampedSource = itemProvenanceSource(c.get("apiKey"));
 
     if (items.length === 0) {
       return c.json(
@@ -705,7 +776,7 @@ export function bulkRoutes(storage: Storage) {
         // Authorize the write up-front so an unauthorized type aborts the
         // batch before any row lands (SQLite can't roll back async txns).
         try {
-          checkWrite(raw.type);
+          checkWrite(raw);
         } catch (err) {
           if (err instanceof MarfaError) {
             throw new MarfaError(
@@ -728,6 +799,7 @@ export function bulkRoutes(storage: Storage) {
           stampedSource,
           atomic,
           checkWrite,
+          checkUpdate,
         });
         if (atomic && result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw
@@ -862,6 +934,32 @@ export function bulkRoutes(storage: Storage) {
     // for admin callers regardless.
     const allowedTypes = getTypeFilter(c);
 
+    // The type axis is not the only one a caller can be narrower than.
+    // `system.activity` sits in every runtime credential's type filter —
+    // that grant is what lets a connector report its own progress — so a
+    // filter naming the type matches every connector's rows in the
+    // tenant, and the worker applies the action to the frozen id list
+    // without re-deriving who may write what. One credential could
+    // rewrite, retier or revoke every sibling's activity in a single
+    // call. Narrowing rather than refusing, because that is the answer
+    // this route already gives on the type axis: a row the caller cannot
+    // write leaves the match set, instead of failing an action over
+    // thousands of rows it legitimately can.
+    //
+    // Judged on the row as it stands and, for `update_properties`, on the
+    // row the patch produces — the same two halves every other door
+    // checks. Before, or a connector edits a sibling's activity without
+    // naming a connection at all; after, or it re-points its own.
+    const callerKey = c.get("apiKey");
+    const patch = body.action === "update_properties" ? body.patch : undefined;
+    const mayAct = (item: Item): boolean =>
+      permitsActivityAttribution(callerKey, item.type, item.properties) &&
+      (patch === undefined ||
+        permitsActivityAttribution(callerKey, item.type, {
+          ...item.properties,
+          ...patch,
+        }));
+
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
@@ -882,6 +980,7 @@ export function bulkRoutes(storage: Storage) {
         cursor,
       });
       for (const item of page.data) {
+        if (!mayAct(item)) continue;
         matched.push(item);
         if (matched.length > cap) break;
       }

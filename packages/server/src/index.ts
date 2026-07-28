@@ -17,6 +17,7 @@ import {
   PendingDeletePurger,
   RateLimitWindowCleaner,
   DcrClientCleaner,
+  RuntimeCredentialReaper,
   runTenantCleanup,
 } from "./storage/retention.js";
 import type { TenantFanout } from "./storage/retention.js";
@@ -27,6 +28,7 @@ import {
   loadInTreeRegistrations,
   type LocalRuntimeBundle,
 } from "./integrations/local-runtime/index.js";
+import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -270,6 +272,25 @@ async function main() {
       : undefined;
   dcrClientCleaner?.start();
 
+  // Runtime credentials are minted per dispatch, so the table grows with
+  // traffic unless something retires them. The mint path supersedes its own
+  // siblings and the bearer gate refuses expired rows, but neither reaches
+  // credentials for connections that stopped dispatching, nor rows minted
+  // before expiry stamping existed. Interval `0` disables the job.
+  const runtimeCredentialReaperIntervalMs =
+    config.runtimeCredentialReaperIntervalMs ?? 3_600_000;
+  const runtimeCredentialReaper =
+    runtimeCredentialReaperIntervalMs > 0
+      ? new RuntimeCredentialReaper(
+          storage,
+          DEFAULT_RUNTIME_CREDENTIAL_TTL_MS,
+          runtimeCredentialReaperIntervalMs,
+          undefined,
+          storage.coordination,
+        )
+      : undefined;
+  runtimeCredentialReaper?.start();
+
   const bulkActionWorker = new BulkActionWorker({
     storage,
     pollIntervalMs: config.bulkActionPollIntervalMs ?? 500,
@@ -428,6 +449,7 @@ async function main() {
     pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
     dcrClientCleaner?.stop();
+    runtimeCredentialReaper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
     if (reactiveRunBridge) {

@@ -78,16 +78,24 @@ The synthetic host in the constructed `Request` URL is ignored by the binding; o
 
 Canonical example: the withmarfa-inbox Email Worker. `integrations/withmarfa-inbox/email-worker/wrangler.toml` declares `RUNTIME_CONTROL → marfa-runtime-control-<env>`, and `src/index.ts` dispatches via `env.RUNTIME_CONTROL.fetch(...)` against `/webhooks/inbound/<CONNECTION_ID>`.
 
-## The Worker `fetch` surface requires the broker key
+## Each Worker has its own identity
+
+A Worker's credential is `MARFA_WORKER_IDENTITY_KEY`, derived by the control plane as `HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, <integration name>)`. It authenticates the hop in both directions: the Worker presents it when leasing a runtime credential, and the control plane derives the same value when it dispatches in.
+
+It replaces the platform broker key, which every Worker used to hold. That key carries `is_platform: true` and mints a runtime credential for any Connection in any tenant, so one copy per Worker meant thirteen platform principals per environment and a compromise of any one of them reached every customer's data. A derived key authenticates one integration; HMAC is one-way, so holding one does not let a Worker compute a sibling's.
+
+The lease broker forwards the integration name a Worker proves to the Marfa server, which checks it against the manifest persisted on the requested Connection. A Worker that learns another integration's Connection id still cannot lease it.
+
+## The Worker `fetch` surface requires that identity key
 
 A Service Binding authenticates by topology, and topology is not a gate the route controls. `workers_dev`, `preview_urls`, a `routes` entry, or a new binding all re-expose the same `fetch` handler without touching its source, so the handler verifies its caller as well.
 
-Every request into a per-Integration Worker's `fetch` handler must carry `Authorization: Bearer <MARFA_RUNTIME_BROKER_KEY>` — the same secret the Worker presents back to the lease broker, checked in the other direction. `createIntegrationWorker(...)` applies the gate once at the entry, before routing, so a route added later is covered the moment it exists rather than the moment someone remembers to gate it. Nothing to opt into: an integration built on the standard entry point inherits it.
+Every request into a per-Integration Worker's `fetch` handler must carry `Authorization: Bearer <MARFA_WORKER_IDENTITY_KEY>`. `createIntegrationWorker(...)` applies the gate once at the entry, before routing, so a route added later is covered the moment it exists rather than the moment someone remembers to gate it. Nothing to opt into: an integration built on the standard entry point inherits it.
 
 Consequences worth knowing when writing or debugging one:
 
 - **Unknown paths return 404, not the banner.** Only `GET /` answers with the informational payload. A `POST` to a route this deployment does not have used to come back `200 {ok: true}`, and every caller read that as success.
-- **A Worker with no `MARFA_RUNTIME_BROKER_KEY` returns 503 `worker_misconfigured`**, distinct from the 401 a wrong key gets, so missing secrets are diagnosable from the response alone.
+- **A Worker with no `MARFA_WORKER_IDENTITY_KEY` returns 503 `worker_misconfigured`**, distinct from the 401 a wrong key gets, so missing secrets are diagnosable from the response alone.
 - **`queue`, `alarm`, and `email` handlers are unaffected.** Queue delivery, Durable Object alarms, and Email Routing never enter `fetch`, so webhook-driven and scheduled work needs no credential.
 - **Configs set `workers_dev = false` and `preview_urls = false`** at the top level and in every named environment. `preview_urls` has no dependable default and has to be stated; the freshness test in `packages/runtime-control/src/integration-wrangler-config.test.ts` enforces both across every config found under `integrations/`.
 
@@ -96,7 +104,7 @@ Gating a `fetch` surface outside the standard entry point (a sibling Worker with
 ```ts
 import { brokerAuthFailure } from "@withmarfa/runtime-sdk/cloudflare";
 
-const refusal = await brokerAuthFailure(request, env.MARFA_RUNTIME_BROKER_KEY);
+const refusal = await brokerAuthFailure(request, env.MARFA_WORKER_IDENTITY_KEY);
 if (refusal) return refusal;
 ```
 
@@ -108,21 +116,26 @@ Every per-integration Worker needs three secrets set before the first queue disp
 
 - **`MARFA_API_URL`** — the deployed Marfa API URL the in-Worker `ConnectionClient` calls back into.
 - **`MARFA_RUNTIME_CONTROL_URL`** — the runtime-control Worker's URL, where the consumer mints per-connection runtime credentials via the `/lease/:connection_id/runtime` broker.
-- **`MARFA_RUNTIME_BROKER_KEY`** — the platform broker key the consumer presents to that lease endpoint. Same value as the server's `MARFA_RUNTIME_BROKER_KEY` env.
+- **`MARFA_WORKER_IDENTITY_KEY`** — this Worker's own identity key, presented to that lease endpoint and required on its own `fetch` surface. Derived, not invented: `HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, <this integration's name>)`, where the root is the control plane's per-env secret. The helper below computes it; never set it by hand.
 
 Without these, the queue consumer's `mintCredential()` throws on the first dispatch with a URL like `undefined/lease/<id>/runtime`. A `console.error` surfaces it via `wrangler tail` (grep `[runtime-sdk:consumeBatch] dispatch threw`), but messages silently retry into the DLQ: no items land, no `system.activity` appears (the activity-emit path needs a working `ConnectionClient`, which needs the broker secrets, a circular dependency in the degraded mode). Set the secrets first.
 
 A helper at `infra/cloudflare/scripts/init-integration-worker-secrets.sh` reads the three values from the calling shell's environment and runs `wrangler secret put` for each:
 
 ```bash
-# Source your per-machine secrets file first so the three env vars
-# (MARFA_API_URL, MARFA_RUNTIME_CONTROL_URL, MARFA_RUNTIME_BROKER_KEY)
-# + CLOUDFLARE_API_TOKEN are exported.
+# Source your per-machine secrets file first so MARFA_API_URL,
+# MARFA_RUNTIME_CONTROL_URL, MARFA_WORKER_IDENTITY_SECRET and
+# CLOUDFLARE_API_TOKEN are exported. The identity KEY is derived by the
+# script from the config's INTEGRATION_NAME; only the ROOT is supplied.
 ./infra/cloudflare/scripts/init-integration-worker-secrets.sh \
   integrations/google-contacts staging
 ```
 
-Re-run the helper whenever the broker key rotates. Each integration's `wrangler.toml` carries a comment block listing the same three secrets as a reminder.
+Re-run the helper for every integration whenever the identity root rotates — a root rotation invalidates every derived key at once, so a Worker missed in the sweep 401s on every lease until it is redeployed. Each integration's `wrangler.toml` carries a comment block listing the same three secrets as a reminder.
+
+Deploy the control plane before the Workers. It has to know the new root before any Worker presents a key derived from it; the reverse order leaves every lease refused until the control plane catches up. Refusals are 401s, which the Worker treats as transient, so the window costs retries rather than torn-down schedules.
+
+**An uninstall inside the window completes with the alarm still armed.** The hop runs the other way for a disarm — the control plane presents a key derived from the new root to a Worker that still holds one derived from the old — and the Worker refuses it like any other wrong credential. A disarm failure deliberately does not fail the uninstall, so the Connection ends up revoked, the user sees the uninstall succeed, and the per-Connection alarm keeps firing. The refusal is recorded: `schedules_disarmed: false` plus `schedule_disarm_error` on the uninstall result, an `action_required` activity row, and the audit row. Disarm is idempotent, so the recovery is to re-run it once the sweep is finished. Sweep every integration promptly and check for `action_required` rows afterwards rather than assuming the window was quiet: a schedule left ticking on a revoked Connection is unbounded on any Worker running a bundle that predates terminal-lease handling.
 
 ## Substrate parity
 

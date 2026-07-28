@@ -8,6 +8,7 @@ import type {
   LeaseTokenIntrospection,
 } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 /** Registered system.integration id pointing at VALID_MANIFEST. */
@@ -260,6 +261,8 @@ describe("connector runtime credential — integration: source", () => {
         extension_permissions: {},
         edge_permissions: {},
         connection_id: connectionId,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource(connectionId),
       },
       keyHash,
       undefined,
@@ -293,6 +296,8 @@ describe("connector runtime credential — integration: source", () => {
         extension_permissions: {},
         edge_permissions: {},
         connection_id: connectionA,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource(connectionA),
       },
       keyHash,
       undefined,

@@ -6,6 +6,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -626,6 +627,8 @@ describe("POST /items — platform-credential gate", () => {
         role: "member",
         type_permissions: { "system.activity": "write" },
         connection_id: "conn_test_carve_out",
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource("conn_test_carve_out"),
       },
       hashApiKey(runtimeKey, TEST_API_KEY_SALT),
       "tenant-x",

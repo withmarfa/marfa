@@ -9,20 +9,34 @@
  *
  * Both verbs run through one dispatch helper, so the gate and the
  * outbound header are pinned on each of them rather than on the pair.
- * A route that stopped presenting the broker key would be refused by
- * every per-Integration Worker in the fleet, and the only symptom is an
+ * A route that stopped presenting a credential would be refused by every
+ * per-Integration Worker in the fleet, and the only symptom is an
  * `action_required` activity row nobody is watching for.
+ *
+ * The two credentials on this route are different and deliberately so.
+ * Inbound, the caller is the Marfa server presenting the platform broker
+ * key. Outbound, the Worker receives a key derived for that Worker
+ * alone. Forwarding the inbound one would put a credential that mints
+ * against any Connection in any tenant onto every Worker in the fleet.
  *
  * The tests mount the real Hono app with a stubbed service binding, so
  * they pin the auth gate, the idempotency contract, and the dispatch
  * shape the per-Integration Worker receives.
  */
 import { describe, it, expect } from "vitest";
+import { deriveWorkerIdentityKey } from "@withmarfa/shared";
 import { buildApp } from "../app.js";
 import type { ControlPlaneEnv } from "../env.js";
 
 const BROKER_KEY = "broker-key-test";
+const IDENTITY_ROOT = "worker-identity-root-test";
+const INTEGRATION = "withmarfa.rss-watcher";
 const CONNECTION_ID = "conn_schedule";
+
+/** What the target Worker holds, and therefore what it must receive. */
+function expectedDispatchKey(): Promise<string> {
+  return deriveWorkerIdentityKey(IDENTITY_ROOT, INTEGRATION);
+}
 
 interface BindingCall {
   url: string;
@@ -37,6 +51,7 @@ function buildEnvWithBinding(
   return {
     MARFA_API_URL: "https://staging.test",
     MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+    MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
     INTEGRATION_RSS_WATCHER: {
       fetch(request: Request): Promise<Response> {
         calls.push({
@@ -116,23 +131,27 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
 
   /**
    * The per-Integration Worker authenticates its whole fetch surface on
-   * the broker key. A headerless dispatch is refused there, and the
-   * uninstall pipeline reads the refusal as "the alarm was not
+   * its own identity key. A headerless dispatch is refused there, and
+   * the uninstall pipeline reads the refusal as "the alarm was not
    * cancelled" — leaving a schedule ticking on a revoked connection,
    * which is the exact failure the disarm route exists to prevent.
    */
-  it("carries the broker key on the outbound disarm dispatch", async () => {
+  it("carries the target Worker's identity key on the outbound disarm dispatch", async () => {
     const calls: BindingCall[] = [];
     const env = buildEnvWithBinding(calls, okResponse);
     await post(
       buildApp(),
       env,
       `/connections/${CONNECTION_ID}/disarm-schedule`,
-      { integration_name: "withmarfa.rss-watcher" },
+      { integration_name: INTEGRATION },
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+    expect(calls[0]!.authorization).toBe(
+      `Bearer ${await expectedDispatchKey()}`,
+    );
+    // The credential the server presented inbound stops at this route.
+    expect(calls[0]!.authorization).not.toBe(`Bearer ${BROKER_KEY}`);
   });
 
   it("rejects a request presenting the wrong broker key", async () => {
@@ -286,6 +305,7 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
     const env = {
       MARFA_API_URL: "https://staging.test",
       MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+      MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
     } as unknown as ControlPlaneEnv;
     const res = await post(
       buildApp(),
@@ -335,15 +355,39 @@ describe("POST /connections/:connection_id/arm-schedule", () => {
     expect(calls[0]!.url).toContain(`connection_id=${CONNECTION_ID}`);
   });
 
-  it("carries the broker key on the outbound arm dispatch", async () => {
+  it("carries the target Worker's identity key on the outbound arm dispatch", async () => {
     const calls: BindingCall[] = [];
     const env = buildEnvWithBinding(calls, armResponse);
     await post(buildApp(), env, `/connections/${CONNECTION_ID}/arm-schedule`, {
-      integration_name: "withmarfa.rss-watcher",
+      integration_name: INTEGRATION,
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+    expect(calls[0]!.authorization).toBe(
+      `Bearer ${await expectedDispatchKey()}`,
+    );
+    expect(calls[0]!.authorization).not.toBe(`Bearer ${BROKER_KEY}`);
+  });
+
+  it("refuses to dispatch when the Worker identity root is unset", async () => {
+    // Deriving from an empty root would produce a key every equally
+    // misconfigured deployment computes identically, which is the
+    // fleet-wide shared secret the derived keys exist to remove.
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, armResponse);
+    delete (env as { MARFA_WORKER_IDENTITY_SECRET?: string })
+      .MARFA_WORKER_IDENTITY_SECRET;
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      { integration_name: INTEGRATION },
+    );
+    expect(res.status).toBe(503);
+    expect((await res.json<{ error: string }>()).error).toBe(
+      "control_plane_misconfigured",
+    );
+    expect(calls).toHaveLength(0);
   });
 
   it("rejects a caller with no Authorization header", async () => {

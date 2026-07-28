@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { findIntegration } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import { brokerAuthFailure } from "../broker-auth.js";
+import { workerDispatchAuthorization } from "../worker-identity.js";
 
 type ControlPlaneContext = Context<{ Bindings: ControlPlaneEnv }>;
 
@@ -19,8 +20,11 @@ type ControlPlaneContext = Context<{ Bindings: ControlPlaneEnv }>;
  *     pipeline; disarm by the uninstall pipeline. Either can be retried
  *     by an operator if the pipeline-time call dropped.
  *
- *     Both authenticate with the `MARFA_RUNTIME_BROKER_KEY` (same gate
- *     as `/lease/...`) so only the server can change schedule state.
+ *     Both authenticate their caller with `MARFA_RUNTIME_BROKER_KEY`,
+ *     so only the Marfa server can change schedule state. That is the
+ *     inbound credential only: what travels onward to the Worker is a
+ *     key derived for that Worker alone, so a dispatch never hands a
+ *     platform credential to code the control plane does not own.
  *
  *     Disarm is idempotent end to end: the DO's `deleteAlarm()` on an
  *     unarmed alarm is a no-op, so disarming a never-armed or
@@ -62,8 +66,22 @@ async function handleScheduleDispatch(
       503,
     );
   }
+  // Inbound gate is the platform broker key: the Marfa server's install
+  // and uninstall pipelines are the callers, and both hold it. What goes
+  // outbound to the Worker is a different credential entirely — see the
+  // dispatch below.
   const unauthorized = await brokerAuthFailure(c, env.MARFA_RUNTIME_BROKER_KEY);
   if (unauthorized) return unauthorized;
+  if (!env.MARFA_WORKER_IDENTITY_SECRET) {
+    return c.json(
+      {
+        error: "control_plane_misconfigured",
+        message: "MARFA_WORKER_IDENTITY_SECRET must be set.",
+      },
+      503,
+    );
+  }
+  const workerIdentitySecret = env.MARFA_WORKER_IDENTITY_SECRET;
 
   let body: { integration_name?: string };
   try {
@@ -112,18 +130,27 @@ async function handleScheduleDispatch(
   if (action === "disarm") {
     inner.searchParams.set("reason", "uninstall");
   }
+  // The per-Integration Worker authenticates its whole fetch surface on
+  // its own identity key. Without this header the dispatch is refused and
+  // the uninstall pipeline reads the refusal as "the alarm could not be
+  // cancelled" — a schedule left ticking on a revoked connection.
+  //
+  // Derived for the integration this dispatch is addressed to, so the
+  // Worker receives only the key it already holds. The platform broker
+  // key used to travel on this hop; sending it meant every Worker in the
+  // fleet held a credential that mints against any Connection in any
+  // tenant. `MARFA_WORKER_IDENTITY_SECRET` is proven non-empty by the 503
+  // guard at the top of this handler.
+  const dispatchAuthorization = await workerDispatchAuthorization(
+    workerIdentitySecret,
+    integrationName,
+  );
   let res: Response;
   try {
-    // The per-Integration Worker authenticates its whole fetch surface on
-    // the broker key. Without this header the dispatch is refused and the
-    // uninstall pipeline reads the refusal as "the alarm could not be
-    // cancelled" — a schedule left ticking on a revoked connection.
-    // `MARFA_RUNTIME_BROKER_KEY` is proven non-empty by the 503 guard at
-    // the top of this handler.
     res = await binding.fetch(
       new Request(inner.toString(), {
         method: "POST",
-        headers: { authorization: `Bearer ${env.MARFA_RUNTIME_BROKER_KEY}` },
+        headers: { authorization: dispatchAuthorization },
       }),
     );
   } catch (err) {

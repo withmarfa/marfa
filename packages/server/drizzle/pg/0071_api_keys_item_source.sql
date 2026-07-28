@@ -1,0 +1,11 @@
+-- Runtime credentials get a stable provenance key.
+--
+-- A credential's `source` is stamped onto every item it writes, and upsert
+-- identity is `(source, source_id)`. Runtime credentials are minted per
+-- dispatch and their `source` carries a per-mint suffix, so provenance moved
+-- on every refresh and the same upstream record was stored again under the new
+-- source. `item_source` is derived from the bound Connection instead and is
+-- fixed for its lifetime. NULL for human-minted keys, which keep stamping
+-- `source`. Nullable and additive; runtime credentials minted before this
+-- column existed fall back to `source` until the reaper drains them.
+ALTER TABLE "api_keys" ADD COLUMN "item_source" text;

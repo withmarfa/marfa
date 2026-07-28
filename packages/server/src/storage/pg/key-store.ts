@@ -1,5 +1,16 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  gt,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   ApiKey,
@@ -33,6 +44,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,
     connection_id: row.connection_id ?? undefined,
+    item_source: row.item_source ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -54,8 +66,20 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       "key metadata_permissions",
     ),
     created_at: row.created_at,
+    expires_at: row.expires_at ?? null,
     last_used_at: row.last_used_at ?? null,
   };
+}
+
+/** Rows that are neither revoked nor past their expiry. `expires_at` is
+ *  NULL for human-minted keys, so the NULL branch keeps them live. Without
+ *  the expiry arm, an expired-but-not-yet-reaped runtime credential reads
+ *  as active for up to a full reaper interval. */
+function notRevokedOrExpired(nowIso: string) {
+  return and(
+    isNull(apiKeys.revoked_at),
+    or(isNull(apiKeys.expires_at), gt(apiKeys.expires_at, nowIso)),
+  );
 }
 
 export class PgKeyStore implements KeyStore {
@@ -121,7 +145,11 @@ export class PgKeyStore implements KeyStore {
   }
 
   async createRuntimeCredential(
-    input: CreateKeyInput & { connection_id: string },
+    input: CreateKeyInput & {
+      connection_id: string;
+      expires_at: string;
+      item_source: string;
+    },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey> {
@@ -157,11 +185,13 @@ export class PgKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
+      item_source: input.item_source,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       created_at: now,
+      expires_at: input.expires_at,
     };
     await this.db.insert(apiKeys).values(row);
     return {
@@ -174,11 +204,13 @@ export class PgKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
+      item_source: input.item_source,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
       metadata_permissions: input.metadata_permissions ?? {},
       created_at: now,
+      expires_at: input.expires_at,
       last_used_at: null,
     };
   }
@@ -187,7 +219,7 @@ export class PgKeyStore implements KeyStore {
     const rows = await this.db
       .select()
       .from(apiKeys)
-      .where(isNull(apiKeys.revoked_at));
+      .where(notRevokedOrExpired(new Date().toISOString()));
     return rows.map(mapRow);
   }
 
@@ -277,6 +309,12 @@ export class PgKeyStore implements KeyStore {
       .where(eq(apiKeys.key_hash, keyHash));
     if (!row) return null;
     if (row.revoked_at) return null;
+    // A key past its hard lifetime bound is as dead as a revoked one —
+    // same null so the middleware surfaces the same 401. ISO-8601 strings
+    // compare correctly as strings.
+    if (row.expires_at && row.expires_at <= new Date().toISOString()) {
+      return null;
+    }
     return {
       ...mapRow(row),
       key_hash: row.key_hash,
@@ -319,10 +357,81 @@ export class PgKeyStore implements KeyStore {
   }
 
   async count(): Promise<number> {
-    const rows = await this.db
-      .select()
+    const [row] = await this.db
+      .select({ total: count() })
       .from(apiKeys)
-      .where(isNull(apiKeys.revoked_at));
+      .where(notRevokedOrExpired(new Date().toISOString()));
+    return row?.total ?? 0;
+  }
+
+  async revokeExpiredRuntimeCredentials(nowIso: string): Promise<number> {
+    const rows = await this.db
+      .update(apiKeys)
+      .set({ revoked_at: nowIso })
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNull(apiKeys.revoked_at),
+          isNotNull(apiKeys.expires_at),
+          lt(apiKeys.expires_at, nowIso),
+        ),
+      )
+      .returning({ id: apiKeys.id });
     return rows.length;
+  }
+
+  async revokeRuntimeCredentialsWithoutExpiryOlderThan(
+    cutoffIso: string,
+    nowIso: string,
+  ): Promise<number> {
+    const rows = await this.db
+      .update(apiKeys)
+      .set({ revoked_at: nowIso })
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNull(apiKeys.revoked_at),
+          isNull(apiKeys.expires_at),
+          lt(apiKeys.created_at, cutoffIso),
+        ),
+      )
+      .returning({ id: apiKeys.id });
+    return rows.length;
+  }
+
+  async deleteRevokedRuntimeCredentialsOlderThan(
+    cutoffIso: string,
+  ): Promise<number> {
+    const rows = await this.db
+      .delete(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, true),
+          isNotNull(apiKeys.revoked_at),
+          lt(apiKeys.revoked_at, cutoffIso),
+        ),
+      )
+      .returning({ id: apiKeys.id });
+    return rows.length;
+  }
+
+  async countRuntimeCredentials(
+    nowIso: string,
+  ): Promise<{ total: number; active: number }> {
+    // Aggregate in SQL. The table is bounded by the reaper's seven-day
+    // window but that is still every dispatch in a week, far too many rows
+    // to drag into JS for a counter on an operator dashboard.
+    const [row] = await this.db
+      .select({
+        total: count(),
+        active: sum(
+          sql`CASE WHEN ${apiKeys.revoked_at} IS NULL AND (${apiKeys.expires_at} IS NULL OR ${apiKeys.expires_at} > ${nowIso}) THEN 1 ELSE 0 END`,
+        ),
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.is_runtime_credential, true));
+    // `count()` maps to a number in drizzle; `sum()` comes back as a
+    // string on Postgres, so only the latter needs converting.
+    return { total: row?.total ?? 0, active: Number(row?.active ?? 0) };
   }
 }

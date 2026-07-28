@@ -5,11 +5,13 @@ import {
   TrashPurger,
   AuthSessionCleaner,
   DcrClientCleaner,
+  RuntimeCredentialReaper,
   runTenantCleanup,
 } from "./retention.js";
 import type { TenantFanout } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -743,5 +745,428 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
     );
     expect(await disabled.runOnce()).toBe(0);
     expect(await oauthClientExists("client_disabled_job")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RuntimeCredentialReaper — retire per-dispatch machine credentials.
+// ---------------------------------------------------------------------------
+
+const RUNTIME_TTL_MS = 600_000;
+
+/**
+ * Mint a runtime credential and force its lifecycle columns to contrived
+ * values. Raw SQL because the store deliberately exposes no way to backdate
+ * `created_at` or plant a NULL `expires_at` — a legacy row's shape can only
+ * be reproduced by writing it directly.
+ */
+async function seedRuntimeCredential(opts: {
+  id: string;
+  createdAt: Date;
+  expiresAt?: Date | null;
+  revokedAt?: Date;
+}): Promise<void> {
+  const minted = await ctx.storage.keys.createRuntimeCredential(
+    {
+      label: `reaper ${opts.id}`,
+      source: `reaper:${opts.id}`,
+      role: "member",
+      type_permissions: {},
+      connection_id: `conn_${opts.id}`,
+      expires_at: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS).toISOString(),
+      item_source: runtimeCredentialItemSource(`conn_${opts.id}`),
+    },
+    hashApiKey(`marfa_k1_${opts.id}`, TEST_API_KEY_SALT),
+    undefined,
+  );
+  const createdIso = opts.createdAt.toISOString();
+  const expiresIso =
+    opts.expiresAt === undefined
+      ? new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS).toISOString()
+      : opts.expiresAt === null
+        ? null
+        : opts.expiresAt.toISOString();
+  const revokedIso = opts.revokedAt ? opts.revokedAt.toISOString() : null;
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(
+      `UPDATE api_keys SET id = $1, created_at = $2, expires_at = $3, revoked_at = $4 WHERE id = $5`,
+      [opts.id, createdIso, expiresIso, revokedIso, minted.id],
+    );
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await s.__sqliteRun(
+      `UPDATE api_keys SET id = ?, created_at = ?, expires_at = ?, revoked_at = ? WHERE id = ?`,
+      [opts.id, createdIso, expiresIso, revokedIso, minted.id],
+    );
+  }
+}
+
+/** Read the lifecycle columns straight from the table — the store's `get`
+ *  hides revoked rows, which is exactly the state under test. */
+async function readCredentialRow(
+  id: string,
+): Promise<{ present: boolean; revoked: boolean }> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  let rows: { revoked_at: string | null }[];
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    rows = (await s.__pgClient(
+      "SELECT revoked_at FROM api_keys WHERE id = $1",
+      [id],
+    )) as { revoked_at: string | null }[];
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteAll: (q: string) => Promise<unknown[]>;
+    };
+    rows = (await s.__sqliteAll(
+      `SELECT revoked_at FROM api_keys WHERE id = '${id.replace(/'/g, "''")}'`,
+    )) as { revoked_at: string | null }[];
+  }
+  const row = rows[0];
+  if (!row) return { present: false, revoked: false };
+  return { present: true, revoked: row.revoked_at !== null };
+}
+
+describe("RuntimeCredentialReaper.runOnce — expiry sweep", () => {
+  it("revokes runtime credentials past expires_at, spares live ones", async () => {
+    await seedRuntimeCredential({
+      id: "cred_expired",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    await seedRuntimeCredential({
+      id: "cred_live",
+      createdAt: FIXED_NOW,
+      expiresAt: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS),
+    });
+
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    const counts = await reaper.runOnce();
+
+    expect(counts.expired).toBe(1);
+    expect((await readCredentialRow("cred_expired")).revoked).toBe(true);
+    expect((await readCredentialRow("cred_live")).revoked).toBe(false);
+  });
+
+  it("is idempotent — a second pass finds nothing fresh to revoke", async () => {
+    await seedRuntimeCredential({
+      id: "cred_idem",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    expect((await reaper.runOnce()).expired).toBe(1);
+    expect((await reaper.runOnce()).expired).toBe(0);
+  });
+});
+
+describe("RuntimeCredentialReaper.runOnce — legacy NULL-expiry drain", () => {
+  it("revokes NULL-expiry runtime credentials older than TTL + one-TTL grace", async () => {
+    // The shape every runtime credential minted before expiry stamping
+    // carries: no expiry, never revoked, unbounded life. This is the drain
+    // that retires the accumulated fleet on the first tick after deploy.
+    await seedRuntimeCredential({
+      id: "cred_legacy_old",
+      createdAt: new Date(FIXED_NOW.getTime() - 30 * MS_PER_DAY),
+      expiresAt: null,
+    });
+
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    const counts = await reaper.runOnce();
+
+    expect(counts.legacy).toBe(1);
+    expect((await readCredentialRow("cred_legacy_old")).revoked).toBe(true);
+  });
+
+  it("spares a NULL-expiry credential still inside the grace window", async () => {
+    // Cutoff is TTL + one-TTL grace; a row minted one TTL ago sits inside
+    // it, so an in-flight dispatch could still be holding the credential.
+    await seedRuntimeCredential({
+      id: "cred_legacy_fresh",
+      createdAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+      expiresAt: null,
+    });
+
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    const counts = await reaper.runOnce();
+
+    expect(counts.legacy).toBe(0);
+    expect((await readCredentialRow("cred_legacy_fresh")).revoked).toBe(false);
+  });
+
+  it("leaves NULL-expiry human keys alone — the drain is runtime-only", async () => {
+    const humanKeyId = (
+      await ctx.storage.keys.create(
+        {
+          label: "human",
+          source: "human",
+          role: "admin",
+          type_permissions: { "*": "write" },
+          default_tier: "library",
+          is_platform: false,
+        },
+        hashApiKey("marfa_k1_human_reaper", TEST_API_KEY_SALT),
+      )
+    ).id;
+
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    const counts = await reaper.runOnce();
+
+    expect(counts.legacy).toBe(0);
+    expect((await readCredentialRow(humanKeyId)).revoked).toBe(false);
+  });
+});
+
+describe("RuntimeCredentialReaper.runOnce — hard delete", () => {
+  it("deletes revoked runtime credentials past the seven-day window", async () => {
+    await seedRuntimeCredential({
+      id: "cred_old_revoked",
+      createdAt: new Date(FIXED_NOW.getTime() - 30 * MS_PER_DAY),
+      expiresAt: new Date(FIXED_NOW.getTime() - 29 * MS_PER_DAY),
+      revokedAt: new Date(FIXED_NOW.getTime() - 8 * MS_PER_DAY),
+    });
+    await seedRuntimeCredential({
+      id: "cred_recent_revoked",
+      createdAt: new Date(FIXED_NOW.getTime() - 3 * MS_PER_DAY),
+      expiresAt: new Date(FIXED_NOW.getTime() - 3 * MS_PER_DAY),
+      revokedAt: new Date(FIXED_NOW.getTime() - MS_PER_DAY),
+    });
+
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    const counts = await reaper.runOnce();
+
+    expect(counts.deleted).toBe(1);
+    expect((await readCredentialRow("cred_old_revoked")).present).toBe(false);
+    expect((await readCredentialRow("cred_recent_revoked")).present).toBe(true);
+  });
+});
+
+describe("KeyStore.countRuntimeCredentials — operator visibility", () => {
+  it("counts every runtime-credential row and the live subset", async () => {
+    await seedRuntimeCredential({
+      id: "cred_count_live",
+      createdAt: FIXED_NOW,
+      expiresAt: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS),
+    });
+    await seedRuntimeCredential({
+      id: "cred_count_expired",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    await seedRuntimeCredential({
+      id: "cred_count_revoked",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS),
+      revokedAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    // A legacy row counts as active: no expiry means nothing has retired it.
+    await seedRuntimeCredential({
+      id: "cred_count_legacy",
+      createdAt: new Date(FIXED_NOW.getTime() - 30 * MS_PER_DAY),
+      expiresAt: null,
+    });
+    // Human keys never appear in either counter.
+    await ctx.storage.keys.create(
+      {
+        label: "human-count",
+        source: "human-count",
+        role: "admin",
+        type_permissions: { "*": "write" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey("marfa_k1_human_count", TEST_API_KEY_SALT),
+    );
+
+    const counts = await ctx.storage.keys.countRuntimeCredentials(
+      FIXED_NOW.toISOString(),
+    );
+    expect(counts.total).toBe(4);
+    expect(counts.active).toBe(2);
+  });
+});
+
+describe("RuntimeCredentialReaper — scheduling and coordination", () => {
+  /** Records every lock name it is asked for, and can refuse the lock the way
+   *  a real `withJobLock` does when another instance already holds it. */
+  function trackingCoordination(opts: { granted: boolean }) {
+    const names: string[] = [];
+    return {
+      names,
+      store: {
+        withJobLock: async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T | undefined> => {
+          names.push(name);
+          return opts.granted ? await fn() : undefined;
+        },
+        // The reaper never takes this lock, but the store has to satisfy
+        // the interface. Always running `fn` matches the real contract:
+        // an exclusive lock waits rather than skipping.
+        withExclusiveLock: async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T> => {
+          names.push(name);
+          return await fn();
+        },
+      },
+    };
+  }
+
+  it("runs the sweep under the cluster-wide lock", async () => {
+    await seedRuntimeCredential({
+      id: "cred_poll_locked",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    const coordination = trackingCoordination({ granted: true });
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+      coordination.store,
+    );
+
+    await reaper.pollForTest();
+
+    expect(coordination.names).toEqual(["runtime-credential-reap"]);
+    expect((await readCredentialRow("cred_poll_locked")).revoked).toBe(true);
+  });
+
+  it("does nothing when another instance holds the lock", async () => {
+    await seedRuntimeCredential({
+      id: "cred_poll_unlocked",
+      createdAt: new Date(FIXED_NOW.getTime() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(FIXED_NOW.getTime() - RUNTIME_TTL_MS),
+    });
+    const coordination = trackingCoordination({ granted: false });
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+      coordination.store,
+    );
+
+    await reaper.pollForTest();
+
+    // Lock refused means the other instance is sweeping; this one must not
+    // duplicate the work, and must not treat `undefined` counts as an error.
+    expect((await readCredentialRow("cred_poll_unlocked")).revoked).toBe(false);
+  });
+
+  it("swallows a sweep failure so the interval survives", async () => {
+    const exploding = {
+      ...ctx.storage,
+      keys: {
+        ...ctx.storage.keys,
+        revokeExpiredRuntimeCredentials: () =>
+          Promise.reject(new Error("db gone")),
+      },
+    } as unknown as typeof ctx.storage;
+    const reaper = new RuntimeCredentialReaper(
+      exploding,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    // A throw escaping poll() would land as an unhandled rejection on the
+    // timer and take the process down on a transient DB blip.
+    await expect(reaper.pollForTest()).resolves.toBeUndefined();
+  });
+
+  it("start() schedules a sweep and stop() cancels it", () => {
+    const reaper = new RuntimeCredentialReaper(
+      ctx.storage,
+      RUNTIME_TTL_MS,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    reaper.start();
+    expect(reaper.scheduledForTest()).toBe(true);
+    reaper.stop();
+    expect(reaper.scheduledForTest()).toBe(false);
+  });
+});
+
+describe("KeyStore.list / count — expired credentials are not live", () => {
+  it("omits an expired-but-unreaped runtime credential", async () => {
+    await seedRuntimeCredential({
+      id: "cred_list_live",
+      createdAt: FIXED_NOW,
+      expiresAt: new Date(Date.now() + RUNTIME_TTL_MS),
+    });
+    await seedRuntimeCredential({
+      id: "cred_list_expired",
+      createdAt: new Date(Date.now() - 2 * RUNTIME_TTL_MS),
+      expiresAt: new Date(Date.now() - RUNTIME_TTL_MS),
+    });
+
+    // The reaper runs hourly, so between expiry and the next tick these rows
+    // are dead but unrevoked. Counting them as live is what let an operator
+    // read "N active keys" while the fleet was already retired.
+    const listed = await ctx.storage.keys.list();
+    const ids = listed.map((k) => k.id);
+    expect(ids).toContain("cred_list_live");
+    expect(ids).not.toContain("cred_list_expired");
+    expect(await ctx.storage.keys.count()).toBe(listed.length);
+  });
+
+  it("keeps NULL-expiry human keys in both surfaces", async () => {
+    const human = await ctx.storage.keys.create(
+      {
+        label: "human-live",
+        source: "human-live",
+        role: "admin",
+        type_permissions: { "*": "write" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey("marfa_k1_human_live_list", TEST_API_KEY_SALT),
+    );
+    const listed = await ctx.storage.keys.list();
+    expect(listed.map((k) => k.id)).toContain(human.id);
   });
 });

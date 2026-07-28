@@ -12,6 +12,7 @@ import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -74,6 +75,7 @@ async function installFresh(): Promise<{
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
     tenantId: undefined,
+    authMode: "keys",
     integrationItemId: integration.id,
     manifest: {
       ...manifest(),
@@ -245,6 +247,8 @@ describe("performUninstall — partial-state semantics", () => {
         role: "member",
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource(installed.connectionId),
       },
       hashApiKey("marfa_k1_" + "0".repeat(64), "test-salt"),
       undefined,

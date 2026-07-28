@@ -154,6 +154,7 @@ export const apiKeys = sqliteTable(
       .notNull()
       .default(false),
     connection_id: text("connection_id"),
+    item_source: text("item_source"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),
@@ -163,6 +164,10 @@ export const apiKeys = sqliteTable(
     edge_permissions: text("edge_permissions").notNull().default("{}"),
     metadata_permissions: text("metadata_permissions").notNull().default("{}"),
     created_at: text("created_at").notNull(),
+    // Hard lifetime bound. NULL means the key never expires (human-minted
+    // keys); runtime credentials are always stamped so the bearer gate and
+    // the reaper can retire them without an explicit revoke.
+    expires_at: text("expires_at"),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),
   },
@@ -170,6 +175,13 @@ export const apiKeys = sqliteTable(
     uniqueIndex("idx_api_keys_source_per_tenant")
       .on(table.tenant_id, table.source)
       .where(sql`revoked_at IS NULL`),
+    // Every reaper pass and the metrics counter filter on
+    // `is_runtime_credential` first. Partial on true: the runtime-credential
+    // slice is the only one anything scans by this column, and human keys are
+    // a rounding error beside a week of dispatch volume.
+    index("idx_api_keys_runtime_credential")
+      .on(table.is_runtime_credential)
+      .where(sql`is_runtime_credential`),
   ],
 );
 

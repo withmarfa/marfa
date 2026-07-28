@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     is_platform boolean DEFAULT false NOT NULL,
     metadata_permissions text DEFAULT '{}'::text NOT NULL,
     is_runtime_credential boolean DEFAULT false NOT NULL,
-    connection_id text
+    connection_id text,
+    expires_at text,
+    item_source text
 );
 
 CREATE TABLE IF NOT EXISTS public.audit_log (
@@ -1041,6 +1043,8 @@ END
 $$;
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id ON public.api_keys USING btree (connection_id) WHERE (connection_id IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_runtime_credential ON public.api_keys USING btree (is_runtime_credential) WHERE is_runtime_credential;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant ON public.api_keys USING btree (tenant_id, source) WHERE (revoked_at IS NULL);
 

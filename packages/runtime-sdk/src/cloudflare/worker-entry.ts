@@ -11,10 +11,10 @@
  *      can arm and cancel the alarm, and `POST /verify` for the control
  *      plane's synchronous one-shot dispatch.
  *
- * The entire fetch surface requires the runtime broker key, checked
- * once before routing (see `broker-auth.ts`). Unknown paths 404 rather
- * than falling through to the banner, so a caller cannot mistake a
- * route this deployment does not have for a successful operation.
+ * The entire fetch surface requires this Worker's own identity key,
+ * checked once before routing (see `broker-auth.ts`). Unknown paths 404
+ * rather than falling through to the banner, so a caller cannot mistake
+ * a route this deployment does not have for a successful operation.
  *
  * Per-integration `worker.ts` files become a 5-line file: register
  * handlers, call `createIntegrationWorker(...)`, re-export
@@ -30,6 +30,7 @@ import type { QueueMessage, RuntimeCredential } from "../types.js";
 import { ConnectionGoneError } from "../errors.js";
 import { verifyHandler } from "../verify-handler.js";
 import { brokerAuthFailure } from "./broker-auth.js";
+import { INTEGRATION_NAME_HEADER } from "@withmarfa/shared";
 
 /**
  * Worker `env` shape this helper expects. Integrations may extend it
@@ -46,11 +47,18 @@ export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
    */
   MARFA_RUNTIME_CONTROL_URL: string;
   /**
-   * Long-lived broker key (`is_platform: true` admin) the Worker
-   * presents to the control plane to mint per-Connection runtime
-   * credentials. Never leaves the Worker.
+   * This Worker's own identity key, derived by the control plane as
+   * `HMAC-SHA256(root_secret, integration_name)`. Presented when leasing
+   * a credential, and checked on every inbound call to this Worker's
+   * fetch surface.
+   *
+   * Deliberately not the platform broker key this replaced. That key
+   * mints against any Connection in any tenant, so a copy on every
+   * Worker made every Worker a platform principal; a derived key
+   * authenticates one integration and nothing else, and cannot be used
+   * to compute a sibling's.
    */
-  MARFA_RUNTIME_BROKER_KEY: string;
+  MARFA_WORKER_IDENTITY_KEY: string;
   /**
    * Optional DLQ producer bindings. Wire whichever DLQ queues the
    * Worker's main consumers spill into; the wrapper routes by message
@@ -129,6 +137,7 @@ function leaseErrorCode(body: string): string | null {
  */
 async function mintCredentialViaBroker(
   env: IntegrationWorkerEnv,
+  config: IntegrationWorkerConfig,
   connectionId: string,
 ): Promise<RuntimeCredential> {
   // Encode the id — it reaches this function from a queue envelope or
@@ -140,7 +149,14 @@ async function mintCredentialViaBroker(
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${env.MARFA_RUNTIME_BROKER_KEY}`,
+      authorization: `Bearer ${env.MARFA_WORKER_IDENTITY_KEY}`,
+      // Says which integration this Worker is, so the control plane
+      // knows which derived key to check the bearer against. Not a
+      // credential on its own: naming an integration this Worker is not
+      // selects a key it cannot present. The control plane forwards the
+      // name it proves to the Marfa server, which refuses a Connection
+      // installed for a different integration.
+      [INTEGRATION_NAME_HEADER]: config.integrationName,
     },
   });
   if (!res.ok) {
@@ -194,7 +210,7 @@ export function buildConsumerEnv(
       return makeStorageProxy(perConnectionStub(env, connectionId));
     },
     mintCredential: (connectionId: string) =>
-      mintCredentialViaBroker(env, connectionId),
+      mintCredentialViaBroker(env, config, connectionId),
     async disarmSchedule(connectionId: string, reason: string) {
       const url = new URL("https://do.invalid/disarm-schedule");
       url.searchParams.set("reason", reason);
@@ -241,7 +257,7 @@ export function createIntegrationWorker<
       // whether a given connection is real.
       const refusal = await brokerAuthFailure(
         request,
-        env.MARFA_RUNTIME_BROKER_KEY,
+        env.MARFA_WORKER_IDENTITY_KEY,
       );
       if (refusal) return refusal;
 
@@ -295,7 +311,7 @@ export function createIntegrationWorker<
           ok: true,
           integration: config.integrationName,
           message:
-            "Per-Integration Worker. Queue + DO traffic only; the HTTP surface is reachable over the control plane's Service Binding and requires the runtime broker key.",
+            "Per-Integration Worker. Queue + DO traffic only; the HTTP surface is reachable over the control plane's Service Binding and requires this Worker's identity key.",
         });
       }
       return Response.json({ ok: false, error: "not_found" }, { status: 404 });

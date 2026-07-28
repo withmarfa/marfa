@@ -54,26 +54,43 @@ function makeAppFetch(app: TestContext["app"], apiUrl: string): typeof fetch {
   };
 }
 
+const ACCEPTANCE_INTEGRATION = "acme.acceptance";
+
 async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
     key: ctx.adminKey,
     body: {
       connection_id: connectionId,
+      integration_name: ACCEPTANCE_INTEGRATION,
       label: `acceptance ${suffix}`,
       source: `acceptance-${suffix}`,
-      // The install pipeline narrows these from the manifest's declared
-      // scopes. Default here is permissive — what the control-plane
-      // lease broker passes in routes/lease.ts.
-      type_permissions: { "*": "write" },
     },
   });
   expect(res.status).toBe(201);
   return (await res.json()) as MintResp;
 }
 
-// The mint endpoint requires a real, active system.connection.
+// The mint endpoint requires a real, active system.connection whose
+// persisted manifest names the integration the caller claims to be.
 async function createActiveConnection(): Promise<string> {
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest_name: ACCEPTANCE_INTEGRATION,
+        manifest_version: "1.0.0",
+        publisher: "Acme",
+        // Deliberately not a valid manifest body. The acceptance run
+        // exercises the substrate contract, not permission projection,
+        // and an unresolvable manifest projects the two substrate grants
+        // it needs: `system.activity` and `connection.runtime` writes.
+        manifest: {},
+        registered_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
   const item = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -81,6 +98,7 @@ async function createActiveConnection(): Promise<string> {
         kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
       },
     },
     undefined,

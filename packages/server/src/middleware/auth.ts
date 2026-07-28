@@ -98,6 +98,33 @@ export function hashApiKey(raw: string, salt: string): string {
 }
 
 /**
+ * Narrow a validated credential row to the shape routes see on
+ * `c.var.apiKey`.
+ *
+ * `KeyStore.validate` returns `ApiKey` plus the two fields only the
+ * store needs — `key_hash`, which no route may ever see, and
+ * `revoked_at`, which is already spent by the time validation returns.
+ *
+ * Subtractive on purpose. Rebuilding the object field by field, which is
+ * what this replaced, means every field added to `ApiKey` afterwards is
+ * dropped until someone remembers to extend the list, and dropped
+ * silently: the types agree either way because the missing fields are
+ * optional. `item_source` was carried on the credential row and lost
+ * exactly here, so item provenance kept rotating with the credential
+ * while every layer that could have noticed was looking elsewhere.
+ * Naming what to remove fails closed on the next field; naming what to
+ * keep fails open.
+ */
+export function toRequestApiKey(
+  stored: ApiKey & { key_hash: string; revoked_at: string | null },
+): ApiKey {
+  const key: Partial<typeof stored> = { ...stored };
+  delete key.key_hash;
+  delete key.revoked_at;
+  return key as ApiKey;
+}
+
+/**
  * Stamps a key as recently-touched in the cache, with FIFO eviction
  * past `LAST_USED_CACHE_MAX`. Map iteration order is insertion order in
  * JS, so deleting the first key drops the oldest entry. Re-insertion of
@@ -392,23 +419,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      c.set("apiKey", {
-        id: stored.id,
-        tenant_id: stored.tenant_id ?? undefined,
-        label: stored.label,
-        source: stored.source,
-        role: stored.role,
-        default_tier: stored.default_tier,
-        is_platform: stored.is_platform,
-        is_runtime_credential: stored.is_runtime_credential,
-        connection_id: stored.connection_id,
-        type_permissions: stored.type_permissions,
-        extension_permissions: stored.extension_permissions,
-        edge_permissions: stored.edge_permissions,
-        metadata_permissions: stored.metadata_permissions,
-        created_at: stored.created_at,
-        last_used_at: stored.last_used_at,
-      });
+      c.set("apiKey", toRequestApiKey(stored));
       c.set("authType", "api_key");
 
       // DB-side conditional UPDATE is the authoritative floor; this cache
@@ -622,6 +633,137 @@ export function requireTypeAccess(
   level: "read" | "write",
 ): void {
   checkTypeAccess(c.get("apiKey"), type, level);
+}
+
+/**
+ * True when the caller is a runtime credential reading the one Connection
+ * it is bound to.
+ *
+ * A handler resolves its own `properties.configuration` with a plain
+ * `GET /items/:connection_id`, so it needs read access to a
+ * `system.connection` row. Granting `system.connection: read` in
+ * `type_permissions` would be tenant-wide — `type_permissions` keys on
+ * type, with no per-item axis — handing every connector read access to
+ * every other Connection's configuration in the tenant. This carve-out is
+ * the per-item form: the credential's `connection_id` stamp must equal
+ * the item being read, so a connector sees its own Connection and no
+ * other. Mirrors the identity check the connection-proxy and extension
+ * routes already apply.
+ */
+export function isOwnConnectionRead(
+  key: ApiKey | undefined,
+  item: { id: string; type: string },
+): boolean {
+  return (
+    key?.is_runtime_credential === true &&
+    item.type === "system.connection" &&
+    key.connection_id === item.id
+  );
+}
+
+/**
+ * The `source` an item written by this credential is stamped with.
+ *
+ * For a human-minted key this is the credential's own `source`, which is
+ * immutable for the credential's life and therefore a stable identity.
+ * Runtime credentials break that assumption: they are minted per
+ * dispatch, and their `source` carries a per-mint suffix because the
+ * column is unique per tenant among live credentials. Stamping it would
+ * make provenance a function of which bearer generation happened to be
+ * live at the time.
+ *
+ * That is not cosmetic. Upsert identity is `(source, source_id)`:
+ * `findBySourceId` scopes its lookup by the item's `source`, so a
+ * connector re-syncing an upstream record after a credential refresh
+ * looks for it under a source no row carries, finds nothing, and creates
+ * a second item. Every rotation forks the connector's whole corpus, and
+ * because both writes succeed the failure is silent.
+ *
+ * `item_source` is derived from the bound Connection and is fixed for
+ * the Connection's lifetime, so it is the value a runtime credential
+ * stamps. Falling back to `source` keeps every non-runtime credential on
+ * exactly the behavior it had, and keeps runtime credentials minted
+ * before the column existed working until they are reaped.
+ */
+export function itemProvenanceSource(
+  key: ApiKey | undefined,
+): string | undefined {
+  return key?.item_source ?? key?.source;
+}
+
+/**
+ * Refuse a `system.activity` write that claims to be a Connection other
+ * than the writing runtime credential's own.
+ *
+ * The `system.activity` carve-out in `checkTypeAccess` lets a runtime
+ * credential write into the reserved `system.*` namespace without being
+ * a platform credential, because status reporting is how a connector
+ * says anything at all. That carve-out is about the type; it says
+ * nothing about whose activity the row claims to be.
+ * `properties.connection_id` is the field every operator surface groups,
+ * filters and alerts on, and it arrives in the request body.
+ *
+ * Left unchecked, one connector can write `severity: action_required`
+ * rows against a sibling Connection in the same tenant: a Repairs inbox
+ * entry telling a user to re-authorize an integration that is working
+ * fine, attributed to a connector that never ran. Nothing distinguishes
+ * the row from a real one, because on the wire it is a real one.
+ *
+ * A runtime credential is bound to exactly one Connection, so the rule
+ * is equality with that binding. Every other credential is unaffected:
+ * writing `system.*` at all already requires a platform credential,
+ * which is an operator acting deliberately rather than a connector
+ * acting on its own.
+ *
+ * Called from each door that can write an item rather than folded into
+ * `checkTypeAccess`, which sees a type but never a body. A door that
+ * skips it is the whole gap, so every call site is pinned by tests that
+ * go through the routes — see `routes/item-write-doors.test.ts`, which
+ * asserts the doors agree rather than testing each of them separately.
+ */
+export function requireActivityAttribution(
+  key: ApiKey | undefined,
+  type: string,
+  properties: unknown,
+): void {
+  if (permitsActivityAttribution(key, type, properties)) return;
+  const claimed = claimedConnectionId(properties);
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    "A runtime credential may only write activity for its own connection",
+    { connection_id: typeof claimed === "string" ? claimed : null },
+  );
+}
+
+/**
+ * The predicate behind `requireActivityAttribution`, for the one door
+ * that narrows rather than refuses.
+ *
+ * `POST /items/bulk-actions` takes a filter, not a list of rows, and its
+ * established answer to "the caller may not touch that" is to drop the
+ * row from the match set (`getTypeFilter` already narrows the same set by
+ * type). Throwing there would make one unreachable row fail an otherwise
+ * legitimate action over thousands, which is a worse answer than the one
+ * the route already gives for the type axis.
+ */
+export function permitsActivityAttribution(
+  key: ApiKey | undefined,
+  type: string,
+  properties: unknown,
+): boolean {
+  if (key?.is_runtime_credential !== true) return true;
+  if (type !== "system.activity") return true;
+  // An absent `connection_id` is not a pass. The type requires the field,
+  // so omitting it is either a malformed row or an attempt to write one
+  // no attribution check can bind — and an unattributed activity row
+  // still lands in the operator surface.
+  return claimedConnectionId(properties) === key.connection_id;
+}
+
+function claimedConnectionId(properties: unknown): unknown {
+  return properties && typeof properties === "object"
+    ? (properties as Record<string, unknown>).connection_id
+    : undefined;
 }
 
 /**

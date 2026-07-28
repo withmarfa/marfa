@@ -216,6 +216,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [registration],
       executor: {
         dispatch: (reg, request) => reg.directDispatch!(request),
@@ -269,6 +270,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [registration],
       executor: {
         dispatch: (reg, request) => reg.directDispatch!(request),
@@ -325,6 +327,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [registration],
       executor: {
         dispatch: (reg, request) => reg.directDispatch!(request),
@@ -393,6 +396,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [registration],
       executor: {
         dispatch: (reg, request) => reg.directDispatch!(request),
@@ -433,6 +437,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [registration],
       executor: {
         dispatch: (reg, request) => reg.directDispatch!(request),
@@ -465,6 +470,7 @@ describe("local-runtime supervisor", () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
       registrations: [],
       executor: {
         dispatch: () => {

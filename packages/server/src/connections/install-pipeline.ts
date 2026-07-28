@@ -29,6 +29,12 @@
  * lease broker. Documented here so future readers don't read the
  * bypass as an oversight.
  *
+ * Only the caller check is bypassed. What a minted credential may reach,
+ * and whether it may be minted at all, are properties of the credential
+ * rather than of the transport, so step 2 takes the Connection lifecycle
+ * lock and applies the tenant fence exactly as the other two mint paths
+ * do. A rule enforced on two of three doors is not a rule.
+ *
  * Manifest version compatibility — the install binds the connection to
  * a specific `integration_ref` at the manifest's exact version. When a
  * new manifest version registers as a sibling item, existing
@@ -43,6 +49,16 @@ import {
 } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import {
+  buildEdgePermissions,
+  buildExtensionPermissions,
+  buildTypePermissions,
+} from "./manifest-permissions.js";
+import {
+  runtimeCredentialItemSource,
+  withConnectionLifecycleLock,
+} from "./lifecycle-lock.js";
+import { assertMintableTenantScope } from "./runtime-credential-lifecycle.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -57,6 +73,13 @@ export interface InstallInput {
   apiKeyId: string;
   /** Tenant scope for every row written. */
   tenantId?: string;
+  /**
+   * The deployment's `AUTH_MODE`, for the tenant fence on the credential
+   * mint below. Required rather than defaulted: the permissive value is
+   * the one that reopens the hole, so a caller that has not thought about
+   * it should not compile.
+   */
+  authMode: "hosted" | "keys";
   /** id of the system.integration item the connection binds to. */
   integrationItemId: string;
   /** The manifest blob (already validated on registration). Drives
@@ -131,51 +154,6 @@ export interface InstallResult {
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
-}
-
-/** Translate manifest.permissions into a runtime-credential
- *  `extension_permissions` map. The `connection.runtime` namespace is
- *  always granted write — the runtime needs it to hydrate its own
- *  cursor state — and any manifest-declared extension grants merge on
- *  top. Same shape the broker uses at refresh time, kept in sync here
- *  so the seed credential and refreshed credentials carry identical
- *  permissions. */
-function buildExtensionPermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const out: Record<string, "read" | "write"> = {
-    "connection.runtime": "write",
-  };
-  const declared = manifest.permissions?.extension;
-  if (declared) {
-    for (const [ns, level] of Object.entries(declared)) {
-      out[ns] = level;
-    }
-  }
-  return out;
-}
-
-function buildEdgePermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const declared = manifest.permissions?.edge;
-  return declared ? { ...declared } : {};
-}
-
-/** Translate manifest.target_types + direction into a `type_permissions`
- *  map. Read-only Integrations get `read` on each target type;
- *  write/both get `write`. The runtime's per-Connection
- *  ConnectionClient enforces these at the server boundary. */
-function buildTypePermissions(
-  manifest: IntegrationManifest,
-): Record<string, "read" | "write"> {
-  const level: "read" | "write" =
-    manifest.direction === "read" ? "read" : "write";
-  const out: Record<string, "read" | "write"> = {};
-  for (const t of manifest.target_types) {
-    out[t] = level;
-  }
-  return out;
 }
 
 export async function performInstall(
@@ -268,9 +246,14 @@ export async function performInstall(
     input.tenantId,
   );
   compensations.push(async () => {
-    // Trash rather than hard-delete — leaves an audit trail. The retention
-    // job will purge eventually.
-    await storage.items.transition(connection.id, "trashed", input.tenantId);
+    // `revoked`, not `trashed`. `system.*` types carry the bounded
+    // lifecycle — `active → revoked` is the only transition they have —
+    // so a trash here raises `invalid_transition`, which the
+    // compensation walker logs and swallows. The visible result was a
+    // rollback that left the Connection active: every install failure
+    // after this point stranded a live Connection nobody had asked for.
+    // Terminal either way, and it matches what uninstall writes.
+    await storage.items.transition(connection.id, "revoked", input.tenantId);
   });
 
   // -------------------------------------------------------------------
@@ -282,21 +265,58 @@ export async function performInstall(
   const keyHash = hashApiKey(rawKey, salt);
   const credentialLabel = input.label.slice(0, 200);
   const credentialSource = `integration:${connection.id}`;
+  const credentialExpiresAt = new Date(
+    Date.now() + INSTALL_CREDENTIAL_TTL_SECONDS * 1000,
+  ).toISOString();
 
   let credential;
   try {
-    credential = await storage.keys.createRuntimeCredential(
-      {
-        label: credentialLabel,
-        source: credentialSource,
-        role: "member",
-        type_permissions: buildTypePermissions(manifest),
-        extension_permissions: buildExtensionPermissions(manifest),
-        edge_permissions: buildEdgePermissions(manifest),
-        connection_id: connection.id,
+    // Third mint path, held to the same two rules as the hosted lease
+    // broker and the local supervisor. The lock is what makes the state
+    // read below mean anything — the Connection row is visible to a
+    // tenant admin the moment step 1 commits, so an uninstall can reach
+    // it before this pipeline gets to step 2, and a credential minted
+    // behind that sweep is live against a revoked Connection. The fence
+    // is the rule that a tenant-less credential is the platform tier
+    // rather than a narrow one; an admin installing without naming a
+    // tenant is exactly how one gets minted.
+    credential = await withConnectionLifecycleLock(
+      storage,
+      connection.id,
+      async () => {
+        const current = await storage.items.get(connection.id, input.tenantId);
+        if (current?.type !== "system.connection") {
+          throw new MarfaError(
+            ErrorCode.CONNECTION_NOT_FOUND,
+            `Connection ${connection.id} disappeared before its credential could be minted`,
+            { connection_id: connection.id },
+          );
+        }
+        if (current.state !== "active") {
+          throw new MarfaError(
+            ErrorCode.CONNECTION_NOT_ACTIVE,
+            `Connection ${connection.id} is ${current.state}; cannot mint runtime credential`,
+            { connection_id: connection.id },
+          );
+        }
+        assertMintableTenantScope(current, input.authMode);
+
+        return storage.keys.createRuntimeCredential(
+          {
+            label: credentialLabel,
+            source: credentialSource,
+            role: "member",
+            type_permissions: buildTypePermissions(manifest),
+            extension_permissions: buildExtensionPermissions(manifest),
+            edge_permissions: buildEdgePermissions(manifest),
+            connection_id: connection.id,
+            expires_at: credentialExpiresAt,
+            item_source: runtimeCredentialItemSource(connection.id),
+          },
+          keyHash,
+          input.tenantId,
+        );
       },
-      keyHash,
-      input.tenantId,
     );
   } catch (err) {
     return rollback(err);

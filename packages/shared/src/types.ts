@@ -249,6 +249,15 @@ export interface ApiKey {
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
+  /**
+   * Stable item-provenance source. Runtime credentials rotate frequently,
+   * so their credential `source` identifies one bearer generation while
+   * `item_source` stays fixed for the bound Connection. Item writes stamp
+   * this value when present, preserving `(source, source_id)` idempotency
+   * across credential refreshes. Ordinary keys leave it unset and continue
+   * stamping `source`.
+   */
+  item_source?: string;
   role: MarfaRole;
   /**
    * Platform-credential gate. When `true`, the credential may register and
@@ -327,6 +336,14 @@ export interface ApiKey {
    */
   oidc_scopes?: readonly ("openid" | "profile" | "email" | "offline_access")[];
   created_at: string;
+  /**
+   * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is
+   * refused at the bearer gate exactly like a revoked key. `null` (or
+   * absent) means the key never expires — the shape of every human-minted
+   * key. Runtime credentials are always stamped at mint so the retention
+   * reaper can retire them without an explicit revoke.
+   */
+  expires_at?: string | null;
   last_used_at: string | null;
 }
 

@@ -5,7 +5,7 @@ import {
   MarfaServerClient,
   RuntimeCredentialMintError,
 } from "../marfa-client.js";
-import { brokerAuthFailure } from "../broker-auth.js";
+import { authenticateWorker } from "../worker-identity.js";
 
 /**
  * Lease broker.
@@ -13,29 +13,37 @@ import { brokerAuthFailure } from "../broker-auth.js";
  *   POST /lease/:connection_id/runtime
  *     Mints (or refreshes) the per-Connection runtime credential by
  *     calling Marfa's `/system/runtime-credentials` endpoint. The
- *     control plane authenticates with MARFA_RUNTIME_BROKER_KEY (a
- *     long-lived `is_platform: true` key bound as a secret).
+ *     control plane authenticates to the server with
+ *     MARFA_RUNTIME_BROKER_KEY (a long-lived `is_platform: true` key
+ *     bound as a secret) — that value stays here and is never handed
+ *     downstream.
  *
- *     Permissions default to `*: write` on all three axes. The
- *     integration Worker calls this on every queue message; the
- *     per-Connection DO caches the result with TTL ≤ 5 min so the
- *     broker isn't hit on the hot path.
+ *     The Marfa server resolves the Connection's persisted Integration
+ *     manifest and owns permission projection. The integration Worker calls
+ *     this on every queue message; the per-Connection DO caches the result
+ *     with TTL ≤ 5 min so the broker isn't hit on the hot path.
  *
  *     A mint refusal is classified by the server's error CODE, not its
  *     status: only `connection_not_found` / `connection_not_active`
  *     are about the Connection itself and pass through as terminal.
  *     Everything else — including a 403 that means the broker key
- *     isn't a platform credential — is `mint_failed` 502, which the
- *     Worker retries.
+ *     isn't a platform credential, and the 403 that means the caller
+ *     asked for a Connection belonging to a different integration — is
+ *     `mint_failed` 502, which the Worker retries. A misrouted request
+ *     is a deployment fault, not a verdict on the Connection, and
+ *     nothing re-arms a schedule torn down by mistake.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
  *     Not yet implemented. Returns 501 until install-time manifest
  *     persistence captures `oauth_requirements.<capability_id>`.
  *
- * Both routes require the caller to present the broker key, because a
- * Connection ID is not a secret: it appears in operator surfaces, in
- * logs and in client state, so an unauthenticated mint path hands a
- * tenant-scoped credential to anyone who has seen one.
+ * Both routes authenticate the caller as a specific integration Worker,
+ * because a Connection ID is not a secret: it appears in operator
+ * surfaces, in logs and in client state, so an unauthenticated mint path
+ * hands a tenant-scoped credential to anyone who has seen one. The
+ * integration the caller proves is forwarded to the server, which holds
+ * the persisted manifest and refuses a Connection that belongs to
+ * another integration.
  */
 
 export function registerLeaseRoutes(
@@ -54,11 +62,8 @@ export function registerLeaseRoutes(
         503,
       );
     }
-    const unauthorized = await brokerAuthFailure(
-      c,
-      env.MARFA_RUNTIME_BROKER_KEY,
-    );
-    if (unauthorized) return unauthorized;
+    const caller = await authenticateWorker(c);
+    if (!caller.ok) return caller.response;
 
     const marfa = new MarfaServerClient(
       env.MARFA_API_URL,
@@ -85,19 +90,13 @@ export function registerLeaseRoutes(
     try {
       minted = await marfa.mintRuntimeCredential({
         connection_id: connectionId,
+        // The integration the caller proved, never one it asked for.
+        // The server checks this against the Connection's persisted
+        // manifest, so forwarding anything the request body carried
+        // would hand the check back to the party it exists to check.
+        integration_name: caller.integrationName,
         label,
         source,
-        // Wildcard write on all three permission axes — mirrors the
-        // local-substrate credential mint (see
-        // `packages/server/src/integrations/local-runtime/credentials.ts`).
-        // All three axes must be granted: `edge_permissions` and
-        // `extension_permissions` default to `{}`, which blocks every
-        // `createEdge` / extension write, so a `type_permissions`-only
-        // credential could write items but silently fail edge and
-        // extension writes.
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
         ttl_seconds: ttl,
       });
     } catch (err) {
@@ -161,20 +160,8 @@ export function registerLeaseRoutes(
   });
 
   app.post("/lease/:connection_id/oauth/:capability_id", async (c) => {
-    if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
-      return c.json(
-        {
-          error: "control_plane_misconfigured",
-          message: "MARFA_RUNTIME_BROKER_KEY must be set.",
-        },
-        503,
-      );
-    }
-    const unauthorized = await brokerAuthFailure(
-      c,
-      c.env.MARFA_RUNTIME_BROKER_KEY,
-    );
-    if (unauthorized) return unauthorized;
+    const caller = await authenticateWorker(c);
+    if (!caller.ok) return caller.response;
 
     const connectionId = c.req.param("connection_id");
     const capabilityId = c.req.param("capability_id");

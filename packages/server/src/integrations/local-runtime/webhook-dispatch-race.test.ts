@@ -231,6 +231,7 @@ function buildSupervisor(
   return createSupervisor(storage, {
     apiUrl: "http://test.local",
     apiKeySalt: TEST_API_KEY_SALT,
+    authMode: "keys" as const,
     registrations: [registration],
     executor: {
       dispatch: (reg, request) => reg.directDispatch!(request),

@@ -265,6 +265,7 @@ function makeSupervisor(registration: LocalIntegrationRegistration) {
   return createSupervisor(ctx.storage, {
     apiUrl: "http://test.local",
     apiKeySalt: TEST_API_KEY_SALT,
+    authMode: "keys" as const,
     registrations: [registration],
     executor: {
       dispatch: (reg, request) => {

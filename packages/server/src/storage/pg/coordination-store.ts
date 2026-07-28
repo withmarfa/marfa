@@ -2,21 +2,60 @@ import type { CoordinationStore } from "../interface.js";
 import type { PgClient } from "./connection.js";
 
 /**
- * Postgres-backed job coordination via session-scoped advisory locks.
+ * Postgres-backed coordination via advisory locks.
  *
- * Multi-instance deployments run the same background jobs (trash purge,
- * version thinning, audit cleanup, webhook poller) on every server. Without
- * a cross-instance gate each instance does the same idempotent work on
- * every tick — wasted cycles. The gate is `pg_try_advisory_lock` keyed by a
- * bigint hash of the job name. Exactly one instance acquires per tick; the
- * others see `acquired = false` and skip the tick cleanly.
+ * Two shapes, for two jobs.
  *
- * Session-scoped (not transaction-scoped) because the caller's `fn` may
- * open its own transactions. A dedicated connection is reserved for the
- * lock's lifetime so the acquire / release pair runs on the same session.
+ * `withJobLock` is the cross-instance gate on background work. Multi-instance
+ * deployments run the same jobs (trash purge, version thinning, audit
+ * cleanup, webhook poller) on every server; without a gate each instance does
+ * the same idempotent work on every tick. `pg_try_advisory_lock` keyed by a
+ * bigint hash of the job name gives exactly one instance the tick; the others
+ * see `acquired = false` and skip cleanly.
+ *
+ * `withExclusiveLock` is the blocking gate on a critical section that has to
+ * happen once — the Connection lifecycle lock that serializes a runtime
+ * credential mint against an uninstall.
+ *
+ * **A session-scoped lock needs a session, and a pooled endpoint is not one.**
+ * The pair that reads correctly — reserve a connection, `pg_advisory_lock`,
+ * run, `pg_advisory_unlock` — assumes the reserved link owns a backend for
+ * its whole life. Behind a transaction-mode pooler it does not: PgBouncer
+ * assigns a server connection per transaction, and a bare statement is its
+ * own transaction, so the acquire lands on whichever backend was free and
+ * the matching release need not reach it. Measured against PgBouncer 1.25 in
+ * `pool_mode = transaction`, two callers hold one lock at once and a lock
+ * outlives the client that took it. That is the same class as the
+ * session-level `SET ROLE` that made streaming RLS need a direct endpoint.
+ *
+ * `withExclusiveLock` therefore takes a **transaction**-scoped lock inside an
+ * explicit transaction. A transaction is the unit a pooler keeps on one
+ * backend, so acquire and release are the same backend by construction, and
+ * release happens on commit, rollback or disconnect rather than depending on
+ * a statement arriving somewhere. Slot cost is unchanged: the previous shape
+ * already held a reserved connection for the whole of `fn`.
+ *
+ * `fn` runs outside that transaction, on whatever connection the storage
+ * layer would normally use. It is deliberately not wrapped: the lock's job is
+ * to exclude other lock-takers, not to make `fn` atomic, and the callers
+ * (`connections/lifecycle-lock.ts`) open their own transactions.
+ *
+ * `withJobLock` is deliberately left session-scoped. Its `fn` is a background
+ * job that can run for minutes, and an explicit transaction held that long
+ * is a worse trade than the failure it would fix: the failure is a second
+ * instance repeating idempotent work, and it cannot hang anything because a
+ * try-lock never waits.
  */
 export class PgCoordinationStore implements CoordinationStore {
   constructor(private client: PgClient) {}
+
+  withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const key = `marfa:${name}`;
+    return this.client.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      return fn();
+    }) as Promise<T>;
+  }
 
   async withJobLock<T>(
     name: string,
