@@ -291,5 +291,194 @@ describe("log payload serialization", () => {
     const circular: Record<string, unknown> = { name: "loop" };
     circular.self = circular;
     expect(() => captureLog("warn", "circular", circular)).not.toThrow();
+    const entry = captureLog("warn", "circular", circular);
+    expect((entry.self as Record<string, unknown>).self).toBe("[circular]");
+  });
+
+  // -------------------------------------------------------------------------
+  // Repetition is not recursion
+  // -------------------------------------------------------------------------
+
+  /**
+   * Cycle detection scoped to the whole traversal instead of the current path
+   * renders the second and every later appearance of a shared object as
+   * `"[circular]"`. Sharing is the normal case in a log payload — the same
+   * tenant on every row, one config object referenced twice — so that failure
+   * mode silently deletes evidence at the log layer, which is the exact way the
+   * original root cause stayed hidden.
+   */
+  describe("repeated but acyclic values", () => {
+    it("renders a shared object in full at every position", () => {
+      const tenant = { id: "t_1", name: "Acme" };
+      const entry = captureLog("info", "rows", {
+        rows: [{ tenant }, { tenant }, { tenant }],
+      });
+      const rows = entry.rows as { tenant: Record<string, unknown> }[];
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        expect(row.tenant).toEqual({ id: "t_1", name: "Acme" });
+      }
+    });
+
+    it("renders a value repeated across sibling keys", () => {
+      const shared = { region: "eu-west-2" };
+      const entry = captureLog("info", "config", {
+        primary: shared,
+        replica: shared,
+      });
+      expect(entry.primary).toEqual({ region: "eu-west-2" });
+      expect(entry.replica).toEqual({ region: "eu-west-2" });
+    });
+
+    it("still catches a value that contains itself indirectly", () => {
+      const outer: Record<string, unknown> = { name: "outer" };
+      const inner: Record<string, unknown> = { name: "inner", back: outer };
+      outer.inner = inner;
+      const entry = captureLog("warn", "indirect cycle", { outer });
+      const rendered = entry.outer as Record<string, Record<string, unknown>>;
+      expect(rendered.inner?.name).toBe("inner");
+      expect(rendered.inner?.back).toBe("[circular]");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Totality — a logger that throws destroys more than one that logs badly
+  // -------------------------------------------------------------------------
+
+  describe("hostile payloads", () => {
+    /** Reads the raw bytes written, so "emitted nothing" is distinguishable. */
+    function captureRaw(data: Record<string, unknown>): string {
+      const written: string[] = [];
+      const original = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (chunk: string | Uint8Array): boolean => {
+        written.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      };
+      try {
+        log("error", "hostile", data);
+      } finally {
+        process.stdout.write = original;
+      }
+      return written.join("");
+    }
+
+    it("emits a line for a property whose getter throws, keeping its siblings", () => {
+      // A lazily-resolved relation on a torn-down connection behaves this way,
+      // and it reaches the logger precisely when the connection is what broke.
+      const payload: Record<string, unknown> = { request_id: "req_1" };
+      Object.defineProperty(payload, "detail", {
+        enumerable: true,
+        get() {
+          throw new Error("getter exploded");
+        },
+      });
+      const raw = captureRaw(payload);
+      expect(raw).not.toBe("");
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(entry.request_id).toBe("req_1");
+      expect(String(entry.detail)).toContain("getter exploded");
+    });
+
+    it("emits a line for an Error whose message getter throws", () => {
+      class LazyError extends Error {
+        override get message(): string {
+          throw new Error("message unavailable");
+        }
+      }
+      const raw = captureRaw({ args: [new LazyError()] });
+      expect(raw).not.toBe("");
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(entry.error_summary).toBeDefined();
+      const args = entry.args as Record<string, unknown>[];
+      expect(String(args[0]?.message)).toContain("message unavailable");
+    });
+
+    it("emits a line for a value whose toJSON throws", () => {
+      const raw = captureRaw({
+        payload: {
+          toJSON() {
+            throw new Error("toJSON exploded");
+          },
+        },
+      });
+      expect(raw).not.toBe("");
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(String(entry.payload)).toContain("toJSON exploded");
+    });
+
+    it("renders a BigInt rather than letting it take the line down", () => {
+      // `JSON.stringify` throws outright on a BigInt — not a silent drop, a
+      // TypeError that would propagate out of the logger.
+      const raw = captureRaw({ rows_scanned: 9007199254740993n });
+      expect(raw).not.toBe("");
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(entry.rows_scanned).toBe("9007199254740993");
+    });
+
+    it("keeps values JSON.stringify would silently drop", () => {
+      const raw = captureRaw({
+        handler: function retryUpload() {
+          return null;
+        },
+        marker: Symbol("boundary"),
+      });
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(entry.handler).toBe("[function retryUpload]");
+      expect(String(entry.marker)).toContain("boundary");
+    });
+
+    it("keeps a Date readable instead of flattening it to an empty object", () => {
+      // A Date has no own enumerable properties, so rebuilding it field by
+      // field yields `{}` and the timestamp is gone.
+      const raw = captureRaw({ started_at: new Date("2026-07-27T12:00:00Z") });
+      const entry = JSON.parse(raw) as Record<string, unknown>;
+      expect(entry.started_at).toBe("2026-07-27T12:00:00.000Z");
+    });
+
+    it("never throws, whatever it is handed", () => {
+      const throwingGetter: Record<string, unknown> = {};
+      Object.defineProperty(throwingGetter, "boom", {
+        enumerable: true,
+        get() {
+          throw new Error("nope");
+        },
+      });
+      class LazyError extends Error {
+        override get message(): string {
+          throw new Error("nope");
+        }
+      }
+      const selfReferential: Record<string, unknown> = {};
+      selfReferential.self = selfReferential;
+
+      const payloads: Record<string, unknown>[] = [
+        throwingGetter,
+        { err: new LazyError() },
+        {
+          bad: {
+            toJSON() {
+              throw new Error("nope");
+            },
+          },
+        },
+        { big: 1n },
+        selfReferential,
+        {
+          proxied: new Proxy(
+            {},
+            {
+              ownKeys() {
+                throw new Error("nope");
+              },
+            },
+          ),
+        },
+        { deep: JSON.parse('{"a":{"b":{"c":{"d":{"e":{"f":{"g":1}}}}}}}') },
+      ];
+      for (const payload of payloads) {
+        expect(() => captureRaw(payload)).not.toThrow();
+        expect(captureRaw(payload)).not.toBe("");
+      }
+    });
   });
 });

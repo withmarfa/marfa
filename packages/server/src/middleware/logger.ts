@@ -82,26 +82,66 @@ function emitOtelLog(
   });
 }
 
+/**
+ * Emit one structured log line.
+ *
+ * Total by construction: no payload can make this throw, and every call emits
+ * something. That is not defensiveness for its own sake. Every caller of this
+ * function is reporting a problem, so a logger that throws takes out the code
+ * path that was trying to tell someone — and the failure it swallows is the
+ * one nobody then has any record of.
+ */
 export function log(
   level: LogLevel,
   message: string,
   data?: Record<string, unknown>,
 ): void {
-  const { payload, firstError } = prepareLogPayload(data);
-  // The one-line summary is what a human greps for; the structured form is
-  // what a log query filters on. A caller that supplied its own summary knows
-  // more about the failure than this does, so it wins.
-  if (firstError !== undefined && payload.error_summary === undefined) {
-    payload.error_summary = formatErrorSummary(firstError);
+  let payload: Record<string, unknown>;
+  let line: string;
+  try {
+    const prepared = prepareLogPayload(data);
+    payload = prepared.payload;
+    // The one-line summary is what a human greps for; the structured form is
+    // what a log query filters on. A caller that supplied its own summary knows
+    // more about the failure than this does, so it wins.
+    if (
+      prepared.firstError !== undefined &&
+      payload.error_summary === undefined
+    ) {
+      payload.error_summary = formatErrorSummary(prepared.firstError);
+    }
+    line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      ...payload,
+    });
+  } catch (err) {
+    // Unconditional net. Every rendering path above is individually guarded, so
+    // nothing that satisfies this function's signature reaches here today and
+    // no test can exercise it — which is the point: it is what stops the next
+    // payload shape nobody anticipated from silently deleting a log line. Built
+    // from primitives only, so it cannot fail in turn.
+    payload = { log_payload_unrenderable: describeThrown(err) };
+    line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level,
+      message: safeString(message),
+      ...payload,
+    });
   }
-  const entry = {
-    timestamp: new Date().toISOString(),
-    level,
-    message,
-    ...payload,
-  };
-  process.stdout.write(JSON.stringify(entry) + "\n");
-  emitOtelLog(level, message, payload);
+  try {
+    process.stdout.write(line + "\n");
+  } catch {
+    // stdout is gone (a closed pipe on shutdown). There is nothing left to
+    // report the failure with, and throwing here would only hide the caller's.
+  }
+  try {
+    emitOtelLog(level, message, payload);
+  } catch {
+    // The telemetry mirror is best-effort and must never take out the primary
+    // stdout line, which has already been written above.
+  }
 }
 
 /**
@@ -127,30 +167,59 @@ function prepareLogPayload(data: Record<string, unknown> | undefined): {
   if (!data) return { payload, firstError: undefined };
 
   let firstError: unknown;
-  // Cycles are rare in log payloads but fatal when they happen: an unguarded
-  // `JSON.stringify` throws, and a logger that throws takes out the code path
-  // that was trying to report a problem.
-  const seen = new WeakSet();
+  /**
+   * The objects on the path from the payload root down to the value being
+   * visited, and only those. A value is circular when it contains *itself*, not
+   * when it appears twice — a traversal-wide set would render the second and
+   * every later appearance of a repeated-but-acyclic value (the same tenant
+   * record on ten rows, one shared config object) as `"[circular]"`, deleting
+   * the evidence the line exists to carry. Entries are removed on the way back
+   * up so siblings each get a full rendering.
+   */
+  const ancestors = new Set<object>();
 
   const visit = (value: unknown, depth: number): unknown => {
-    if (value == null || typeof value !== "object") return value;
+    if (value === null || value === undefined) return value;
+
+    const kind = typeof value;
+    // `JSON.stringify` throws outright on a BigInt, and silently drops symbols
+    // and functions — a dropped key is lost evidence, so render them instead.
+    if (kind === "bigint" || kind === "symbol" || kind === "function") {
+      return stringifyThrownValue(value);
+    }
+    // Everything left that is not an object is a string, number or boolean.
+    if (kind !== "object") return value;
+
     if (isErrorLike(value)) {
       firstError ??= value;
       return serializeError(value);
     }
     if (depth >= MAX_PAYLOAD_DEPTH) return "[truncated]";
-    if (seen.has(value)) return "[circular]";
-    seen.add(value);
-    if (Array.isArray(value))
-      return value.map((item) => visit(item, depth + 1));
-    const out: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value)) {
-      out[key] = visit(nested, depth + 1);
+    if (ancestors.has(value)) return "[circular]";
+
+    ancestors.add(value);
+    try {
+      // Honor `toJSON` the way `JSON.stringify` would, but here rather than at
+      // stringify time, where a throwing implementation would take the whole
+      // line down. Dates, URLs and every other self-rendering value pass
+      // through this; without it they flatten to `{}` (no own enumerable
+      // properties) and the value is gone.
+      const custom = viaToJson(value);
+      if (custom.handled) return visit(custom.value, depth + 1);
+      if (Array.isArray(value)) {
+        return value.map((item) => visit(item, depth + 1));
+      }
+      const out: Record<string, unknown> = {};
+      for (const [key, nested] of safeEntries(value)) {
+        out[key] = visit(nested, depth + 1);
+      }
+      return out;
+    } finally {
+      ancestors.delete(value);
     }
-    return out;
   };
 
-  for (const [key, value] of Object.entries(data)) {
+  for (const [key, value] of safeEntries(data)) {
     payload[key] = visit(value, 0);
   }
   return { payload, firstError };
@@ -165,10 +234,82 @@ const MAX_PAYLOAD_DEPTH = 6;
  * subclass. The internal-class tag survives all three.
  */
 function isErrorLike(value: object): boolean {
-  return (
-    value instanceof Error ||
-    Object.prototype.toString.call(value) === "[object Error]"
-  );
+  if (value instanceof Error) return true;
+  return safeToStringTag(value) === "[object Error]";
+}
+
+// ---------------------------------------------------------------------------
+// Total property access
+//
+// Everything below assumes the logged value is hostile: a getter that throws,
+// a `toJSON` that throws, a `toString` that throws. None of that is exotic —
+// a lazily-resolved ORM relation, a proxy over a torn-down resource, and a
+// half-constructed config object all behave this way — and all of it reaches
+// the logger precisely when something has already gone wrong.
+// ---------------------------------------------------------------------------
+
+/** Short, always-safe description of a value that could not be rendered. */
+function describeThrown(err: unknown): string {
+  try {
+    if (err instanceof Error && typeof err.message === "string") {
+      return err.message.slice(0, 200);
+    }
+  } catch {
+    // A throwing `message` getter on the failure itself. Fall through.
+  }
+  return "unknown error";
+}
+
+/** `String(value)` that cannot be defeated by a throwing `toString`. */
+function safeString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return safeToStringTag(value);
+  }
+}
+
+function safeToStringTag(value: unknown): string {
+  try {
+    return Object.prototype.toString.call(value);
+  } catch {
+    return "[unrenderable]";
+  }
+}
+
+/** Own enumerable entries, with each property read guarded individually. */
+function safeEntries(value: object): [string, unknown][] {
+  let keys: string[];
+  try {
+    keys = Object.keys(value);
+  } catch (err) {
+    return [["log_keys_unreadable", describeThrown(err)]];
+  }
+  return keys.map((key) => [key, readProperty(value, key)]);
+}
+
+function readProperty(value: object, key: string): unknown {
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch (err) {
+    return `[unreadable: ${describeThrown(err)}]`;
+  }
+}
+
+/** Result of consulting a value's own `toJSON`, if it has a usable one. */
+function viaToJson(value: object): { handled: boolean; value?: unknown } {
+  let toJson: unknown;
+  try {
+    toJson = (value as { toJSON?: unknown }).toJSON;
+  } catch (err) {
+    return { handled: true, value: `[unreadable: ${describeThrown(err)}]` };
+  }
+  if (typeof toJson !== "function") return { handled: false };
+  try {
+    return { handled: true, value: (toJson as () => unknown).call(value) };
+  } catch (err) {
+    return { handled: true, value: `[unserializable: ${describeThrown(err)}]` };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -212,22 +353,33 @@ const MAX_AGGREGATE_ERRORS = 5;
  * makes a failed boot indistinguishable from any other failed boot.
  */
 export function formatErrorSummary(err: unknown): string {
-  const parts: string[] = [];
-  let current: unknown = err;
-  for (let depth = 0; current != null && depth <= MAX_CAUSE_DEPTH; depth += 1) {
-    parts.push(describeErrorValue(current));
-    current = nextInChain(current);
+  try {
+    const parts: string[] = [];
+    let current: unknown = err;
+    for (
+      let depth = 0;
+      current !== null && current !== undefined && depth <= MAX_CAUSE_DEPTH;
+      depth += 1
+    ) {
+      parts.push(describeErrorValue(current));
+      current = nextInChain(current);
+    }
+    if (parts.length === 0) return "unknown error";
+    return parts.join(" <- caused by ");
+  } catch (err2) {
+    return `[unsummarizable: ${describeThrown(err2)}]`;
   }
-  if (parts.length === 0) return "unknown error";
-  return parts.join(" <- caused by ");
 }
 
 function nextInChain(err: unknown): unknown {
-  if (err == null || typeof err !== "object") return undefined;
-  const e = err as { cause?: unknown; errors?: unknown };
-  if (e.cause != null) return e.cause;
+  if (err === null || err === undefined || typeof err !== "object") {
+    return undefined;
+  }
+  const cause = readProperty(err, "cause");
+  if (cause !== null && cause !== undefined) return cause;
   // Only the first sub-error rides the summary; serializeError keeps them all.
-  if (Array.isArray(e.errors) && e.errors.length > 0) return e.errors[0];
+  const errors = readProperty(err, "errors");
+  if (Array.isArray(errors) && errors.length > 0) return errors[0];
   return undefined;
 }
 
@@ -243,26 +395,35 @@ function stringifyThrownValue(value: unknown): string {
     typeof value === "bigint" ||
     typeof value === "symbol"
   ) {
-    return value.toString();
+    return safeString(value);
   }
   if (typeof value === "function") {
-    return `[function ${value.name || "anonymous"}]`;
+    return `[function ${readFunctionName(value)}]`;
   }
   try {
     const json = JSON.stringify(value);
+    // `slice` stays inside the try: `JSON.stringify` is typed as returning a
+    // string but returns undefined for a value that renders to nothing.
     if (json !== "{}") return json.slice(0, 200);
   } catch {
-    // Circular or non-serializable — fall through to the tag below.
+    // Circular, a BigInt, or a throwing toJSON — fall through to the tag below.
   }
-  return Object.prototype.toString.call(value);
+  return safeToStringTag(value);
+}
+
+function readFunctionName(value: object): string {
+  const name = readProperty(value, "name");
+  return typeof name === "string" && name !== "" ? name : "anonymous";
 }
 
 function describeErrorValue(err: unknown): string {
-  if (err == null) return "unknown error";
+  if (err === null || err === undefined) return "unknown error";
   if (typeof err !== "object") return stringifyThrownValue(err);
-  const e = err as { name?: unknown; message?: unknown; code?: unknown };
-  const name = typeof e.name === "string" && e.name !== "" ? e.name : undefined;
-  const message = typeof e.message === "string" ? e.message.trim() : "";
+  const rawName = readProperty(err, "name");
+  const rawMessage = readProperty(err, "message");
+  const name =
+    typeof rawName === "string" && rawName !== "" ? rawName : undefined;
+  const message = typeof rawMessage === "string" ? rawMessage.trim() : "";
 
   let text: string;
   if (message && name && name !== "Error") text = `${name}: ${message}`;
@@ -270,9 +431,9 @@ function describeErrorValue(err: unknown): string {
   else if (name) text = name;
   else text = stringifyThrownValue(err);
 
-  const code = e.code;
+  const code = readProperty(err, "code");
   if (typeof code === "string" || typeof code === "number") {
-    const codeText = code.toString();
+    const codeText = safeString(code);
     if (!text.includes(codeText)) text += ` (${codeText})`;
   }
   return text;
@@ -283,31 +444,42 @@ function describeErrorValue(err: unknown): string {
  * above, the full cause chain, and every branch of an `AggregateError`.
  * Stacks ride along outside production, where they are worth more than the
  * noise they add.
+ *
+ * Every field is read through a guard. An `Error` subclass that computes its
+ * `message` lazily — and throws while doing so, because whatever it needed is
+ * exactly what has just failed — is otherwise able to suppress the log line
+ * describing its own failure.
  */
 export function serializeError(err: unknown, depth = 0): unknown {
-  if (err == null) return null;
+  if (err === null || err === undefined) return null;
   if (typeof err !== "object") return stringifyThrownValue(err);
 
-  const e = err as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  if (typeof e.name === "string" && e.name !== "") out.name = e.name;
-  out.message = typeof e.message === "string" ? e.message : "";
+  const name = readProperty(err, "name");
+  if (typeof name === "string" && name !== "") out.name = name;
+  const message = readProperty(err, "message");
+  out.message = typeof message === "string" ? message : "";
 
   for (const key of ERROR_DETAIL_KEYS) {
-    const value = e[key];
+    const value = readProperty(err, key);
     if (typeof value === "string" || typeof value === "number") {
       out[key] = value;
     }
   }
 
-  if (process.env.NODE_ENV !== "production" && typeof e.stack === "string") {
-    out.stack = e.stack;
+  if (process.env.NODE_ENV !== "production") {
+    const stack = readProperty(err, "stack");
+    if (typeof stack === "string") out.stack = stack;
   }
 
   if (depth < MAX_CAUSE_DEPTH) {
-    if (e.cause != null) out.cause = serializeError(e.cause, depth + 1);
-    if (Array.isArray(e.errors) && e.errors.length > 0) {
-      out.errors = e.errors
+    const cause = readProperty(err, "cause");
+    if (cause !== null && cause !== undefined) {
+      out.cause = serializeError(cause, depth + 1);
+    }
+    const errors = readProperty(err, "errors");
+    if (Array.isArray(errors) && errors.length > 0) {
+      out.errors = errors
         .slice(0, MAX_AGGREGATE_ERRORS)
         .map((sub) => serializeError(sub, depth + 1));
     }
