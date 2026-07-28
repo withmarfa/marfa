@@ -49,6 +49,30 @@ function lockKey(clientId: string, authUserId: string): string {
 }
 
 /**
+ * How many callers are holding or queued on each key.
+ *
+ * This exists for the tests that pin an interleaving. To show that a
+ * competing request really overlapped the one holding the lock, a test
+ * has to observe it arrive; the alternative is to pause for a while and
+ * assume it did. That assumption is invisible when it breaks, because a
+ * request arriving after the holder has already finished leaves exactly
+ * the same end state as one that arrived in time — the test keeps
+ * passing and quietly stops covering the race.
+ */
+const depth = new Map<string, number>();
+
+/**
+ * Callers holding or queued on the (client, user) lock right now.
+ *
+ * Read this to observe arrival, never to decide anything: the count is
+ * only true at the instant it is read, so branching on it would race the
+ * very thing the lock exists to serialize.
+ */
+export function consentLockDepth(clientId: string, authUserId: string): number {
+  return depth.get(lockKey(clientId, authUserId)) ?? 0;
+}
+
+/**
  * Run `fn` with exclusive access to the (client, user) grant. Waiters run
  * in call order, and a rejection from one caller does not strand the
  * next: the queue advances on settlement, not on success.
@@ -64,14 +88,20 @@ export async function withConsentLock<T>(
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  // Published before the first await, so two synchronous callers queue in
-  // the order they arrived rather than both seeing an empty slot.
+  // Both published before the first await, so two synchronous callers
+  // queue in the order they arrived rather than both seeing an empty
+  // slot, and so a caller counts as arrived from the moment it starts
+  // waiting rather than once it gets its turn.
   inFlight.set(key, held);
+  depth.set(key, (depth.get(key) ?? 0) + 1);
   if (predecessor) await predecessor;
   try {
     return await fn();
   } finally {
     release();
     if (inFlight.get(key) === held) inFlight.delete(key);
+    const remaining = (depth.get(key) ?? 1) - 1;
+    if (remaining > 0) depth.set(key, remaining);
+    else depth.delete(key);
   }
 }

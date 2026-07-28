@@ -51,7 +51,7 @@
  * (prompt=none, prompt=login, empty scope) are minted locally with
  * better-auth's `makeSignature` against the fixed test auth secret.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
 import {
@@ -59,9 +59,18 @@ import {
   markEmailVerified,
   request,
   waitForAudit,
+  waitForConsentLockDepth,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
+
+// Every test here boots a server, signs a user up and in (two password
+// hashes), and drives a full consent round trip before it asserts
+// anything. That is a lot of real work to fit inside the default budget
+// on a machine running the rest of the suite beside it, and an overrun
+// reports as a timeout — a result that says nothing about the property
+// the test exists to check.
+vi.setConfig({ testTimeout: 45_000 });
 
 let ctx: TestContext | undefined;
 
@@ -1244,6 +1253,12 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
  * Replace `getPriorConsent` with one that performs the real read and then
  * parks the first caller until the returned gate is opened. Returns the
  * unpatched reader so assertions can still see the stored state.
+ *
+ * The read the silent path makes runs inside the consent lock, so parking
+ * on it holds the lock for as long as the gate stays shut. That is what
+ * puts the competing request in the queue instead of letting it run to
+ * completion, and it is the whole reason these two tests describe a race
+ * rather than a sequence.
  */
 function holdSilentFlowAfterReadingGrant(c: TestContext): {
   reachedRead: Promise<void>;
@@ -1273,16 +1288,6 @@ function holdSilentFlowAfterReadingGrant(c: TestContext): {
     readStandingGrant,
   };
 }
-
-/**
- * How long the competing request gets before the parked one is released.
- * It does not get clear of the gate — the lock is what it parks on, and
- * it stays parked until the holder returns. The wait is only there to
- * make the ordering deterministic: without it the competing request might
- * not have reached the lock at all before the holder finishes, and the
- * test would exercise two requests that never overlapped.
- */
-const RACE_SETTLE_MS = 150;
 
 describe("GET /auth/authorize (consent skip) — concurrent grant changes", () => {
   it("REGRESSION: a narrowing that lands mid-flight is not undone by the silent restoration", async () => {
@@ -1319,7 +1324,10 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
       },
       headers: { cookie, origin: ORIGIN },
     });
-    await new Promise((r) => setTimeout(r, RACE_SETTLE_MS));
+    // The narrowing has to be queued behind the parked holder before the
+    // holder is let go. Released early, the two run one after the other
+    // and the restoration never has a decision to overwrite.
+    await waitForConsentLockDepth(clientId, authUserId, 2);
     resume();
 
     const [silentRes, narrowRes] = await Promise.all([silent, narrowing]);
@@ -1369,7 +1377,9 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
       `/auth/grants/${grantItemId}/revoke`,
       { headers: { cookie, origin: ORIGIN } },
     );
-    await new Promise((r) => setTimeout(r, RACE_SETTLE_MS));
+    // Same reason as the narrowing case: the revoke has to be waiting on
+    // the lock, not arriving after the holder has already restored.
+    await waitForConsentLockDepth(clientId, authUserId, 2);
     resume();
 
     const [, revokeRes] = await Promise.all([silent, revoke]);
