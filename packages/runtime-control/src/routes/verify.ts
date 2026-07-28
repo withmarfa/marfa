@@ -39,8 +39,9 @@ import { MarfaServerClient } from "../marfa-client.js";
  *      server package, and the wire shape is what every per-Integration
  *      Worker consumes (high stability, low drift risk).
  *   3. Resolve the integration's service binding and POST `/verify`
- *      with the envelope — the SDK's `verifyHandler` runs the
- *      registered handler synchronously and returns its result.
+ *      with the envelope, presenting `MARFA_RUNTIME_BROKER_KEY` — the
+ *      SDK's `verifyHandler` runs the registered handler synchronously
+ *      and returns its result.
  *   4. Poll `system.activity` for rows tagged with the connection,
  *      since the dispatch timestamp.
  *   5. Surface the combined response.
@@ -239,6 +240,21 @@ export function registerVerifyRoute(
       );
     }
 
+    // The broker key is only needed for the dispatch hop, so it is
+    // checked here rather than at the top of the route: the inbound
+    // gate on verify is the operator's platform bearer, and failing
+    // early on a key this route has not used yet would mask genuine
+    // 400s from the request body.
+    if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
+      return c.json(
+        {
+          error: "control_plane_misconfigured",
+          message: "MARFA_RUNTIME_BROKER_KEY must be set.",
+        },
+        503,
+      );
+    }
+
     // Dispatch timestamp — used to scope the activity poll to rows
     // emitted by THIS verify run. Tightened by 1 second to absorb
     // clock skew between the control plane and the server.
@@ -250,7 +266,15 @@ export function registerVerifyRoute(
       dispatchRes = await binding.fetch(
         new Request("https://integration.invalid/verify", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            // The integration Worker gates its whole fetch surface on
+            // the broker key. Note this is deliberately NOT the
+            // operator's bearer: the operator's platform credential is
+            // what authorizes the verify request at this route, and it
+            // stops here.
+            authorization: `Bearer ${c.env.MARFA_RUNTIME_BROKER_KEY}`,
+          },
           body: JSON.stringify({ envelope }),
         }),
       );

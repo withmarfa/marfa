@@ -37,7 +37,10 @@ export function registerArmScheduleRoute(
         503,
       );
     }
-    const unauthorized = brokerAuthFailure(c, c.env.MARFA_RUNTIME_BROKER_KEY);
+    const unauthorized = await brokerAuthFailure(
+      c,
+      c.env.MARFA_RUNTIME_BROKER_KEY,
+    );
     if (unauthorized) return unauthorized;
 
     let body: { integration_name?: string };
@@ -69,7 +72,15 @@ export function registerArmScheduleRoute(
     let res: Response;
     try {
       res = await binding.fetch(
-        new Request(inner.toString(), { method: "POST" }),
+        new Request(inner.toString(), {
+          method: "POST",
+          // Present the broker key onward. The Service Binding proves
+          // topology; the Worker still verifies its caller, so the hop
+          // carries the same credential in both directions.
+          headers: {
+            authorization: `Bearer ${c.env.MARFA_RUNTIME_BROKER_KEY}`,
+          },
+        }),
       );
     } catch (err) {
       return c.json(

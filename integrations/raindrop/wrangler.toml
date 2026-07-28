@@ -6,6 +6,21 @@ main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are stated because `preview_urls` has no dependable
+# default. Wrangler's deploy path resolves none locally: an unset
+# value is dropped from the request body and the API decides. Its
+# config schema documents a default of `false`, and the helper it
+# mocks that API with computes a third answer. Left unset, per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames can keep
+# serving the Worker.
+workers_dev = false
+preview_urls = false
+
 [vars]
 INTEGRATION_NAME = "raindrop.bookmarks"
 MANIFEST_CRON = "*/10 * * * *"
@@ -22,6 +37,8 @@ new_sqlite_classes = ["PerConnectionState"]
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "marfa-integration-raindrop-staging"
+workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 INTEGRATION_NAME = "raindrop.bookmarks"
@@ -54,6 +71,8 @@ dead_letter_queue = "marfa-scheduled-poll-raindrop-staging-dlq"
 # ---- Prod -----------------------------------------------------------------
 [env.prod]
 name = "marfa-integration-raindrop-prod"
+workers_dev = false
+preview_urls = false
 
 [env.prod.vars]
 INTEGRATION_NAME = "raindrop.bookmarks"

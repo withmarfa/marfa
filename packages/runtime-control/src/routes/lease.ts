@@ -43,7 +43,10 @@ export function registerLeaseRoutes(
         503,
       );
     }
-    const unauthorized = brokerAuthFailure(c, env.MARFA_RUNTIME_BROKER_KEY);
+    const unauthorized = await brokerAuthFailure(
+      c,
+      env.MARFA_RUNTIME_BROKER_KEY,
+    );
     if (unauthorized) return unauthorized;
 
     const marfa = new MarfaServerClient(
@@ -106,7 +109,7 @@ export function registerLeaseRoutes(
     );
   });
 
-  app.post("/lease/:connection_id/oauth/:capability_id", (c) => {
+  app.post("/lease/:connection_id/oauth/:capability_id", async (c) => {
     if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
       return c.json(
         {
@@ -116,7 +119,10 @@ export function registerLeaseRoutes(
         503,
       );
     }
-    const unauthorized = brokerAuthFailure(c, c.env.MARFA_RUNTIME_BROKER_KEY);
+    const unauthorized = await brokerAuthFailure(
+      c,
+      c.env.MARFA_RUNTIME_BROKER_KEY,
+    );
     if (unauthorized) return unauthorized;
 
     const connectionId = c.req.param("connection_id");
