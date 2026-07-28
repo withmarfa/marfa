@@ -442,6 +442,118 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
   });
 });
 
+/**
+ * The two rules this mint shares with the hosted one.
+ *
+ * Every other case in this file runs in `keys` mode, where nothing
+ * carries a tenant and the fence is a deliberate no-op — so the fence
+ * could be deleted outright and the whole file would stay green. The
+ * cases below boot `hosted` instead, which is the only mode where either
+ * rule has anything to say.
+ */
+describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
+  beforeEach(async () => {
+    // Replaces the keys-mode context the outer hook built. `authMode` is
+    // fixed when storage is opened, so a hosted case needs its own; the
+    // outer `afterEach` cleans up whichever one is current.
+    await ctx.cleanup();
+    ctx = await createTestContext({ authMode: "hosted" });
+  });
+
+  it("refuses to mint for a Connection with no tenant", async () => {
+    // The rule is the substrate's, not the transport's. A tenant-less
+    // credential is not a narrow credential but the platform tier: the
+    // RLS wrapper skips a tenant-less caller and the storage layer drops
+    // its tenant predicate, so the connector reads every tenant's rows.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    await expect(
+      mintLocalRuntimeCredential(
+        ctx.storage,
+        TEST_API_KEY_SALT,
+        connectionId,
+        "hosted",
+      ),
+    ).rejects.toThrow(/no tenant/i);
+  });
+
+  it("keeps minting for a Connection that has one", async () => {
+    // The fence must refuse the tenant-less case and nothing else, or it
+    // takes every local integration offline rather than one bad install.
+    const tenant = await ctx.storage.tenants!.create("local-mint-scoped");
+    const integrationId = await createIntegrationItem();
+    const properties: Record<string, unknown> = {
+      kind: "integration",
+      status: "active",
+      granted_at: new Date().toISOString(),
+      integration_ref: integrationId,
+    };
+    const connection = await ctx.storage.items.create(
+      { type: "system.connection", properties },
+      tenant.id,
+    );
+
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connection.id,
+      "hosted",
+    );
+    expect(credential.connection_id).toBe(connection.id);
+  });
+
+  it("blocks on the Connection lifecycle lock and re-reads state under it", async () => {
+    // The supervisor's dispatch lock is a different key and does not
+    // serialize against uninstall. Without the lifecycle lock the state
+    // check below is a snapshot of a decision the uninstall pipeline has
+    // already overturned, and the dispatch runs on a credential minted
+    // behind a sweep that had revoked everything.
+    const tenant = await ctx.storage.tenants!.create("local-mint-race");
+    const integrationId = await createIntegrationItem();
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: integrationId,
+        },
+      },
+      tenant.id,
+    );
+
+    let settled = false;
+    let failure: unknown = null;
+
+    await ctx.storage.coordination.withExclusiveLock(
+      `connection-lifecycle:${connection.id}`,
+      async () => {
+        void mintLocalRuntimeCredential(
+          ctx.storage,
+          TEST_API_KEY_SALT,
+          connection.id,
+          "hosted",
+        ).catch((err: unknown) => {
+          settled = true;
+          failure = err;
+        });
+        await new Promise((r) => setTimeout(r, 200));
+        // Asserted before the revoke rather than after: what is being
+        // pinned is that the mint is still waiting, not merely that it
+        // ends up refused.
+        expect(settled).toBe(false);
+        await ctx.storage.items.transition(connection.id, "revoked", tenant.id);
+      },
+    );
+
+    await new Promise((r) => setTimeout(r, 200));
+    expect(settled).toBe(true);
+    expect(String(failure)).toMatch(/cannot mint runtime credential/);
+  });
+});
+
 describe("runtime credential TTL vs the dispatch bound", () => {
   it("outlives the longest possible dispatch", () => {
     // The invariant that lets expiry be enforced at all. The local substrate
