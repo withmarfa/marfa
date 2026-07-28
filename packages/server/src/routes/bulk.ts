@@ -315,7 +315,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Items"],
   summary: "Get a bulk-action job",
   description:
-    "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Only the credential that created the job or an admin can read it.",
+    "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it, by an admin within the same space, and by a platform credential. A job in another space reads as absent.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -341,7 +341,8 @@ const bulkActionStatusRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Not the originating credential and not an admin",
+      description:
+        "Not the originating credential, and not an admin for this space",
     },
     404: {
       content: {
@@ -392,7 +393,8 @@ const bulkActionCancelRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Not the originating credential and not an admin",
+      description:
+        "Not the originating credential, and not an admin for this space",
     },
     404: {
       content: {
@@ -988,19 +990,36 @@ export function bulkRoutes(storage: Storage) {
   return router;
 }
 
-// Caller is allowed to read/cancel a job only if it created the job
-// (api_key_id match) or holds platform admin. Tenant match alone is not
-// sufficient — within a tenant, separate credentials don't observe each
-// other's bulk_action jobs (consistent with how other ops surfaces
-// behave).
+// Who may read or cancel a job, in the order the checks run:
+//
+//   - an unbound admin, which is platform authority, reaches any job;
+//   - a tenant-bound admin reaches every job in its own tenant, and is
+//     cloaked from the rest;
+//   - anyone else reaches only jobs their own credential created, since
+//     within a tenant separate credentials do not observe each other's
+//     bulk_action jobs.
+//
+// The role alone is not platform authority: `POST /admin/tenants/:id/keys`
+// mints admin keys bound to one tenant, and `getById` applies no tenant
+// filter, so trusting the role by itself hands a bound key every other
+// tenant's jobs. Postgres row-level security already fences tenanted rows
+// independently, but it cannot fence the null-tenant slice, and every
+// purge job is null-tenant because purge is platform-gated. This function
+// is the fence that covers both, and the only one on SQLite.
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
-  // Admin (platform-admin or tenant-admin with no tenant scope on the
-  // job) bypasses the credential check.
-  if (apiKey.role === "admin") return;
+  if (apiKey.role === "admin") {
+    if (!apiKey.tenant_id) return;
+    if (apiKey.tenant_id === job.tenant_id) return;
+    // Cloaked as absent rather than refused, so a cross-tenant probe
+    // cannot enumerate job ids. Matches the treatment of `/keys/:id`.
+    // The credential branch below keeps its 403: within one tenant the
+    // job's existence is not a secret, only its contents.
+    throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+  }
   if (job.api_key_id && apiKey.id === job.api_key_id) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,

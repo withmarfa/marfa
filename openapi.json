@@ -5481,7 +5481,7 @@
           "Items"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Only the credential that created the job or an admin can read it.",
+        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it, by an admin within the same space, and by a platform credential. A job in another space reads as absent.",
         "security": [
           {
             "bearerAuth": []
@@ -5656,7 +5656,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential and not an admin",
+            "description": "Not the originating credential, and not an admin for this space",
             "content": {
               "application/json": {
                 "schema": {
@@ -5916,7 +5916,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential and not an admin",
+            "description": "Not the originating credential, and not an admin for this space",
             "content": {
               "application/json": {
                 "schema": {

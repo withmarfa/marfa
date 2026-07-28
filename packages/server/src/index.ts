@@ -36,6 +36,7 @@ import {
 import { createEmailTransport } from "./email/index.js";
 import { checkRedirectAllowlist } from "./routes/redirect-allowlist-check.js";
 import { checkCorsOrigins } from "./routes/cors-origins-check.js";
+import { checkMultiReplica } from "./multi-replica-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
@@ -383,6 +384,11 @@ async function main() {
     authMode: config.authMode,
     corsOrigins: config.corsOrigins,
   });
+
+  // Boot guard: warn loud when several server processes appear to share one
+  // database. Realtime delivery is process-local, so the extra processes drop
+  // events silently — nothing surfaces at the API, so nothing else would say.
+  checkMultiReplica();
 
   const app = createApp(
     storage,
