@@ -11,8 +11,15 @@ import { appendFileSync } from "node:fs";
 import { SURFACES, UNREACHABLE_SURFACES } from "./surfaces.mjs";
 import { checkLiveness } from "./probes.mjs";
 import { checkDeployDrift } from "./drift.mjs";
-import { checkTelemetry } from "./posthog.mjs";
-import { emitHeartbeat, checkHeartbeatGap } from "./heartbeat.mjs";
+import { checkTelemetry, unobservablePairing } from "./posthog.mjs";
+import {
+  emitHeartbeat,
+  fetchHeartbeatHistory,
+  checkHeartbeatGap,
+  checkFleetOscillation,
+  checkHeartbeatProjectMatch,
+} from "./heartbeat.mjs";
+import { splitFindings, visibilityLines } from "./summary.mjs";
 import { reconcileAlert } from "./alert.mjs";
 
 const env = process.env;
@@ -47,6 +54,35 @@ function surfacesForRun() {
   ];
 }
 
+/**
+ * Run a check that owns no internal error handling, and turn a throw into a
+ * finding rather than an aborted run.
+ *
+ * The summary is written once, at the end. Anything that throws on the way
+ * there takes every line with it — including the watchdog visibility lines
+ * whose entire job is to say what this run could not see. A stack trace on
+ * stderr is not that statement, and a run that dies before writing its
+ * summary looks, in the workflow list, a lot like one that had nothing to
+ * report.
+ */
+async function attempt(area, title, fn, fallback) {
+  try {
+    return await fn();
+  } catch (error) {
+    return {
+      ...fallback,
+      findings: [
+        {
+          severity: "red",
+          area,
+          title,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
+}
+
 async function main() {
   const repo = env.GITHUB_REPOSITORY;
   const token = env.GITHUB_TOKEN;
@@ -55,24 +91,41 @@ async function main() {
       ? `${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${env.GITHUB_RUN_ID}`
       : "(local run)";
 
-  const heartbeat = await checkHeartbeatGap({ env, now });
-  const liveness = await checkLiveness(surfacesForRun());
-  const drift = await checkDeployDrift({
-    repo,
-    token,
-    probeResults: liveness.results,
-    now,
-  });
-  const telemetry = await checkTelemetry(env);
+  // One read of the heartbeat history serves both watchdog checks: they want
+  // the same rows, and the query API is rate-limited per hour. Both are pure
+  // functions of it, which is what makes their thresholds testable against a
+  // real interval distribution rather than only against invented ones.
+  const history = await fetchHeartbeatHistory({ env });
+  const heartbeat = checkHeartbeatGap({ history, now });
+  const oscillation = checkFleetOscillation({ history });
+  const projectMatch = await checkHeartbeatProjectMatch({ env });
 
-  const allFindings = [
-    ...heartbeat.findings,
-    ...liveness.findings,
-    ...drift.findings,
-    ...telemetry.findings,
-  ];
-  const red = allFindings.filter((f) => f.severity === "red");
-  const warn = allFindings.filter((f) => f.severity === "warn");
+  const liveness = await checkLiveness(surfacesForRun());
+  // `checkDeployDrift` and `checkTelemetry` handle their expected failures
+  // internally, so these wrappers only catch the unexpected — but an
+  // unexpected throw here used to discard the whole summary.
+  const drift = await attempt(
+    "drift",
+    "The deployed-build comparison could not be run",
+    () =>
+      checkDeployDrift({ repo, token, probeResults: liveness.results, now }),
+    { environments: [] },
+  );
+  const telemetry = await attempt(
+    "telemetry",
+    "The telemetry checks could not be run",
+    () => checkTelemetry(env),
+    { unavailable: true, configured: true, services: [], windowMinutes: null },
+  );
+
+  const { red, warn, fleetHealthy } = splitFindings({
+    liveness,
+    drift,
+    telemetry,
+    heartbeat,
+    oscillation,
+    projectMatch,
+  });
 
   // ---- Run summary -------------------------------------------------------
 
@@ -94,16 +147,22 @@ async function main() {
     lines.push("");
   }
 
+  // Every surface is sampled several times per run. Showing the pass/fail
+  // split rather than a single verdict is the point: "2/3 ok" and "3/3 ok"
+  // mean very different things, and collapsing them is what let an
+  // intermittent surface read as healthy.
   lines.push(
     "## Liveness",
     "",
-    "| Surface | Result | Time | Attempts |",
-    "|---|---|---|---|",
+    "| Surface | State | Samples ok | Slowest | Detail |",
+    "|---|---|---|---|---|",
   );
   for (const r of liveness.results) {
+    const passed = r.samples - r.failed;
     lines.push(
-      `| ${r.surface.label} | ${r.ok ? "ok" : `FAILED — ${r.detail}`} | ` +
-        `${r.durationMs === null ? "—" : `${String(r.durationMs)} ms`} | ${String(r.attempts)} |`,
+      `| ${r.surface.label} | ${r.state} | ${String(passed)}/${String(r.samples)} | ` +
+        `${r.durationMs === null ? "—" : `${String(r.durationMs)} ms`} | ` +
+        `${r.ok ? "—" : r.detail} |`,
     );
   }
   lines.push("");
@@ -125,29 +184,64 @@ async function main() {
 
   lines.push("## Telemetry");
   lines.push("");
-  if (!telemetry.configured) {
+  if (telemetry.unavailable) {
+    // Distinct from "not configured" on purpose: one is a deployment without
+    // telemetry wiring, the other is wiring that failed. Reporting the second
+    // as the first would describe a broken check as a deliberate absence.
+    lines.push(
+      "UNAVAILABLE — the telemetry checks threw and could not be run. See the failures above.",
+      "",
+    );
+  } else if (!telemetry.configured) {
     lines.push(
       "Not checked — telemetry credentials are not configured for this repository.",
       "",
     );
-  } else if (telemetry.services.length === 0) {
+  } else if (telemetry.services.every((s) => s.total === 0)) {
+    // The service list spans a day, so it can carry services that logged
+    // nothing at all inside the alerting window. An all-zero list is the same
+    // silence an empty one used to mean.
     lines.push(
       `No log records at all in the last ${String(telemetry.windowMinutes)} minutes.`,
       "",
     );
   } else {
+    // Startups and shutdowns are shown side by side because their difference
+    // is the signal, not either count alone: matched pairs are a container
+    // waking on demand, unpaired startups are a process that died.
     lines.push(
       `Window: last ${String(telemetry.windowMinutes)} minutes.`,
       "",
-      "| Project | Service | Errors | Startups | Records |",
-      "|---|---|---|---|---|",
+      "| Project | Service | Errors | Startups | Clean stops | Records |",
+      "|---|---|---|---|---|---|",
     );
     for (const s of telemetry.services) {
       lines.push(
-        `| ${s.project} | ${s.service} | ${String(s.errors)} | ${String(s.boots)} | ${String(s.total)} |`,
+        `| ${s.project} | ${s.service} | ${String(s.errors)} | ${String(s.boots)} | ` +
+          `${String(s.shutdowns)} | ${String(s.total)} |`,
       );
     }
     lines.push("");
+  }
+
+  // Spell out the blind spot when it is actually biting. A surface with no
+  // running instance emits nothing, so every telemetry check above goes quiet
+  // — which looks exactly like health. Saying so on the run that it matters
+  // stops the empty rows being read as reassurance.
+  const noInstance = liveness.results.filter(
+    (r) =>
+      !r.ok &&
+      (r.kind === "instance-not-running" ||
+        r.kind === "instance-will-not-start"),
+  );
+  if (noInstance.length > 0) {
+    lines.push(
+      `> ${noInstance.map((r) => r.surface.label).join(", ")} had no running instance ` +
+        "during this run. A service that is not running emits no telemetry, so the " +
+        "error-rate and restart checks above are structurally blind to this outage — " +
+        "their silence is a consequence of it, not evidence against it.",
+      "",
+    );
   }
 
   lines.push("## Not covered by this check", "");
@@ -197,22 +291,24 @@ async function main() {
       );
     }
   }
-  lines.push(
-    `Alert issue: ${alert.action}${alert.url ? ` — ${alert.url}` : ""}`,
-  );
-
   // The heartbeat is emitted last and unconditionally, so its presence means
   // "a run completed", not "a run found nothing wrong".
   const beat = await emitHeartbeat({
     env,
     runId: env.GITHUB_RUN_ID ?? "local",
-    healthy: red.length === 0,
+    healthy: fleetHealthy,
   });
+
+  lines.push("## What this run could see", "");
   lines.push(
-    `Heartbeat: ${beat.emitted ? "emitted" : `not emitted (${String(beat.reason ?? beat.status)})`}` +
-      (heartbeat.lastSeen
-        ? `, previous ${String(heartbeat.ageMinutes)} min ago`
-        : ""),
+    ...visibilityLines({
+      alert,
+      heartbeat,
+      oscillation,
+      projectMatch,
+      beat,
+      unobservablePairing: unobservablePairing(telemetry.services),
+    }),
   );
 
   summary(lines);
@@ -225,4 +321,23 @@ async function main() {
   }
 }
 
-await main();
+// A throw anywhere above reaches here rather than the runner's default
+// handler. The default prints a stack trace and nothing else, which in the
+// workflow list is hard to tell from a run that completed quietly — the exact
+// confusion this whole directory exists to remove. Exit non-zero, but say so
+// in the summary first.
+try {
+  await main();
+} catch (error) {
+  summary([
+    "# Fleet health — CHECK FAILED",
+    "",
+    `The check itself threw at ${now.toISOString()} and could not complete, so ` +
+      "nothing below it ran. This says nothing about the fleet either way.",
+    "",
+    "```",
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
+    "```",
+  ]);
+  process.exitCode = 1;
+}

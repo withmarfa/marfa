@@ -31,18 +31,38 @@
 # convention here would quietly reintroduce the bug. Do not "fix" this to
 # match the other workflows.
 #
+# ## Every surface is sampled several times per run
+#
+# A single point-in-time probe cannot see an intermittent surface. One that
+# answers when you look and fails between looks reads as healthy forever, and
+# the gaps leave no trace. This is not theoretical: an earlier version sampled
+# once, landed inside an up window during a real outage, and recorded "ok"
+# while the same surface was returning 500s either side of that moment.
+#
+# Each surface is therefore probed three times across the run, and samples
+# that disagree are reported as "intermittent" rather than rounded to up or
+# down. Two further layers cover what within-run sampling still cannot see:
+# the run verdict recorded on each heartbeat reveals a fleet flipping between
+# runs, and telemetry startup counts are compared against clean-shutdown
+# counts, because a process that dies does not get to log a shutdown.
+#
 # ## Noticing that this check itself has stopped
 #
 # A monitor that stops running raises no alarms, because a monitor that finds
-# nothing wrong also raises none. Three ways to tell them apart, cheapest
+# nothing wrong also raises none. Four ways to tell them apart, cheapest
 # first:
 #
 #   1. Every run emits a `marfa_watchdog_heartbeat` event. Configure an
 #      absence alert on that event in the telemetry backend — it is the only
 #      mechanism that catches a watcher which stops and never returns.
-#   2. Each run reads the previous heartbeat and reports a gap, which catches
+#   2. Each run reads its recent heartbeats and reports a gap that is out of
+#      character for the interval it has recently been getting, which catches
 #      a watcher that stopped and later resumed.
-#   3. `gh run list --workflow=observability.yml --limit 1` shows the last
+#   3. Each run asserts that the project the heartbeat is written to is the
+#      project it is read back from. They are configured separately, and if
+#      they diverge then mechanisms 1 and 2 both go quiet at once and look
+#      exactly like a healthy fleet.
+#   4. `gh run list --workflow=observability.yml --limit 1` shows the last
 #      execution time directly.
 #
 # The most common silent death is GitHub disabling scheduled workflows on
@@ -50,18 +70,65 @@
 # notification is easy to miss, and the workflow resumes silently on the next
 # push — leaving a gap that only mechanism 1 or 2 will surface.
 #
+# ## The `cron` interval is a request, not a promise
+#
+# GitHub drops scheduled runs under load rather than queueing them, and this
+# repository is nowhere near the rate it asks for. Measured over 40
+# consecutive scheduled runs between 2026-07-25 and 2026-07-28, via
+# `gh run list --workflow=observability.yml --json event,createdAt`:
+#
+#   | delivered runs per day  | ~15 (11 to 16 on complete days) |
+#   | shortest interval       | 57 minutes                      |
+#   | median interval         | 75 minutes                      |
+#   | longest interval        | 227 minutes                     |
+#
+# Nothing in `.github/observability/` may derive a threshold from the `cron`
+# line. Doing so is what produced a staleness tolerance under half the real
+# interval, which fired on every run, and an oscillation window too narrow to
+# ever hold enough runs to trip. The checks now measure the interval they are
+# actually getting; see the header of `heartbeat.mjs`.
+#
 # ## Cost
 #
 # Scheduled runs on a private repository consume billable minutes, and each
-# job is billed as a whole minute regardless of how long it actually takes.
-# At the cadence below that is roughly 290 minutes a day. Cadence is the only
-# meaningful lever; the `cron` line is the single place to change it.
+# job is billed as a whole minute regardless of how long it actually takes, so
+# the only number that matters is what share of runs fit inside one minute.
+#
+# Measured 2026-07-29 over the 30 most recent completed scheduled runs, job
+# start to job completion — `gh run view <id> --json jobs`, not the run's
+# wall clock, which includes queue time that is not billed:
+#
+#   | median            | 17s |
+#   | 95th percentile   | 29s |
+#   | slowest           | 34s |
+#   | runs past 60s     | 0   |
+#
+# Those figures are for the code *before* the repeated sampling landed. The
+# sampling adds its spread on top: three samples twenty seconds apart put the
+# median near 37s and the 95th percentile near 50s, so the schedule stays at
+# roughly **15 billed minutes a day**. Only the slowest observed run is close
+# enough to the boundary to spill into a second minute, which costs a minute
+# when it happens and is not worth engineering around.
+#
+# The spread is what makes this a real constraint rather than a note: thirty
+# seconds of spacing would have put the 95th percentile at 59s and moved the
+# whole tail past the boundary. Anything that lengthens a run — more samples,
+# wider spacing, another network round trip — is a cost decision. Re-measure
+# with the command above before quoting any of these figures; do not recompute
+# them from the `cron` line.
+#
+# Note which way the cadence error runs before treating cadence as a cost
+# lever: the delivered rate is also the ceiling on how quickly anything here
+# can notice an outage, so it buys detection latency far more than it costs
+# money.
 
 name: Observability
 
 on:
   schedule:
-    # Every five minutes. See the cost note above before increasing frequency.
+    # Asks for a run every five minutes and gets one roughly every 75. See
+    # the interval note above: this line is a request, and no threshold in
+    # `.github/observability/` may be derived from it.
     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
@@ -111,6 +178,35 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+
+      # Runs on every execution, not just pull requests. It takes about a
+      # second, and a watcher whose own decision logic is broken fails silently
+      # in exactly the way this workflow exists to prevent.
+      #
+      # The count assertion is the point. `node --test` exits 0 when its
+      # pattern matches no test files, so a rename, a directory move, or a new
+      # test file that stops matching the naming convention would turn this
+      # gate into a step that reports success without running anything — a
+      # silent no-op guarding against silent no-ops.
+      #
+      # The pattern stays a quoted glob rather than a directory argument: Node
+      # has accepted a directory as a search root in some versions and tried to
+      # execute it as a module in others, and the glob behaves the same across
+      # all of them. The TAP reporter is pinned so the plan line has a stable
+      # shape to read regardless of whether stdout is a terminal, and
+      # `pipefail` is set because the default shell would otherwise take
+      # `tee`'s exit status and swallow a genuine test failure.
+      - name: Test the check's decision logic
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap '.github/observability/*.test.mjs' \
+            | tee observability-tests.tap
+          ran=$(sed -n 's/^# pass \([0-9][0-9]*\)$/\1/p' observability-tests.tap)
+          if [ -z "${ran}" ] || [ "${ran}" -eq 0 ]; then
+            echo "::error::No observability tests ran; the test gate is a no-op." >&2
+            exit 1
+          fi
+          echo "${ran} test(s) passed."
 
       - name: Check fleet health
         env:
