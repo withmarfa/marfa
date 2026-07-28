@@ -39,7 +39,7 @@ function makeBaseEnv(): IntegrationWorkerEnv {
     INTEGRATION_NAME: "demo",
     MARFA_API_URL: "https://server.invalid",
     MARFA_RUNTIME_CONTROL_URL: "https://control.invalid",
-    MARFA_RUNTIME_BROKER_KEY: "broker_key",
+    MARFA_WORKER_IDENTITY_KEY: "identity_key",
   };
 }
 
@@ -124,7 +124,7 @@ describe("buildConsumerEnv.mintCredential broker URL", () => {
     vi.unstubAllGlobals();
   });
 
-  it("presents the broker key and leaves an ordinary id untouched", async () => {
+  it("presents its own identity key and integration name, and leaves an ordinary id untouched", async () => {
     const fetchMock = stubFetch();
     const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
     await consumer.mintCredential("conn_1");
@@ -134,7 +134,14 @@ describe("buildConsumerEnv.mintCredential broker URL", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: "Bearer broker_key",
+          // Not a platform credential. The whole point of the derived
+          // key is that this Worker holds nothing that mints against
+          // another integration's Connection.
+          authorization: "Bearer identity_key",
+          // Comes from the manifest-derived config, never from the
+          // message being processed, so a queue envelope cannot make
+          // this Worker claim to be a different integration.
+          "x-marfa-integration": CONFIG.integrationName,
         },
       },
     );
@@ -266,7 +273,7 @@ describe("buildConsumerEnv.mintCredential broker classification", () => {
  * for an authorized caller is what proves the gate opens rather than
  * merely closing everything.
  */
-const BROKER_KEY = "broker_key";
+const IDENTITY_KEY = "identity_key";
 
 interface DoStub {
   fetch: ReturnType<typeof vi.fn>;
@@ -290,7 +297,7 @@ function makeFetchEnv(overrides: Partial<IntegrationWorkerEnv> = {}): {
     } as unknown as IntegrationWorkerEnv["PER_CONNECTION_STATE"],
     MARFA_API_URL: "https://server.invalid",
     MARFA_RUNTIME_CONTROL_URL: "https://control.invalid",
-    MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+    MARFA_WORKER_IDENTITY_KEY: IDENTITY_KEY,
     ...overrides,
   } as IntegrationWorkerEnv;
   return { env, doStub, idFromName };
@@ -312,7 +319,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
   it.each([
     ["/verify", {}],
     ["/verify", { authorization: "Bearer wrong_key" }],
-    ["/verify", { authorization: BROKER_KEY }],
+    ["/verify", { authorization: IDENTITY_KEY }],
     ["/arm-schedule", {}],
     ["/arm-schedule", { authorization: "Bearer wrong_key" }],
     ["/disarm-schedule", {}],
@@ -334,7 +341,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
     const { env } = makeFetchEnv();
     const res = await worker.fetch(
       post(
-        `/arm-schedule?connection_id=conn_1&authorization=Bearer ${BROKER_KEY}`,
+        `/arm-schedule?connection_id=conn_1&authorization=Bearer ${IDENTITY_KEY}`,
       ),
       env,
       CTX,
@@ -342,8 +349,8 @@ describe("createIntegrationWorker fetch auth gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("fails closed when the Worker has no broker key configured", async () => {
-    const { env, doStub } = makeFetchEnv({ MARFA_RUNTIME_BROKER_KEY: "" });
+  it("fails closed when the Worker has no identity key configured", async () => {
+    const { env, doStub } = makeFetchEnv({ MARFA_WORKER_IDENTITY_KEY: "" });
     // Both an absent header and the literal `Bearer ` a missing secret
     // would interpolate into must be refused — never `Bearer undefined`
     // matching `Bearer undefined`.
@@ -371,7 +378,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
     const { env, doStub, idFromName } = makeFetchEnv();
     const res = await worker.fetch(
       post("/arm-schedule?connection_id=conn_1", {
-        authorization: `Bearer ${BROKER_KEY}`,
+        authorization: `Bearer ${IDENTITY_KEY}`,
       }),
       env,
       CTX,
@@ -385,7 +392,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
   it("admits an authorized /arm-schedule call and still validates its payload", async () => {
     const { env, doStub } = makeFetchEnv();
     const res = await worker.fetch(
-      post("/arm-schedule", { authorization: `Bearer ${BROKER_KEY}` }),
+      post("/arm-schedule", { authorization: `Bearer ${IDENTITY_KEY}` }),
       env,
       CTX,
     );
@@ -401,7 +408,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
     const { env, doStub, idFromName } = makeFetchEnv();
     const res = await worker.fetch(
       post("/disarm-schedule?connection_id=conn_1&reason=uninstall", {
-        authorization: `Bearer ${BROKER_KEY}`,
+        authorization: `Bearer ${IDENTITY_KEY}`,
       }),
       env,
       CTX,
@@ -421,7 +428,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
     const { env, doStub } = makeFetchEnv();
     await worker.fetch(
       post("/disarm-schedule?connection_id=conn_1", {
-        authorization: `Bearer ${BROKER_KEY}`,
+        authorization: `Bearer ${IDENTITY_KEY}`,
       }),
       env,
       CTX,
@@ -433,7 +440,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
   it("admits an authorized /disarm-schedule call and still validates its payload", async () => {
     const { env, doStub } = makeFetchEnv();
     const res = await worker.fetch(
-      post("/disarm-schedule", { authorization: `Bearer ${BROKER_KEY}` }),
+      post("/disarm-schedule", { authorization: `Bearer ${IDENTITY_KEY}` }),
       env,
       CTX,
     );
@@ -448,7 +455,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
   it("admits an authorized /verify call through to the verify handler", async () => {
     const { env } = makeFetchEnv();
     const res = await worker.fetch(
-      post("/verify", { authorization: `Bearer ${BROKER_KEY}` }),
+      post("/verify", { authorization: `Bearer ${IDENTITY_KEY}` }),
       env,
       CTX,
     );
@@ -462,7 +469,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
 
 describe("createIntegrationWorker fetch routing", () => {
   const worker = createIntegrationWorker(CONFIG);
-  const auth = { authorization: `Bearer ${BROKER_KEY}` };
+  const auth = { authorization: `Bearer ${IDENTITY_KEY}` };
 
   it("serves the informational banner on GET /", async () => {
     const { env } = makeFetchEnv();

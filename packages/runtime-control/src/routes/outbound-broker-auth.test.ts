@@ -1,14 +1,19 @@
 /**
- * Every control-plane hop into a per-Integration Worker presents the
- * broker key.
+ * Every control-plane hop into a per-Integration Worker presents that
+ * Worker's own identity key, and never the platform broker key.
  *
- * Per-Integration Workers gate their whole `fetch` surface on the
- * runtime broker key, so a control-plane route that dispatches over a
- * Service Binding without an `authorization` header gets a 401 from
- * every Worker in the fleet. The blast radius is quiet: install-time
- * arming, uninstall-time disarming and operator verify all fail, and
- * the only symptom is an `action_required` activity row nobody is
- * watching.
+ * Two failures, opposite in character, live on this one hop.
+ *
+ * Present nothing and the dispatch is refused: Workers gate their whole
+ * `fetch` surface, so install-time arming, uninstall-time disarming and
+ * operator verify all fail across the fleet, and the only symptom is an
+ * `action_required` activity row nobody is watching.
+ *
+ * Present the broker key and the dispatch succeeds — while handing the
+ * receiving Worker a credential that mints against any Connection in any
+ * tenant. That is the failure with no symptom at all, which is why the
+ * source guard below asserts the absence of that env var by name rather
+ * than only the presence of an `authorization` header.
  *
  * Two things make this a separate file rather than more cases in
  * `arm-schedule.test.ts` and `verify.test.ts`, which already assert the
@@ -30,6 +35,7 @@
  * rather than letting the coverage quietly shrink.
  */
 import { describe, it, expect } from "vitest";
+import { deriveWorkerIdentityKey } from "@withmarfa/shared";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,8 +44,10 @@ import type { ControlPlaneEnv } from "../env.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** The value both ends of the control-plane → Worker hop hold. */
+/** Platform key. Held by the server and this Worker; never sent onward. */
 const BROKER_KEY = "broker-key-test";
+/** Root the per-Worker identity keys derive from. Held only here. */
+const IDENTITY_ROOT = "worker-identity-root-test";
 const INTEGRATION = "withmarfa.rss-watcher";
 
 /**
@@ -196,19 +204,28 @@ describe("every Service-Binding dispatch site is covered", () => {
     expect(dispatchSites().length).toBeGreaterThan(0);
   });
 
-  it.each(dispatchSites())("$label carries the broker key", ({ text }) => {
+  it.each(dispatchSites())("$label carries a credential", ({ text }) => {
     // Named per site rather than per route, so a dispatch added on a
     // route the behavioral cases below do not reach is still held to
-    // the contract. The env var is asserted by name because the
-    // failure that matters is a dispatch presenting some other
-    // credential, the operator's platform bearer say, which an
-    // `authorization`-only check would wave through.
+    // the contract.
     expect(text).toContain("authorization");
-    expect(text).toContain("MARFA_RUNTIME_BROKER_KEY");
   });
+
+  it.each(dispatchSites())(
+    "$label does not carry the platform key",
+    ({ text }) => {
+      // Asserted by name, and as an absence. A dispatch that reaches for
+      // `MARFA_RUNTIME_BROKER_KEY` still works — the Worker would accept
+      // it if it held the same value — so nothing behavioral notices, and
+      // what has actually happened is that a platform credential has been
+      // handed to a Worker. The behavioral cases below check the positive
+      // half; this checks the half that succeeds while being wrong.
+      expect(text).not.toContain("MARFA_RUNTIME_BROKER_KEY");
+    },
+  );
 });
 
-describe("schedule dispatch presents the broker key onward", () => {
+describe("schedule dispatch presents the Worker's identity key onward", () => {
   it("finds the schedule routes to check", () => {
     // Vacuity guard. An empty list would make the assertions below
     // pass while checking nothing, and renaming arm-schedule out of the
@@ -222,6 +239,7 @@ describe("schedule dispatch presents the broker key onward", () => {
     const binding = mockBinding();
     const env: ControlPlaneEnv = {
       MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+      MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
       INTEGRATION_RSS_WATCHER: binding,
     };
     const app = buildApp();
@@ -232,6 +250,9 @@ describe("schedule dispatch presents the broker key onward", () => {
         body: JSON.stringify({ integration_name: INTEGRATION }),
         headers: {
           "content-type": "application/json",
+          // The inbound gate here is the server's platform bearer. It
+          // authorizes the route and stops: what the Worker sees is a
+          // key derived for that Worker alone.
           authorization: `Bearer ${BROKER_KEY}`,
         },
       },
@@ -240,11 +261,14 @@ describe("schedule dispatch presents the broker key onward", () => {
 
     expect(res.status).toBe(200);
     expect(binding.calls).toHaveLength(1);
-    expect(binding.calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+    expect(binding.calls[0]!.authorization).toBe(
+      `Bearer ${await deriveWorkerIdentityKey(IDENTITY_ROOT, INTEGRATION)}`,
+    );
+    expect(binding.calls[0]!.authorization).not.toBe(`Bearer ${BROKER_KEY}`);
   });
 });
 
-describe("verify dispatch presents the broker key onward", () => {
+describe("verify dispatch presents the Worker's identity key onward", () => {
   it("POST /connections/:connection_id/verify", async () => {
     const binding = mockBinding({
       ok: true,
@@ -257,6 +281,7 @@ describe("verify dispatch presents the broker key onward", () => {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
         MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+        MARFA_WORKER_IDENTITY_SECRET: IDENTITY_ROOT,
         INTEGRATION_RSS_WATCHER: binding,
       };
       const app = buildApp();
@@ -280,8 +305,11 @@ describe("verify dispatch presents the broker key onward", () => {
 
       expect(res.status).toBe(200);
       expect(binding.calls).toHaveLength(1);
-      expect(binding.calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+      expect(binding.calls[0]!.authorization).toBe(
+        `Bearer ${await deriveWorkerIdentityKey(IDENTITY_ROOT, INTEGRATION)}`,
+      );
       expect(binding.calls[0]!.authorization).not.toBe("Bearer marfa_k1_op");
+      expect(binding.calls[0]!.authorization).not.toBe(`Bearer ${BROKER_KEY}`);
     } finally {
       globalThis.fetch = originalFetch;
     }

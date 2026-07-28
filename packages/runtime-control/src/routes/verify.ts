@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { findIntegration } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import { MarfaServerClient } from "../marfa-client.js";
+import { workerDispatchAuthorization } from "../worker-identity.js";
 
 /**
  * Synchronous verify-route.
@@ -39,9 +40,10 @@ import { MarfaServerClient } from "../marfa-client.js";
  *      server package, and the wire shape is what every per-Integration
  *      Worker consumes (high stability, low drift risk).
  *   3. Resolve the integration's service binding and POST `/verify`
- *      with the envelope, presenting `MARFA_RUNTIME_BROKER_KEY` — the
- *      SDK's `verifyHandler` runs the registered handler synchronously
- *      and returns its result.
+ *      with the envelope, presenting the target Worker's own identity
+ *      key derived from `MARFA_WORKER_IDENTITY_SECRET` — the SDK's
+ *      `verifyHandler` runs the registered handler synchronously and
+ *      returns its result.
  *   4. Poll `system.activity` for rows tagged with the connection,
  *      since the dispatch timestamp.
  *   5. Surface the combined response.
@@ -240,16 +242,16 @@ export function registerVerifyRoute(
       );
     }
 
-    // The broker key is only needed for the dispatch hop, so it is
-    // checked here rather than at the top of the route: the inbound
-    // gate on verify is the operator's platform bearer, and failing
-    // early on a key this route has not used yet would mask genuine
-    // 400s from the request body.
-    if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
+    // The Worker identity secret is only needed for the dispatch hop, so
+    // it is checked here rather than at the top of the route: the
+    // inbound gate on verify is the operator's platform bearer, and
+    // failing early on a secret this route has not used yet would mask
+    // genuine 400s from the request body.
+    if (!c.env.MARFA_WORKER_IDENTITY_SECRET) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MARFA_RUNTIME_BROKER_KEY must be set.",
+          message: "MARFA_WORKER_IDENTITY_SECRET must be set.",
         },
         503,
       );
@@ -261,6 +263,15 @@ export function registerVerifyRoute(
     const dispatchTimestampMs = Date.now() - 1000;
     const dispatchTimestampIso = new Date(dispatchTimestampMs).toISOString();
 
+    // Derived for the integration being dispatched to, so the Worker
+    // receives only its own key. Deliberately NOT the operator's bearer,
+    // which authorizes the verify request at this route and stops here,
+    // and no longer the platform broker key, which never leaves the
+    // control plane.
+    const dispatchAuthorization = await workerDispatchAuthorization(
+      c.env.MARFA_WORKER_IDENTITY_SECRET,
+      ctxResult.integration_name,
+    );
     let dispatchRes: Response;
     try {
       dispatchRes = await binding.fetch(
@@ -268,12 +279,7 @@ export function registerVerifyRoute(
           method: "POST",
           headers: {
             "content-type": "application/json",
-            // The integration Worker gates its whole fetch surface on
-            // the broker key. Note this is deliberately NOT the
-            // operator's bearer: the operator's platform credential is
-            // what authorizes the verify request at this route, and it
-            // stops here.
-            authorization: `Bearer ${c.env.MARFA_RUNTIME_BROKER_KEY}`,
+            authorization: dispatchAuthorization,
           },
           body: JSON.stringify({ envelope }),
         }),

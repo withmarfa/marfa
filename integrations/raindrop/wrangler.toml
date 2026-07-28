@@ -102,4 +102,15 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "marfa-scheduled-poll-raindrop-prod-dlq"
 
-# Secrets: MARFA_API_URL, MARFA_RUNTIME_CONTROL_URL, MARFA_RUNTIME_BROKER_KEY
+# Secrets (`wrangler secret put --env <env>`):
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_WORKER_IDENTITY_KEY
+#         This Worker's own identity, derived by the operator as
+#         HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, INTEGRATION_NAME).
+#         Presented to the control plane's lease broker, and required on
+#         every inbound call to this Worker's fetch surface.
+#         Set it with infra/cloudflare/scripts/init-integration-worker-secrets.sh,
+#         which derives it from the config's INTEGRATION_NAME.
+#         NOT the platform broker key this replaced: that key mints
+#         against any Connection in any tenant and never reaches a Worker.

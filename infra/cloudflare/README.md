@@ -48,8 +48,13 @@ After provisioning resources, set the per-environment secrets the Workers consum
 # Per env: dev | staging | prod. Replace <env> below.
 wrangler secret put MARFA_API_URL --env <env>
 wrangler secret put MARFA_RUNTIME_BROKER_KEY --env <env>
+wrangler secret put MARFA_WORKER_IDENTITY_SECRET --env <env>
 wrangler secret put CLOUDFLARE_QUEUES_API_TOKEN --env <env>
 ```
+
+`MARFA_RUNTIME_BROKER_KEY` is the platform credential the control plane presents to the Marfa server, and that the server presents back on the schedule routes. It stays between those two: it is never sent to an integration Worker and never accepted from one.
+
+`MARFA_WORKER_IDENTITY_SECRET` is the root every integration Worker's key derives from, as `HMAC-SHA256(root, integration_name)`. Only the control plane holds it. Generate a fresh 32-byte value per environment (`openssl rand -hex 32`) — sharing a root across environments would let a staging Worker authenticate against production. Rotating it invalidates every derived key at once, so re-run `scripts/init-integration-worker-secrets.sh` for every integration and redeploy them; do the control plane first, since a Worker presenting a key the control plane has not adopted is refused.
 
 `CLOUDFLARE_QUEUES_API_TOKEN` is an account-scoped CF API token with `queues_read` + `queues_write` scopes — the runtime-control DLQ peek/replay routes use it to call Cloudflare Queues' HTTP-pull API. The same token can be reused across envs (the wrangler-secret bind is per-env).
 

@@ -12,8 +12,10 @@
 # The control plane (wrangler.control.toml) and per-Integration Workers
 # share the same Cloudflare account but no other state. Calls from the
 # control plane into a Worker go over a Service Binding declared in
-# wrangler.control.toml, and carry the runtime broker key — the Worker
-# gates its whole fetch surface on it.
+# wrangler.control.toml, and carry this Worker's own identity key — the
+# Worker gates its whole fetch surface on it. The control plane derives
+# that key per integration, so no Worker holds a credential another
+# Worker could use.
 
 name = "marfa-integration-EXAMPLE"
 main = "../../integrations/EXAMPLE/src/worker.ts"
@@ -105,3 +107,13 @@ ENVIRONMENT = "prod"
 #   - MARFA_API_URL           (every env; the runtime credential is
 #                              fetched per-message from the control
 #                              plane's lease broker, never bound here)
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_WORKER_IDENTITY_KEY
+#         This Worker's own identity, derived by the operator as
+#         HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, INTEGRATION_NAME).
+#         Presented to the control plane's lease broker, and required on
+#         every inbound call to this Worker's fetch surface.
+#         Set it with infra/cloudflare/scripts/init-integration-worker-secrets.sh,
+#         which derives it from the config's INTEGRATION_NAME.
+#         NOT the platform broker key this replaced: that key mints
+#         against any Connection in any tenant and never reaches a Worker.

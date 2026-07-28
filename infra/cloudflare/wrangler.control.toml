@@ -278,9 +278,19 @@ service = "marfa-integration-withmarfa-inbox-prod"
 #
 # Secrets (set via `wrangler secret put` per env):
 #   - MARFA_API_URL              (every env)
-#   - MARFA_RUNTIME_BROKER_KEY   (server-issued long-lived key the
-#                                control plane uses to mint per-Connection
-#                                runtime credentials)
+#   - MARFA_RUNTIME_BROKER_KEY   (server-issued long-lived `is_platform`
+#                                key the control plane uses to mint
+#                                per-Connection runtime credentials, and
+#                                that the server presents on the schedule
+#                                routes. Stays between the server and this
+#                                Worker; never sent to an integration
+#                                Worker and never accepted from one.)
+#   - MARFA_WORKER_IDENTITY_SECRET  (root every integration Worker's
+#                                identity key derives from, as
+#                                HMAC-SHA256(root, integration_name).
+#                                Held only here. Per-env: sharing a root
+#                                across environments lets a staging
+#                                Worker authenticate to production.)
 #   - CLOUDFLARE_QUEUES_API_TOKEN  account-scoped CF API token with
 #                                  `queues_read` + `queues_write`
 #                                  permissions. Used by the DLQ
