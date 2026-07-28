@@ -10,6 +10,52 @@ import { SCHEMA_SQL } from "./schema-sql.generated.js";
 export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
 
+/**
+ * Seconds a pooled connection may sit idle before postgres.js closes it.
+ *
+ * The library default is `null` — never close — which means the pool holds its
+ * sockets open for the life of the process. Against a serverless Postgres that
+ * is a standing charge: a compute that scales to zero only does so when it has
+ * **no connections at all**, so an idle pool bills continuously whether or not
+ * anything is being served. An always-idle deployment costs the same as a busy
+ * one, and the compute-hour budget goes on being switched on.
+ *
+ * 30 seconds is chosen against two measured numbers. Reconnecting to an already
+ * awake compute costs well under a second, and only after a full 30s lull, so a
+ * normal interactive session never churns connections. Waking a **suspended**
+ * compute measured at roughly 0.6–1.1s on top of that — but that cost is only
+ * reachable after the provider's own idle timer (5 minutes by default) has also
+ * run down, and any gap that long has already scaled the container itself to
+ * zero, so the two waits land on the same unlucky request rather than stacking
+ * on separate ones. The value only has to be comfortably under the provider's
+ * timer for scale-to-zero to become reachable at all; the rest is headroom.
+ *
+ * One value suits both deployment shapes, so this is not configurable: against
+ * a Postgres on the same host or in the same cluster a reconnect is a rounding
+ * error, which makes the timeout harmless for a self-host, while for a hosted
+ * serverless database it is the entire point.
+ *
+ * Reserved connections are exempt by construction — postgres.js cancels the
+ * idle timer whenever a connection leaves the idle queue — so a long-lived
+ * streaming RLS reservation is never closed out from under an open stream.
+ */
+const POOL_IDLE_TIMEOUT_SECONDS = 30;
+
+/**
+ * Seconds a connection may live before it is recycled, idle or not.
+ *
+ * postgres.js already defaults this to a jittered 30–60 minutes, so this is a
+ * pin rather than a new behavior: it keeps the value visible next to the idle
+ * timeout it belongs with, and stops a dependency bump moving it silently.
+ * Recycling bounds how long any one socket can accumulate server-side session
+ * state or sit behind an intermediary that has quietly stopped forwarding it.
+ *
+ * With the idle timeout above, only a connection that stays continuously busy
+ * ever reaches this age. Recycling is deferred while a connection is reserved,
+ * so this cannot interrupt a stream mid-flight either.
+ */
+const POOL_MAX_LIFETIME_SECONDS = 30 * 60;
+
 export async function createConnection(
   connectionString: string,
   options?: {
@@ -111,6 +157,8 @@ export async function createConnection(
 
   const client = postgres(connectionString, {
     max: options?.maxPoolSize ?? 10,
+    idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
+    max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
@@ -123,6 +171,10 @@ export async function createConnection(
         // data-plane requests and the direct endpoint has a tighter
         // connection ceiling than the pooler.
         max: Math.min(options?.maxPoolSize ?? 10, 5),
+        // Same reasoning as the app pool. This one matters more per socket:
+        // between streams it holds its slots open with nothing to show for it.
+        idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
+        max_lifetime: POOL_MAX_LIFETIME_SECONDS,
         // eslint-disable-next-line @typescript-eslint/no-empty-function
         onnotice: () => {},
       })

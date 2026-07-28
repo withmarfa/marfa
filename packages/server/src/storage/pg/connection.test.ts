@@ -116,6 +116,36 @@ describe("createConnection pool-mode guard", () => {
     await conn.close();
   });
 
+  it("closes idle connections and recycles long-lived ones, on both pools", async () => {
+    // postgres.js never closes an idle connection by default, so the pool holds
+    // its sockets for the life of the process. A serverless Postgres only
+    // scales to zero when it has no connections at all, which turns an idle
+    // deployment into a continuous bill: measured, one instance spent 403 of
+    // its billing hours awake while holding four OAuth grants and no items.
+    // Both pools need this — the streaming one sits idle between streams.
+    const conn = await createConnection(POOLED, {
+      poolMode: "transaction",
+      directConnectionString: DIRECT,
+      skipBootstrap: true,
+    });
+    try {
+      for (const client of [conn.client, conn.streamClient]) {
+        const { idle_timeout: idleTimeout, max_lifetime: maxLifetime } = (
+          client as unknown as {
+            options: { idle_timeout: number; max_lifetime: number };
+          }
+        ).options;
+        expect(idleTimeout).toBeGreaterThan(0);
+        // Has to clear the provider's own idle timer (300s on Neon) with room
+        // to spare, or the sockets close too late for a suspend to ever engage.
+        expect(idleTimeout).toBeLessThanOrEqual(60);
+        expect(maxLifetime).toBeGreaterThan(idleTimeout);
+      }
+    } finally {
+      await conn.close();
+    }
+  });
+
   it("accepts a pooler and a Postgres sharing a host on different ports", async () => {
     // PgBouncer beside Postgres on one machine is the standard self-hosted
     // shape. Comparing hosts alone would refuse to start a correct deployment.
