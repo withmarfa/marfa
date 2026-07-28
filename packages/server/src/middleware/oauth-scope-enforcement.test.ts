@@ -344,7 +344,11 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
-          body: { type: "core.note", properties: { body: "secret" } },
+          body: {
+            type: "core.note",
+            properties: { body: "secret" },
+            tags: ["nonsense-scope-canary"],
+          },
         })
       ).json()) as { item: { id: string } };
 
@@ -359,6 +363,19 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(list.status).toBe(200);
       const body = (await list.json()) as { data: unknown[] };
       expect(body.data).toEqual([]);
+      // The tag aggregate reads the same empty allow-list and has to agree.
+      // It used to skip the type clause on an empty list and hand back the
+      // tenant's whole vocabulary, naming what exists to a token that can
+      // read none of it.
+      const tags = await request(ctx.app, "GET", "/metadata/tags", {
+        key: rawToken,
+      });
+      expect(tags.status).toBe(200);
+      const tagsBody = (await tags.json()) as { tags: { tag: string }[] };
+      expect(tagsBody.tags.map((t) => t.tag)).not.toContain(
+        "nonsense-scope-canary",
+      );
+      expect(tagsBody.tags).toEqual([]);
       // Direct read — requireTypeAccess fires and rejects.
       const direct = await request(
         ctx.app,
