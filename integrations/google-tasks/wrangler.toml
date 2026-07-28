@@ -22,6 +22,21 @@ compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from env.
 
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are stated because `preview_urls` has no dependable
+# default. Wrangler's deploy path resolves none locally: an unset
+# value is dropped from the request body and the API decides. Its
+# config schema documents a default of `false`, and the helper it
+# mocks that API with computes a third answer. Left unset, per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames can keep
+# serving the Worker.
+workers_dev = false
+preview_urls = false
+
 [vars]
 INTEGRATION_NAME = "google.tasks"
 MANIFEST_CRON = "*/10 * * * *"
@@ -38,6 +53,8 @@ new_sqlite_classes = ["PerConnectionState"]
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "marfa-integration-google-tasks-staging"
+workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.tasks"
@@ -89,6 +106,8 @@ dead_letter_queue = "marfa-reactive-run-google-tasks-staging-dlq"
 # with staging if you change queue topology.
 [env.prod]
 name = "marfa-integration-google-tasks-prod"
+workers_dev = false
+preview_urls = false
 
 [env.prod.vars]
 INTEGRATION_NAME = "google.tasks"

@@ -1,0 +1,55 @@
+/**
+ * Header forwarding for internal Better Auth dispatches.
+ *
+ * Several Marfa-owned auth routes wrap a Better Auth endpoint: they take
+ * the browser's request, do Marfa-side work, then hand a synthesized
+ * `Request` to `auth.handler(...)`. That inner request has to carry the
+ * caller's session cookie, and it has to satisfy Better Auth's own
+ * trusted-origins check.
+ *
+ * Forwarding the browser's headers verbatim does not achieve the second
+ * part. Better Auth validates `Origin` (falling back to `Referer`) on
+ * every cookie-bearing non-GET, and a top-level browser navigation sends
+ * no `Origin` at all — so a wrapper reached by navigation would dispatch
+ * an origin-less POST and be rejected. `fallbackOrigin` closes that: when
+ * the inbound request has no usable `Origin`, the dispatch is stamped
+ * with the issuer's own origin, which is what the internal hop actually
+ * is.
+ */
+
+/** Headers copied from the inbound request onto the internal dispatch. */
+const PASSTHROUGH_HEADERS = [
+  "origin",
+  "cookie",
+  "user-agent",
+  "accept-language",
+] as const;
+
+/**
+ * Build the header set for an internal Better Auth dispatch: `base`
+ * (typically `content-type`) plus the passthrough headers above.
+ *
+ * When `Origin` is absent or `"null"` (browsers serialize it as `"null"`
+ * under strict referrer policies and in sandboxed iframes), fall back to
+ * `fallbackOrigin` so Better Auth's trusted-origins check passes.
+ *
+ * Callers that deliberately want the inbound request's own origin to be
+ * the one Better Auth judges — because a missing origin should be
+ * rejected rather than papered over — omit `fallbackOrigin`.
+ */
+export function forwardHeaders(
+  src: Headers,
+  base: Record<string, string>,
+  fallbackOrigin?: string,
+): Headers {
+  const out = new Headers(base);
+  for (const name of PASSTHROUGH_HEADERS) {
+    const value = src.get(name);
+    if (value) out.set(name, value);
+  }
+  const incomingOrigin = out.get("origin");
+  if (fallbackOrigin && (!incomingOrigin || incomingOrigin === "null")) {
+    out.set("origin", fallbackOrigin);
+  }
+  return out;
+}

@@ -10,10 +10,12 @@
     "provision": "tsx provision.ts",
     "provision:dev": "tsx provision.ts dev",
     "provision:staging": "tsx provision.ts staging",
-    "provision:prod": "tsx provision.ts prod"
+    "provision:prod": "tsx provision.ts prod",
+    "verify:worker-surface": "tsx scripts/verify-integration-worker-surface.ts"
   },
   "dependencies": {
-    "@withmarfa/shared": "workspace:*"
+    "@withmarfa/shared": "workspace:*",
+    "smol-toml": "^1.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

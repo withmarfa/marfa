@@ -8,7 +8,13 @@
  *   2. The fetch handler — routes `POST /arm-schedule?connection_id=X`
  *      and `POST /disarm-schedule?connection_id=X` to the per-Connection
  *      DO so the install and uninstall pipelines (via the control plane)
- *      can arm and cancel the alarm.
+ *      can arm and cancel the alarm, and `POST /verify` for the control
+ *      plane's synchronous one-shot dispatch.
+ *
+ * The entire fetch surface requires the runtime broker key, checked
+ * once before routing (see `broker-auth.ts`). Unknown paths 404 rather
+ * than falling through to the banner, so a caller cannot mistake a
+ * route this deployment does not have for a successful operation.
  *
  * Per-integration `worker.ts` files become a 5-line file: register
  * handlers, call `createIntegrationWorker(...)`, re-export
@@ -23,6 +29,7 @@ import type { PerConnectionAlarmEnv } from "./per-connection-state.js";
 import type { QueueMessage, RuntimeCredential } from "../types.js";
 import { ConnectionGoneError } from "../errors.js";
 import { verifyHandler } from "../verify-handler.js";
+import { brokerAuthFailure } from "./broker-auth.js";
 
 /**
  * Worker `env` shape this helper expects. Integrations may extend it
@@ -124,6 +131,10 @@ async function mintCredentialViaBroker(
   env: IntegrationWorkerEnv,
   connectionId: string,
 ): Promise<RuntimeCredential> {
+  // Encode the id — it reaches this function from a queue envelope or
+  // an operator-supplied verify payload, so it is caller-controlled and
+  // must not be able to reshape the broker path. Matches how the
+  // control plane builds its own arm-schedule URL.
   const url = `${env.MARFA_RUNTIME_CONTROL_URL}/lease/${encodeURIComponent(connectionId)}/runtime`;
   const res = await fetch(url, {
     method: "POST",
@@ -221,6 +232,19 @@ export function createIntegrationWorker<
   return {
     async fetch(request: Request, env: E, ctx: ExecutionContext) {
       void ctx;
+      // Gate the whole fetch surface once, before any routing. Gating
+      // route-by-route means every route added later is open until
+      // someone remembers to add a line; gating here means a new route
+      // is covered the moment it exists. It also refuses before any
+      // parsing, so a caller that cannot authenticate learns nothing
+      // about which paths exist, which parameters they take, or
+      // whether a given connection is real.
+      const refusal = await brokerAuthFailure(
+        request,
+        env.MARFA_RUNTIME_BROKER_KEY,
+      );
+      if (refusal) return refusal;
+
       const url = new URL(request.url);
       // The control plane hits these from a service binding to arm the
       // schedule alarm at install time and cancel it at uninstall.
@@ -239,6 +263,9 @@ export function createIntegrationWorker<
         const innerUrl = new URL(request.url);
         innerUrl.search = "";
         if (url.pathname === "/disarm-schedule") {
+          // The reason is recorded on the tombstone, so an operator
+          // reading DO state later can tell an uninstall teardown from
+          // a manual one.
           innerUrl.searchParams.set(
             "reason",
             url.searchParams.get("reason") ?? "control_plane",
@@ -257,20 +284,21 @@ export function createIntegrationWorker<
         const consumerEnv = buildConsumerEnv(env, config);
         return verifyHandler(consumerEnv, request);
       }
-      // Unmatched paths are 404, never a success envelope. A Worker
-      // predating a route still resolves and answers, so a 200 catch-all
-      // would report "done" for work this deployment cannot do yet — and
-      // every caller up the chain would believe it.
-      return Response.json(
-        {
-          ok: false,
-          error: "not_found",
+      // Informational banner, useful as a smoke check that a Service
+      // Binding resolves to the Worker the caller expected. Narrow to
+      // `GET /` on purpose: it used to be the catch-all, which meant a
+      // POST to a route this deployment does not have came back 200
+      // `ok: true`, and every caller read that as the operation having
+      // succeeded. A missing route has to look like a missing route.
+      if (url.pathname === "/" && request.method === "GET") {
+        return Response.json({
+          ok: true,
           integration: config.integrationName,
           message:
-            "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule, /disarm-schedule and /verify.",
-        },
-        { status: 404 },
-      );
+            "Per-Integration Worker. Queue + DO traffic only; the HTTP surface is reachable over the control plane's Service Binding and requires the runtime broker key.",
+        });
+      }
+      return Response.json({ ok: false, error: "not_found" }, { status: 404 });
     },
     async queue(batch: MessageBatch<QueueMessage>, env: E) {
       const consumerEnv = buildConsumerEnv(env, config);

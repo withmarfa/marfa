@@ -375,11 +375,10 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  * one of those flows is already owned by an explicit Marfa-side handler
  * that does the work deterministically:
  *   - consent projection + audit: `POST /auth/authorize/decision`
- *     (`routes/auth-consent.ts`) handles it before proxying to
- *     `/auth/oauth2/consent`. We need the explicit handler because the
- *     plugin's consent endpoint doesn't carry `client_id` in its body
- *     (it links via the pre-minted code), making the after-hook approach
- *     fragile.
+ *     (`routes/auth-consent.ts`) verifies the signed query, proxies to
+ *     `/auth/oauth2/consent`, and projects only after the plugin returns a
+ *     code-bearing registered callback. The explicit handler retains the
+ *     verified client context needed to gate those side effects.
  *   - revoke cascade + audit: `DELETE /auth/grants/:id` and
  *     `POST /auth/grants/:id/revoke` (`routes/oauth.ts`) call
  *     `storage.oauthProvider.revokeTokensForGrant` and emit

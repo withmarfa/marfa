@@ -78,6 +78,30 @@ The synthetic host in the constructed `Request` URL is ignored by the binding; o
 
 Canonical example: the withmarfa-inbox Email Worker. `integrations/withmarfa-inbox/email-worker/wrangler.toml` declares `RUNTIME_CONTROL → marfa-runtime-control-<env>`, and `src/index.ts` dispatches via `env.RUNTIME_CONTROL.fetch(...)` against `/webhooks/inbound/<CONNECTION_ID>`.
 
+## The Worker `fetch` surface requires the broker key
+
+A Service Binding authenticates by topology, and topology is not a gate the route controls. `workers_dev`, `preview_urls`, a `routes` entry, or a new binding all re-expose the same `fetch` handler without touching its source, so the handler verifies its caller as well.
+
+Every request into a per-Integration Worker's `fetch` handler must carry `Authorization: Bearer <MARFA_RUNTIME_BROKER_KEY>` — the same secret the Worker presents back to the lease broker, checked in the other direction. `createIntegrationWorker(...)` applies the gate once at the entry, before routing, so a route added later is covered the moment it exists rather than the moment someone remembers to gate it. Nothing to opt into: an integration built on the standard entry point inherits it.
+
+Consequences worth knowing when writing or debugging one:
+
+- **Unknown paths return 404, not the banner.** Only `GET /` answers with the informational payload. A `POST` to a route this deployment does not have used to come back `200 {ok: true}`, and every caller read that as success.
+- **A Worker with no `MARFA_RUNTIME_BROKER_KEY` returns 503 `worker_misconfigured`**, distinct from the 401 a wrong key gets, so missing secrets are diagnosable from the response alone.
+- **`queue`, `alarm`, and `email` handlers are unaffected.** Queue delivery, Durable Object alarms, and Email Routing never enter `fetch`, so webhook-driven and scheduled work needs no credential.
+- **Configs set `workers_dev = false` and `preview_urls = false`** at the top level and in every named environment. `preview_urls` has no dependable default and has to be stated; the freshness test in `packages/runtime-control/src/integration-wrangler-config.test.ts` enforces both across every config found under `integrations/`.
+
+Gating a `fetch` surface outside the standard entry point (a sibling Worker with its own handler, say) uses the same helper rather than a fresh comparison:
+
+```ts
+import { brokerAuthFailure } from "@withmarfa/runtime-sdk/cloudflare";
+
+const refusal = await brokerAuthFailure(request, env.MARFA_RUNTIME_BROKER_KEY);
+if (refusal) return refusal;
+```
+
+It returns the `Response` to hand back, or `null` when the caller is authorized. The rule it applies lives in `@withmarfa/shared`'s `isBrokerAuthorized`, shared with the control plane's own gate so the two ends of the hop cannot drift apart.
+
 ## First-deploy operator setup (hosted substrate)
 
 Every per-integration Worker needs three secrets set before the first queue dispatch will succeed:

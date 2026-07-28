@@ -1,4 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  type Mock,
+} from "vitest";
 import {
   buildConsumerEnv,
   createIntegrationWorker,
@@ -96,90 +104,64 @@ describe("buildConsumerEnv.dlqProducerFor routing", () => {
 });
 
 /**
- * Build an env whose DO namespace hands back a stub recording every
- * request it receives, so the fetch-routing tests can assert what
- * reached (or never reached) the per-Connection Durable Object.
+ * The connection id reaches `mintCredential` from a queue envelope or a
+ * verify payload, so it is caller-controlled by the time it is spliced
+ * into the lease broker path. Percent-encoding is what stops a crafted
+ * id steering the request at a different control-plane route.
  */
-function envWithDoStub(seen: Request[]): IntegrationWorkerEnv {
-  const stub = {
-    fetch(request: Request): Promise<Response> {
-      seen.push(request);
-      return Promise.resolve(
-        Response.json({ ok: true, disarmed: true, previous_next_run_at_ms: 1 }),
-      );
-    },
-  };
-  return {
-    ...makeBaseEnv(),
-    PER_CONNECTION_STATE: {
-      idFromName: (name: string) => name,
-      get: () => stub,
-    } as unknown as IntegrationWorkerEnv["PER_CONNECTION_STATE"],
-  };
-}
+describe("buildConsumerEnv.mintCredential broker URL", () => {
+  const CREDENTIAL = { token: "tok", expires_at: "2026-01-01T00:00:00Z" };
 
-const EXEC_CTX = {
-  waitUntil: () => undefined,
-  passThroughOnException: () => undefined,
-} as unknown as ExecutionContext;
+  function stubFetch(): Mock<typeof fetch> {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json(CREDENTIAL)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
 
-describe("createIntegrationWorker fetch routing", () => {
-  it("answers an unrouted path with 404, not a success envelope", async () => {
-    // A Worker that predates a route still resolves its hostname, so a
-    // 200 catch-all turns "this deployment cannot do that yet" into
-    // "done". Every caller upstream then reports success for work that
-    // never happened.
-    const worker = createIntegrationWorker(CONFIG);
-    const res = await worker.fetch(
-      new Request("https://integration.invalid/not-a-route", {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("presents the broker key and leaves an ordinary id untouched", async () => {
+    const fetchMock = stubFetch();
+    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+    await consumer.mintCredential("conn_1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://control.invalid/lease/conn_1/runtime",
+      {
         method: "POST",
-      }),
-      envWithDoStub([]),
-      EXEC_CTX,
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer broker_key",
+        },
+      },
     );
-
-    expect(res.status).toBe(404);
-    const body = await res.json<{ ok?: boolean; error?: string }>();
-    expect(body.ok).not.toBe(true);
-    expect(body.error).toBe("not_found");
   });
 
-  it("answers a GET on a POST-only control path with 404", async () => {
-    const worker = createIntegrationWorker(CONFIG);
-    const res = await worker.fetch(
-      new Request("https://integration.invalid/disarm-schedule", {
-        method: "GET",
-      }),
-      envWithDoStub([]),
-      EXEC_CTX,
-    );
-
-    expect(res.status).toBe(404);
-  });
-
-  it("forwards a disarm to the per-Connection Durable Object", async () => {
-    const seen: Request[] = [];
-    const worker = createIntegrationWorker(CONFIG);
-    const res = await worker.fetch(
-      new Request(
-        "https://integration.invalid/disarm-schedule?connection_id=conn_a&reason=uninstall",
-        { method: "POST" },
-      ),
-      envWithDoStub(seen),
-      EXEC_CTX,
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json<{ disarmed: boolean }>()).toMatchObject({
-      disarmed: true,
-    });
-    expect(seen).toHaveLength(1);
-    const forwarded = new URL(seen[0]!.url);
-    expect(forwarded.pathname).toBe("/disarm-schedule");
-    expect(forwarded.searchParams.get("reason")).toBe("uninstall");
+  it.each([
+    ["../dlq", "https://control.invalid/lease/..%2Fdlq/runtime"],
+    ["a?b=c", "https://control.invalid/lease/a%3Fb%3Dc/runtime"],
+    ["a#frag", "https://control.invalid/lease/a%23frag/runtime"],
+  ])("encodes %s so it cannot reshape the path", async (id, expected) => {
+    const fetchMock = stubFetch();
+    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+    await consumer.mintCredential(id);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(expected);
   });
 });
 
+/**
+ * Which broker refusals mean "this Connection can never run again".
+ *
+ * A terminal verdict makes the consumer tear the schedule down, and
+ * nothing re-arms it without an operator working one Connection at a
+ * time. A transient verdict costs a retry. The asymmetry is why the
+ * negative cases below matter more than the positive ones: every
+ * refusal that is not specifically about this Connection has to stay
+ * transient, however plausible its status looks.
+ */
 describe("buildConsumerEnv.mintCredential broker classification", () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
@@ -189,51 +171,32 @@ describe("buildConsumerEnv.mintCredential broker classification", () => {
     globalThis.fetch = originalFetch;
   });
 
-  function stubBroker(
-    status: number,
-    body: unknown,
-    captured?: string[],
-  ): void {
-    globalThis.fetch = (input: RequestInfo | URL) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      captured?.push(url);
-      return Promise.resolve(
+  function stubBroker(status: number, body: unknown): void {
+    globalThis.fetch = () =>
+      Promise.resolve(
         new Response(typeof body === "string" ? body : JSON.stringify(body), {
           status,
           headers: { "content-type": "application/json" },
         }),
       );
-    };
   }
 
-  it("converts a lease-broker connection_not_found into ConnectionGoneError", async () => {
-    stubBroker(404, {
-      error: "connection_not_found",
-      message: "no such connection",
-    });
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+  function mintError(): Promise<unknown> {
+    return buildConsumerEnv(makeBaseEnv(), CONFIG)
+      .mintCredential("conn_a")
+      .catch((e: unknown) => e);
+  }
 
-    await expect(consumer.mintCredential("conn_a")).rejects.toBeInstanceOf(
-      ConnectionGoneError,
-    );
-  });
-
-  it("converts a lease-broker connection_not_active into ConnectionGoneError", async () => {
-    stubBroker(403, {
-      error: "connection_not_active",
-      message: "connection revoked",
-    });
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
-
-    await expect(consumer.mintCredential("conn_a")).rejects.toBeInstanceOf(
-      ConnectionGoneError,
-    );
-  });
+  it.each([
+    ["connection_not_found", 404],
+    ["connection_not_active", 403],
+  ])(
+    "converts a lease-broker %s into ConnectionGoneError",
+    async (error, status) => {
+      stubBroker(status, { error, message: "gone" });
+      expect(await mintError()).toBeInstanceOf(ConnectionGoneError);
+    },
+  );
 
   it("does NOT convert an unrecognized 404 — a routing miss is transient", async () => {
     // The control plane answers 404 from its own notFound handler for any
@@ -241,22 +204,39 @@ describe("buildConsumerEnv.mintCredential broker classification", () => {
     // would otherwise make every healthy connection disarm itself on its
     // first tick, permanently and silently.
     stubBroker(404, { error: "not_found", path: "/lease/conn_a/runtime" });
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
 
-    const err = await consumer
-      .mintCredential("conn_a")
-      .catch((e: unknown) => e);
+  it("does NOT convert an unauthorized 401 from the control plane", async () => {
+    // The lease route is gated on the broker key. A Worker holding a
+    // stale key is refused for every connection it serves, which says
+    // nothing about any of them.
+    stubBroker(401, { error: "unauthorized" });
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+
+  it("does NOT convert a platform-credential 403 — it is fleet-wide, not per-connection", async () => {
+    // The server refuses a mint from a non-platform credential with 403
+    // `forbidden`. A broker key rotated to a valid but tenant-scoped
+    // admin key produces exactly this for every connection in every
+    // tenant, so reading it as terminal deschedules the whole fleet
+    // inside one cron period.
+    stubBroker(403, {
+      error: "forbidden",
+      message: "requires a platform credential (is_platform: true)",
+    });
+    const err = await mintError();
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(ConnectionGoneError);
   });
 
   it("does NOT convert a WAF-style 403 with no recognizable body", async () => {
     stubBroker(403, "<html>blocked</html>");
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
-
-    const err = await consumer
-      .mintCredential("conn_a")
-      .catch((e: unknown) => e);
+    const err = await mintError();
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(ConnectionGoneError);
   });
@@ -265,28 +245,279 @@ describe("buildConsumerEnv.mintCredential broker classification", () => {
     // The code alone is not proof: a cached or proxied 200/500 body could
     // carry it. Status and code must agree before the terminal verdict.
     stubBroker(500, { error: "connection_not_found" });
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
-
-    const err = await consumer
-      .mintCredential("conn_a")
-      .catch((e: unknown) => e);
+    const err = await mintError();
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(ConnectionGoneError);
   });
+});
 
-  it("percent-encodes the connection id into the lease URL", async () => {
-    const captured: string[] = [];
-    stubBroker(
-      200,
-      { api_key: "k", connection_id: "a/b", expires_at: "x" },
-      captured,
-    );
-    const consumer = buildConsumerEnv(makeBaseEnv(), CONFIG);
+/**
+ * Auth gate on the Worker's fetch surface.
+ *
+ * The routes here mint a runtime credential and run the real handler
+ * with real persistence, so "the caller reached us over a Service
+ * Binding" cannot be the whole authorization story: a `workers_dev`
+ * subdomain, a preview URL, a `routes` entry, or an extra binding all
+ * re-expose the same handler without touching this file. These tests
+ * pin the refusal so the surface cannot quietly reopen.
+ *
+ * `400 missing_envelope` / `400 missing_connection_id` are the exact
+ * responses an unauthenticated caller used to get, so asserting them
+ * for an authorized caller is what proves the gate opens rather than
+ * merely closing everything.
+ */
+const BROKER_KEY = "broker_key";
 
-    await consumer.mintCredential("a/b?x=1");
+interface DoStub {
+  fetch: ReturnType<typeof vi.fn>;
+}
 
-    expect(captured[0]).toBe(
-      "https://control.invalid/lease/a%2Fb%3Fx%3D1/runtime",
-    );
+function makeFetchEnv(overrides: Partial<IntegrationWorkerEnv> = {}): {
+  env: IntegrationWorkerEnv;
+  doStub: DoStub;
+  idFromName: ReturnType<typeof vi.fn>;
+} {
+  const doStub: DoStub = {
+    fetch: vi.fn(() =>
+      Promise.resolve(Response.json({ ok: true, armed: true })),
+    ),
+  };
+  const idFromName = vi.fn((name: string) => name);
+  const env = {
+    PER_CONNECTION_STATE: {
+      idFromName,
+      get: () => doStub,
+    } as unknown as IntegrationWorkerEnv["PER_CONNECTION_STATE"],
+    MARFA_API_URL: "https://server.invalid",
+    MARFA_RUNTIME_CONTROL_URL: "https://control.invalid",
+    MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+    ...overrides,
+  } as IntegrationWorkerEnv;
+  return { env, doStub, idFromName };
+}
+
+const CTX = {} as ExecutionContext;
+
+function post(path: string, headers: Record<string, string> = {}): Request {
+  return new Request(`https://integration.invalid${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
   });
+}
+
+describe("createIntegrationWorker fetch auth gate", () => {
+  const worker = createIntegrationWorker(CONFIG);
+
+  it.each([
+    ["/verify", {}],
+    ["/verify", { authorization: "Bearer wrong_key" }],
+    ["/verify", { authorization: BROKER_KEY }],
+    ["/arm-schedule", {}],
+    ["/arm-schedule", { authorization: "Bearer wrong_key" }],
+    ["/disarm-schedule", {}],
+    ["/disarm-schedule", { authorization: "Bearer wrong_key" }],
+  ])("refuses POST %s with headers %o", async (path, headers) => {
+    const { env, doStub, idFromName } = makeFetchEnv();
+    const res = await worker.fetch(post(path, headers), env, CTX);
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      error: "unauthorized",
+    });
+    // Nothing downstream ran: no DO resolved, no handler dispatched.
+    expect(idFromName).not.toHaveBeenCalled();
+    expect(doStub.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a query-string credential — the key must be a header", async () => {
+    const { env } = makeFetchEnv();
+    const res = await worker.fetch(
+      post(
+        `/arm-schedule?connection_id=conn_1&authorization=Bearer ${BROKER_KEY}`,
+      ),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("fails closed when the Worker has no broker key configured", async () => {
+    const { env, doStub } = makeFetchEnv({ MARFA_RUNTIME_BROKER_KEY: "" });
+    // Both an absent header and the literal `Bearer ` a missing secret
+    // would interpolate into must be refused — never `Bearer undefined`
+    // matching `Bearer undefined`.
+    const attempts: Record<string, string>[] = [
+      {},
+      { authorization: "Bearer " },
+      { authorization: "Bearer undefined" },
+    ];
+    for (const headers of attempts) {
+      const res = await worker.fetch(
+        post("/arm-schedule?connection_id=conn_1", headers),
+        env,
+        CTX,
+      );
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toMatchObject({
+        ok: false,
+        error: "worker_misconfigured",
+      });
+    }
+    expect(doStub.fetch).not.toHaveBeenCalled();
+  });
+
+  it("admits an authorized /arm-schedule call through to the Durable Object", async () => {
+    const { env, doStub, idFromName } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/arm-schedule?connection_id=conn_1", {
+        authorization: `Bearer ${BROKER_KEY}`,
+      }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, armed: true });
+    expect(idFromName).toHaveBeenCalledWith("conn_1");
+    expect(doStub.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("admits an authorized /arm-schedule call and still validates its payload", async () => {
+    const { env, doStub } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/arm-schedule", { authorization: `Bearer ${BROKER_KEY}` }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      reason: "missing_connection_id",
+    });
+    expect(doStub.fetch).not.toHaveBeenCalled();
+  });
+
+  it("admits an authorized /disarm-schedule call through to the Durable Object", async () => {
+    const { env, doStub, idFromName } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/disarm-schedule?connection_id=conn_1&reason=uninstall", {
+        authorization: `Bearer ${BROKER_KEY}`,
+      }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("conn_1");
+    expect(doStub.fetch).toHaveBeenCalledTimes(1);
+    const forwarded = new URL(
+      (doStub.fetch.mock.calls[0] as [Request])[0].url,
+    );
+    expect(forwarded.pathname).toBe("/disarm-schedule");
+    // The reason rides through to the Durable Object's tombstone, so an
+    // operator reading DO state later can tell an uninstall teardown
+    // from a manual one.
+    expect(forwarded.searchParams.get("reason")).toBe("uninstall");
+  });
+
+  it("defaults the disarm reason when the caller omits one", async () => {
+    const { env, doStub } = makeFetchEnv();
+    await worker.fetch(
+      post("/disarm-schedule?connection_id=conn_1", {
+        authorization: `Bearer ${BROKER_KEY}`,
+      }),
+      env,
+      CTX,
+    );
+    const forwarded = new URL(
+      (doStub.fetch.mock.calls[0] as [Request])[0].url,
+    );
+    expect(forwarded.searchParams.get("reason")).toBe("control_plane");
+  });
+
+  it("admits an authorized /disarm-schedule call and still validates its payload", async () => {
+    const { env, doStub } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/disarm-schedule", { authorization: `Bearer ${BROKER_KEY}` }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      reason: "missing_connection_id",
+    });
+    expect(doStub.fetch).not.toHaveBeenCalled();
+  });
+
+  it("admits an authorized /verify call through to the verify handler", async () => {
+    const { env } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/verify", { authorization: `Bearer ${BROKER_KEY}` }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      error: "missing_envelope",
+    });
+  });
+});
+
+describe("createIntegrationWorker fetch routing", () => {
+  const worker = createIntegrationWorker(CONFIG);
+  const auth = { authorization: `Bearer ${BROKER_KEY}` };
+
+  it("serves the informational banner on GET /", async () => {
+    const { env } = makeFetchEnv();
+    const res = await worker.fetch(
+      new Request("https://integration.invalid/", {
+        method: "GET",
+        headers: auth,
+      }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      integration: "demo",
+    });
+  });
+
+  it.each([
+    "/",
+    "/arm-schedule/",
+    "/disarm-schedule/",
+    "/verify/x",
+    "/anything",
+  ])("404s an unknown path (%s) instead of reporting success", async (path) => {
+    const { env } = makeFetchEnv();
+    const res = await worker.fetch(post(path, auth), env, CTX);
+    expect(res.status).toBe(404);
+    // The old catch-all answered 200 `ok: true` here, which every
+    // caller read as the operation having succeeded — a route the
+    // deployment does not have must not look like one that worked.
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      error: "not_found",
+    });
+  });
+
+  it.each(["/verify", "/arm-schedule", "/disarm-schedule"])(
+    "404s a GET to %s, which only accepts POST",
+    async (path) => {
+      const { env, doStub } = makeFetchEnv();
+      const res = await worker.fetch(
+        new Request(`https://integration.invalid${path}`, {
+          method: "GET",
+          headers: auth,
+        }),
+        env,
+        CTX,
+      );
+      expect(res.status).toBe(404);
+      expect(doStub.fetch).not.toHaveBeenCalled();
+    },
+  );
 });

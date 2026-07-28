@@ -38,6 +38,9 @@ importers:
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      smol-toml:
+        specifier: ^1.4.3
+        version: 1.6.1
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -114,6 +117,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/google-calendar:
     dependencies:
@@ -139,6 +145,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/google-contacts:
     dependencies:
@@ -164,6 +173,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/google-drive:
     dependencies:
@@ -189,6 +201,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/google-tasks:
     dependencies:
@@ -214,6 +229,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/google-youtube:
     dependencies:
@@ -239,6 +257,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/raindrop:
     dependencies:
@@ -264,6 +285,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/readwise:
     dependencies:
@@ -289,6 +313,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/rss-watcher:
     dependencies:
@@ -314,6 +341,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/sync:
     dependencies:
@@ -355,6 +385,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/todoist:
     dependencies:
@@ -380,6 +413,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/withmarfa-inbox:
     dependencies:
@@ -405,6 +441,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   integrations/withmarfa-inbox/email-worker:
     dependencies:
@@ -421,6 +460,9 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.5)(esbuild@0.27.4)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.98.0(@cloudflare/workers-types@4.20260609.1)
 
   packages/runtime-control:
     dependencies:

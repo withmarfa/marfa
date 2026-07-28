@@ -21,6 +21,7 @@
     "@withmarfa/runtime-test": "workspace:*",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "tsup": "^8.5.1"
+    "tsup": "^8.5.1",
+    "wrangler": "^4.96.0"
   }
 }

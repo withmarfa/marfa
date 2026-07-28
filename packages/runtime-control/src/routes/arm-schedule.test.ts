@@ -1,10 +1,17 @@
 /**
- * Schedule arm/disarm broker routes.
+ * Schedule arm/disarm broker routes — the inbound gate, the credential
+ * presented onward, and the disarm contract.
  *
  * Disarm is the teardown counterpart to arm: the server calls it when a
  * Connection is uninstalled so the per-Connection alarm stops firing.
  * Without it, an uninstalled Connection's schedule runs forever against
  * a Connection that no longer exists.
+ *
+ * Both verbs run through one dispatch helper, so the gate and the
+ * outbound header are pinned on each of them rather than on the pair.
+ * A route that stopped presenting the broker key would be refused by
+ * every per-Integration Worker in the fleet, and the only symptom is an
+ * `action_required` activity row nobody is watching for.
  *
  * The tests mount the real Hono app with a stubbed service binding, so
  * they pin the auth gate, the idempotency contract, and the dispatch
@@ -50,19 +57,35 @@ function okResponse(): Response {
   });
 }
 
+function armResponse(): Response {
+  return new Response(JSON.stringify({ ok: true, next_run_at_ms: 1 }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/**
+ * `auth` defaults to the correct key. Pass `null` to send no
+ * `Authorization` header at all — a different refusal path from
+ * presenting the wrong value, and the one an unauthenticated caller
+ * takes.
+ */
 function post(
   app: ReturnType<typeof buildApp>,
   env: ControlPlaneEnv,
   path: string,
   body: unknown,
-  auth = `Bearer ${BROKER_KEY}`,
+  auth: string | null = `Bearer ${BROKER_KEY}`,
 ): Promise<Response> {
   return Promise.resolve(
     app.request(
       path,
       {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: auth },
+        headers: {
+          "content-type": "application/json",
+          ...(auth === null ? {} : { authorization: auth }),
+        },
         body: JSON.stringify(body),
       },
       env,
@@ -112,7 +135,7 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
   });
 
-  it("rejects a request without the broker key", async () => {
+  it("rejects a request presenting the wrong broker key", async () => {
     const env = buildEnvWithBinding([], okResponse);
     const res = await post(
       buildApp(),
@@ -122,6 +145,32 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
       "Bearer wrong",
     );
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a caller with no Authorization header", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, okResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/disarm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+      null,
+    );
+    expect(res.status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects when the control plane has no broker key configured", async () => {
+    const res = await post(
+      buildApp(),
+      {} as ControlPlaneEnv,
+      `/connections/${CONNECTION_ID}/disarm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+    expect(res.status).toBe(503);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe("control_plane_misconfigured");
   });
 
   it("requires an integration_name", async () => {
@@ -248,19 +297,27 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
     const body = await res.json<{ error: string }>();
     expect(body.error).toBe("no_service_binding");
   });
+
+  it("percent-encodes the connection id into the dispatch URL", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, okResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      "/connections/conn%201%26x/disarm-schedule",
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+
+    expect(res.status).toBe(200);
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("connection_id")).toBe("conn 1&x");
+  });
 });
 
 describe("POST /connections/:connection_id/arm-schedule", () => {
   it("still dispatches arm to the integration Worker", async () => {
     const calls: BindingCall[] = [];
-    const env = buildEnvWithBinding(
-      calls,
-      () =>
-        new Response(JSON.stringify({ ok: true, next_run_at_ms: 1 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    );
+    const env = buildEnvWithBinding(calls, armResponse);
     const res = await post(
       buildApp(),
       env,
@@ -269,25 +326,108 @@ describe("POST /connections/:connection_id/arm-schedule", () => {
     );
 
     expect(res.status).toBe(200);
+    const body = await res.json<{ ok: boolean; integration_name: string }>();
+    expect(body.ok).toBe(true);
+    expect(body.integration_name).toBe("withmarfa.rss-watcher");
     expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("POST");
     expect(calls[0]!.url).toContain("/arm-schedule");
+    expect(calls[0]!.url).toContain(`connection_id=${CONNECTION_ID}`);
   });
 
   it("carries the broker key on the outbound arm dispatch", async () => {
     const calls: BindingCall[] = [];
-    const env = buildEnvWithBinding(
-      calls,
-      () =>
-        new Response(JSON.stringify({ ok: true, next_run_at_ms: 1 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    );
+    const env = buildEnvWithBinding(calls, armResponse);
     await post(buildApp(), env, `/connections/${CONNECTION_ID}/arm-schedule`, {
       integration_name: "withmarfa.rss-watcher",
     });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+  });
+
+  it("rejects a caller with no Authorization header", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, armResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+      null,
+    );
+    expect(res.status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects a caller presenting the wrong key", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, armResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+      "Bearer not-the-key",
+    );
+    expect(res.status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects when the control plane has no broker key configured", async () => {
+    const res = await post(
+      buildApp(),
+      {} as ControlPlaneEnv,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+    expect(res.status).toBe(503);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe("control_plane_misconfigured");
+  });
+
+  it("requires integration_name", async () => {
+    const env = buildEnvWithBinding([], armResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      {},
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json<{ error: string }>();
+    expect(body.error).toBe("missing_integration_name");
+  });
+
+  it("returns 503 when no service binding is declared for the integration", async () => {
+    const env = buildEnvWithBinding([], armResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      `/connections/${CONNECTION_ID}/arm-schedule`,
+      { integration_name: "acme.unknown" },
+    );
+    expect(res.status).toBe(503);
+    const body = await res.json<{
+      error: string;
+      integration_name: string;
+    }>();
+    expect(body.error).toBe("no_service_binding");
+    expect(body.integration_name).toBe("acme.unknown");
+  });
+
+  it("percent-encodes the connection id into the dispatch URL", async () => {
+    const calls: BindingCall[] = [];
+    const env = buildEnvWithBinding(calls, armResponse);
+    const res = await post(
+      buildApp(),
+      env,
+      "/connections/conn%201%26x/arm-schedule",
+      { integration_name: "withmarfa.rss-watcher" },
+    );
+
+    expect(res.status).toBe(200);
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("connection_id")).toBe("conn 1&x");
   });
 });

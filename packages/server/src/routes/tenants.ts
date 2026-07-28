@@ -174,6 +174,14 @@ const getQuotasRoute = createRoute({
       },
       description: "Forbidden",
     },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "Tenant not found",
+    },
   },
 });
 
@@ -270,6 +278,14 @@ const putQuotasRoute = createRoute({
       },
       description: "Forbidden",
     },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "Tenant not found",
+    },
   },
 });
 
@@ -348,7 +364,11 @@ export function tenantRoutes(storage: Storage) {
   router.openapi(getQuotasRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
-    const quota = await storage.tenantQuotas.get(id);
+    const result = await storage.tenantQuotas.getForExistingTenant(id);
+    if (!result.exists) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    }
+    const quota = result.quota;
     return c.json(
       {
         tenant_id: id,
@@ -367,7 +387,10 @@ export function tenantRoutes(storage: Storage) {
     const key = requireAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const result = await storage.tenantQuotas.set(id, body);
+    const result = await storage.tenantQuotas.setForExistingTenant(id, body);
+    if (!result) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,

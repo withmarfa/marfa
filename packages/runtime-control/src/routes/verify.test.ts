@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { buildApp } from "../app.js";
 import type { ControlPlaneEnv } from "../env.js";
 
+/** The value both ends of the control-plane → Worker hop hold. */
 const BROKER_KEY = "broker-key-test";
 
 interface BindingCall {
@@ -407,6 +408,84 @@ describe("POST /connections/:id/verify", () => {
     }
   });
 
+  it("presents the broker key to the integration Worker on dispatch", async () => {
+    // The Worker gates its whole fetch surface on this key. Without the
+    // header the dispatch 401s and verify reports dispatch_failed, so
+    // the assertion is what keeps the two ends of the hop in step.
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMarfaFetch({
+      verifyContext: {
+        integration_name: "withmarfa.rss-watcher",
+        tenant_id: null,
+      },
+    });
+    const binding = mockBinding(true);
+    try {
+      const env: ControlPlaneEnv = {
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
+        INTEGRATION_RSS_WATCHER: binding,
+      };
+      const app = buildApp();
+      const res = await app.request(
+        "/connections/conn_test_verify/verify",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            event: { item_id: "item_1", event_type: "item.created" },
+          }),
+          headers: { authorization: "Bearer marfa_k1_op" },
+        },
+        env,
+      );
+      expect(res.status).toBe(200);
+      expect(binding.calls).toHaveLength(1);
+      expect(binding.calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
+      // The operator's own bearer authorizes this route and stops here
+      // — it is never what the Worker sees.
+      expect(binding.calls[0]!.authorization).not.toBe("Bearer marfa_k1_op");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("refuses to dispatch when the control plane has no broker key", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMarfaFetch({
+      verifyContext: {
+        integration_name: "withmarfa.rss-watcher",
+        tenant_id: null,
+      },
+    });
+    const binding = mockBinding(true);
+    try {
+      const env: ControlPlaneEnv = {
+        MARFA_API_URL: "http://localhost:0",
+        INTEGRATION_RSS_WATCHER: binding,
+      };
+      const app = buildApp();
+      const res = await app.request(
+        "/connections/conn_test_verify/verify",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            event: { item_id: "item_1", event_type: "item.created" },
+          }),
+          headers: { authorization: "Bearer marfa_k1_op" },
+        },
+        env,
+      );
+      expect(res.status).toBe(503);
+      await expect(res.json()).resolves.toMatchObject({
+        error: "control_plane_misconfigured",
+      });
+      // Fail before the hop rather than sending an unauthenticated one.
+      expect(binding.calls).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("threads operator-supplied cycle metadata into the envelope", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMarfaFetch({
@@ -454,87 +533,6 @@ describe("POST /connections/:id/verify", () => {
         originating_connection_id: "conn_origin",
         hop_count: 2,
       });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  /**
-   * The per-Integration Worker authenticates its whole fetch surface on
-   * the broker key. Verify's upstream lookups travel on the operator's
-   * bearer instead, so the broker key is needed only here — and without
-   * it the dispatch is refused and verify reports a failure that has
-   * nothing to do with the handler under test.
-   */
-  it("carries the broker key on the outbound verify dispatch", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMarfaFetch({
-      verifyContext: {
-        integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
-      },
-    });
-    const binding = mockBinding(true);
-    try {
-      const env: ControlPlaneEnv = {
-        MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: BROKER_KEY,
-        INTEGRATION_RSS_WATCHER: binding,
-      };
-      const res = await buildApp().request(
-        "/connections/conn_test_verify/verify",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            event: { item_id: "item_1", event_type: "item.created" },
-          }),
-          headers: { authorization: "Bearer marfa_k1_op" },
-        },
-        env,
-      );
-
-      expect(res.status).toBe(200);
-      expect(binding.calls).toHaveLength(1);
-      expect(binding.calls[0]!.authorization).toBe(`Bearer ${BROKER_KEY}`);
-      // The operator's own bearer must not be what reaches the Worker:
-      // it is a Marfa API credential, not the Worker's gate.
-      expect(binding.calls[0]!.authorization).not.toBe("Bearer marfa_k1_op");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("refuses to dispatch when the broker key is unset", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMarfaFetch({
-      verifyContext: {
-        integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
-      },
-    });
-    const binding = mockBinding(true);
-    try {
-      const env: ControlPlaneEnv = {
-        MARFA_API_URL: "http://localhost:0",
-        INTEGRATION_RSS_WATCHER: binding,
-      };
-      const res = await buildApp().request(
-        "/connections/conn_test_verify/verify",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            event: { item_id: "item_1", event_type: "item.created" },
-          }),
-          headers: { authorization: "Bearer marfa_k1_op" },
-        },
-        env,
-      );
-
-      expect(res.status).toBe(503);
-      expect((await res.json<{ error: string }>()).error).toBe(
-        "control_plane_misconfigured",
-      );
-      expect(binding.calls).toHaveLength(0);
     } finally {
       globalThis.fetch = originalFetch;
     }

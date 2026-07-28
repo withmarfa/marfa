@@ -62,7 +62,10 @@ async function handleScheduleDispatch(
       503,
     );
   }
-  const unauthorized = brokerAuthFailure(c, env.MARFA_RUNTIME_BROKER_KEY);
+  const unauthorized = await brokerAuthFailure(
+    c,
+    env.MARFA_RUNTIME_BROKER_KEY,
+  );
   if (unauthorized) return unauthorized;
 
   let body: { integration_name?: string };

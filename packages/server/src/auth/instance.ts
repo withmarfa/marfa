@@ -68,10 +68,11 @@ export interface MarfaAuthOptions {
    *  deployments enable it. Best-effort — a seed failure never blocks
    *  sign-up. */
   seedStarterContent?: boolean;
-  /** Optional shared secret used for cookie signing. When unset,
-   *  better-auth generates an ephemeral secret per process — fine for
-   *  dev, not safe for production. Production deployments must set
-   *  `MARFA_AUTH_SECRET`. */
+  /** Shared secret used to sign cookies and the OAuth authorize query.
+   *  When unset, falls back to `BETTER_AUTH_SECRET` / `AUTH_SECRET` and
+   *  then to a per-process ephemeral secret — fine for dev (sessions
+   *  don't survive a restart), not safe for production. Production
+   *  deployments must set `MARFA_AUTH_SECRET`. */
   secret?: string;
   /** Origins permitted to make credentialed (cookie) requests against
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
@@ -199,6 +200,12 @@ export interface MarfaAuth {
    *  the OAuth issuer field on the discovery doc, and the cookie
    *  domain). Mirrors `MARFA_AUTH_BASE_URL`. */
   baseURL: string;
+  /** The secret Better Auth signs with, after resolution — the
+   *  configured value, an environment fallback, or a per-process
+   *  ephemeral one. Exposed so the consent route can verify the OAuth
+   *  Provider plugin's signed authorize query against the same value the
+   *  plugin signed it with. Never log or serialize it. */
+  signingSecret: string;
   api: unknown;
 }
 
@@ -258,10 +265,30 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     }
   }
 
+  // Better Auth resolves its signing secret from `secret`, then
+  // BETTER_AUTH_SECRET / AUTH_SECRET, then a constant that ships inside
+  // the published package. Resolve it here and pass the result
+  // explicitly instead, for two reasons. The consent route has to verify
+  // the OAuth Provider plugin's signed authorize query, and a verifier
+  // reading a different value than the signer used fails open. And an
+  // instance that configured nothing should not end up signing with a
+  // secret anyone can read off npm. `MARFA_AUTH_SECRET` is mandatory in
+  // production, so the ephemeral branch is dev-only — where a restart
+  // invalidating sessions is the documented behavior.
+  const configuredSecret = [
+    options.secret,
+    process.env.BETTER_AUTH_SECRET,
+    process.env.AUTH_SECRET,
+  ].find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.length > 0,
+  );
+  const signingSecret = configuredSecret ?? randomBytes(32).toString("hex");
+
   const instance = betterAuth({
     baseURL: options.baseURL,
     basePath: "/auth",
-    secret: options.secret,
+    secret: signingSecret,
     trustedOrigins: options.trustedOrigins,
     // Suppress the ERROR-level log Better Auth emits when a
     // `request-password-reset` hits a non-existent email. The
@@ -583,11 +610,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
             }),
-            // Sibling shell plugin hosting the four `hooks.after` matchers
-            // that project plugin grant lifecycle into `system.connection`
-            // items + emit auth.grant.created / auth.grant.revoked audit
-            // rows. Best-effort — projection failures must NEVER break
-            // the auth flow.
+            // Sibling shell plugin hosting the refresh-replay before-hook.
+            // Consent projection and grant revocation remain in the Marfa
+            // route handlers that hold the verified client/user context.
             buildOauthProjectionPlugin({
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
@@ -637,6 +662,17 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       }),
     ],
     advanced: {
+      // Better Auth's trusted-origins check is a real defense on this
+      // surface: every Marfa-owned auth route that wraps a Better Auth
+      // endpoint dispatches an internal cookie-bearing POST, and the
+      // check is what stops an origin-less one from being honored. Left
+      // unset, Better Auth turns the check OFF whenever it detects a test
+      // environment — which would let a regression in that dispatch ship
+      // green, since the tests would be the only place it never runs.
+      // Setting it explicitly makes tests exercise the production path.
+      // `false` matches what an unset value already resolves to outside
+      // tests, so deployed behavior is unchanged.
+      disableOriginCheck: false,
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.
       cookiePrefix: "marfa.auth",
@@ -672,5 +708,6 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     allowSignup: options.allowSignup,
     oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
     baseURL: options.baseURL,
+    signingSecret,
   };
 }

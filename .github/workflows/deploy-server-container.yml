@@ -16,9 +16,19 @@
 # arbitrary-code-execution risk.
 #
 # Manual trigger only — this is the riskiest deploy. The Worker's runtime
-# secrets (the pooled DATABASE_URL, MARFA_AUTH_SECRET, ...) are set out-of-band
-# via infra/cloudflare/scripts/init-server-container-secrets.sh and persist on
-# the Worker; this workflow does not set them.
+# secrets (the pooled DATABASE_URL, MARFA_DATABASE_URL_DIRECT, MARFA_AUTH_SECRET,
+# ...) are set out-of-band via infra/cloudflare/scripts/init-server-container-secrets.sh
+# and persist on the Worker; this workflow does not set them.
+#
+# Nothing triggers this automatically, so a merge to main changes nothing until
+# someone dispatches it. That matters most for the Worker's `envVars` map in
+# infra/cloudflare/server-container/src/index.ts: the container reads those at
+# launch, so a change there is inert until the WORKER rolls, whether or not the
+# image changed. The two orders are not equally safe — old image plus new Worker
+# is harmless (extra variables the image ignores), while new image plus old
+# Worker is broken AND silent, because the image takes its "unset" branch for
+# config the Worker never forwarded and reports nothing. Dispatch this workflow
+# whenever `envVars` changes, even for an image-only or config-only commit.
 #
 # Migrate-then-deploy: the `migrate` job applies pending Drizzle migrations
 # against the target env's DIRECT (unpooled) Neon URL BEFORE the container

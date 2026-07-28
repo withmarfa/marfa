@@ -15,6 +15,10 @@ export { PerConnectionState } from "./per-connection-state.js";
 export type { PerConnectionAlarmEnv } from "./per-connection-state.js";
 
 export { createIntegrationWorker, buildConsumerEnv } from "./worker-entry.js";
+// Exported so an integration that adds its own `fetch` route gates it
+// the same way the bootstrap gates `/arm-schedule` and `/verify`,
+// rather than growing a second notion of "authorized".
+export { brokerAuthFailure } from "./broker-auth.js";
 export type {
   IntegrationWorkerEnv,
   IntegrationWorkerConfig,
