@@ -49,7 +49,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -79,7 +86,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -137,7 +151,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -200,7 +221,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -225,7 +253,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -281,7 +316,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -313,7 +355,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
@@ -367,7 +416,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # No `cache: pnpm`. On the self-hosted pool the store at
+          # ~/Library/pnpm/store already persists between jobs, so the cache
+          # restores nothing — but its post step still tars the whole store,
+          # and that store is 12 GB. Several jobs finishing together put
+          # concurrent multi-gigabyte tars on one machine, which is what made
+          # runs take about an hour with every visible step green. Restore
+          # this if the repository moves back to hosted runners, where the
+          # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
         env:
