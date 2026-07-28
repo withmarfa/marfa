@@ -833,17 +833,52 @@ async function proxyConsentDecision(
 type SignedQueryVerdict = "valid" | "expired" | "unsigned";
 
 /**
+ * Order a parameter set the way the OAuth Provider plugin orders it
+ * before signing, so a signature computed here matches one computed
+ * there.
+ *
+ * The plugin canonicalizes because anything between it and the browser —
+ * a CDN, a proxy — is free to reorder query parameters in transit, and a
+ * signature taken over the arrival order breaks whenever one does. Sort
+ * is by key, then by value, so the parameters the plugin repeats still
+ * land in a stable sequence.
+ */
+function canonicalizeOAuthQueryParams(
+  params: URLSearchParams,
+): URLSearchParams {
+  const canonical = new URLSearchParams();
+  const entries = [...params.entries()].sort(
+    ([keyA, valueA], [keyB, valueB]) => {
+      if (keyA < keyB) return -1;
+      if (keyA > keyB) return 1;
+      if (valueA < valueB) return -1;
+      if (valueA > valueB) return 1;
+      return 0;
+    },
+  );
+  for (const [key, value] of entries) canonical.append(key, value);
+  return canonical;
+}
+
+/**
  * Is this authorize query one the OAuth Provider plugin actually signed,
  * and still inside its validity window?
  *
- * Mirrors the plugin's own `verifyOAuthQueryParams`: strip `sig`,
- * re-sign what remains with the instance's signing secret, compare in
+ * Mirrors the plugin's own `verifyOAuthQueryParams`: reject anything
+ * carrying other than exactly one `sig`, strip it, canonicalize what
+ * remains, re-sign with the instance's signing secret, compare in
  * constant time, and reject anything past `exp`. The plugin's copy is
  * internal to the package, so this is a deliberate re-implementation
  * against the same public primitives (`makeSignature` from
  * `better-auth/crypto`) and the same secret the instance signs with —
  * `MarfaAuth.signingSecret` exists so there is one resolved value rather
  * than a verifier guessing at what the signer used.
+ *
+ * Being a re-implementation, it has to move when the plugin's signing
+ * scheme moves: the canonicalization below arrived with the plugin's fix
+ * for proxy parameter reordering, and until this matched it, every
+ * genuinely signed query read as forged. The consent round trip in the
+ * route tests is what pins the two together.
  *
  * The plugin re-verifies on its own before minting anything, so this is
  * not the fence that protects code issuance. It is the fence in front of
@@ -857,7 +892,12 @@ async function verifySignedQuery(
 ): Promise<SignedQueryVerdict> {
   try {
     const params = new URLSearchParams(oauthQuery);
-    const sig = params.get("sig");
+    // Exactly one `sig`, never several. The plugin emits one; accepting a
+    // set and testing a single member of it would let a caller keep a
+    // valid signature alongside the parameters it does not cover.
+    const sigs = params.getAll("sig");
+    if (sigs.length !== 1) return "unsigned";
+    const sig = sigs[0];
     if (!sig) return "unsigned";
     const expSeconds = Number(params.get("exp"));
     // A missing or unparseable `exp` is not a request that timed out. The
@@ -866,7 +906,10 @@ async function verifySignedQuery(
     if (!Number.isFinite(expSeconds)) return "unsigned";
     if (expSeconds * 1000 < Date.now()) return "expired";
     params.delete("sig");
-    const expected = await makeSignature(params.toString(), auth.signingSecret);
+    const expected = await makeSignature(
+      canonicalizeOAuthQueryParams(params).toString(),
+      auth.signingSecret,
+    );
     if (constantTimeEqual(sig, expected)) return "valid";
     log(
       "warn",
@@ -1083,7 +1126,13 @@ function classifyProxyOutcome(
   return "interaction";
 }
 
-export const __test_internals = { isRegisteredResponseRedirect };
+export const __test_internals = {
+  isRegisteredResponseRedirect,
+  // Shared with the tests that mint their own signed queries, so a signer
+  // and its verifier can never disagree about parameter order. The tests
+  // that drive the real plugin flow are what pin this to the plugin.
+  canonicalizeOAuthQueryParams,
+};
 
 /**
  * Build the OIDC error redirect for a `prompt=none` request that cannot

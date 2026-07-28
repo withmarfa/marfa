@@ -304,7 +304,10 @@ async function mintSignedQuery(
   const params = new URLSearchParams(fields);
   params.set("exp", String(Math.floor(Date.now() / 1000) + 600));
   params.set("ba_iat", String(Date.now()));
-  const sig = await makeSignature(params.toString(), TEST_AUTH_SECRET);
+  const sig = await makeSignature(
+    __test_internals.canonicalizeOAuthQueryParams(params).toString(),
+    TEST_AUTH_SECRET,
+  );
   params.append("sig", sig);
   return params.toString();
 }

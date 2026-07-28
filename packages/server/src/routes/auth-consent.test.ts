@@ -24,6 +24,7 @@ import {
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { __test_internals } from "./auth-consent.js";
 
 let ctx: TestContext | undefined;
 
@@ -195,7 +196,13 @@ async function buildSignedOauthQuery(
   });
   params.set("exp", extra?.exp ?? String(Math.floor(Date.now() / 1000) + 600));
   params.set("ba_iat", extra?.ba_iat ?? String(Date.now()));
-  params.set("sig", await makeSignature(params.toString(), TEST_AUTH_SECRET));
+  params.set(
+    "sig",
+    await makeSignature(
+      __test_internals.canonicalizeOAuthQueryParams(params).toString(),
+      TEST_AUTH_SECRET,
+    ),
+  );
   return params.toString();
 }
 
