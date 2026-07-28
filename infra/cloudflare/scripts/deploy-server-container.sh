@@ -50,6 +50,9 @@
 #   - SKIP_S3_CRED_CHECK       (set to 1 to bypass the s3 credential guard that
 #                               otherwise blocks a BLOB_BACKEND=s3 deploy when the
 #                               Worker lacks the S3 secrets)
+#   - SKIP_DB_DIRECT_CHECK     (set to 1 to bypass the pre-flight that blocks a
+#                               deploy when the Worker lacks MARFA_DATABASE_URL_DIRECT,
+#                               which the container now refuses to boot without)
 #   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
 #                               host — override for a jurisdiction-restricted bucket, e.g. EU)
 #   - SERVER_SLEEP_AFTER       (container idle scale-to-zero timer; default "20m")
@@ -62,6 +65,20 @@
 #                               Durable Object). Set "true" to opt a genuinely
 #                               latency-sensitive env into always-on)
 #   - STAGING_WORKERS_SUBDOMAIN (account workers.dev subdomain, for the staging auth base URL)
+#
+# WHAT ROLLS WHAT, AND WHY THE ORDER IS ASYMMETRIC
+#   The container receives its environment from the Worker's `envVars` map, read
+#   once at container launch. So a change to `server-container/src/index.ts`
+#   (adding a variable, changing a static value like MARFA_DB_POOL_MODE) only
+#   takes effect when the WORKER is redeployed — running this script — and a
+#   change to the server image only takes effect when a new image tag rolls.
+#   The two failure modes are not symmetric:
+#     - Old image + new Worker: safe. The container gets variables it ignores.
+#     - New image + old Worker: NOT safe, and silent. The image expects config
+#       the Worker never forwards, so it takes its "unset" branch and reports
+#       nothing wrong. That is exactly how MARFA_DATABASE_URL_DIRECT stayed
+#       inert for the life of the feature it was added for.
+#   Deploy the Worker whenever `envVars` changes, even if the image has not.
 #
 # The image must already be built (linux/amd64) and pushed to the managed
 # registry under the SAME tag this script resolves. The default tag is the
@@ -210,6 +227,39 @@ else
   export V_AUTH_BASE_URL="https://api.marfa.so"
   export V_CORS_ORIGINS="${PROD_CORS_ORIGINS:-https://api.marfa.so}"
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod-${GIT_SHA}}"
+fi
+
+# Boot guard: the container declares MARFA_DB_POOL_MODE=transaction, so the
+# server refuses to start without MARFA_DATABASE_URL_DIRECT. That refusal is
+# deliberate — streaming RLS sets a session-level role, which strands on a
+# shared backend over the pooled endpoint DATABASE_URL points at — but a
+# container that will not boot surfaces as a generic "Failed to start container"
+# 500 after the roll. Check before, where the message can name the fix. Same
+# live-secret-list approach as the S3 guard below. Skip with
+# SKIP_DB_DIRECT_CHECK=1.
+if [[ "${SKIP_DB_DIRECT_CHECK:-}" != "1" ]]; then
+  echo "→ Verifying MARFA_DATABASE_URL_DIRECT is set on $SERVER_WORKER_NAME"
+  if DB_SECRET_LIST="$(wrangler secret list --name "$SERVER_WORKER_NAME" 2>/dev/null)"; then
+    if grep -q '"MARFA_DATABASE_URL_DIRECT"' <<<"$DB_SECRET_LIST"; then
+      echo "  ✓ MARFA_DATABASE_URL_DIRECT present"
+    else
+      echo "error: the Worker is missing the MARFA_DATABASE_URL_DIRECT secret." >&2
+      echo "  The container sets MARFA_DB_POOL_MODE=transaction, so the server" >&2
+      echo "  will refuse to boot without it and the roll will fail." >&2
+      if [[ "$ENV_NAME" == "staging" ]]; then
+        echo "  Fix: set NEON_DATABASE_URL_STAGING in your shell, then run:" >&2
+      else
+        echo "  Fix: set NEON_DATABASE_URL_PROD in your shell, then run:" >&2
+      fi
+      echo "    ./infra/cloudflare/scripts/init-server-container-secrets.sh $ENV_NAME" >&2
+      exit 1
+    fi
+  else
+    # A first-ever deploy has no Worker to list secrets on yet. Refusing here
+    # would block a legitimate bootstrap on a check that cannot run, so say so
+    # and continue rather than assert something unverified.
+    echo "  ⚠ could not read the secret list (new Worker?) — skipping this check" >&2
+  fi
 fi
 
 # Durability guard: a BLOB_BACKEND=s3 deploy must not roll unless the Worker

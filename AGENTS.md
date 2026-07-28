@@ -109,6 +109,8 @@ Server package only (not needed for shared or SDK development):
 - `PORT` — server port (default: 8600)
 - `DB_DIALECT` — `sqlite` or `pg` (default: sqlite)
 - `DATABASE_URL` — Postgres connection string (required when dialect is pg)
+- `MARFA_DB_POOL_MODE` — `session` (default) or `transaction`, describing the endpoint `DATABASE_URL` points at. A direct Postgres connection is `session`. Set `transaction` when the app talks to a transaction-mode pooler (PgBouncer, Neon's `-pooler` endpoint); that makes `MARFA_DATABASE_URL_DIRECT` mandatory and the server refuses to boot without it. An unrecognized value throws at boot rather than falling back to the permissive mode.
+- `MARFA_DATABASE_URL_DIRECT` — direct (unpooled, session-mode) URL for the same database as `DATABASE_URL`, used **only** by streaming RLS. Streaming issues a session-level `SET ROLE marfa_app`, which over a transaction-mode pooler strands on a shared backend and is inherited by later, unrelated queries — including Better Auth's session reads, which then fail with `permission denied`. Required when `MARFA_DB_POOL_MODE=transaction`; unnecessary otherwise, and streaming then shares the main client. It must address a **different endpoint** than `DATABASE_URL`: pointing it back at the pooled one satisfies every presence check while reproducing the failure exactly, so the server compares host and port and refuses to start when they match. Port is part of the comparison so the common self-hosted shape — PgBouncer beside Postgres on one machine — still starts.
 - `SQLITE_PATH` — database file path (default: `./data/marfa.db`)
 - `BLOB_BACKEND` — `filesystem` or `s3` (default: filesystem)
 - `BLOB_PATH` — blob storage directory (default: `./data/blobs`)
