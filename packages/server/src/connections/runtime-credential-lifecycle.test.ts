@@ -643,6 +643,49 @@ describe("a runtime credential speaks only for its own Connection", () => {
     expect(res.status).toBe(403);
   });
 
+  it("refuses a natural-key upsert against a type it cannot write", async () => {
+    // The third door, and the one clause of its fix that attribution
+    // cannot stand in for. `POST /items` short-circuits to an update when
+    // `(source, source_id)` resolves a row, and that update ignores the
+    // body's `type` entirely — it lands on whatever the resolved row
+    // already is. Naming a type the credential does hold therefore
+    // admitted an edit to a row of any other type.
+    //
+    // Reachable because item provenance is now the Connection's rather
+    // than the credential's: a source that rotated with each mint could
+    // only ever resolve rows from the live generation, so the door
+    // matters more after that change than before it. The fixture stands
+    // in for a row an earlier generation wrote under a manifest that has
+    // since been narrowed — same provenance, a type this credential no
+    // longer reaches.
+    const tenant = await ctx.storage.tenants!.create("upsert-target-type");
+    const mine = await credentialFor(tenant.id, "acme.upsert-target-type");
+
+    const legacy = await ctx.storage.items.create(
+      {
+        type: "core.task",
+        properties: { title: "left by an earlier generation" },
+        source: `integration:${mine.connectionId}`,
+        source_id: "narrowed",
+      },
+      tenant.id,
+    );
+
+    const res = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "core.note",
+        source_id: "narrowed",
+        properties: { body: "clobbered" },
+      },
+    });
+    expect(res.status).toBe(403);
+
+    const after = await ctx.storage.items.get(legacy.id, tenant.id);
+    expect(after?.properties.title).toBe("left by an earlier generation");
+    expect(after?.properties.body).toBeUndefined();
+  });
+
   it("still lets a credential write and update its own activity", async () => {
     // The gate has to admit the only thing a connector legitimately does
     // with this type, or the runtime SDK's activity sink stops working

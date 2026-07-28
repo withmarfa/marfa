@@ -1027,6 +1027,39 @@ export function itemRoutes(storage: Storage) {
         tenantId,
       );
       if (existing) {
+        // Authorize the update against the row it lands on, not the body
+        // that addressed it. Every gate above ran on `type`, which the
+        // caller chose and which this branch never writes — the update
+        // takes the resolved row's type as it stands. Naming a type the
+        // credential holds write on therefore admitted an edit to a row
+        // of any other type, and skipped every gate keyed on the real
+        // one, the attribution check included. These are the gates
+        // `PATCH /items/{id}` runs; running them here is what makes the
+        // two doors agree. The create path below keeps authorizing the
+        // claim, because there the claim is the row.
+        //
+        // Reachable at all because `item_source` fixed provenance to the
+        // Connection: a source that rotated with each mint could only
+        // ever resolve rows from the credential's own generation.
+        const credentialForUpdate = c.get("apiKey");
+        requireTypeAccess(c, existing.type, "write");
+        requireActivityAttribution(
+          credentialForUpdate,
+          existing.type,
+          existing.properties,
+        );
+        // Judged on the value the row ends up with. The merge mirrors the
+        // shallow property merge the storage layer performs, so a body
+        // that leaves `connection_id` alone is not read as claiming an
+        // absent one.
+        requireActivityAttribution(
+          credentialForUpdate,
+          existing.type,
+          body.properties !== undefined
+            ? { ...existing.properties, ...properties }
+            : existing.properties,
+        );
+
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
         // with the existing row's id. A 200 response carrying a different id
