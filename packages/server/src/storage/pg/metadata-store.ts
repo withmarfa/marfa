@@ -22,35 +22,31 @@ export class PgMetadataStore implements MetadataStore {
       : sql``;
 
     let typesClause = sql``;
-    if (filters.allowedTypes && filters.allowedTypes.length > 0) {
-      const typed = filters.allowedTypes.filter((p) => p !== "*");
-      if (typed.length === 0) {
-        // includes "*" — no restriction
-        typesClause = sql``;
-      } else {
-        const decomposed = typed.map(typePatternToSql);
-        // A subtree wildcard contributes its own root to the equality list as
-        // well as a prefix match, so `core.media.*` covers `core.media`.
-        const exact = decomposed
-          .map((d) => d.exact)
-          .filter((v): v is string => v !== null);
-        const wildcards = decomposed
-          .map((d) => d.descendantPattern)
-          .filter((v): v is string => v !== null);
-        const parts: ReturnType<typeof sql>[] = [];
-        if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
-        for (const w of wildcards)
-          parts.push(sql`i.type LIKE ${w} ESCAPE '\\'`);
-        if (filters.allowedTypes.includes("*")) {
-          // "*" always matches — leave no restriction
-        } else if (parts.length > 0) {
-          const joined = parts.reduce(
-            (acc, part, idx) => (idx === 0 ? part : sql`${acc} OR ${part}`),
-            sql``,
-          );
-          typesClause = sql`AND (${joined})`;
-        }
-      }
+    // An empty allow-list means "no readable types", not "no restriction",
+    // and every other read surface reads it that way. Guarding on a non-empty
+    // list dropped the clause and returned the whole tenant's tag vocabulary
+    // with counts, which names what exists even when no item behind it is
+    // readable.
+    if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
+      const decomposed = filters.allowedTypes.map(typePatternToSql);
+      // A subtree wildcard contributes its own root to the equality list as
+      // well as a prefix match, so `core.media.*` covers `core.media`.
+      const exact = decomposed
+        .map((d) => d.exact)
+        .filter((v): v is string => v !== null);
+      const wildcards = decomposed
+        .map((d) => d.descendantPattern)
+        .filter((v): v is string => v !== null);
+      const parts: ReturnType<typeof sql>[] = [];
+      if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
+      for (const w of wildcards) parts.push(sql`i.type LIKE ${w} ESCAPE '\\'`);
+      // The seed is what an empty allow-list resolves to: no clause at all
+      // would widen the query back to every type.
+      const joined = parts.reduce(
+        (acc, part, idx) => (idx === 0 ? part : sql`${acc} OR ${part}`),
+        sql`false`,
+      );
+      typesClause = sql`AND (${joined})`;
     }
 
     const result = await this.db.execute(sql`

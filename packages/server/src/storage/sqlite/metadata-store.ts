@@ -23,23 +23,25 @@ export class SqliteMetadataStore implements MetadataStore {
       conditions.push("i.tenant_id = ?");
       params.push(filters.tenantId);
     }
-    if (filters.allowedTypes && filters.allowedTypes.length > 0) {
-      const includesStar = filters.allowedTypes.includes("*");
-      if (!includesStar) {
-        const typeClauses = filters.allowedTypes.map((pattern) => {
-          const { exact, descendantPattern } = typePatternToSql(pattern);
-          if (!exact) return "1=0";
-          if (!descendantPattern) {
-            params.push(exact);
-            return "i.type = ?";
-          }
-          params.push(exact, descendantPattern);
-          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
-        });
-        if (typeClauses.length > 0) {
-          conditions.push(`(${typeClauses.join(" OR ")})`);
+    // An empty allow-list means "no readable types", not "no restriction",
+    // and every other read surface reads it that way. Guarding on a non-empty
+    // list dropped the clause and returned the whole tenant's tag vocabulary
+    // with counts, which names what exists even when no item behind it is
+    // readable.
+    if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
+      const typeClauses = filters.allowedTypes.map((pattern) => {
+        const { exact, descendantPattern } = typePatternToSql(pattern);
+        if (!exact) return "1=0";
+        if (!descendantPattern) {
+          params.push(exact);
+          return "i.type = ?";
         }
-      }
+        params.push(exact, descendantPattern);
+        return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+      });
+      conditions.push(
+        typeClauses.length > 0 ? `(${typeClauses.join(" OR ")})` : "1=0",
+      );
     }
     const where = conditions.join(" AND ");
     const sqlText = `

@@ -168,6 +168,27 @@ describe("allowed_types — underscore handling across read surfaces", () => {
     expect(tags).toContain("tag-underscored");
     expect(tags).not.toContain("tag-lookalike");
   });
+
+  it("returns no tags to a credential with no readable types", async () => {
+    // An empty allow-list means "nothing is readable", and every other read
+    // surface says so. The tag aggregate guarded on a non-empty list, so the
+    // empty case skipped the type clause and handed back the tenant's whole
+    // vocabulary with counts — which names what exists even though no item
+    // behind it is readable.
+    const key = await mintScopedKey({});
+
+    const tagsRes = await request(ctx.app, "GET", "/metadata/tags", { key });
+    expect(tagsRes.status).toBe(200);
+    const tagsBody = (await tagsRes.json()) as { tags: { tag: string }[] };
+    expect(tagsBody.tags).toEqual([]);
+
+    // The sibling surfaces, pinned in the same test so a future divergence
+    // reads as the disagreement it is.
+    expect(await listTypes("/items", key)).toEqual([]);
+    const statsRes = await request(ctx.app, "GET", "/items/stats", { key });
+    expect(statsRes.status).toBe(200);
+    expect(await statsRes.json()).toEqual({});
+  });
 });
 
 describe("GET /items?filter= — LIKE operands declare their escape character", () => {
