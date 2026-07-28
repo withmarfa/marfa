@@ -43,22 +43,83 @@ const BROKER_KEY = "broker-key-test";
 const INTEGRATION = "withmarfa.rss-watcher";
 
 /**
- * Route modules that dispatch over a Service Binding. Every one of
- * them is exercised below. Adding a name here without adding a case is
- * the one way to weaken this file, so treat the list as a checklist
- * rather than a formality.
+ * Service-Binding dispatch sites, counted per route module. Every one
+ * of them is exercised below. Adding an entry or raising a count here
+ * without adding a case is the one way to weaken this file, so treat
+ * it as a checklist rather than a formality.
+ *
+ * Counts rather than a set of file names. A set only notices the first
+ * dispatch a module gains: a second one added inside `arm-schedule.ts`
+ * or `verify.ts`, on a route outside the schedule pattern and with no
+ * `authorization` header, leaves the file list identical and ships an
+ * ungated hop past a guard whose whole job is to stop exactly that.
  */
-const COVERED_DISPATCHERS = ["arm-schedule.ts", "verify.ts"];
+const COVERED_DISPATCHES: Record<string, number> = {
+  "arm-schedule.ts": 1,
+  "verify.ts": 1,
+};
 
 /** `POST /connections/:connection_id/<verb>-schedule`. */
 const SCHEDULE_ROUTE = /^\/connections\/:connection_id\/[a-z-]+-schedule$/;
 
-/** Route modules containing a Service-Binding dispatch, found in source. */
-function dispatchingRouteModules(): string[] {
+/** Route modules, test files excluded. */
+function routeModules(): string[] {
   return readdirSync(__dirname)
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
-    .filter((f) => readFileSync(join(__dirname, f), "utf8").includes(".fetch("))
     .sort();
+}
+
+/**
+ * The argument text of every Service-Binding dispatch in a module.
+ *
+ * Read from source rather than driven through the app, because what is
+ * being guarded is the existence of a dispatch: one added on a route
+ * nothing calls yet still ships, and no request would reach it. Parens
+ * are matched by depth, which holds for the shape every dispatch here
+ * uses, the Request built inline at the call. A dispatch that builds
+ * its Request further up fails this guard rather than passing it. For
+ * a check on whether a credential is present, a call site that cannot
+ * be read has to read as absent.
+ */
+function dispatchArguments(file: string): string[] {
+  const source = readFileSync(join(__dirname, file), "utf8");
+  const found: string[] = [];
+  const CALL = ".fetch(";
+  let from = 0;
+  for (;;) {
+    const call = source.indexOf(CALL, from);
+    if (call === -1) return found;
+    const open = call + CALL.length;
+    let depth = 1;
+    let i = open;
+    while (i < source.length && depth > 0) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") depth--;
+      i++;
+    }
+    found.push(source.slice(open, i - 1));
+    from = i;
+  }
+}
+
+/** Route modules that dispatch, with how many dispatches each holds. */
+function dispatchSiteCounts(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const file of routeModules()) {
+    const sites = dispatchArguments(file).length;
+    if (sites > 0) counts[file] = sites;
+  }
+  return counts;
+}
+
+/** Every dispatch site in the package, one entry per call. */
+function dispatchSites(): { label: string; text: string }[] {
+  return routeModules().flatMap((file) =>
+    dispatchArguments(file).map((text, index) => ({
+      label: `${file} dispatch ${String(index + 1)}`,
+      text,
+    })),
+  );
 }
 
 function scheduleRoutePaths(): string[] {
@@ -124,8 +185,26 @@ function mockMarfaFetch(): typeof fetch {
 }
 
 describe("every Service-Binding dispatch site is covered", () => {
-  it("finds no dispatching route module without a case here", () => {
-    expect(dispatchingRouteModules()).toEqual(COVERED_DISPATCHERS);
+  it("finds no dispatch site without a case here", () => {
+    expect(dispatchSiteCounts()).toEqual(COVERED_DISPATCHES);
+  });
+
+  it("found dispatch sites to read", () => {
+    // Vacuity guard. A change to how a dispatch is written that the
+    // paren walk cannot follow would leave the per-site assertions
+    // below iterating an empty list and passing.
+    expect(dispatchSites().length).toBeGreaterThan(0);
+  });
+
+  it.each(dispatchSites())("$label carries the broker key", ({ text }) => {
+    // Named per site rather than per route, so a dispatch added on a
+    // route the behavioral cases below do not reach is still held to
+    // the contract. The env var is asserted by name because the
+    // failure that matters is a dispatch presenting some other
+    // credential, the operator's platform bearer say, which an
+    // `authorization`-only check would wave through.
+    expect(text).toContain("authorization");
+    expect(text).toContain("MARFA_RUNTIME_BROKER_KEY");
   });
 });
 
