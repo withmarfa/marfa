@@ -1338,6 +1338,16 @@ describe("bridge — unmapped integration handling", () => {
     expect(bridge).not.toBeNull();
 
     const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    // The bridge logs every failed alert write from the same catch block that
+    // decides whether to arm a retry. Waiting for that line is what makes the
+    // assertion below a statement about the decision rather than about
+    // whichever happened to run first.
+    const failureLogs: string[] = [];
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation((...args: unknown[]) => {
+        failureLogs.push(args.map((arg) => String(arg)).join(" "));
+      });
     try {
       await bridge!.start();
       const note = await originalCreate({
@@ -1359,11 +1369,23 @@ describe("bridge — unmapped integration handling", () => {
       const stopping = bridge!.stop();
       rejectWrite(new Error("storage closed during bridge shutdown"));
       await stopping;
+      expect(
+        await waitFor(
+          () => Promise.resolve(failureLogs),
+          (logs) =>
+            logs.some((line) =>
+              line.includes("storage closed during bridge shutdown"),
+            ),
+        ),
+      ).toContainEqual(
+        expect.stringContaining("storage closed during bridge shutdown"),
+      );
 
       expect(
         timeoutSpy.mock.calls.filter(([, delay]) => delay === 43),
       ).toHaveLength(0);
     } finally {
+      errorSpy.mockRestore();
       timeoutSpy.mockRestore();
       rejectWrite(new Error("test cleanup"));
       ctx.storage.items.create = originalCreate;
@@ -1371,17 +1393,12 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
-  it("reattributes a shared-integration retry when its connection is removed", async () => {
-    const integrationName = "acme.unmapped-retry-reattribution";
+  it("stop waits for an in-flight alert write to settle", async () => {
+    const integrationName = "acme.unmapped-stop-awaits-write";
     const integrationId = await createIntegration(
       manifest({ name: integrationName }),
     );
-    const firstConnection = await createConnection({
-      integrationRef: integrationId,
-    });
-    const removedConnection = await createConnection({
-      integrationRef: integrationId,
-    });
+    await createConnection({ integrationRef: integrationId });
 
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
     let rejectWrite!: (reason?: unknown) => void;
@@ -1396,9 +1413,103 @@ describe("bridge — unmapped integration handling", () => {
         properties?.summary?.includes(integrationName)
       ) {
         activityWriteAttempts++;
-        if (activityWriteAttempts === 1) return pendingWrite;
+        return pendingWrite;
       }
       return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 10,
+      unmappedActivityRetryMaxMs: 10,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "stop must await the alert write" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      // Callers tear storage down once stop() resolves, so reporting the
+      // bridge quiesced while one of its own writes is still outstanding
+      // leaves that write to land against a closed store.
+      const stopping = bridge!.stop();
+      const settledWhileWritePending = await Promise.race([
+        stopping.then(() => true),
+        new Promise<false>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 200),
+        ),
+      ]);
+      expect(settledWhileWritePending).toBe(false);
+
+      rejectWrite(new Error("storage closed during bridge shutdown"));
+      await expect(stopping).resolves.toBeUndefined();
+    } finally {
+      rejectWrite(new Error("test cleanup"));
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("reattributes a shared-integration retry when its connection is removed", async () => {
+    const integrationName = "acme.unmapped-retry-reattribution";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionIds = [
+      await createConnection({ integrationRef: integrationId }),
+      await createConnection({ integrationRef: integrationId }),
+    ];
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    const originalGet = ctx.storage.items.get.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    // Every alert names the connection the retry state was pointing at when it
+    // was written, so the sequence of names is the whole subject of this test.
+    const alertedConnections: string[] = [];
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as
+        | { summary?: string; connection_id?: string }
+        | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        alertedConnections.push(properties.connection_id ?? "");
+        if (alertedConnections.length === 1) return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+    // The cache-invalidation subscriber reads each changed connection through
+    // `items.get`, so watching that read is how the test knows a refresh has
+    // been processed rather than guessing at a sleep.
+    let refreshWatch: string | null = null;
+    let refreshSeen = false;
+    ctx.storage.items.get = async (id, tenantId, options) => {
+      if (refreshWatch !== null && id === refreshWatch) refreshSeen = true;
+      return originalGet(id, tenantId, options);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1425,25 +1536,67 @@ describe("bridge — unmapped integration handling", () => {
       });
       expect(
         await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
+          () => Promise.resolve(alertedConnections.length),
           (attempts) => attempts === 1,
         ),
       ).toBe(1);
 
+      // Both connections share one retry state. The in-flight write names the
+      // first connection fanout reached; the state itself was then re-pointed
+      // at the second, so that is the one whose removal the retry has to
+      // survive. Revoking the other connection would assert nothing.
+      const survivor = alertedConnections[0];
+      const stateHolder = connectionIds.find((id) => id !== survivor);
+      if (survivor === undefined || stateHolder === undefined) {
+        throw new Error(
+          "expected the two connections to share one retry state, with the in-flight write naming only one of them",
+        );
+      }
+
       const removed = await ctx.storage.items.transition(
-        removedConnection,
+        stateHolder,
         "revoked",
       );
-      await publish({ type: "state_changed", item: removed });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      rejectWrite(new Error("first alert write failed"));
-
+      // Attribute the revocation to the surviving connection so fanout skips
+      // it as a self-event. Left unattributed, that fanout would re-point the
+      // retry state at the survivor on its own and the removal path's
+      // reattribution would never be exercised.
+      await publish({
+        type: "state_changed",
+        item: removed,
+        originatingConnectionId: survivor,
+      });
+      // The invalidation subscriber refreshes connections in publish order, so
+      // seeing the survivor's refresh proves the revoked one already landed.
+      const survivorItem = await originalGet(survivor);
+      if (!survivorItem) {
+        throw new Error("the surviving connection should still be readable");
+      }
+      refreshWatch = survivor;
+      await publish({
+        type: "state_changed",
+        item: survivorItem,
+        originatingConnectionId: survivor,
+      });
       expect(
         await waitFor(
-          () => Promise.resolve(activityWriteAttempts),
+          () => Promise.resolve(refreshSeen),
+          (seen) => seen,
+        ),
+      ).toBe(true);
+
+      // Only now can the retry chain start, so it runs against a registry that
+      // has already dropped the connection the state was pointing at.
+      rejectWrite(new Error("first alert write failed"));
+      expect(
+        await waitFor(
+          () => Promise.resolve(alertedConnections.length),
           (attempts) => attempts === 2,
         ),
       ).toBe(2);
+      expect(alertedConnections[1]).toBe(survivor);
+      expect(alertedConnections[1]).not.toBe(stateHolder);
+
       const activity = await waitFor(
         async () => {
           const activities = await ctx.storage.items.list({
@@ -1458,11 +1611,12 @@ describe("bridge — unmapped integration handling", () => {
         (row) => row !== undefined,
       );
       expect(activity?.properties).toMatchObject({
-        connection_id: firstConnection,
+        connection_id: survivor,
       });
     } finally {
       rejectWrite(new Error("test cleanup"));
       ctx.storage.items.create = originalCreate;
+      ctx.storage.items.get = originalGet;
       await bridge!.stop();
     }
   });
