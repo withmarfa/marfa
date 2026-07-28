@@ -14,8 +14,10 @@ import { checkDeployDrift } from "./drift.mjs";
 import { checkTelemetry } from "./posthog.mjs";
 import {
   emitHeartbeat,
+  fetchHeartbeatHistory,
   checkHeartbeatGap,
   checkFleetOscillation,
+  checkHeartbeatProjectMatch,
 } from "./heartbeat.mjs";
 import { reconcileAlert } from "./alert.mjs";
 
@@ -51,6 +53,30 @@ function surfacesForRun() {
   ];
 }
 
+/**
+ * One line describing what the watchdog had to work with this run.
+ *
+ * Both watchdog checks are quiet when the history is thin, and quiet is what
+ * a healthy fleet looks like too. The distinction has to be written down
+ * somewhere a human will see it.
+ */
+function describeHistory(heartbeat, oscillation) {
+  if (!heartbeat.configured) return "not checked (not configured)";
+  if (heartbeat.unknown) return "UNAVAILABLE — history could not be read";
+  if (heartbeat.firstRun) {
+    return "empty — first scheduled run, or the previous one aged out";
+  }
+  if (!heartbeat.baselineKnown) {
+    return "too few scheduled runs yet to establish a normal interval";
+  }
+  return (
+    `normal interval ~${String(heartbeat.baselineMinutes)} min ` +
+    `(median of ${String(heartbeat.samples)}), gap tolerance ` +
+    `${String(heartbeat.toleranceMinutes)} min; ` +
+    `${String(oscillation.flips)} flip(s) across ${String(oscillation.runs)} recent run(s)`
+  );
+}
+
 async function main() {
   const repo = env.GITHUB_REPOSITORY;
   const token = env.GITHUB_TOKEN;
@@ -59,7 +85,15 @@ async function main() {
       ? `${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${env.GITHUB_RUN_ID}`
       : "(local run)";
 
-  const heartbeat = await checkHeartbeatGap({ env, now });
+  // One read of the heartbeat history serves both watchdog checks: they want
+  // the same rows, and the query API is rate-limited per hour. Both are pure
+  // functions of it, which is what makes their thresholds testable against a
+  // real interval distribution rather than only against invented ones.
+  const history = await fetchHeartbeatHistory({ env });
+  const heartbeat = checkHeartbeatGap({ history, now });
+  const oscillation = checkFleetOscillation({ history });
+  const projectMatch = await checkHeartbeatProjectMatch({ env });
+
   const liveness = await checkLiveness(surfacesForRun());
   const drift = await checkDeployDrift({
     repo,
@@ -68,17 +102,34 @@ async function main() {
     now,
   });
   const telemetry = await checkTelemetry(env);
-  const oscillation = await checkFleetOscillation({ env });
 
-  const allFindings = [
-    ...heartbeat.findings,
-    ...oscillation.findings,
+  // Findings about the fleet, and findings about the watcher itself, are kept
+  // apart. Both alert; only the first decides the verdict recorded on this
+  // run's heartbeat, because that verdict answers "was the fleet healthy?" and
+  // a gap in the watcher's own history is not an answer to it.
+  //
+  // Keeping the oscillation finding out of that verdict also breaks a loop.
+  // The finding is derived from the `healthy` values on previous heartbeats,
+  // so recording it would feed the detector's own output back into the
+  // sequence it reads next time — which can manufacture the very transitions
+  // it counts: a green fleet plus a firing detector records unhealthy, the
+  // next run records healthy again, and that flip is entirely the detector's
+  // own. It would also hold the alert open past the point where its text
+  // ("something is recovering and failing again") is still true.
+  const fleetFindings = [
     ...liveness.findings,
     ...drift.findings,
     ...telemetry.findings,
   ];
+  const allFindings = [
+    ...heartbeat.findings,
+    ...oscillation.findings,
+    ...projectMatch.findings,
+    ...fleetFindings,
+  ];
   const red = allFindings.filter((f) => f.severity === "red");
   const warn = allFindings.filter((f) => f.severity === "warn");
+  const fleetHealthy = !fleetFindings.some((f) => f.severity === "red");
 
   // ---- Run summary -------------------------------------------------------
 
@@ -237,12 +288,20 @@ async function main() {
     `Alert issue: ${alert.action}${alert.url ? ` — ${alert.url}` : ""}`,
   );
 
+  // Both watchdog checks fail closed — no history means no findings, which
+  // reads as health. Stating what the history actually was on every run is
+  // what stops that being invisible, and it puts the derived tolerance in
+  // front of whoever is reading, so the numbers can be sanity-checked without
+  // reading the source.
+  lines.push(`Watchdog history: ${describeHistory(heartbeat, oscillation)}`);
+  lines.push(`Watchdog project: ${projectMatch.note}`);
+
   // The heartbeat is emitted last and unconditionally, so its presence means
   // "a run completed", not "a run found nothing wrong".
   const beat = await emitHeartbeat({
     env,
     runId: env.GITHUB_RUN_ID ?? "local",
-    healthy: red.length === 0,
+    healthy: fleetHealthy,
   });
   lines.push(
     `Heartbeat: ${beat.emitted ? "emitted" : `not emitted (${String(beat.reason ?? beat.status)})`}` +
