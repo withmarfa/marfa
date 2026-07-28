@@ -20,7 +20,7 @@
 #   ./infra/cloudflare/scripts/deploy-server-container.sh <staging|prod> [extra wrangler args]
 #
 # Required env (operator-specific; source from the per-machine secrets file):
-#   - CLOUDFLARE_API_TOKEN     (marfa-account token; export = $CLOUDFLARE_API_TOKEN_MARFA)
+#   - CLOUDFLARE_API_TOKEN     (token with Workers write on the target account)
 #   - CLOUDFLARE_ACCOUNT_ID    (marfa account id)
 #
 # Migrate-before-deploy (canonical ordering: migrate-then-deploy):

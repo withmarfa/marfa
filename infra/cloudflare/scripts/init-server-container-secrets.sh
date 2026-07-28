@@ -9,8 +9,11 @@
 #   ./infra/cloudflare/scripts/init-server-container-secrets.sh <staging|prod>
 #
 # Reads values from the calling shell's environment (source your per-machine
-# secrets file first). Secret slots use consumer-scoped names; the source env
-# vars carry the *_MARFA / *_STAGING / *_PROD developer suffix.
+# secrets file first). Both the secret slots and the source env vars use
+# consumer-scoped names, so a deployer with no knowledge of any particular
+# operator's shell can run this. A handful of suffixed legacy names are still
+# accepted as fallbacks, marked below; they are a compatibility shim and new
+# deployments should not rely on them.
 #
 # The DATABASE_URL Worker secret is the POOLED (PgBouncer) endpoint and is
 # resolved PER-ENV, with a backward-compat fallback to the legacy shared
@@ -34,13 +37,13 @@
 #
 #   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
 #   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
-#   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
+#   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN
 #   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer <per-env PostHog token>"
 #     staging <- POSTHOG_PROJECT_KEY_STAGING
 #     prod    <- POSTHOG_PROJECT_KEY_PROD || POSTHOG_PROJECT_KEY_MARFA (legacy)
 #     (per-env so staging and prod telemetry land in separate PostHog projects)
 # Optional (set only when the source var is present):
-#   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN_MARFA      (only if MARFA_SET_QUEUES=1)
+#   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN            (only if MARFA_SET_QUEUES=1)
 #   CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS <- CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
 #   MARFA_RUNTIME_BROKER_KEY    <- MARFA_RUNTIME_BROKER_KEY
 #   S3_ACCESS_KEY_ID            <- R2_ACCESS_KEY_ID                (R2 S3-API creds)
@@ -108,7 +111,15 @@ if [[ -z "$DIRECT_DB_URL" ]]; then
   exit 1
 fi
 
-: "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
+# Consumer-scoped name first, so a deployer with no knowledge of any
+# particular operator's shell can run this. The suffixed name stays as a
+# fallback only.
+CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN_MARFA:-}}"
+if [[ -z "$CF_TOKEN" ]]; then
+  echo "error: no Cloudflare API token resolved" >&2
+  echo "  set CLOUDFLARE_API_TOKEN to a token with Workers write on the target account" >&2
+  exit 1
+fi
 
 # Resolve the PostHog ingestion token per-env so staging and prod telemetry land
 # in their OWN PostHog projects. Prod falls back to the legacy shared name so
@@ -138,12 +149,12 @@ put_secret DATABASE_URL "$POOLED_DB_URL"
 put_secret MARFA_DATABASE_URL_DIRECT "$DIRECT_DB_URL"
 put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
 put_secret API_KEY_SALT "$SALT"
-put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CF_TOKEN"
 put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_TOKEN}"
 
 # Optional — reactive runs / schedule arming / R2 blobs.
 if [[ "${MARFA_SET_QUEUES:-}" == "1" ]]; then
-  put_secret CLOUDFLARE_QUEUES_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+  put_secret CLOUDFLARE_QUEUES_API_TOKEN "$CF_TOKEN"
   put_secret CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS "${CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS:-}"
 fi
 put_secret MARFA_RUNTIME_BROKER_KEY "${MARFA_RUNTIME_BROKER_KEY:-}"
