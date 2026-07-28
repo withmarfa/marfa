@@ -473,9 +473,9 @@ async function guardRefreshTokenGrant(
   if (typeof storage.oauthProvider?.findRefreshTokenGrantKey !== "function")
     return;
 
-  // The plugin strips the `prefix.refreshToken` (`marfa_rt_`) BEFORE
-  // calling our hasher (verified `index.mjs:394`). Strip here too so the
-  // hash matches the stored value.
+  // The plugin strips the `prefix.refreshToken` (`marfa_rt_`) in its
+  // `decodeRefreshToken` step, BEFORE calling our hasher. Strip here too so
+  // the hash matches the stored value.
   const REFRESH_PREFIX = "marfa_rt_";
   const bare = refreshTokenRaw.startsWith(REFRESH_PREFIX)
     ? refreshTokenRaw.slice(REFRESH_PREFIX.length)
