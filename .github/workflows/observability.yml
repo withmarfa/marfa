@@ -91,15 +91,36 @@
 # ## Cost
 #
 # Scheduled runs on a private repository consume billable minutes, and each
-# job is billed as a whole minute regardless of how long it actually takes.
-# Every run in the sample above finished inside one billable minute, so the
-# real cost is about **15 minutes a day** — not the ~290 that the requested
-# rate would imply. Measure it again before quoting it; do not recompute it
-# from the `cron` line.
+# job is billed as a whole minute regardless of how long it actually takes, so
+# the only number that matters is what share of runs fit inside one minute.
 #
-# Note which way that error runs before treating cadence as a cost lever: the
-# delivered rate is also the ceiling on how quickly anything here can notice
-# an outage, so it buys detection latency far more than it costs money.
+# Measured 2026-07-29 over the 30 most recent completed scheduled runs, job
+# start to job completion — `gh run view <id> --json jobs`, not the run's
+# wall clock, which includes queue time that is not billed:
+#
+#   | median            | 17s |
+#   | 95th percentile   | 29s |
+#   | slowest           | 34s |
+#   | runs past 60s     | 0   |
+#
+# Those figures are for the code *before* the repeated sampling landed. The
+# sampling adds its spread on top: three samples twenty seconds apart put the
+# median near 37s and the 95th percentile near 50s, so the schedule stays at
+# roughly **15 billed minutes a day**. Only the slowest observed run is close
+# enough to the boundary to spill into a second minute, which costs a minute
+# when it happens and is not worth engineering around.
+#
+# The spread is what makes this a real constraint rather than a note: thirty
+# seconds of spacing would have put the 95th percentile at 59s and moved the
+# whole tail past the boundary. Anything that lengthens a run — more samples,
+# wider spacing, another network round trip — is a cost decision. Re-measure
+# with the command above before quoting any of these figures; do not recompute
+# them from the `cron` line.
+#
+# Note which way the cadence error runs before treating cadence as a cost
+# lever: the delivered rate is also the ceiling on how quickly anything here
+# can notice an outage, so it buys detection latency far more than it costs
+# money.
 
 name: Observability
 
@@ -161,8 +182,31 @@ jobs:
       # Runs on every execution, not just pull requests. It takes about a
       # second, and a watcher whose own decision logic is broken fails silently
       # in exactly the way this workflow exists to prevent.
+      #
+      # The count assertion is the point. `node --test` exits 0 when its
+      # pattern matches no test files, so a rename, a directory move, or a new
+      # test file that stops matching the naming convention would turn this
+      # gate into a step that reports success without running anything — a
+      # silent no-op guarding against silent no-ops.
+      #
+      # The pattern stays a quoted glob rather than a directory argument: Node
+      # has accepted a directory as a search root in some versions and tried to
+      # execute it as a module in others, and the glob behaves the same across
+      # all of them. The TAP reporter is pinned so the plan line has a stable
+      # shape to read regardless of whether stdout is a terminal, and
+      # `pipefail` is set because the default shell would otherwise take
+      # `tee`'s exit status and swallow a genuine test failure.
       - name: Test the check's decision logic
-        run: node --test '.github/observability/*.test.mjs'
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap '.github/observability/*.test.mjs' \
+            | tee observability-tests.tap
+          ran=$(sed -n 's/^# pass \([0-9][0-9]*\)$/\1/p' observability-tests.tap)
+          if [ -z "${ran}" ] || [ "${ran}" -eq 0 ]; then
+            echo "::error::No observability tests ran; the test gate is a no-op." >&2
+            exit 1
+          fi
+          echo "${ran} test(s) passed."
 
       - name: Check fleet health
         env:

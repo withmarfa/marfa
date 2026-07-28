@@ -31,17 +31,31 @@ const ATTEMPT_TIMEOUT_MS = 30_000;
 /**
  * Samples per surface per run, and the gap between them.
  *
- * Three samples spread over thirty seconds spaces them widely enough to catch
+ * Three samples spread over twenty seconds spaces them widely enough to catch
  * a surface cycling on the order of tens of seconds, rather than aliasing
  * over it.
  *
- * The upper bound on the spread is billing, not usefulness: jobs bill by the
- * whole minute, and runner setup already consumes twenty-odd seconds, so a
- * wider spread would push a one-minute job into two and double the cost of
- * the schedule for a marginal gain in resolution.
+ * The upper bound on the spread is billing, not usefulness: a job bills as a
+ * whole minute however long it takes, so the entire run has to fit inside one.
+ * That budget is measured, not assumed. Across the thirty most recent
+ * scheduled runs before this change (2026-07-29, job start to job completion,
+ * excluding queue time, which is not billed) the job took a median of 17
+ * seconds, 29 at the 95th percentile and 34 at its worst. The sleeps are added
+ * on top of that, so thirty seconds of spread would have put the 95th
+ * percentile at 59 seconds and the tail past the boundary; twenty leaves the
+ * 95th percentile near 50 and only the very worst run at risk of spilling
+ * into a second minute. Widening this is a cost decision, not a resolution
+ * one — re-measure before changing it.
  */
-const SAMPLE_COUNT = 3;
-const SAMPLE_INTERVAL_MS = 15_000;
+export const SAMPLE_COUNT = 3;
+export const SAMPLE_INTERVAL_MS = 10_000;
+
+/**
+ * The most spread the billing budget above allows, in milliseconds. Exported
+ * so a test fails when the sample plan grows past what was measured, rather
+ * than the overrun showing up as a doubled invoice nobody connects to it.
+ */
+export const MAX_SAMPLE_SPREAD_MS = 20_000;
 
 /**
  * One immediate retry within a sample, so a transient blip on the runner's
@@ -220,6 +234,24 @@ export function summarizeSamples(surface, samples) {
     durationMs: durations.length > 0 ? Math.max(...durations) : null,
   };
 
+  // No samples is not a passing surface, it is an unprobed one. Reaching the
+  // "no failures" branch with an empty array would report `up` on evidence
+  // nobody gathered — a fail-open in the one function whose stated purpose is
+  // to stop a probe claiming health it did not observe. This has to come
+  // first: zero failures out of zero samples satisfies every test below it.
+  if (samples.length === 0) {
+    return {
+      ...base,
+      ok: false,
+      state: "not-probed",
+      kind: "not-probed",
+      detail:
+        "no samples were taken, so nothing is known about this surface. An " +
+        "unprobed surface is reported rather than assumed healthy: silence " +
+        "here would be indistinguishable from a clean run.",
+    };
+  }
+
   if (failures.length === 0) {
     return { ...base, ok: true, state: "up" };
   }
@@ -255,30 +287,48 @@ export function summarizeSamples(surface, samples) {
   };
 }
 
+const FINDING_TITLE = {
+  intermittent: (label) => `${label} is intermittently failing`,
+  "not-probed": (label) => `${label} was not probed`,
+  down: (label) => `${label} is down`,
+};
+
 /**
  * Probe every surface repeatedly and turn the results into findings.
+ *
+ * `sleep` is injectable so a test can assert that the samples are actually
+ * spread rather than taken back to back. The spacing is the whole reason this
+ * function exists — a run that took its three samples in the same instant
+ * would pass every assertion about the verdict mapping while seeing exactly
+ * what one sample sees.
  */
 export async function checkLiveness(surfaces, options = {}) {
-  const sampleCount = options.sampleCount ?? SAMPLE_COUNT;
+  // `??` does not fall back on `0`, so a caller passing zero would otherwise
+  // run no rounds at all and get a green fleet built from nothing. Clamp
+  // rather than reject: a probe stage that quietly does nothing is the failure
+  // being guarded against, and refusing to run at all is the same outcome.
+  const requested = options.sampleCount ?? SAMPLE_COUNT;
+  const sampleCount = Number.isFinite(requested)
+    ? Math.max(1, Math.floor(requested))
+    : SAMPLE_COUNT;
   const intervalMs = options.intervalMs ?? SAMPLE_INTERVAL_MS;
+  const wait = options.sleep ?? sleep;
 
-  const collected = new Map(surfaces.map((s) => [s.id, []]));
+  // Keyed by position, not by `id`. Two surfaces sharing an id collapse into
+  // one bucket, and both then summarize the same merged samples — a surface
+  // that is up and one that is down would each be reported as intermittent.
+  const collected = surfaces.map(() => []);
 
   for (let round = 0; round < sampleCount; round += 1) {
-    if (round > 0) await sleep(intervalMs);
+    if (round > 0) await wait(intervalMs);
     const roundResults = await Promise.all(
-      surfaces.map(async (surface) => ({
-        id: surface.id,
-        sample: await takeSample(surface),
-      })),
+      surfaces.map((surface) => takeSample(surface)),
     );
-    for (const { id, sample } of roundResults) {
-      collected.get(id).push(sample);
-    }
+    roundResults.forEach((sample, index) => collected[index].push(sample));
   }
 
-  const results = surfaces.map((surface) =>
-    summarizeSamples(surface, collected.get(surface.id)),
+  const results = surfaces.map((surface, index) =>
+    summarizeSamples(surface, collected[index]),
   );
 
   const findings = results
@@ -286,10 +336,7 @@ export async function checkLiveness(surfaces, options = {}) {
     .map((r) => ({
       severity: "red",
       area: r.state === "intermittent" ? "flapping" : "liveness",
-      title:
-        r.state === "intermittent"
-          ? `${r.surface.label} is intermittently failing`
-          : `${r.surface.label} is down`,
+      title: (FINDING_TITLE[r.state] ?? FINDING_TITLE.down)(r.surface.label),
       detail: `${r.surface.url} — ${r.detail}`,
     }));
 

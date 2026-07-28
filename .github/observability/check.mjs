@@ -11,7 +11,7 @@ import { appendFileSync } from "node:fs";
 import { SURFACES, UNREACHABLE_SURFACES } from "./surfaces.mjs";
 import { checkLiveness } from "./probes.mjs";
 import { checkDeployDrift } from "./drift.mjs";
-import { checkTelemetry } from "./posthog.mjs";
+import { checkTelemetry, unobservablePairing } from "./posthog.mjs";
 import {
   emitHeartbeat,
   fetchHeartbeatHistory,
@@ -19,6 +19,7 @@ import {
   checkFleetOscillation,
   checkHeartbeatProjectMatch,
 } from "./heartbeat.mjs";
+import { splitFindings, visibilityLines } from "./summary.mjs";
 import { reconcileAlert } from "./alert.mjs";
 
 const env = process.env;
@@ -54,27 +55,32 @@ function surfacesForRun() {
 }
 
 /**
- * One line describing what the watchdog had to work with this run.
+ * Run a check that owns no internal error handling, and turn a throw into a
+ * finding rather than an aborted run.
  *
- * Both watchdog checks are quiet when the history is thin, and quiet is what
- * a healthy fleet looks like too. The distinction has to be written down
- * somewhere a human will see it.
+ * The summary is written once, at the end. Anything that throws on the way
+ * there takes every line with it — including the watchdog visibility lines
+ * whose entire job is to say what this run could not see. A stack trace on
+ * stderr is not that statement, and a run that dies before writing its
+ * summary looks, in the workflow list, a lot like one that had nothing to
+ * report.
  */
-function describeHistory(heartbeat, oscillation) {
-  if (!heartbeat.configured) return "not checked (not configured)";
-  if (heartbeat.unknown) return "UNAVAILABLE — history could not be read";
-  if (heartbeat.firstRun) {
-    return "empty — first scheduled run, or the previous one aged out";
+async function attempt(area, title, fn, fallback) {
+  try {
+    return await fn();
+  } catch (error) {
+    return {
+      ...fallback,
+      findings: [
+        {
+          severity: "red",
+          area,
+          title,
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
   }
-  if (!heartbeat.baselineKnown) {
-    return "too few scheduled runs yet to establish a normal interval";
-  }
-  return (
-    `normal interval ~${String(heartbeat.baselineMinutes)} min ` +
-    `(median of ${String(heartbeat.samples)}), gap tolerance ` +
-    `${String(heartbeat.toleranceMinutes)} min; ` +
-    `${String(oscillation.flips)} flip(s) across ${String(oscillation.runs)} recent run(s)`
-  );
 }
 
 async function main() {
@@ -95,41 +101,31 @@ async function main() {
   const projectMatch = await checkHeartbeatProjectMatch({ env });
 
   const liveness = await checkLiveness(surfacesForRun());
-  const drift = await checkDeployDrift({
-    repo,
-    token,
-    probeResults: liveness.results,
-    now,
-  });
-  const telemetry = await checkTelemetry(env);
+  // `checkDeployDrift` and `checkTelemetry` handle their expected failures
+  // internally, so these wrappers only catch the unexpected — but an
+  // unexpected throw here used to discard the whole summary.
+  const drift = await attempt(
+    "drift",
+    "The deployed-build comparison could not be run",
+    () =>
+      checkDeployDrift({ repo, token, probeResults: liveness.results, now }),
+    { environments: [] },
+  );
+  const telemetry = await attempt(
+    "telemetry",
+    "The telemetry checks could not be run",
+    () => checkTelemetry(env),
+    { unavailable: true, configured: true, services: [], windowMinutes: null },
+  );
 
-  // Findings about the fleet, and findings about the watcher itself, are kept
-  // apart. Both alert; only the first decides the verdict recorded on this
-  // run's heartbeat, because that verdict answers "was the fleet healthy?" and
-  // a gap in the watcher's own history is not an answer to it.
-  //
-  // Keeping the oscillation finding out of that verdict also breaks a loop.
-  // The finding is derived from the `healthy` values on previous heartbeats,
-  // so recording it would feed the detector's own output back into the
-  // sequence it reads next time — which can manufacture the very transitions
-  // it counts: a green fleet plus a firing detector records unhealthy, the
-  // next run records healthy again, and that flip is entirely the detector's
-  // own. It would also hold the alert open past the point where its text
-  // ("something is recovering and failing again") is still true.
-  const fleetFindings = [
-    ...liveness.findings,
-    ...drift.findings,
-    ...telemetry.findings,
-  ];
-  const allFindings = [
-    ...heartbeat.findings,
-    ...oscillation.findings,
-    ...projectMatch.findings,
-    ...fleetFindings,
-  ];
-  const red = allFindings.filter((f) => f.severity === "red");
-  const warn = allFindings.filter((f) => f.severity === "warn");
-  const fleetHealthy = !fleetFindings.some((f) => f.severity === "red");
+  const { red, warn, fleetHealthy } = splitFindings({
+    liveness,
+    drift,
+    telemetry,
+    heartbeat,
+    oscillation,
+    projectMatch,
+  });
 
   // ---- Run summary -------------------------------------------------------
 
@@ -188,12 +184,23 @@ async function main() {
 
   lines.push("## Telemetry");
   lines.push("");
-  if (!telemetry.configured) {
+  if (telemetry.unavailable) {
+    // Distinct from "not configured" on purpose: one is a deployment without
+    // telemetry wiring, the other is wiring that failed. Reporting the second
+    // as the first would describe a broken check as a deliberate absence.
+    lines.push(
+      "UNAVAILABLE — the telemetry checks threw and could not be run. See the failures above.",
+      "",
+    );
+  } else if (!telemetry.configured) {
     lines.push(
       "Not checked — telemetry credentials are not configured for this repository.",
       "",
     );
-  } else if (telemetry.services.length === 0) {
+  } else if (telemetry.services.every((s) => s.total === 0)) {
+    // The service list spans a day, so it can carry services that logged
+    // nothing at all inside the alerting window. An all-zero list is the same
+    // silence an empty one used to mean.
     lines.push(
       `No log records at all in the last ${String(telemetry.windowMinutes)} minutes.`,
       "",
@@ -284,18 +291,6 @@ async function main() {
       );
     }
   }
-  lines.push(
-    `Alert issue: ${alert.action}${alert.url ? ` — ${alert.url}` : ""}`,
-  );
-
-  // Both watchdog checks fail closed — no history means no findings, which
-  // reads as health. Stating what the history actually was on every run is
-  // what stops that being invisible, and it puts the derived tolerance in
-  // front of whoever is reading, so the numbers can be sanity-checked without
-  // reading the source.
-  lines.push(`Watchdog history: ${describeHistory(heartbeat, oscillation)}`);
-  lines.push(`Watchdog project: ${projectMatch.note}`);
-
   // The heartbeat is emitted last and unconditionally, so its presence means
   // "a run completed", not "a run found nothing wrong".
   const beat = await emitHeartbeat({
@@ -303,11 +298,17 @@ async function main() {
     runId: env.GITHUB_RUN_ID ?? "local",
     healthy: fleetHealthy,
   });
+
+  lines.push("## What this run could see", "");
   lines.push(
-    `Heartbeat: ${beat.emitted ? "emitted" : `not emitted (${String(beat.reason ?? beat.status)})`}` +
-      (heartbeat.lastSeen
-        ? `, previous ${String(heartbeat.ageMinutes)} min ago`
-        : ""),
+    ...visibilityLines({
+      alert,
+      heartbeat,
+      oscillation,
+      projectMatch,
+      beat,
+      unobservablePairing: unobservablePairing(telemetry.services),
+    }),
   );
 
   summary(lines);
@@ -320,4 +321,23 @@ async function main() {
   }
 }
 
-await main();
+// A throw anywhere above reaches here rather than the runner's default
+// handler. The default prints a stack trace and nothing else, which in the
+// workflow list is hard to tell from a run that completed quietly — the exact
+// confusion this whole directory exists to remove. Exit non-zero, but say so
+// in the summary first.
+try {
+  await main();
+} catch (error) {
+  summary([
+    "# Fleet health — CHECK FAILED",
+    "",
+    `The check itself threw at ${now.toISOString()} and could not complete, so ` +
+      "nothing below it ran. This says nothing about the fleet either way.",
+    "",
+    "```",
+    error instanceof Error ? (error.stack ?? error.message) : String(error),
+    "```",
+  ]);
+  process.exitCode = 1;
+}

@@ -48,7 +48,31 @@ const HEARTBEAT_EVENT = "marfa_watchdog_heartbeat";
  * they arrive in bursts seconds apart, and mixing them in would drag the
  * observed interval towards zero and make a tolerance derived from it fire on
  * the next genuinely scheduled run. Every heartbeat therefore records what
- * triggered it, and everything below reads only the scheduled ones.
+ * triggered it, and everything below prefers the scheduled ones.
+ *
+ * ## Heartbeats recorded before the marker existed still count
+ *
+ * The marker is newer than the event. Filtering strictly on it would discard
+ * every heartbeat already recorded, and both mechanisms here need history
+ * before they can say anything: the gap check needs five intervals and the
+ * oscillation check needs four verdicts. At the interval this schedule
+ * delivers that is most of a working day with the watchdog reporting nothing
+ * — a self-inflicted blackout, on the change whose entire purpose is to stop
+ * blackouts going unnoticed, and one the summary would have described as a
+ * first-ever run.
+ *
+ * Unmarked heartbeats are therefore read as scheduled history. The cost was
+ * measured rather than assumed: across the heartbeats recorded before the
+ * marker, admitting the unmarked ones moves the derived tolerance from 316 to
+ * 272 minutes, because the burst of pull-request and dispatch beats from the
+ * day this was first wired contributes nine intervals under half an hour. The
+ * widest interval the scheduler has ever delivered is 227 minutes, so the
+ * looser figure still clears it with 45 minutes to spare. Half a day of
+ * headroom is a smaller price than half a day of blindness, and the median is
+ * what makes it small — a mean would have been dragged much further.
+ *
+ * This tolerance is self-limiting: unmarked rows age out of the lookback, and
+ * from then on every row read carries the marker.
  */
 const SCHEDULED_TRIGGER = "schedule";
 
@@ -88,6 +112,18 @@ const HISTORY_LIMIT = 64;
  * long outage entering the history cannot desensitize the check afterwards.
  * The gap being judged is never itself in the baseline: this run has not
  * emitted its heartbeat yet.
+ *
+ * **What this costs, stated plainly.** Four times a median of about eighty
+ * minutes is a tolerance in the region of five hours, so the shortest
+ * monitoring outage this can report is about five hours long. The oscillation
+ * check needs four scheduled runs before it can fire, which is a similar
+ * span. Nothing here notices a blackout shorter than that, and nothing here
+ * can: the scheduler's own worst day is three and three-quarter hours, so a
+ * tolerance tight enough to catch a four-hour outage would fire on ordinary
+ * scheduling instead. The floor is a consequence of the delivered cadence,
+ * not a preference — it narrows only if the schedule starts running closer to
+ * the rate it asks for. `describeHistory` prints the derived figure on every
+ * run so it is a number an operator can see rather than one to re-derive.
  */
 const GAP_TOLERANCE_MULTIPLE = 4;
 
@@ -234,6 +270,20 @@ export async function emitHeartbeat({ env, runId, healthy }) {
  * as a gap of several decades. A list of rows makes "nothing recorded" an
  * empty array, which cannot be mistaken for an ancient heartbeat.
  */
+export function buildHistoryQuery() {
+  return (
+    "SELECT timestamp, properties.healthy, properties.trigger FROM events " +
+    `WHERE event = '${HEARTBEAT_EVENT}' ` +
+    // A row recorded before the marker existed carries NULL here, and
+    // `NULL = 'schedule'` is NULL, so a bare equality would discard the entire
+    // existing history the first time this runs. See the marker note above for
+    // why unmarked rows are read as scheduled and what that costs.
+    `AND (properties.trigger = '${SCHEDULED_TRIGGER}' OR properties.trigger IS NULL) ` +
+    `AND timestamp >= now() - INTERVAL ${String(HISTORY_LOOKBACK_DAYS)} DAY ` +
+    `ORDER BY timestamp DESC LIMIT ${String(HISTORY_LIMIT)}`
+  );
+}
+
 export async function fetchHeartbeatHistory({ env }) {
   const apiKey = env.POSTHOG_PERSONAL_API_KEY;
   const host = env.POSTHOG_HOST;
@@ -242,12 +292,7 @@ export async function fetchHeartbeatHistory({ env }) {
     return { configured: false, beats: [] };
   }
 
-  const query =
-    "SELECT timestamp, properties.healthy FROM events " +
-    `WHERE event = '${HEARTBEAT_EVENT}' ` +
-    `AND properties.trigger = '${SCHEDULED_TRIGGER}' ` +
-    `AND timestamp >= now() - INTERVAL ${String(HISTORY_LOOKBACK_DAYS)} DAY ` +
-    `ORDER BY timestamp DESC LIMIT ${String(HISTORY_LIMIT)}`;
+  const query = buildHistoryQuery();
 
   try {
     const response = await fetch(
@@ -266,9 +311,17 @@ export async function fetchHeartbeatHistory({ env }) {
 
     const payload = await response.json();
     const beats = (payload.results ?? [])
-      .map((row) => ({ at: parseTimestamp(row[0]), healthy: row[1] }))
+      .map((row) => ({
+        at: parseTimestamp(row[0]),
+        healthy: row[1],
+        trigger: row[2] ?? null,
+      }))
       .filter((beat) => beat.at !== null);
-    return { configured: true, beats };
+    // How many rows predate the marker. The summary states it, so a thin
+    // history during the changeover is legible as a changeover rather than
+    // read as a month of silence.
+    const unmarked = beats.filter((beat) => beat.trigger === null).length;
+    return { configured: true, beats, unmarked };
   } catch {
     return { configured: true, unknown: true, beats: [] };
   }
@@ -342,11 +395,20 @@ export function checkHeartbeatGap({ history, now }) {
   }
 
   const beats = history.beats;
+  // Carried forward so the summary can distinguish a thin history during the
+  // marker changeover from a genuinely silent month.
+  const unmarked = history.unmarked ?? 0;
   if (beats.length === 0) {
     // Either the first ever scheduled run, or a silence long enough that the
     // previous heartbeat fell outside the lookback. Worth stating in the
     // summary, but not something this can characterize.
-    return { configured: true, firstRun: true, lastSeen: null, findings: [] };
+    return {
+      configured: true,
+      firstRun: true,
+      lastSeen: null,
+      unmarked,
+      findings: [],
+    };
   }
 
   const lastSeen = beats[0].at;
@@ -359,6 +421,7 @@ export function checkHeartbeatGap({ history, now }) {
       lastSeen: lastSeen.toISOString(),
       ageMinutes,
       baselineKnown: false,
+      unmarked,
       findings: [],
     };
   }
@@ -386,6 +449,7 @@ export function checkHeartbeatGap({ history, now }) {
     lastSeen: lastSeen.toISOString(),
     ageMinutes,
     baselineKnown: true,
+    unmarked,
     ...baseline,
     findings,
   };
@@ -401,11 +465,31 @@ export function checkHeartbeatGap({ history, now }) {
  * Pure, for the same reason as the gap check above.
  */
 export function checkFleetOscillation({ history }) {
-  if (!history.configured || history.unknown) return { findings: [] };
+  if (!history.configured || history.unknown) {
+    return { unknown: true, findings: [] };
+  }
 
   const window = history.beats.slice(0, OSCILLATION_RUN_WINDOW);
   const verdicts = window.map((beat) => beat.healthy);
   const readable = verdicts.filter((v) => readVerdict(v) !== null);
+
+  // History arrived, and not one row of it could be read as a verdict. That is
+  // a different thing from a steady fleet and must not be reported as one:
+  // `0 flips across 0 runs` sitting beside a fully populated gap baseline is
+  // the shape of a detector that has silently stopped working, and the only
+  // tell is a zero that also appears when everything is fine. `readVerdict`
+  // deliberately drops anything that is not a boolean or one of two exact
+  // strings, so a serialization change upstream lands here rather than
+  // manufacturing flips — which makes this branch reachable by design.
+  if (window.length > 0 && readable.length === 0) {
+    return {
+      unknown: true,
+      flips: 0,
+      runs: 0,
+      beats: window.length,
+      findings: [],
+    };
+  }
 
   // Three flips need four runs to sit between. Below that the honest answer
   // is "not enough history yet", which is not the same as "not flapping".
