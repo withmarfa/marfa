@@ -35,7 +35,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   encryptSecret,
@@ -388,16 +388,25 @@ export function oauthStartRoutes(
   const authMode = options.authMode ?? "keys";
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
-    requireAuth(c);
-    const apiKey = c.get("apiKey");
-    if (!apiKey || (apiKey.role !== "admin" && !apiKey.is_platform)) {
+    const apiKey = requireAuth(c);
+    if (!hasTenantAdminAuthority(apiKey) && !apiKey.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "OAuth start requires admin or platform credential",
       );
     }
     const connectionId = c.req.param("id");
-    const connection = await storage.items.get(connectionId);
+    // Fenced on the caller's tenant. Rank alone does not confer
+    // cross-tenant reach: a credential carrying a `tenant_id` is confined
+    // to it whatever its role, and `POST /admin/tenants/{id}/keys` mints
+    // exactly that shape at `role: "admin"`. An unfenced lookup here
+    // would let such a key start an OAuth flow against another tenant's
+    // connection, and the signed state binds the connection id — so the
+    // callback would persist the resulting tokens onto that connection.
+    const connection = await storage.items.get(
+      connectionId,
+      apiKey.tenant_id ?? undefined,
+    );
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
@@ -615,8 +624,15 @@ export function oauthCallbackRoutes(
       );
     }
 
-    const tenantId = (connection.properties as { tenant_id?: string })
-      .tenant_id;
+    // The connection's tenant comes from its row column, never from its
+    // properties bag — no writer of a `system.connection` puts a
+    // `tenant_id` there, so reading it that way always yielded
+    // `undefined` and persisted the upstream access and refresh tokens
+    // with a NULL tenant. The `connection_oauth_tokens` RLS policy admits
+    // NULL rows into every tenant's session, so those secrets were
+    // readable instance-wide, and the tenant-scoped read path in the
+    // proxy could not find them at all.
+    const tenantId = connection.tenant_id ?? undefined;
     await storage.connectionOauthTokens.upsert({
       connection_id: envelope.connection_id,
       tenant_id: tenantId,

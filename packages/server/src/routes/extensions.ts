@@ -17,8 +17,23 @@ import {
   resolveExtensionPermission,
   filterExtensionsByPermission,
 } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
+
+/**
+ * Reserved extension namespaces are the metadata-layer twin of the
+ * reserved *type* namespaces, which `checkTypeAccess` gates on
+ * `is_platform` rather than on rank. Read them the same way: platform
+ * authority, or an explicit platform credential — never rank alone. A
+ * tenant-bound `admin` (the shape `POST /admin/tenants/{id}/keys` mints)
+ * is admin within one tenant, not a platform principal, so it does not
+ * qualify to write platform-internal namespaces.
+ */
+function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
+  if (!apiKey) return false;
+  return hasPlatformAuthority(apiKey) || apiKey.is_platform;
+}
 
 /** The `connection.runtime` namespace is reserved for the
  *  per-Connection runtime credential's hot state. Only credentials
@@ -28,7 +43,11 @@ const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
  *  it. */
 const RUNTIME_NAMESPACE = "connection.runtime";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  roleBypassesPermissionMaps,
+  hasPlatformAuthority,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -313,7 +332,7 @@ export function extensionRoutes(storage: Storage) {
       extensions,
       apiKey?.extension_permissions,
       apiKey?.label ?? "",
-      apiKey?.role === "admin",
+      roleBypassesPermissionMaps(apiKey),
     );
 
     return c.json({ extensions: filtered }, 200);
@@ -333,14 +352,13 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    const perm =
-      apiKey?.role === "admin"
-        ? "write"
-        : resolveExtensionPermission(
-            namespace,
-            apiKey?.extension_permissions,
-            apiKey?.label ?? "",
-          );
+    const perm = roleBypassesPermissionMaps(apiKey)
+      ? "write"
+      : resolveExtensionPermission(
+          namespace,
+          apiKey?.extension_permissions,
+          apiKey?.label ?? "",
+        );
     if (perm === "none") {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -386,7 +404,10 @@ export function extensionRoutes(storage: Storage) {
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot write the runtime namespace of connection ${id}`,
         );
       }
-    } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+    } else if (
+      RESERVED_NAMESPACES.has(namespace) &&
+      !mayWriteReservedNamespace(apiKey)
+    ) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
@@ -394,14 +415,13 @@ export function extensionRoutes(storage: Storage) {
     }
 
     if (namespace !== RUNTIME_NAMESPACE) {
-      const perm =
-        apiKey?.role === "admin"
-          ? "write"
-          : resolveExtensionPermission(
-              namespace,
-              apiKey?.extension_permissions,
-              apiKey?.label ?? "",
-            );
+      const perm = roleBypassesPermissionMaps(apiKey)
+        ? "write"
+        : resolveExtensionPermission(
+            namespace,
+            apiKey?.extension_permissions,
+            apiKey?.label ?? "",
+          );
       if (perm !== "write") {
         throw new MarfaError(
           ErrorCode.FORBIDDEN,
@@ -461,14 +481,17 @@ export function extensionRoutes(storage: Storage) {
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot delete the runtime namespace of connection ${id}`,
         );
       }
-    } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+    } else if (
+      RESERVED_NAMESPACES.has(namespace) &&
+      !mayWriteReservedNamespace(apiKey)
+    ) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
     } else {
       const isOwner = apiKey?.label === namespace;
-      if (apiKey?.role !== "admin" && !isOwner) {
+      if (!roleBypassesPermissionMaps(apiKey) && !isOwner) {
         const perm = resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,

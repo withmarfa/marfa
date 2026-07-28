@@ -33,6 +33,7 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAdmin } from "../middleware/auth.js";
+import { assertUnreservedSource } from "./keys.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictTenantStatus } from "../middleware/tenant-suspension.js";
@@ -715,6 +716,8 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     if (!tenant) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
+
+    assertUnreservedSource(body.source);
 
     const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
     const stored = await storage.keys.create(

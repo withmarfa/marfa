@@ -8,7 +8,7 @@ import {
   type InboundWebhook,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
@@ -91,7 +91,11 @@ async function requireConnectionAccess(
       "Connection not found",
     );
   }
-  const isAdmin = key.role === "admin" || key.is_platform;
+  // Tenant-bounded admin authority, matching
+  // `requireConnectionProxyAccess`: the connection lookup above is fenced
+  // on `key.tenant_id`, so rank decides what the caller may do and the
+  // fence decides which connections it can see.
+  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
   // Same widening as `requireConnectionProxyAccess` in
   // `routes/connection-proxy.ts` — accept runtime credentials minted
   // for this connection alongside the OAuth-app-grant shape.

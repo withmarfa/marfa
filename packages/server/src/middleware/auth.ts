@@ -445,6 +445,41 @@ export function authMiddleware(storage: Storage, salt: string) {
 // Access control helpers (context-agnostic)
 // ---------------------------------------------------------------------------
 
+/**
+ * Credential `source` prefixes that the connection routes read as proof
+ * of connector identity: `requireConnectionAccess` in
+ * `routes/inbound-webhooks.ts` and `routes/connection-leased-tokens.ts`,
+ * `requireConnectionProxyAccess` in `routes/connection-proxy.ts`, and the
+ * cycle resolver's origin derivation all match on them.
+ *
+ * A caller-supplied `source` is free text, so without this reservation a
+ * tenant admin could mint a plain `member` key labelled
+ * `oauth:<connection-id>` and hold connector authority over that
+ * connection — proxying through its decrypted upstream token, issuing
+ * leases, rewriting its inbound webhooks — while carrying none of the
+ * bindings that authority is supposed to follow from. Same shape as
+ * lifting `role` out of the body: a field the request controls, read
+ * later as authority.
+ *
+ * The legitimate holders never pass through the mint routes. Connector
+ * credentials are created at the storage layer by the install pipeline
+ * and the runtime broker; the OAuth shape is synthesized per-request in
+ * this file and never persisted at all.
+ */
+export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
+  "oauth:",
+  "integration:",
+  "runtime-",
+] as const;
+
+/** Whether `source` claims one of the reserved connector shapes. */
+export function isReservedCredentialSource(source: string): boolean {
+  const normalized = source.trim().toLowerCase();
+  return RESERVED_CREDENTIAL_SOURCE_PREFIXES.some((prefix) =>
+    normalized.startsWith(prefix),
+  );
+}
+
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
@@ -473,10 +508,33 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
  */
 export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (key.role !== "admin" || key.tenant_id) {
+  if (!hasPlatformAuthority(key)) {
     throw new MarfaError(ErrorCode.FORBIDDEN, "Platform admin access required");
   }
   return key;
+}
+
+/**
+ * Predicate form of `checkAdmin`'s test, for the handful of routes that
+ * need the answer as a boolean rather than a throw (they combine it with
+ * a connector-credential branch, or use it to widen a tenant filter).
+ *
+ * Exported so no callsite re-derives it. A hand-rolled `role === "admin"`
+ * silently readmits the tenant-bound admin this gate exists to exclude,
+ * and the two definitions then drift apart with nothing to catch it.
+ */
+export function hasPlatformAuthority(key: ApiKey): boolean {
+  return key.role === "admin" && !key.tenant_id;
+}
+
+/**
+ * Predicate form of `checkTenantAdmin`'s test: admin-shaped authority
+ * within whatever scope the credential is bound to. Says nothing about
+ * which tenant — the caller still owes the tenant fence on every storage
+ * call, exactly as `checkTenantAdmin` documents.
+ */
+export function hasTenantAdminAuthority(key: ApiKey): boolean {
+  return key.role === "admin" || key.role === "tenant_admin";
 }
 
 /**
@@ -503,7 +561,7 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
  */
 export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (key.role !== "admin" && key.role !== "tenant_admin") {
+  if (!hasTenantAdminAuthority(key)) {
     throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
@@ -519,8 +577,19 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
  * for every app they sign into. Role gates (`requireTenantAdmin` /
  * `requireAdmin`) still consult the projected role regardless of this flag —
  * only the data-plane permission-map checks honor it.
+ *
+ * Exported because the extension-permission surface (`extension_permissions`,
+ * which has no `require*` helper of its own) makes the same decision inline.
+ * A hand-rolled `role === "admin"` there is wrong twice over: it hands an
+ * OAuth app the full extension surface whenever the signed-in user happens
+ * to be an admin, and it withholds it from the tenant_admin every hosted
+ * sign-up is provisioned as.
+ *
+ * Accepts `undefined` so anonymous-capable routes can call it directly; a
+ * missing credential bypasses nothing.
  */
-function roleBypassesPermissionMaps(key: ApiKey): boolean {
+export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
+  if (!key) return false;
   if (key.scope_enforced) return false;
   return key.role === "admin" || key.role === "tenant_admin";
 }

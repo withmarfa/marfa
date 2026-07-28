@@ -9,7 +9,11 @@ import {
   type LeaseTokenIntrospection,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  hasTenantAdminAuthority,
+  hasPlatformAuthority,
+} from "../middleware/auth.js";
 import type {
   Storage,
   ConnectionLeasedTokenRow,
@@ -98,17 +102,27 @@ async function requireConnectionAccess(
   connectionId: string,
 ): Promise<{ tenantId: string | undefined }> {
   const key = requireAuth(c);
-  const isAdmin = key.role === "admin" || key.is_platform;
+  // Tenant-bounded admin authority, matching the sibling connection
+  // routes: leased tokens belong to a connection, and a connection
+  // belongs to a tenant.
+  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
   const isConnector = isConnectionScopedSource(key.source, connectionId);
-  // Defense-in-depth: any non-admin / non-connector credential MUST carry
-  // a resolved `tenant_id`. Without it, the storage call sites below
-  // treat `undefined` tenantId as cross-tenant. Refuse here so a future
-  // caller that forgets to stamp tenant_id can't quietly bypass scoping
-  // on this route. Runtime credentials and OAuth bearers issued for this
-  // connection are exempt — their `connection_id` / source-prefix
-  // binding is its own scope, and self-hosted (single-tenant) deploys
-  // legitimately leave `tenant_id` unset on those.
-  if (!isAdmin && !isConnector && !key.tenant_id) {
+  // Defense-in-depth: any credential that would resolve to an undefined
+  // tenantId below must be entitled to cross-tenant reach, because the
+  // storage call sites treat `undefined` as "any tenant". The test is
+  // platform authority (unbound admin) or an explicit platform
+  // credential — NOT tenant-admin rank, which says nothing about
+  // whether the credential is confined. Runtime credentials and OAuth
+  // bearers issued for this connection are exempt: their
+  // `connection_id` / source-prefix binding is its own scope, and
+  // self-hosted (single-tenant) deploys legitimately leave `tenant_id`
+  // unset on those.
+  if (
+    !key.tenant_id &&
+    !isConnector &&
+    !hasPlatformAuthority(key) &&
+    !key.is_platform
+  ) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Tenant scope required for this credential",

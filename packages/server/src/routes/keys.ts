@@ -7,7 +7,12 @@ import {
   canGrantRole,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin, hashApiKey } from "../middleware/auth.js";
+import {
+  requireTenantAdmin,
+  hashApiKey,
+  isReservedCredentialSource,
+  RESERVED_CREDENTIAL_SOURCE_PREFIXES,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -19,6 +24,28 @@ const KEY_PREFIX = "marfa_k1_";
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
+}
+
+/**
+ * Refuse a caller-supplied `source` that claims a connector shape.
+ *
+ * `source` is otherwise free text, but three prefixes are read elsewhere
+ * as proof that a credential IS a particular connection's connector —
+ * see `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Genuine connector
+ * credentials are minted at the storage layer by the install pipeline and
+ * the runtime broker, never through an HTTP mint route, so nothing
+ * legitimate is turned away here.
+ *
+ * Shared by `POST /keys` and `POST /admin/tenants/{id}/keys`: both write
+ * `source` straight from the body, so a check on only one of them is no
+ * check at all.
+ */
+export function assertUnreservedSource(source: string): void {
+  if (!isReservedCredentialSource(source)) return;
+  throw new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes identify a connection's own connector credential and are issued by the install pipeline, not by this route.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +447,8 @@ export function keyRoutes(storage: Storage, salt: string) {
       }
     }
 
+    assertUnreservedSource(body.source);
+
     const typePermissions = body.type_permissions ?? {};
 
     const rawKey = generateRawKey();
@@ -528,15 +557,16 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    // tenant_admin sees only its own tenant's keys; admin (no tenant_id)
-    // sees all. Cross-tenant visibility is fenced at the application layer
-    // here and at the DB layer when RLS enforcement is on.
+    // A tenant-bound caller sees only its own tenant's keys; only an
+    // unbound credential sees all. The fence keys on the tenant binding,
+    // not on the role: `POST /admin/tenants/{id}/keys` mints a
+    // tenant-bound `admin`, and a role-keyed fence would hand that
+    // credential every other tenant's key inventory.
     const key = requireTenantAdmin(c);
     const all = await storage.keys.list();
-    const visible =
-      key.role === "tenant_admin" && key.tenant_id
-        ? all.filter((k) => k.tenant_id === key.tenant_id)
-        : all;
+    const visible = key.tenant_id
+      ? all.filter((k) => k.tenant_id === key.tenant_id)
+      : all;
     return c.json({ keys: visible }, 200);
   });
 
@@ -549,7 +579,9 @@ export function keyRoutes(storage: Storage, salt: string) {
     }
 
     // 404 not 403 — cross-tenant probes must not enumerate key ids.
-    if (key.role === "tenant_admin" && key.tenant_id) {
+    // Keyed on the tenant binding rather than the role, so a tenant-bound
+    // `admin` is fenced to its own tenant exactly like a tenant_admin.
+    if (key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
         throw new MarfaError(
@@ -598,11 +630,9 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (!existing) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
-    if (
-      key.role === "tenant_admin" &&
-      key.tenant_id &&
-      existing.tenant_id !== key.tenant_id
-    ) {
+    // Same tenant-binding fence as `revokeKeyRoute` — a bound credential
+    // of any rank may only address keys inside its own tenant.
+    if (key.tenant_id && existing.tenant_id !== key.tenant_id) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
 
