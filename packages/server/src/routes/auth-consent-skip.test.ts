@@ -931,17 +931,23 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
       );
 
       // The standing grant covers the request, so the route takes the
-      // proxy path. Empty PKCE fields make the provider return its own
-      // `invalid_request` callback. Correct callback classification must
-      // forward that error unchanged rather than synthesizing the
-      // `interaction_required` fallback for prompt=none.
+      // proxy path. An empty `code_challenge` makes the provider return
+      // its own `invalid_request` callback. The method beside it still
+      // has to name a real one: the provider validates the method
+      // against its enum before anything reaches the OAuth error path,
+      // and an empty method is refused as a malformed request instead of
+      // being redirected to the client. That refusal tests nothing about
+      // callback classification, because it produces no callback.
+      // Correct classification must forward the error unchanged rather
+      // than synthesizing the `interaction_required` fallback for
+      // prompt=none.
       const signedQuery = await mintSignedQuery(
         authorizeFields(clientId, scope, {
           redirect_uri: redirectUri,
           state: `none-${kind}`,
           prompt: "none",
           code_challenge: "",
-          code_challenge_method: "",
+          code_challenge_method: "S256",
         }),
       );
 
@@ -988,7 +994,7 @@ describe("GET /auth/authorize (consent skip) — prompt=none", () => {
         redirect_uri: requestedRedirect,
         prompt: "none",
         code_challenge: "",
-        code_challenge_method: "",
+        code_challenge_method: "S256",
       }),
     );
     const res = await landOnConsentPage(ctx, signedQuery, { cookie });
