@@ -164,7 +164,7 @@ describe("POST /connections/:connection_id/disarm-schedule", () => {
   it("rejects when the control plane has no broker key configured", async () => {
     const res = await post(
       buildApp(),
-      {} as ControlPlaneEnv,
+      {},
       `/connections/${CONNECTION_ID}/disarm-schedule`,
       { integration_name: "withmarfa.rss-watcher" },
     );
@@ -377,7 +377,7 @@ describe("POST /connections/:connection_id/arm-schedule", () => {
   it("rejects when the control plane has no broker key configured", async () => {
     const res = await post(
       buildApp(),
-      {} as ControlPlaneEnv,
+      {},
       `/connections/${CONNECTION_ID}/arm-schedule`,
       { integration_name: "withmarfa.rss-watcher" },
     );

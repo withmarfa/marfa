@@ -409,9 +409,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
     expect(res.status).toBe(200);
     expect(idFromName).toHaveBeenCalledWith("conn_1");
     expect(doStub.fetch).toHaveBeenCalledTimes(1);
-    const forwarded = new URL(
-      (doStub.fetch.mock.calls[0] as [Request])[0].url,
-    );
+    const forwarded = new URL((doStub.fetch.mock.calls[0] as [Request])[0].url);
     expect(forwarded.pathname).toBe("/disarm-schedule");
     // The reason rides through to the Durable Object's tombstone, so an
     // operator reading DO state later can tell an uninstall teardown
@@ -428,9 +426,7 @@ describe("createIntegrationWorker fetch auth gate", () => {
       env,
       CTX,
     );
-    const forwarded = new URL(
-      (doStub.fetch.mock.calls[0] as [Request])[0].url,
-    );
+    const forwarded = new URL((doStub.fetch.mock.calls[0] as [Request])[0].url);
     expect(forwarded.searchParams.get("reason")).toBe("control_plane");
   });
 

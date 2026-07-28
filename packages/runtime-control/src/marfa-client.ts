@@ -67,10 +67,10 @@ function parseErrorCode(text: string): string | null {
     if (!parsed || typeof parsed !== "object" || !("error" in parsed)) {
       return null;
     }
-    const err = (parsed as { error: unknown }).error;
+    const err = parsed.error;
     if (typeof err === "string") return err;
     if (err && typeof err === "object" && "code" in err) {
-      const code = (err as { code: unknown }).code;
+      const code = err.code;
       return typeof code === "string" ? code : null;
     }
   } catch {
