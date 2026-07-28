@@ -91,10 +91,15 @@
 # A SHA-suffixed tag changes the reference on every build, forcing the roll.
 #
 # Build → push → deploy, all on the same commit's SHA tag:
-#   TAG="<env>-$(git rev-parse --short HEAD)"   # e.g. staging-1a2b3c4
+#   SHA="$(git rev-parse --short HEAD)"
+#   TAG="<env>-$SHA"                            # e.g. staging-1a2b3c4
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile \
-#     -t "marfa-server:$TAG" --load .
+#     --build-arg VERSION_SHA="$SHA" -t "marfa-server:$TAG" --load .
 #   wrangler containers push "marfa-server:$TAG"
+# VERSION_SHA is not optional in practice. The Dockerfile defaults it to "dev",
+# so a build without it deploys a server that reports {"sha":"dev"} on /health —
+# leaving no way to tell which commit an environment is actually running, which
+# is the one question a deploy check exists to answer.
 #   ./infra/cloudflare/scripts/deploy-server-container.sh <staging|prod>
 # The deploy step recomputes the same default tag from the current HEAD, so as
 # long as the working tree is on the commit you built, the tags line up with no
