@@ -306,6 +306,20 @@ export class PgItemStore implements ItemStore {
     sourceId: string,
     tenantId?: string,
   ): Promise<Item | null> {
+    const item = await this.findBySourceIdIncludingTrashed(
+      source,
+      sourceId,
+      tenantId,
+    );
+    if (item?.state === "trashed") return null;
+    return item;
+  }
+
+  async findBySourceIdIncludingTrashed(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null> {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),
@@ -316,7 +330,6 @@ export class PgItemStore implements ItemStore {
       .from(items)
       .where(and(...conditions));
     if (!row) return null;
-    if (row.state === "trashed") return null;
     return rowToItem(row);
   }
 

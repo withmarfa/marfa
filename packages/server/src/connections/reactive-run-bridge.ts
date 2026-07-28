@@ -36,6 +36,7 @@
  * separate subscriber listens for `system.connection` lifecycle events
  * (created/updated/deleted) and refreshes the affected entry.
  */
+import type { Item } from "@withmarfa/shared";
 import { Pool } from "undici";
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
@@ -73,6 +74,8 @@ const COOLDOWN_THRESHOLD = 3;
 const ESCALATION_THRESHOLD = 10;
 const COOLDOWN_MS = 60_000;
 const MAX_COOLDOWN_MS = 5 * 60_000;
+const UNMAPPED_ACTIVITY_RETRY_BASE_MS = 1_000;
+const UNMAPPED_ACTIVITY_RETRY_MAX_MS = 60_000;
 /** Fallback per-fetch send timeout when no `sendTimeoutMs` is supplied
  *  (test harnesses that build a partial `BridgeConfig`). Production wires
  *  `AppConfig.reactiveRunSendTimeoutMs` (env `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`)
@@ -84,6 +87,15 @@ interface SubscriberFailureState {
   /** Epoch ms after which the cooldown gate stops skipping. `null` when
    *  the subscriber is below the cooldown threshold. */
   cooldownUntil: number | null;
+}
+
+interface UnmappedActivityState {
+  entry: SubscriptionEntry;
+  reported: boolean;
+  inFlight: Promise<void> | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  consecutiveFailures: number;
+  retryAfter: number;
 }
 
 /** Result discriminator for `sendOne`. Lets `fanoutEvent` distinguish
@@ -148,6 +160,12 @@ export interface BridgeConfig {
    * into the future. Default 5 minutes.
    */
   failureCooldownMaxMs?: number;
+  /** Initial retry delay for a failed unmapped-integration activity write. */
+  unmappedActivityRetryBaseMs?: number;
+  /** Maximum retry delay for failed unmapped-integration activity writes. */
+  unmappedActivityRetryMaxMs?: number;
+  /** Epoch-millisecond clock override for deterministic alert-backoff tests. */
+  unmappedActivityNow?: () => number;
   /** Custom fetch (for tests). */
   fetch?: typeof fetch;
 }
@@ -195,6 +213,11 @@ export function tryStartReactiveRunBridge(
       config?.failureEscalationThreshold ?? ESCALATION_THRESHOLD,
     failureCooldownMs: config?.failureCooldownMs ?? COOLDOWN_MS,
     failureCooldownMaxMs: config?.failureCooldownMaxMs ?? MAX_COOLDOWN_MS,
+    unmappedActivityRetryBaseMs:
+      config?.unmappedActivityRetryBaseMs ?? UNMAPPED_ACTIVITY_RETRY_BASE_MS,
+    unmappedActivityRetryMaxMs:
+      config?.unmappedActivityRetryMaxMs ?? UNMAPPED_ACTIVITY_RETRY_MAX_MS,
+    unmappedActivityNow: config?.unmappedActivityNow ?? Date.now,
     fetch: config?.fetch,
   });
 }
@@ -324,12 +347,11 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     pools.set(origin, pool);
     return pool;
   };
-  // Dedup set for "no queue URL mapped for this integration" activity
-  // rows. Without this the bridge would emit one row per fanout event
-  // for a misconfigured integration, flooding the action_required
-  // surface. Reset only on process restart; operators are expected to
-  // flip the env var, restart, and pick up the new mapping.
-  const unmappedIntegrationsReported = new Set<string>();
+  // Per-tenant, per-integration state for "no queue URL mapped" activity
+  // rows. Successful writes stay deduped for the process lifetime. Failed
+  // writes use an in-flight gate plus bounded backoff so a busy event stream
+  // cannot hammer storage while the alert surface is unhealthy.
+  const unmappedActivityStates = new Map<string, UnmappedActivityState>();
   const subscriptions = new Map<string, SubscriptionEntry>();
   // Per-subscriber failure tracking. Lives alongside subscriptions and
   // shares its lifecycle — entries are cleaned up when a subscription
@@ -351,6 +373,27 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   // bridge has fully unwound before they move on.
   let drainerExit: Promise<void> | null = null;
 
+  const clearUnmappedStateIfUnused = (entry: SubscriptionEntry): void => {
+    const replacement = Array.from(subscriptions.values()).find(
+      (candidate) =>
+        candidate.integration_name === entry.integration_name &&
+        candidate.tenant_id === entry.tenant_id,
+    );
+    const key = unmappedActivityKey(
+      entry.tenant_id ?? undefined,
+      entry.integration_name,
+    );
+    const state = unmappedActivityStates.get(key);
+    if (replacement) {
+      if (state?.entry.connection_id === entry.connection_id) {
+        state.entry = replacement;
+      }
+      return;
+    }
+    if (state?.retryTimer) clearTimeout(state.retryTimer);
+    unmappedActivityStates.delete(key);
+  };
+
   /**
    * Refresh the subscription entry for one connection id. Called from
    * the cache-invalidation subscriber on system.connection lifecycle
@@ -358,10 +401,12 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
    * the storage reads are idempotent.
    */
   const refreshConnection = async (connectionId: string): Promise<void> => {
+    const previous = subscriptions.get(connectionId);
     const item = await storage.items.get(connectionId);
     if (item?.type !== "system.connection") {
       subscriptions.delete(connectionId);
       subscriberFailures.delete(connectionId);
+      if (previous) clearUnmappedStateIfUnused(previous);
       return;
     }
     const entry = await buildEntryForConnection(storage, {
@@ -379,6 +424,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       subscriptions.delete(connectionId);
       subscriberFailures.delete(connectionId);
     }
+    if (previous) clearUnmappedStateIfUnused(previous);
   };
 
   /**
@@ -447,7 +493,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
                 next.value,
                 subscriptions,
                 subscriberFailures,
-                unmappedIntegrationsReported,
+                unmappedActivityStates,
                 refreshConnection,
                 config,
                 fetchImpl,
@@ -472,6 +518,13 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       running = false;
       subscriptions.clear();
       subscriberFailures.clear();
+      const unmappedActivityInFlight = Array.from(
+        unmappedActivityStates.values(),
+      ).flatMap((state) => (state.inFlight ? [state.inFlight] : []));
+      for (const state of unmappedActivityStates.values()) {
+        if (state.retryTimer) clearTimeout(state.retryTimer);
+      }
+      unmappedActivityStates.clear();
       // Wake the for-await loops by emitting synthetic events. Each
       // loop wakes, sees `stopRequested === true`, breaks. The
       // generator unwinds, `events.on(...)` detaches its listener, the
@@ -517,6 +570,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       const exit = drainerExit;
       drainerExit = null;
       if (exit) await exit;
+      await Promise.allSettled(unmappedActivityInFlight);
       // Close every Pool last — after the drainer has stopped issuing
       // new requests. close() awaits in-flight, then destroys all
       // connections. Tests injecting config.fetch won't have any pools.
@@ -561,7 +615,7 @@ async function fanoutEvent(
   event: ItemEventWithId,
   subscriptions: Map<string, SubscriptionEntry>,
   subscriberFailures: Map<string, SubscriberFailureState>,
-  unmappedIntegrationsReported: Set<string>,
+  unmappedActivityStates: Map<string, UnmappedActivityState>,
   refreshConnection: (connectionId: string) => Promise<void>,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
@@ -596,12 +650,17 @@ async function fanoutEvent(
     // connection is fine; the env-var just hasn't been set yet.
     const queueUrl = config.resolveQueueUrl(entry.integration_name);
     if (queueUrl === null) {
-      await handleUnmappedIntegration(
+      const activityTask = handleUnmappedIntegration(
         entry,
-        event,
-        unmappedIntegrationsReported,
+        event.tenantId,
+        unmappedActivityStates,
+        config,
         storage,
       );
+      // The alert path carries its own rejection handling. Do not await it in
+      // this event's fanout: a slow activity store must not hold mapped queue
+      // sends, later events, or unrelated tenants behind it.
+      if (activityTask) void activityTask;
       continue;
     }
     const body = buildQueueMessageBody(event, entry);
@@ -640,43 +699,265 @@ async function fanoutEvent(
 /**
  * Handle a fanout target whose integration has no queue URL mapped in
  * the bridge's resolver. Logged loudly every time; the operator-visible
- * `system.activity` row is deduped per integration per process lifetime
- * so a misconfigured integration doesn't flood the action_required
- * surface. Best-effort throughout; the bridge must never crash on an
+ * `system.activity` row is deduped per tenant + integration. Writes are
+ * idempotent across ambiguous outcomes and guarded by in-flight + backoff
+ * state so a broken activity store cannot turn a busy event stream into a
+ * write storm. Best-effort throughout; the bridge must never crash on an
  * env-config gap.
  */
-async function handleUnmappedIntegration(
+function handleUnmappedIntegration(
   entry: SubscriptionEntry,
-  event: ItemEventWithId,
-  unmappedIntegrationsReported: Set<string>,
+  tenantId: string | undefined,
+  states: Map<string, UnmappedActivityState>,
+  config: BridgeConfig,
   storage: Storage,
-): Promise<void> {
+): Promise<void> | null {
   console.error(
     `[reactive-run-bridge] no queue URL mapped for integration "${entry.integration_name}" (connection ${entry.connection_id}); skipping dispatch — set CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS to include this integration`,
   );
-  if (unmappedIntegrationsReported.has(entry.integration_name)) return;
-  unmappedIntegrationsReported.add(entry.integration_name);
+  const key = unmappedActivityKey(tenantId, entry.integration_name);
+  let state = states.get(key);
+  if (!state) {
+    state = {
+      entry,
+      reported: false,
+      inFlight: null,
+      retryTimer: null,
+      consecutiveFailures: 0,
+      retryAfter: 0,
+    };
+    states.set(key, state);
+  } else {
+    // A tenant can have several Connections for the same Integration. Keep a
+    // live representative so a later retry never attributes the alert to a
+    // Connection that was removed while the first write was in flight.
+    state.entry = entry;
+  }
+
+  const now = config.unmappedActivityNow?.() ?? Date.now();
+  if (state.reported || state.inFlight) return null;
+  if (state.retryAfter > now) {
+    // The backoff timer's own callback lands here whenever Node fires it ahead
+    // of its deadline, which it is documented to do by up to a millisecond.
+    // The callback has already cleared `retryTimer`, so returning without
+    // re-arming would strand the chain: no further event is guaranteed to
+    // arrive, and the alert would never be written. Re-arm for whatever wait
+    // is left, and only when no timer is already holding the chain — an event
+    // arriving mid-backoff must still be turned away without a write.
+    if (!state.retryTimer) {
+      armUnmappedActivityRetry(
+        key,
+        state,
+        tenantId,
+        states,
+        config,
+        storage,
+        state.retryAfter - now,
+      );
+    }
+    return null;
+  }
+
+  const attempt = (async (): Promise<void> => {
+    try {
+      await writeUnmappedActivity(entry, tenantId, storage);
+      state.reported = true;
+      if (state.retryTimer) clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+      state.consecutiveFailures = 0;
+      state.retryAfter = 0;
+    } catch (err) {
+      state.consecutiveFailures++;
+      const retryDelay = computeUnmappedActivityRetryMs(
+        state.consecutiveFailures,
+        config.unmappedActivityRetryBaseMs ?? UNMAPPED_ACTIVITY_RETRY_BASE_MS,
+        config.unmappedActivityRetryMaxMs ?? UNMAPPED_ACTIVITY_RETRY_MAX_MS,
+      );
+      state.retryAfter =
+        (config.unmappedActivityNow?.() ?? Date.now()) + retryDelay;
+      console.error(
+        `[reactive-run-bridge] unmapped-integration activity write failed for ${entry.integration_name}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      armUnmappedActivityRetry(
+        key,
+        state,
+        tenantId,
+        states,
+        config,
+        storage,
+        retryDelay,
+      );
+      // Don't crash the drainer over an activity-row write failure.
+    } finally {
+      state.inFlight = null;
+    }
+  })();
+  state.inFlight = attempt;
+  return attempt;
+}
+
+/**
+ * Arm the backoff timer for one unmapped-integration alert retry.
+ *
+ * Shared by the failure path and by the backoff gate, which re-arms whenever a
+ * timer fires ahead of its own deadline. The callback re-enters
+ * `handleUnmappedIntegration` rather than writing directly, so every retry
+ * passes the same reported / in-flight / resolver checks a fresh event would.
+ *
+ * Arming is skipped once the state has left the registry: `stop()` retires
+ * every state, and a timer armed after that would outlive the bridge and write
+ * an alert for a connection nobody is watching any more.
+ */
+function armUnmappedActivityRetry(
+  key: string,
+  state: UnmappedActivityState,
+  tenantId: string | undefined,
+  states: Map<string, UnmappedActivityState>,
+  config: BridgeConfig,
+  storage: Storage,
+  delayMs: number,
+): void {
+  if (states.get(key) !== state) return;
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  state.retryTimer = setTimeout(
+    () => {
+      state.retryTimer = null;
+      if (states.get(key) !== state || state.reported) return;
+      // The operator may have closed the env-config gap in the meantime. A
+      // mapped integration needs no alert, so retire the state rather than
+      // writing one for a problem that no longer exists.
+      if (config.resolveQueueUrl(state.entry.integration_name) !== null) {
+        states.delete(key);
+        return;
+      }
+      void handleUnmappedIntegration(
+        state.entry,
+        tenantId,
+        states,
+        config,
+        storage,
+      );
+    },
+    Math.max(1, delayMs),
+  );
+}
+
+function unmappedActivityKey(
+  tenantId: string | undefined,
+  integrationName: string,
+): string {
+  return JSON.stringify([tenantId ?? null, integrationName]);
+}
+
+const UNMAPPED_ACTIVITY_SOURCE = "marfa/reactive-run-bridge";
+
+function unmappedActivitySourceId(key: string): string {
+  // The database uniqueness constraint is global across tenants, so the
+  // tenant-inclusive key must remain part of source_id even though lookups
+  // also pass tenantId for read isolation.
+  return `unmapped-integration:${key}`;
+}
+
+function unmappedActivityProperties(entry: SubscriptionEntry): {
+  connection_id: string;
+  severity: "action_required";
+  summary: string;
+  detail: { integration_name: string; hint: string };
+} {
+  return {
+    severity: "action_required",
+    summary: `Integration "${entry.integration_name}" has no reactive-run queue URL mapped`,
+    connection_id: entry.connection_id,
+    detail: {
+      integration_name: entry.integration_name,
+      hint: "Add this integration to CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS and restart the server.",
+    },
+  };
+}
+
+function isMatchingUnmappedActivity(
+  item: Item | null,
+  tenantId: string | undefined,
+  integrationName: string,
+): boolean {
+  if (
+    item?.type !== "system.activity" ||
+    (item.tenant_id ?? null) !== (tenantId ?? null)
+  ) {
+    return false;
+  }
+  const properties = item.properties as {
+    severity?: string;
+    summary?: string;
+    detail?: { integration_name?: string; hint?: string };
+  };
+  return (
+    properties.severity === "action_required" &&
+    properties.summary ===
+      `Integration "${integrationName}" has no reactive-run queue URL mapped` &&
+    properties.detail?.integration_name === integrationName &&
+    properties.detail.hint ===
+      "Add this integration to CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS and restart the server."
+  );
+}
+
+async function writeUnmappedActivity(
+  entry: SubscriptionEntry,
+  tenantId: string | undefined,
+  storage: Storage,
+): Promise<void> {
+  const key = unmappedActivityKey(tenantId, entry.integration_name);
+  const sourceId = unmappedActivitySourceId(key);
+  const existing = await storage.items.findBySourceIdIncludingTrashed(
+    UNMAPPED_ACTIVITY_SOURCE,
+    sourceId,
+    tenantId,
+  );
+  if (isMatchingUnmappedActivity(existing, tenantId, entry.integration_name)) {
+    return;
+  }
+  if (existing) {
+    throw new Error(
+      `Natural-key collision for unmapped integration activity ${sourceId}`,
+    );
+  }
+
   try {
     await storage.items.create(
       {
         type: "system.activity",
-        properties: {
-          severity: "action_required",
-          summary: `Integration "${entry.integration_name}" has no reactive-run queue URL mapped`,
-          connection_id: entry.connection_id,
-          detail: {
-            integration_name: entry.integration_name,
-            item_id: event.item.id,
-            hint: "Add this integration to CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS and restart the server.",
-          },
-        },
+        properties: unmappedActivityProperties(entry),
+        source: UNMAPPED_ACTIVITY_SOURCE,
+        source_id: sourceId,
       },
-      event.tenantId,
+      tenantId,
     );
-  } catch {
-    // Don't crash the drainer over an activity-row write failure;
-    // stderr already carries the loud error.
+  } catch (createError) {
+    // A transport/driver rejection does not prove the transaction failed.
+    // Re-read the natural key and accept only the same tenant-scoped,
+    // semantically identical alert; an unrelated collision remains a failure.
+    const committed = await storage.items.findBySourceIdIncludingTrashed(
+      UNMAPPED_ACTIVITY_SOURCE,
+      sourceId,
+      tenantId,
+    );
+    if (
+      isMatchingUnmappedActivity(committed, tenantId, entry.integration_name)
+    ) {
+      return;
+    }
+    throw createError;
   }
+}
+
+function computeUnmappedActivityRetryMs(
+  consecutiveFailures: number,
+  baseMs: number,
+  maxMs: number,
+): number {
+  const exponent = Math.min(Math.max(consecutiveFailures - 1, 0), 30);
+  return Math.min(baseMs * 2 ** exponent, maxMs);
 }
 
 /**
