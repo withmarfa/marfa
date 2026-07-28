@@ -107,14 +107,11 @@ export interface ItemFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** Multi-source filter. When set, results are narrowed to items whose
-   *  `source` is in the array. `source` and `sources` may both be set;
-   *  the single-source filter is AND'd with the multi-source filter. */
-  sources?: string[];
   /** The tenant's `source_filter` enforcement lever, applied per row: a row
    *  whose type the lever lists must carry an approved source, every other
-   *  row passes. Distinct from `sources`, which narrows the whole result set
-   *  regardless of type. */
+   *  row passes untouched. Per-row on purpose — the lever is per-type, so
+   *  narrowing the whole result set instead would both over-restrict the
+   *  types it does not list and leave it decidable from the request. */
   source_filter?: SourceFilterSettings;
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
@@ -140,8 +137,6 @@ export interface SearchFilters {
   state?: ItemState;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
   tier?: "library" | "feed";
-  /** Multi-source filter. Narrows results to items whose `source` is in the array. */
-  sources?: string[];
   /** Mirrors `ItemFilters.source_filter`. */
   source_filter?: SourceFilterSettings;
   /** Mirrors `ItemFilters.exclude_system_types`. */

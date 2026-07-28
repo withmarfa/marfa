@@ -83,12 +83,6 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.tier);
     }
 
-    if (filters.sources && filters.sources.length > 0) {
-      const placeholders = filters.sources.map(() => "?").join(", ");
-      conditions.push(`AND i.source IN (${placeholders})`);
-      params.push(...filters.sources);
-    }
-
     if (filters.exclude_system_types) {
       conditions.push("AND i.type NOT LIKE 'system.%'");
     }
