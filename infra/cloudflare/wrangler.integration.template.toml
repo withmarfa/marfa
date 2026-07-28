@@ -20,11 +20,12 @@ main = "../../integrations/EXAMPLE/src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the
-# env, which is what every shipping integration config does. The token
-# left here previously would have been copied verbatim: nothing renders
-# this file, so a `${...}` in it reaches Wrangler as those literal
-# characters. `deploy-integrations.sh` names the resolved account back
-# before it deploys, since the config no longer pins one.
+# env, which is what every shipping integration config does. The
+# `${CLOUDFLARE_ACCOUNT_ID}` placeholder that used to sit here would
+# have been copied verbatim: nothing renders this file, so it reaches
+# Wrangler as those literal characters rather than an account.
+# `deploy-integrations.sh` names the resolved account back before it
+# deploys, since the config pins none.
 
 # No public HTTP surface. The control plane reaches this Worker over a
 # Service Binding; queue delivery and Durable Object alarms never touch
