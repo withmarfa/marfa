@@ -120,6 +120,53 @@ describe.skipIf(!enabled)(
       ).rejects.toThrow(/MARFA_DATABASE_URL_DIRECT/);
     });
 
+    it("refuses a direct endpoint that is the pooled one again", async () => {
+      await expect(
+        createConnection(pooledUrl, {
+          poolMode: "transaction",
+          directConnectionString: pooledUrl,
+          skipBootstrap: true,
+        }),
+      ).rejects.toThrow(/same endpoint as DATABASE_URL/);
+    });
+
+    it("poisons the app pool when the streaming client is on the pooled endpoint", async () => {
+      // Why the refusal above is not paranoia. This is the shape the guard
+      // rejects, built by hand so the assertion is about the database's
+      // behavior rather than about the guard: two separate pools, both on the
+      // pooler. Every presence check passes, the two clients are genuinely
+      // distinct objects, and the app pool still goes unreadable for the whole
+      // life of the stream. Without this the guard rests on a comment.
+      const appPool = postgres(pooledUrl, {
+        max: 3,
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        onnotice: () => {},
+      });
+      const streamPool = postgres(pooledUrl, {
+        max: 3,
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        onnotice: () => {},
+      });
+      expect(streamPool).not.toBe(appPool);
+      try {
+        expect(new Set(await readAuthSessionAsOwner(appPool, 10))).toEqual(
+          new Set(["ok"]),
+        );
+        const ctx = await acquireStreamRls(streamPool, TENANT_ID);
+        try {
+          const during = await readAuthSessionAsOwner(appPool, 20);
+          // 42501 is `permission denied`: the owner's read landed on a backend
+          // still wearing the stream's `marfa_app` role.
+          expect(during).toContain("42501");
+        } finally {
+          await ctx.release();
+        }
+      } finally {
+        await appPool.end();
+        await streamPool.end();
+      }
+    });
+
     it("keeps the app pool readable as owner across a stream's whole lifetime", async () => {
       const conn = await createConnection(pooledUrl, {
         poolMode: "transaction",

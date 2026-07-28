@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
-import { pgEndpointHost } from "./storage/pg/connection.js";
+import { pgEndpointHost } from "./storage/pg/endpoint.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";

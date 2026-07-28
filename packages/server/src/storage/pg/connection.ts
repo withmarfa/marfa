@@ -3,24 +3,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
 import type { DbPoolMode } from "../../config.js";
 import { stampPgDrizzleMigrations } from "../bootstrap-stamp.js";
+import { isSamePgEndpoint, pgEndpointLabel } from "./endpoint.js";
 import { wrapDbWithRequestContext } from "./request-context.js";
 import { SCHEMA_SQL } from "./schema-sql.generated.js";
 
 export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
-
-/**
- * Host of a Postgres URL, for logging. Never the whole connection string —
- * that carries the password. Returns `"unknown"` rather than throwing, since
- * a log line is not worth failing a boot over.
- */
-export function pgEndpointHost(connectionString: string): string {
-  try {
-    return new URL(connectionString).hostname || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 export async function createConnection(
   connectionString: string,
@@ -98,6 +86,26 @@ export async function createConnection(
       "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
         "Streaming RLS must reserve from a direct (unpooled) endpoint, not the " +
         "transaction-mode pooled one DATABASE_URL points at.",
+    );
+  }
+
+  // "Set" is not the same as "direct". Pointing the direct variable back at the
+  // pooled endpoint satisfies the presence check above, builds a second pool
+  // that is distinct from the app's, logs itself as `direct`, and still strands
+  // the role — every observable signal reads healthy while the outage is
+  // reproduced exactly. Nothing downstream can tell the difference, so the
+  // difference has to be established here.
+  if (
+    options?.poolMode === "transaction" &&
+    isSamePgEndpoint(connectionString, directConnectionString)
+  ) {
+    throw new Error(
+      "MARFA_DATABASE_URL_DIRECT points at the same endpoint as DATABASE_URL " +
+        `(${pgEndpointLabel(directConnectionString)}), so it is the pooled one. ` +
+        "Streaming RLS needs an endpoint that owns its backend outright; a " +
+        "session-level SET ROLE over a transaction-mode pooler strands on a " +
+        "shared backend. On Neon the direct host is the pooled host without " +
+        "the `-pooler` suffix.",
     );
   }
 

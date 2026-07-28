@@ -1,6 +1,7 @@
 import type { PermissionBundle } from "@withmarfa/shared";
 import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
+import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
 
 /**
  * Numeric env-var read with explicit "missing or empty → default" semantics.
@@ -566,27 +567,42 @@ export function loadConfig(): AppConfig {
   const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
   const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
   const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
+  const databaseUrl = process.env.DATABASE_URL ?? "";
   const databaseUrlDirect = process.env.MARFA_DATABASE_URL_DIRECT ?? "";
 
-  // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;
-  // over a transaction-mode pooler that role strands on a shared backend and
-  // is inherited by later, unrelated queries, including Better Auth's session
-  // reads on tables the role holds no grant on. Falling back to the pooled
-  // client when the direct endpoint is missing is a silent downgrade from
-  // "isolated" to "leaks across the whole instance", so refuse to start
-  // instead. Disabling streaming RLS as the fallback would be no better: that
-  // trades a visible outage for an invisible loss of tenant isolation.
-  if (
-    storageDialect === "pg" &&
-    dbPoolMode === "transaction" &&
-    databaseUrlDirect === ""
-  ) {
-    throw new Error(
-      "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
-        "Streaming RLS sets a session-level role, which strands on a shared backend " +
-        "over a transaction-mode pooler; point this at the direct (unpooled) " +
-        "endpoint of the same database as DATABASE_URL.",
-    );
+  if (storageDialect === "pg" && dbPoolMode === "transaction") {
+    // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;
+    // over a transaction-mode pooler that role strands on a shared backend and
+    // is inherited by later, unrelated queries, including Better Auth's session
+    // reads on tables the role holds no grant on. Falling back to the pooled
+    // client when the direct endpoint is missing is a silent downgrade from
+    // "isolated" to "leaks across the whole instance", so refuse to start
+    // instead. Disabling streaming RLS as the fallback would be no better: that
+    // trades a visible outage for an invisible loss of tenant isolation.
+    if (databaseUrlDirect === "") {
+      throw new Error(
+        "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
+          "Streaming RLS sets a session-level role, which strands on a shared backend " +
+          "over a transaction-mode pooler; point this at the direct (unpooled) " +
+          "endpoint of the same database as DATABASE_URL.",
+      );
+    }
+    // Presence is not directness. The two hosts are resolved from adjacent
+    // variable names in the deploy tooling, and on Neon they differ by the
+    // six characters of the `-pooler` suffix, so the plausible misconfiguration
+    // is not "unset" but "set to the pooled endpoint again" — which satisfies
+    // every other signal (a distinct client, a `direct` boot log) while
+    // reproducing the outage exactly.
+    if (isSamePgEndpoint(databaseUrl, databaseUrlDirect)) {
+      throw new Error(
+        "MARFA_DATABASE_URL_DIRECT points at the same endpoint as DATABASE_URL " +
+          `(${pgEndpointLabel(databaseUrlDirect)}), so it is the pooled one. ` +
+          "Streaming RLS needs an endpoint that owns its backend outright; a " +
+          "session-level SET ROLE over a transaction-mode pooler strands on a " +
+          "shared backend. On Neon the direct host is the pooled host without " +
+          "the `-pooler` suffix.",
+      );
+    }
   }
 
   if (process.env.NODE_ENV === "production") {
@@ -622,7 +638,7 @@ export function loadConfig(): AppConfig {
     port,
     storageDialect,
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
-    databaseUrl: process.env.DATABASE_URL ?? "",
+    databaseUrl,
     databaseUrlDirect,
     dbPoolMode,
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",

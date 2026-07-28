@@ -198,6 +198,37 @@ describe("loadConfig streaming-RLS endpoint guard", () => {
     expect(() => loadConfig()).toThrow(/MARFA_DATABASE_URL_DIRECT/);
   });
 
+  it("throws when the direct endpoint is the pooled one again", () => {
+    // The realistic misconfiguration, not the hypothetical one: the deploy
+    // resolves the two URLs from adjacent variable names, and on Neon the
+    // hostnames differ by the six characters of the `-pooler` suffix. A
+    // presence check passes this, and so does every other signal downstream.
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@pooler.example:5432/marfa";
+    process.env.MARFA_DATABASE_URL_DIRECT =
+      "postgres://user:pw@pooler.example:5432/marfa";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    expect(() => loadConfig()).toThrow(/same endpoint as DATABASE_URL/);
+  });
+
+  it("names only the host and port when it refuses, never the credentials", () => {
+    // Boot failures land in logs an operator pastes around, so the message has
+    // to be actionable without carrying the password.
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:hunter2@pooler.example/marfa";
+    process.env.MARFA_DATABASE_URL_DIRECT =
+      "postgres://user:hunter2@pooler.example/marfa";
+    process.env.MARFA_DB_POOL_MODE = "transaction";
+    let message = "";
+    try {
+      loadConfig();
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("pooler.example:5432");
+    expect(message).not.toContain("hunter2");
+  });
+
   it("succeeds on a transaction-mode pool once the direct endpoint is configured", () => {
     process.env.DB_DIALECT = "pg";
     process.env.DATABASE_URL = "postgres://user:pw@pooler.example/marfa";

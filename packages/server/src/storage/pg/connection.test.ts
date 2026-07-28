@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { createConnection, pgEndpointHost } from "./connection.js";
+import { createConnection } from "./connection.js";
 
 // Postgres-only — runs under `pnpm test:pg` which spins up a throw-away
 // pg17 container and sets DB_DIALECT=pg + DATABASE_URL.
@@ -58,6 +58,7 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
  */
 describe("createConnection pool-mode guard", () => {
   const POOLED = "postgres://user:pw@pooler.invalid:6432/marfa";
+  const DIRECT = "postgres://user:pw@direct.invalid:5432/marfa";
 
   it("rejects a transaction-mode pool with no direct endpoint, naming the variable", async () => {
     // Streaming issues a session-level SET ROLE. Reusing the pooled client for
@@ -77,33 +78,56 @@ describe("createConnection pool-mode guard", () => {
       }),
     ).rejects.toThrow(/MARFA_DATABASE_URL_DIRECT/);
   });
-});
 
-/**
- * The startup log names the endpoint streaming RLS reserves from, and the only
- * thing that identifies it is the host. The rest of the connection string is
- * the password.
- */
-describe("pgEndpointHost", () => {
-  it("returns the host and nothing else", () => {
-    expect(
-      pgEndpointHost(
-        "postgres://marfa:s3cret@ep-cool-1-pooler.example:6432/db",
-      ),
-    ).toBe("ep-cool-1-pooler.example");
+  it("rejects a direct endpoint that is the pooled one again", async () => {
+    // Verified against PgBouncer 1.25.2 in pool_mode = transaction: this shape
+    // builds a second, distinct pool, satisfies every presence check, logs
+    // itself as `direct`, and then turns 20 consecutive owner reads of an
+    // auth table into 20 SQLSTATE 42501s for the duration of a stream. A
+    // genuinely direct endpoint leaves all 20 clean. "Set" is not "direct".
+    await expect(
+      createConnection(POOLED, {
+        poolMode: "transaction",
+        directConnectionString: POOLED,
+      }),
+    ).rejects.toThrow(/same endpoint as DATABASE_URL/);
   });
 
-  it("never leaks the credentials in the string it returns", () => {
-    const host = pgEndpointHost(
-      "postgresql://marfa:hunter2@direct.example:5432/db?sslmode=require",
+  it("rejects the pooled endpoint wearing different credentials", async () => {
+    // Which user, database and TLS mode the URL asks for changes nothing about
+    // which listener answers, so neither can be allowed to disguise it.
+    await expect(
+      createConnection(POOLED, {
+        poolMode: "transaction",
+        directConnectionString:
+          "postgresql://other:secret@pooler.invalid:6432/other?sslmode=require",
+      }),
+    ).rejects.toThrow(/same endpoint as DATABASE_URL/);
+  });
+
+  it("accepts a genuinely separate endpoint and gives streaming its own pool", async () => {
+    // No connection is opened: postgres.js is lazy and bootstrap is skipped.
+    const conn = await createConnection(POOLED, {
+      poolMode: "transaction",
+      directConnectionString: DIRECT,
+      skipBootstrap: true,
+    });
+    expect(conn.streamClient).not.toBe(conn.client);
+    await conn.close();
+  });
+
+  it("accepts a pooler and a Postgres sharing a host on different ports", async () => {
+    // PgBouncer beside Postgres on one machine is the standard self-hosted
+    // shape. Comparing hosts alone would refuse to start a correct deployment.
+    const conn = await createConnection(
+      "postgres://user:pw@localhost:6432/marfa",
+      {
+        poolMode: "transaction",
+        directConnectionString: "postgres://user:pw@localhost:5432/marfa",
+        skipBootstrap: true,
+      },
     );
-    expect(host).not.toContain("hunter2");
-    expect(host).not.toContain("marfa:");
-  });
-
-  it("degrades to a placeholder rather than throwing on an unparseable URL", () => {
-    // A log line is never worth failing a boot over.
-    expect(pgEndpointHost("not a url")).toBe("unknown");
-    expect(pgEndpointHost("")).toBe("unknown");
+    expect(conn.streamClient).not.toBe(conn.client);
+    await conn.close();
   });
 });
