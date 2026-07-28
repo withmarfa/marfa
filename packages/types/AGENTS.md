@@ -37,7 +37,9 @@ Consequences worth knowing:
   - **Every field the target _requires_ must be present here, required, and shaped the same.** A reader expects those on every item.
   - **Every field the target merely _declares_ must, if this type declares the same name, be shaped compatibly.** A reader reads an optional field whenever it is present, so a same-named field of a different shape is a mis-parse, not a harmless extra. Omitting the field entirely is fine.
 
-  Shape compatibility is one-directional: an `enum` may stand in for a `string` (an enum only ever holds a string, so narrowing a free-text field to the closed set an upstream service actually emits is safe), but never the reverse. Everything else — `type`, `format`, `items_type`, and the enum value set — must match, with an enum permitted to narrow the target's values.
+  Shape compatibility asks one question: can a value valid under this field be handed to a reader of the target's field without a mis-parse? So a **narrower type may stand in for the wider one it lives inside**, never the reverse — `url`, `email`, `datetime`, `date` and `enum` all hold strings and read as `string`; every `integer` reads as a `number`. An enum may additionally narrow the target's value set. `items_type` and the enum value set otherwise have to match.
+
+  `format` is the one attribute that does **not** gate on absence. Only the annotation-only formats (`bcp47`, `iso3166`) survive normalization, and nothing checks their values at write time, so a plain `string` and an annotated one admit exactly the same values and a reader cannot tell them apart. A field that omits the target's annotation is accepted; a field that declares a _different_ one is rejected, because that is an author stating a contradiction rather than leaving a detail unsaid.
 
   **Known limit.** The check reaches field declarations only. Two `object` fields, or two `array`s with `items_type: "object"`, compare as compatible whatever they contain, because the field model has no vocabulary for nested shape. A claim involving a structured `object` field carries no machine-checked guarantee about what is inside it.
 

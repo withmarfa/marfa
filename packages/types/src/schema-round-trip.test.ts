@@ -480,6 +480,119 @@ describe("compatible_with — optional fields on the target", () => {
   });
 });
 
+// The compatibility rule is about values: a claim holds when a reader of the
+// target cannot be handed something it would mis-parse. Anything that does not
+// change the value set a field admits must not gate the claim, or the check
+// rejects schemas that are in fact readable.
+describe("compatible_with — what changes the value set and what does not", () => {
+  it("accepts a plain string against a target field annotated bcp47", () => {
+    // `core.note.language` is `{ type: "string", format: "bcp47" }`, and
+    // nothing validates a language tag at write time. A plain string and a
+    // bcp47-annotated string therefore hold exactly the same values, so an
+    // omitted annotation cannot surprise a reader.
+    const result = validate({
+      id: "acme.plain_language_note",
+      version: 1,
+      compatible_with: ["core.note"],
+      fields: {
+        body: { type: "string", required: true },
+        language: { type: "string" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an annotation that contradicts the target's", () => {
+    // Neither annotation is enforced, but declaring country codes where the
+    // target declares language tags is the author stating a contradiction.
+    const result = validate({
+      id: "acme.miscoded_note",
+      version: 1,
+      compatible_with: ["core.note"],
+      fields: {
+        body: { type: "string", required: true },
+        language: { type: "string", format: "iso3166" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.errors.some(
+        (error) =>
+          error.field === "compatible_with.core.note.language.format" &&
+          error.code === "compatible_with_violation",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts field types whose values are a subset of the target's", () => {
+    const customTargets = new Map<string, TypeSchema>([
+      [
+        "acme.loose",
+        {
+          id: "acme.loose",
+          version: 1,
+          fields: {
+            href: { type: "string" },
+            contact: { type: "string" },
+            seen_at: { type: "string" },
+            born_on: { type: "string" },
+            score: { type: "number" },
+          },
+        },
+      ],
+    ]);
+    const result = validateTypeSchema(
+      {
+        id: "acme.tight",
+        version: 1,
+        compatible_with: ["acme.loose"],
+        fields: {
+          href: { type: "url" },
+          contact: { type: "email" },
+          seen_at: { type: "datetime" },
+          born_on: { type: "date" },
+          score: { type: "integer" },
+        },
+      },
+      { resolveSchema: (id) => customTargets.get(id) ?? emitted.get(id) },
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects the same pairs in the widening direction", () => {
+    const customTargets = new Map<string, TypeSchema>([
+      [
+        "acme.tight_target",
+        {
+          id: "acme.tight_target",
+          version: 1,
+          fields: { href: { type: "url" }, score: { type: "integer" } },
+        },
+      ],
+    ]);
+    const result = validateTypeSchema(
+      {
+        id: "acme.loose_candidate",
+        version: 1,
+        compatible_with: ["acme.tight_target"],
+        fields: { href: { type: "string" }, score: { type: "number" } },
+      },
+      { resolveSchema: (id) => customTargets.get(id) ?? emitted.get(id) },
+    );
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    for (const field of ["href", "score"]) {
+      expect(
+        result.errors.some(
+          (error) =>
+            error.field === `compatible_with.acme.tight_target.${field}.type`,
+        ),
+      ).toBe(true);
+    }
+  });
+});
+
 describe("field attributes survive normalization", () => {
   it("carries searchable, maxLength, maxItems and annotation formats", () => {
     const result = validate({

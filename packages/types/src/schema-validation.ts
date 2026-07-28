@@ -1091,19 +1091,34 @@ function validateCompatibleWith(
 }
 
 /**
- * Whether a value valid under `candidate` is also valid under `target`.
+ * Field types whose values are a strict subset of another type's, keyed by
+ * the narrower one.
  *
- * Only one pair is asymmetric: `enum_values` is a list of strings, so an
- * `enum` field only ever holds a string and a reader expecting `string` reads
- * it fine. The reverse fails — a reader expecting one of a fixed set can be
- * handed anything. Every other pair has to match exactly.
+ * Every entry is a containment fact about the values themselves, matching how
+ * each type is compiled for write-time validation: `url`, `email`,
+ * `datetime`, `date` and `enum` all hold strings, and every `integer` is a
+ * `number`. Each relation is one-way — a reader expecting a URL that is
+ * handed an arbitrary string has no such guarantee — which is why this is a
+ * table rather than a symmetric comparison.
  */
+const FIELD_TYPES_READABLE_AS: Partial<
+  Record<FieldType, readonly FieldType[]>
+> = {
+  url: ["string"],
+  email: ["string"],
+  datetime: ["string"],
+  date: ["string"],
+  enum: ["string"],
+  integer: ["number"],
+};
+
+/** Whether a value valid under `candidate` is also valid under `target`. */
 function fieldTypeIsReadableAs(
   candidate: FieldType,
   target: FieldType,
 ): boolean {
   if (candidate === target) return true;
-  return candidate === "enum" && target === "string";
+  return FIELD_TYPES_READABLE_AS[candidate]?.includes(target) ?? false;
 }
 
 /**
@@ -1126,7 +1141,17 @@ function describeCompatibilityConflict(
     };
   }
 
-  if (target.format !== undefined && candidate.format !== target.format) {
+  // Only the annotation-only formats survive normalization, and they carry no
+  // guarantee about values: nothing checks a `bcp47` field at write time, so a
+  // plain `string` and a `bcp47` string hold the same set and no reader can be
+  // mis-parsed by the difference. An omitted annotation therefore passes.
+  // Two different annotations do not: that is the author stating a contra-
+  // diction, which is worth refusing even though neither is enforced.
+  if (
+    target.format !== undefined &&
+    candidate.format !== undefined &&
+    candidate.format !== target.format
+  ) {
     return {
       attribute: "format",
       expected: `format ${target.format}`,
