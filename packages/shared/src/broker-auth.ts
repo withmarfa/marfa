@@ -68,11 +68,35 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
     crypto.subtle.sign("HMAC", key, ENCODER.encode(a)),
     crypto.subtle.sign("HMAC", key, ENCODER.encode(b)),
   ]);
-  const bytesA = new Uint8Array(tagA);
-  const bytesB = new Uint8Array(tagB);
-  let difference = bytesA.length ^ bytesB.length;
-  for (let i = 0; i < bytesA.length; i++) {
-    difference |= (bytesA[i] ?? 0) ^ (bytesB[i] ?? 0);
+  return constantTimeBytesEqual(new Uint8Array(tagA), new Uint8Array(tagB));
+}
+
+/**
+ * Whether two byte sequences are identical, in time that does not
+ * depend on where they first differ.
+ *
+ * Every byte position contributes to the answer. The per-byte
+ * differences are OR'd into one accumulator and the loop always runs
+ * to the end, so the work done is a function of the length alone. An
+ * early return on the first mismatch would give the same answer while
+ * leaking the position of the first differing byte through timing,
+ * which is the whole reason not to write `===` here.
+ *
+ * Exported for its own tests rather than for callers, and deliberately
+ * not re-exported from the package index. This accumulation is the
+ * part of the compare that can regress in silence: one character
+ * turns `|=` into `=` and the function then checks the last byte
+ * alone, which lint, types and a whole passing suite have nothing to
+ * say about. Nothing observable from `isBrokerAuthorized` can pin it
+ * down either, because the tags it compares are MACs under a key that
+ * differs on every call, so a wrong pair still collides in that last
+ * byte roughly once in 256. Handed a fixed pair of byte sequences,
+ * the rule is exact and testable.
+ */
+export function constantTimeBytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  let difference = a.length ^ b.length;
+  for (let i = 0; i < a.length; i++) {
+    difference |= (a[i] ?? 0) ^ (b[i] ?? 0);
   }
   return difference === 0;
 }
