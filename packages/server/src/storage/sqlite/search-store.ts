@@ -104,8 +104,8 @@ export class SqliteSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPattern } =
-            typePatternToSql(pattern);
+          const { global, exact, descendantPattern, extraTypes } =
+            typePatternToSql(pattern, filters.tenantId ?? null);
           if (global) return "1=1";
           if (!exact) return "1=0";
           if (!descendantPattern) {
@@ -113,7 +113,12 @@ export class SqliteSearchStore implements SearchStore {
             return "i.type = ?";
           }
           params.push(exact, descendantPattern);
-          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+          if (extraTypes.length === 0) {
+            return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+          }
+          params.push(...extraTypes);
+          const placeholders = extraTypes.map(() => "?").join(", ");
+          return `(i.type = ? OR i.type LIKE ? ESCAPE '\\' OR i.type IN (${placeholders}))`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
@@ -123,6 +128,8 @@ export class SqliteSearchStore implements SearchStore {
       filters.source_filter,
       "sqlite",
       "i",
+      1,
+      filters.tenantId ?? null,
     );
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);

@@ -3,6 +3,7 @@ import {
   subtreeWildcardRoot,
   typeMatchesPattern,
   typePatternToSql,
+  typeSubtreeToSql,
 } from "./type-patterns.js";
 import { matchesTypePattern, resolveTypePermission } from "./validation.js";
 import { expandWildcardScopes } from "./scopes.js";
@@ -128,6 +129,7 @@ describe("typePatternToSql", () => {
       global: false,
       exact: "core.media",
       descendantPattern: "core.media.%",
+      extraTypes: [],
     });
   });
 
@@ -136,6 +138,7 @@ describe("typePatternToSql", () => {
       global: false,
       exact: "core.note",
       descendantPattern: null,
+      extraTypes: [],
     });
   });
 
@@ -144,6 +147,7 @@ describe("typePatternToSql", () => {
       global: true,
       exact: null,
       descendantPattern: null,
+      extraTypes: [],
     });
   });
 
@@ -152,6 +156,18 @@ describe("typePatternToSql", () => {
       global: false,
       exact: "demo.web_gallery",
       descendantPattern: "demo.web\\_gallery.%",
+      extraTypes: [],
     });
+  });
+});
+
+describe("resolving names alone", () => {
+  it("consults no registry when the caller supplies no tenant scope", () => {
+    // Webhook filters and scope parsing match on identifiers only. Omitting the
+    // scope has to keep them on exactly the predicate they always emitted, so
+    // the declared half is opt-in rather than something a pure caller inherits.
+    expect(typePatternToSql("core.note.*").extraTypes).toEqual([]);
+    expect(typeSubtreeToSql("core.note").extraTypes).toEqual([]);
+    expect(typeMatchesPattern("user.elsewhere", "core.note.*")).toBe(false);
   });
 });

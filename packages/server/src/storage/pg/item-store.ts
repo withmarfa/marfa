@@ -137,17 +137,22 @@ import { rowToItem } from "./helpers.js";
  */
 function allowedTypesCondition(
   patterns: string[] | undefined,
+  tenantId?: string | null,
 ): SQL | undefined {
   if (!patterns) return undefined;
   if (patterns.length === 0) return sql`1=0`;
   const clauses = patterns.map((pattern) => {
-    const { global, exact, descendantPattern } = typePatternToSql(pattern);
+    const { global, exact, descendantPattern, extraTypes } = typePatternToSql(
+      pattern,
+      tenantId,
+    );
     if (global) return sql`1=1`;
     if (!exact) return sql`1=0`;
     if (!descendantPattern) return eq(items.type, exact);
     return or(
       eq(items.type, exact),
       sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+      ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
     );
   });
   return or(...clauses);
@@ -415,13 +420,15 @@ export class PgItemStore implements ItemStore {
       // `core.entity` and `core.entity.*` mean the same thing: the type and
       // everything under it. A bare identifier has always included its
       // subtypes here, so the explicit wildcard must too.
-      const { global, exact, descendantPattern } = typeSubtreeToSql(
+      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
+        filters.tenantId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const typeClause = or(
           eq(items.type, exact),
           sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+          ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
         );
         if (typeClause) conditions.push(typeClause);
       }
@@ -476,7 +483,10 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      const clause = allowedTypesCondition(filters.allowed_types);
+      const clause = allowedTypesCondition(
+        filters.allowed_types,
+        filters.tenantId ?? null,
+      );
       if (clause) conditions.push(clause);
     }
 
@@ -484,6 +494,7 @@ export class PgItemStore implements ItemStore {
       filters.source_filter,
       items.type,
       items.source,
+      filters.tenantId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 
@@ -967,7 +978,7 @@ export class PgItemStore implements ItemStore {
     if (tenantId) {
       conditions.push(eq(items.tenant_id, tenantId));
     }
-    const typeClause = allowedTypesCondition(allowedTypes);
+    const typeClause = allowedTypesCondition(allowedTypes, tenantId ?? null);
     if (typeClause) conditions.push(typeClause);
     // Counts have to agree with the listing they summarize, so the read
     // lever applies here too.
@@ -975,6 +986,7 @@ export class PgItemStore implements ItemStore {
       sourceFilter,
       items.type,
       items.source,
+      tenantId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 

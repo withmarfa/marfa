@@ -772,16 +772,28 @@ export interface SourceFilterSettings {
  * `core.note.private` too, so a lever listing `core.note` that skipped the
  * subtype would narrow only part of the view it is meant to narrow.
  */
-function decomposeCoveredTypes(types: string[]): {
+function decomposeCoveredTypes(
+  types: string[],
+  tenantId?: string | null,
+): {
   global: boolean;
   pairs: { exact: string; descendantPattern: string }[];
 } {
   const pairs: { exact: string; descendantPattern: string }[] = [];
   for (const configured of types) {
-    const { global, exact, descendantPattern } = typeSubtreeToSql(configured);
+    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+      configured,
+      tenantId,
+    );
     if (global) return { global: true, pairs: [] };
     if (exact !== null && descendantPattern !== null) {
       pairs.push({ exact, descendantPattern });
+    }
+    // A declared descendant needs no LIKE of its own — its identifier is
+    // already exact — but it must be covered, or a lever narrowing a subtree
+    // would leave the member named outside that subtree's namespace unnarrowed.
+    for (const extra of extraTypes) {
+      pairs.push({ exact: extra, descendantPattern: `${extra}.%` });
     }
   }
   return { global: false, pairs };
@@ -804,9 +816,10 @@ export function sourceFilterToSql(
   filter: SourceFilterSettings | undefined,
   typeCol: unknown,
   sourceCol: unknown,
+  tenantId?: string | null,
 ): SQL | undefined {
   if (!filter) return undefined;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  const { global, pairs } = decomposeCoveredTypes(filter.types, tenantId);
   if (!global && pairs.length === 0) return undefined;
 
   const covered = global
@@ -846,9 +859,10 @@ export function sourceFilterToRawSql(
   dialect: SqlDialect,
   tableAlias: string,
   startParamIdx = 1,
+  tenantId?: string | null,
 ): RawSqlResult | null {
   if (!filter) return null;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  const { global, pairs } = decomposeCoveredTypes(filter.types, tenantId);
   if (!global && pairs.length === 0) return null;
 
   const params: unknown[] = [];

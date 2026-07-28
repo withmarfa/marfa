@@ -463,6 +463,42 @@ export function isSubtypeOf(
   return false;
 }
 
+/**
+ * Every type in the tenant's vocabulary whose declared `parent` chain reaches
+ * `rootId`, excluding `rootId` itself and excluding anything already covered by
+ * a name-prefix match on `<rootId>.`.
+ *
+ * The identifier and the declared parent are two different hierarchies and
+ * nothing keeps them in agreement: `acme.annotated_note` may legally declare
+ * `core.note` as its parent, and registration accepts it. A subtree matcher
+ * built on the name alone therefore answers a query about notes without the
+ * annotated ones in it — no error, just a short answer. This is the set that
+ * closes that gap, and it is deliberately only the *difference*: the prefix
+ * clause still carries its own descendants, so a caller unions the two rather
+ * than replacing one with the other. Namespace containment stays meaningful in
+ * its own right, and narrowing it would trade a silent omission for a different
+ * silent omission.
+ *
+ * Cost is one pass over the tenant's types per call, which is small (the
+ * platform ships ~42) and only paid when a subtree is actually being resolved.
+ */
+export function declaredDescendantsOutsideNamespace(
+  rootId: string,
+  tenantId?: string | null,
+): string[] {
+  const prefix = `${rootId}.`;
+  const out: string[] = [];
+  for (const schema of listTypes(tenantId)) {
+    if (schema.id === rootId) continue;
+    if (schema.id.startsWith(prefix)) continue;
+    // Only types that declare a parent can reach the root by any route other
+    // than their name, so the walk is skipped for the overwhelming majority.
+    if (!schema.parent) continue;
+    if (isSubtypeOf(schema.id, rootId, tenantId)) out.push(schema.id);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Validation — Zod schema generation from field definitions
 // ---------------------------------------------------------------------------

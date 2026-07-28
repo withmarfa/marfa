@@ -28,11 +28,15 @@ export class PgMetadataStore implements MetadataStore {
     // with counts, which names what exists even when no item behind it is
     // readable.
     if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
-      const decomposed = filters.allowedTypes.map(typePatternToSql);
+      const decomposed = filters.allowedTypes.map((pattern) =>
+        typePatternToSql(pattern, filters.tenantId ?? null),
+      );
       // A subtree wildcard contributes its own root to the equality list as
-      // well as a prefix match, so `core.media.*` covers `core.media`.
+      // well as a prefix match, so `core.media.*` covers `core.media`. A
+      // descendant that declares its parent rather than inheriting the name
+      // joins the same list, since its identifier is already exact.
       const exact = decomposed
-        .map((d) => d.exact)
+        .flatMap((d) => [d.exact, ...d.extraTypes])
         .filter((v): v is string => v !== null);
       const wildcards = decomposed
         .map((d) => d.descendantPattern)
