@@ -1,9 +1,8 @@
 {
   "id": "google.drive.file",
   "label": "Google Drive File",
-  "description": "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
+  "description": "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. Metadata-only captures do not claim `core.file` compatibility because they have no required blob reference.",
   "version": 1,
-  "compatible_with": ["core.file"],
   "fields": {
     "title": {
       "type": "string",

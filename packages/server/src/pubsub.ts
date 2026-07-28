@@ -99,6 +99,22 @@ export interface EdgeEventWithId extends EdgeEvent {
 
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 
+/**
+ * Process-local event bus, and the sole distribution channel for Server-Sent
+ * Events and outbound webhook dispatch.
+ *
+ * **This makes one server process per database a hard requirement.** A second
+ * process publishing here reaches only its own subscribers, so an SSE client
+ * or webhook consumer attached to a different process never sees the event. It
+ * fails silently in every direction: the write commits, the API returns 200,
+ * nothing logs, nothing retries, and the event is gone. `multi-replica-check.ts`
+ * warns at boot where the topology can be detected, and the self-hosting
+ * documentation states the constraint for the cases it cannot.
+ *
+ * Making this safe across processes means moving distribution to a shared
+ * broker (Postgres LISTEN/NOTIFY, or an external bus). That is a substantial
+ * change and deliberately not attempted here.
+ */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
 

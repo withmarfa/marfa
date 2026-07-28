@@ -1,7 +1,13 @@
 import { eq, sql } from "drizzle-orm";
 import type { TenantQuota, QuotaResource } from "@withmarfa/shared";
 import type { TenantQuotaStore } from "../interface.js";
-import { tenantQuotas, items, outboundWebhooks, blobs } from "./schema.js";
+import {
+  tenantQuotas,
+  tenants,
+  items,
+  outboundWebhooks,
+  blobs,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /**
@@ -34,6 +40,30 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       rate_per_minute_limit: row.rate_per_minute_limit,
       updated_at: row.updated_at,
     };
+  }
+
+  async getForExistingTenant(
+    tenantId: string,
+  ): Promise<
+    { exists: true; quota: TenantQuota | null } | { exists: false; quota: null }
+  > {
+    return this.db.transaction(async (tx) => {
+      // libsql write transactions use BEGIN IMMEDIATE, so this existence read
+      // and the optional quota read cannot interleave with account deletion.
+      const tenant = await tx
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .get();
+      if (!tenant) return { exists: false, quota: null };
+
+      const row = await tx
+        .select()
+        .from(tenantQuotas)
+        .where(eq(tenantQuotas.tenant_id, tenantId))
+        .get();
+      return { exists: true, quota: row ? toTenantQuota(row) : null };
+    });
   }
 
   async set(
@@ -81,6 +111,63 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
     };
   }
 
+  async setForExistingTenant(
+    tenantId: string,
+    input: {
+      items_limit?: number | null;
+      webhooks_limit?: number | null;
+      blobs_limit?: number | null;
+      storage_bytes_limit?: number | null;
+      rate_per_minute_limit?: number | null;
+    },
+  ): Promise<TenantQuota | null> {
+    return this.db.transaction(async (tx) => {
+      // libsql opens write transactions with BEGIN IMMEDIATE, so account
+      // deletion and this existence-check-plus-upsert cannot interleave.
+      const tenant = await tx
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .get();
+      if (!tenant) return null;
+
+      const now = new Date().toISOString();
+      await tx
+        .insert(tenantQuotas)
+        .values({
+          tenant_id: tenantId,
+          items_limit: input.items_limit ?? null,
+          webhooks_limit: input.webhooks_limit ?? null,
+          blobs_limit: input.blobs_limit ?? null,
+          storage_bytes_limit: input.storage_bytes_limit ?? null,
+          rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+          updated_at: now,
+        })
+        .onConflictDoUpdate({
+          target: tenantQuotas.tenant_id,
+          set: {
+            items_limit: input.items_limit ?? null,
+            webhooks_limit: input.webhooks_limit ?? null,
+            blobs_limit: input.blobs_limit ?? null,
+            storage_bytes_limit: input.storage_bytes_limit ?? null,
+            rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+            updated_at: now,
+          },
+        })
+        .run();
+
+      return {
+        tenant_id: tenantId,
+        items_limit: input.items_limit ?? null,
+        webhooks_limit: input.webhooks_limit ?? null,
+        blobs_limit: input.blobs_limit ?? null,
+        storage_bytes_limit: input.storage_bytes_limit ?? null,
+        rate_per_minute_limit: input.rate_per_minute_limit ?? null,
+        updated_at: now,
+      };
+    });
+  }
+
   async count(tenantId: string, resource: QuotaResource): Promise<number> {
     if (resource === "items") {
       const row = await this.db
@@ -121,4 +208,16 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
     // count query — no DB row to sum here.
     return 0;
   }
+}
+
+function toTenantQuota(row: typeof tenantQuotas.$inferSelect): TenantQuota {
+  return {
+    tenant_id: row.tenant_id,
+    items_limit: row.items_limit,
+    webhooks_limit: row.webhooks_limit,
+    blobs_limit: row.blobs_limit,
+    storage_bytes_limit: row.storage_bytes_limit,
+    rate_per_minute_limit: row.rate_per_minute_limit,
+    updated_at: row.updated_at,
+  };
 }

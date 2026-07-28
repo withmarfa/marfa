@@ -14,14 +14,14 @@
  *     queue receives one message per subscribing connection (and zero
  *     for connections that don't subscribe).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   tryStartReactiveRunBridge,
   __test_internals,
 } from "./reactive-run-bridge.js";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import { isValidId, type IntegrationManifest } from "@withmarfa/shared";
 import { publish } from "../pubsub.js";
 
 /**
@@ -1040,5 +1040,1063 @@ describe("bridge — unmapped integration handling", () => {
     void fetchCalls;
 
     await bridge!.stop();
+  });
+
+  it("uses one genuine UUIDv7 activity for multiple connections of the same integration", async () => {
+    const integrationName = "acme.unmapped-shared-integration";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionIds = [
+      await createConnection({ integrationRef: integrationId }),
+      await createConnection({ integrationRef: integrationId }),
+    ];
+    const beforePublish = Date.now();
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "shared integration event" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+
+      const matchingRows = async () => {
+        const activity = await ctx.storage.items.list({
+          type: "system.activity",
+          limit: 100,
+        });
+        return activity.data.filter((row) => {
+          const properties = row.properties as { summary?: string };
+          return properties.summary?.includes(integrationName);
+        });
+      };
+      const rows = await waitFor(matchingRows, (value) => value.length === 1);
+      expect(rows).toHaveLength(1);
+
+      const activity = rows[0];
+      if (!activity) throw new Error("unmapped activity was not persisted");
+      expect(isValidId(activity.id)).toBe(true);
+      const timestampHex = activity.id.slice(0, 8) + activity.id.slice(9, 13);
+      const idTimestamp = Number.parseInt(timestampHex, 16);
+      expect(idTimestamp).toBeGreaterThanOrEqual(beforePublish);
+      expect(idTimestamp).toBeLessThanOrEqual(Date.now());
+      expect(activity.source).toBe("marfa/reactive-run-bridge");
+      expect(activity.source_id).toBe(
+        `unmapped-integration:${JSON.stringify([null, integrationName])}`,
+      );
+
+      const properties = activity.properties as { connection_id?: string };
+      expect(connectionIds).toContain(properties.connection_id);
+
+      const secondNote = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "second shared integration event" },
+      });
+      await publish({
+        type: "created",
+        item: secondNote,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(await matchingRows()).toHaveLength(1);
+    } finally {
+      await bridge!.stop();
+    }
+  });
+
+  it("retries a transient activity-write failure without another event", async () => {
+    const integrationName = "acme.unmapped-activity-retry";
+    const intUnmapped = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connUnmapped = await createConnection({
+      integrationRef: intUnmapped,
+    });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) {
+          throw new Error("forced first activity write failure");
+        }
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 10,
+      unmappedActivityRetryMaxMs: 10,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("first activity attempt fails");
+      const matchingActivities = async () => {
+        const activityRows = await ctx.storage.items.list({
+          type: "system.activity",
+          limit: 100,
+        });
+        return activityRows.data.filter((row) => {
+          const properties = row.properties as {
+            connection_id?: string;
+            summary?: string;
+          };
+          return (
+            properties.connection_id === connUnmapped &&
+            properties.summary?.includes(integrationName)
+          );
+        });
+      };
+      expect(
+        await waitFor(matchingActivities, (rows) => rows.length === 1, {
+          timeoutMs: 5_000,
+        }),
+      ).toHaveLength(1);
+      expect(activityWriteAttempts).toBe(2);
+
+      await publishNote("later events remain deduplicated");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(activityWriteAttempts).toBe(2);
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("re-arms the retry when its backoff timer fires before the deadline", async () => {
+    const integrationName = "acme.unmapped-early-backoff-timer";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionId = await createConnection({
+      integrationRef: integrationId,
+    });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) {
+          throw new Error("forced first activity write failure");
+        }
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    // Node fires a `setTimeout` up to a millisecond before its deadline, so a
+    // backoff callback can re-enter the write path while the deadline it just
+    // waited out still reads as in the future. Holding the bridge's clock
+    // still until this test releases it turns that sub-millisecond race into a
+    // fixed condition: the timer has fired, the deadline has not passed, and
+    // only a re-armed timer can carry the chain forward.
+    let now = 5_000;
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 20,
+      unmappedActivityRetryMaxMs: 20,
+      unmappedActivityNow: () => now,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "backoff timer fires before the deadline" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      // Give the 20 ms timer several chances to fire against the frozen clock.
+      // Every one of those firings is early, so none of them may write.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(activityWriteAttempts).toBe(1);
+
+      // Release the deadline without publishing anything else: the retry chain
+      // is the only thing left that can produce a second attempt.
+      now += 20;
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 2,
+        ),
+      ).toBe(2);
+
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
+      expect(activity?.properties).toMatchObject({
+        connection_id: connectionId,
+      });
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("does not arm a retry after stop retires an in-flight write", async () => {
+    const integrationName = "acme.unmapped-stop-during-write";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 43,
+      unmappedActivityRetryMaxMs: 43,
+    });
+    expect(bridge).not.toBeNull();
+
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    // The bridge logs every failed alert write from the same catch block that
+    // decides whether to arm a retry. Waiting for that line is what makes the
+    // assertion below a statement about the decision rather than about
+    // whichever happened to run first.
+    const failureLogs: string[] = [];
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation((...args: unknown[]) => {
+        failureLogs.push(args.map((arg) => String(arg)).join(" "));
+      });
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "stop while alert write is pending" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      const stopping = bridge!.stop();
+      rejectWrite(new Error("storage closed during bridge shutdown"));
+      await stopping;
+      expect(
+        await waitFor(
+          () => Promise.resolve(failureLogs),
+          (logs) =>
+            logs.some((line) =>
+              line.includes("storage closed during bridge shutdown"),
+            ),
+        ),
+      ).toContainEqual(
+        expect.stringContaining("storage closed during bridge shutdown"),
+      );
+
+      expect(
+        timeoutSpy.mock.calls.filter(([, delay]) => delay === 43),
+      ).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+      timeoutSpy.mockRestore();
+      rejectWrite(new Error("test cleanup"));
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("stop waits for an in-flight alert write to settle", async () => {
+    const integrationName = "acme.unmapped-stop-awaits-write";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 10,
+      unmappedActivityRetryMaxMs: 10,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "stop must await the alert write" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      // Callers tear storage down once stop() resolves, so reporting the
+      // bridge quiesced while one of its own writes is still outstanding
+      // leaves that write to land against a closed store.
+      const stopping = bridge!.stop();
+      const settledWhileWritePending = await Promise.race([
+        stopping.then(() => true),
+        new Promise<false>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 200),
+        ),
+      ]);
+      expect(settledWhileWritePending).toBe(false);
+
+      rejectWrite(new Error("storage closed during bridge shutdown"));
+      await expect(stopping).resolves.toBeUndefined();
+    } finally {
+      rejectWrite(new Error("test cleanup"));
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
+  it("reattributes a shared-integration retry when its connection is removed", async () => {
+    const integrationName = "acme.unmapped-retry-reattribution";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionIds = [
+      await createConnection({ integrationRef: integrationId }),
+      await createConnection({ integrationRef: integrationId }),
+    ];
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    const originalGet = ctx.storage.items.get.bind(ctx.storage.items);
+    let rejectWrite!: (reason?: unknown) => void;
+    const pendingWrite = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    // Every alert names the connection the retry state was pointing at when it
+    // was written, so the sequence of names is the whole subject of this test.
+    const alertedConnections: string[] = [];
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as
+        | { summary?: string; connection_id?: string }
+        | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        alertedConnections.push(properties.connection_id ?? "");
+        if (alertedConnections.length === 1) return pendingWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+    // The cache-invalidation subscriber reads each changed connection through
+    // `items.get`, so watching that read is how the test knows a refresh has
+    // been processed rather than guessing at a sleep.
+    let refreshWatch: string | null = null;
+    let refreshSeen = false;
+    ctx.storage.items.get = async (id, tenantId, options) => {
+      if (refreshWatch !== null && id === refreshWatch) refreshSeen = true;
+      return originalGet(id, tenantId, options);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 20,
+      unmappedActivityRetryMaxMs: 20,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "shared integration retry" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(alertedConnections.length),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      // Both connections share one retry state. The in-flight write names the
+      // first connection fanout reached; the state itself was then re-pointed
+      // at the second, so that is the one whose removal the retry has to
+      // survive. Revoking the other connection would assert nothing.
+      const survivor = alertedConnections[0];
+      const stateHolder = connectionIds.find((id) => id !== survivor);
+      if (survivor === undefined || stateHolder === undefined) {
+        throw new Error(
+          "expected the two connections to share one retry state, with the in-flight write naming only one of them",
+        );
+      }
+
+      const removed = await ctx.storage.items.transition(
+        stateHolder,
+        "revoked",
+      );
+      // Attribute the revocation to the surviving connection so fanout skips
+      // it as a self-event. Left unattributed, that fanout would re-point the
+      // retry state at the survivor on its own and the removal path's
+      // reattribution would never be exercised.
+      await publish({
+        type: "state_changed",
+        item: removed,
+        originatingConnectionId: survivor,
+      });
+      // The invalidation subscriber refreshes connections in publish order, so
+      // seeing the survivor's refresh proves the revoked one already landed.
+      const survivorItem = await originalGet(survivor);
+      if (!survivorItem) {
+        throw new Error("the surviving connection should still be readable");
+      }
+      refreshWatch = survivor;
+      await publish({
+        type: "state_changed",
+        item: survivorItem,
+        originatingConnectionId: survivor,
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(refreshSeen),
+          (seen) => seen,
+        ),
+      ).toBe(true);
+
+      // Only now can the retry chain start, so it runs against a registry that
+      // has already dropped the connection the state was pointing at.
+      rejectWrite(new Error("first alert write failed"));
+      expect(
+        await waitFor(
+          () => Promise.resolve(alertedConnections.length),
+          (attempts) => attempts === 2,
+        ),
+      ).toBe(2);
+      expect(alertedConnections[1]).toBe(survivor);
+      expect(alertedConnections[1]).not.toBe(stateHolder);
+
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
+      expect(activity?.properties).toMatchObject({
+        connection_id: survivor,
+      });
+    } finally {
+      rejectWrite(new Error("test cleanup"));
+      ctx.storage.items.create = originalCreate;
+      ctx.storage.items.get = originalGet;
+      await bridge!.stop();
+    }
+  });
+
+  it("deduplicates unmapped activity rows independently per tenant", async () => {
+    const integrationName = "acme.unmapped-tenant-scope";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const tenantA = await ctx.storage.tenants!.create("Unmapped tenant A");
+    const tenantB = await ctx.storage.tenants!.create("Unmapped tenant B");
+    await createConnection({
+      integrationRef: integrationId,
+      tenantId: tenantA.id,
+    });
+    await createConnection({
+      integrationRef: integrationId,
+      tenantId: tenantB.id,
+    });
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      for (const [tenantId, body] of [
+        [tenantA.id, "tenant A event"],
+        [tenantB.id, "tenant B event"],
+      ] as const) {
+        const note = await ctx.storage.items.create(
+          { type: "core.note", properties: { body } },
+          tenantId,
+        );
+        await publish({
+          type: "created",
+          item: note,
+          tenantId,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+        expect(
+          await waitFor(
+            async () => {
+              const activity = await ctx.storage.items.list({
+                tenantId,
+                type: "system.activity",
+                limit: 100,
+              });
+              return activity.data.filter((row) => {
+                const properties = row.properties as { summary?: string };
+                return properties.summary?.includes(integrationName);
+              }).length;
+            },
+            (count) => count === 1,
+          ),
+        ).toBe(1);
+      }
+
+      const matchingRows = async () => {
+        const activity = await Promise.all(
+          [tenantA.id, tenantB.id].map((tenantId) =>
+            ctx.storage.items.list({
+              tenantId,
+              type: "system.activity",
+              limit: 100,
+            }),
+          ),
+        );
+        return activity
+          .flatMap((page) => page.data)
+          .filter((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+      };
+      const rows = await waitFor(matchingRows, (value) => value.length === 2);
+      expect(rows.map((row) => row.tenant_id).sort()).toEqual(
+        [tenantA.id, tenantB.id].sort(),
+      );
+    } finally {
+      await bridge!.stop();
+    }
+  });
+
+  it("treats a trashed prior unmapped activity as already reported after restart", async () => {
+    const integrationName = "acme.unmapped-trashed-alert";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const firstBridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+    });
+    expect(firstBridge).not.toBeNull();
+
+    let activityId: string;
+    try {
+      await firstBridge!.start();
+      const note = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "create the original alert" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
+      expect(activity).toBeDefined();
+      activityId = activity!.id;
+    } finally {
+      await firstBridge!.stop();
+    }
+
+    await ctx.storage.items.delete(activityId);
+    expect(await ctx.storage.items.get(activityId)).toBeNull();
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    const originalFindBySourceIdIncludingTrashed =
+      ctx.storage.items.findBySourceIdIncludingTrashed.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    let sourceLookupCompletions = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+      }
+      return originalCreate(input, tenantId);
+    };
+    ctx.storage.items.findBySourceIdIncludingTrashed = async (
+      source,
+      sourceId,
+      tenantId,
+    ) => {
+      const item = await originalFindBySourceIdIncludingTrashed(
+        source,
+        sourceId,
+        tenantId,
+      );
+      if (item?.id === activityId) sourceLookupCompletions++;
+      return item;
+    };
+
+    const restartedBridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 1,
+      unmappedActivityRetryMaxMs: 1,
+    });
+    expect(restartedBridge).not.toBeNull();
+
+    try {
+      await restartedBridge!.start();
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("restart sees the reserved natural key");
+      expect(
+        await waitFor(
+          () => Promise.resolve(sourceLookupCompletions),
+          (count) => count === 1,
+        ),
+      ).toBe(1);
+      await Promise.resolve();
+      expect(activityWriteAttempts).toBe(0);
+
+      await publishNote("later events stay deduplicated");
+      await Promise.resolve();
+      expect(sourceLookupCompletions).toBe(1);
+      expect(activityWriteAttempts).toBe(0);
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      ctx.storage.items.findBySourceIdIncludingTrashed =
+        originalFindBySourceIdIncludingTrashed;
+      await restartedBridge!.stop();
+    }
+  });
+
+  it("recognizes a committed activity after an ambiguous rejection and retry", async () => {
+    const integrationName = "acme.unmapped-ambiguous-commit";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionId = await createConnection({
+      integrationRef: integrationId,
+    });
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    const originalFindBySourceIdIncludingTrashed =
+      ctx.storage.items.findBySourceIdIncludingTrashed.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    let committedActivityId: string | undefined;
+    let hideCommittedRowOnce = true;
+    let sourceLookupAttempts = 0;
+    let sourceLookupCompletions = 0;
+
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) {
+          const created = await originalCreate(input, tenantId);
+          committedActivityId = created.id;
+          throw new Error("commit outcome was lost after persistence");
+        }
+      }
+      return originalCreate(input, tenantId);
+    };
+    ctx.storage.items.findBySourceIdIncludingTrashed = async (
+      source,
+      sourceId,
+      tenantId,
+    ) => {
+      sourceLookupAttempts++;
+      const existing = await originalFindBySourceIdIncludingTrashed(
+        source,
+        sourceId,
+        tenantId,
+      );
+      sourceLookupCompletions++;
+      if (
+        committedActivityId !== undefined &&
+        existing?.id === committedActivityId &&
+        hideCommittedRowOnce
+      ) {
+        hideCommittedRowOnce = false;
+        return null;
+      }
+      return existing;
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 0,
+      unmappedActivityRetryMaxMs: 0,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("ambiguous first attempt");
+      expect(
+        await waitFor(
+          () =>
+            Promise.resolve({
+              activityWriteAttempts,
+              sourceLookupAttempts,
+              sourceLookupCompletions,
+            }),
+          (lookups) =>
+            lookups.activityWriteAttempts === 1 &&
+            lookups.sourceLookupAttempts === 3 &&
+            lookups.sourceLookupCompletions === 3,
+        ),
+      ).toEqual({
+        activityWriteAttempts: 1,
+        sourceLookupAttempts: 3,
+        sourceLookupCompletions: 3,
+      });
+
+      await publishNote("later event remains deduplicated");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sourceLookupAttempts).toBe(3);
+      expect(activityWriteAttempts).toBe(1);
+
+      const activity = await ctx.storage.items.list({
+        type: "system.activity",
+        limit: 100,
+      });
+      expect(
+        activity.data.filter((row) => {
+          const properties = row.properties as {
+            connection_id?: string;
+            summary?: string;
+          };
+          return (
+            properties.connection_id === connectionId &&
+            properties.summary?.includes(integrationName)
+          );
+        }),
+      ).toHaveLength(1);
+
+      await publishNote("deduped after recovered commit");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(activityWriteAttempts).toBe(1);
+      expect(sourceLookupAttempts).toBe(3);
+      expect(sourceLookupCompletions).toBe(3);
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      ctx.storage.items.findBySourceIdIncludingTrashed =
+        originalFindBySourceIdIncludingTrashed;
+      await bridge!.stop();
+    }
+  });
+
+  it("gates concurrent unmapped writes, backs off failures, and keeps mapped fanout moving", async () => {
+    const unmappedName = "acme.unmapped-write-backoff";
+    const mappedName = "acme.mapped-during-unmapped-write";
+    const unmappedIntegration = await createIntegration(
+      manifest({ name: unmappedName }),
+    );
+    const mappedIntegration = await createIntegration(
+      manifest({ name: mappedName }),
+    );
+    await createConnection({ integrationRef: unmappedIntegration });
+    await createConnection({ integrationRef: unmappedIntegration });
+    await createConnection({ integrationRef: mappedIntegration });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let rejectFirstWrite!: (reason?: unknown) => void;
+    const pendingFirstWrite = new Promise<never>((_resolve, reject) => {
+      rejectFirstWrite = reject;
+    });
+    let activityWriteAttempts = 0;
+    let mappedFetches = 0;
+    let now = 3_000;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(unmappedName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) return pendingFirstWrite;
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === unmappedName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: (_input, init) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("expected queue request body to be a string");
+        }
+        const body = JSON.parse(init.body) as {
+          body?: { integration_name?: string };
+        };
+        if (body.body?.integration_name === mappedName) {
+          mappedFetches++;
+        }
+        return Promise.resolve(new Response(null, { status: 202 }));
+      },
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 100,
+      unmappedActivityRetryMaxMs: 100,
+      unmappedActivityNow: () => now,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const publishNote = async (body: string): Promise<void> => {
+        const note = await originalCreate({
+          type: "core.note",
+          properties: { body },
+        });
+        await publish({
+          type: "created",
+          item: note,
+          originatingConnectionId: "itm_unrelated_origin",
+        });
+      };
+
+      await publishNote("write remains in flight");
+      expect(
+        await waitFor(
+          () => Promise.resolve({ activityWriteAttempts, mappedFetches }),
+          (value) =>
+            value.activityWriteAttempts === 1 && value.mappedFetches === 1,
+        ),
+      ).toEqual({ activityWriteAttempts: 1, mappedFetches: 1 });
+
+      await publishNote("second event while write remains in flight");
+      expect(
+        await waitFor(
+          () => Promise.resolve(mappedFetches),
+          (count) => count === 2,
+        ),
+      ).toBe(2);
+      expect(activityWriteAttempts).toBe(1);
+
+      rejectFirstWrite(new Error("activity storage unavailable"));
+      await publishNote("event inside backoff");
+      expect(
+        await waitFor(
+          () => Promise.resolve(mappedFetches),
+          (count) => count === 3,
+        ),
+      ).toBe(3);
+      expect(activityWriteAttempts).toBe(1);
+
+      now += 99;
+      await publishNote("event just before retry deadline");
+      expect(
+        await waitFor(
+          () => Promise.resolve(mappedFetches),
+          (count) => count === 4,
+        ),
+      ).toBe(4);
+      expect(activityWriteAttempts).toBe(1);
+
+      now += 1;
+      await publishNote("event at retry deadline");
+      expect(
+        await waitFor(
+          () => Promise.resolve({ activityWriteAttempts, mappedFetches }),
+          (value) =>
+            value.activityWriteAttempts === 2 && value.mappedFetches === 5,
+        ),
+      ).toEqual({ activityWriteAttempts: 2, mappedFetches: 5 });
+
+      await publishNote("deduped after eventual success");
+      expect(
+        await waitFor(
+          () => Promise.resolve(mappedFetches),
+          (count) => count === 6,
+        ),
+      ).toBe(6);
+      expect(activityWriteAttempts).toBe(2);
+    } finally {
+      rejectFirstWrite(new Error("bridge stopped"));
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
   });
 });

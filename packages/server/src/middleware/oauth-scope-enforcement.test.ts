@@ -118,6 +118,45 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(body.data).toEqual([]);
     });
 
+    it("treats underscores in subtree scopes as literal identifier bytes", async () => {
+      const schemas = [
+        "demo.web_gallery",
+        "demo.web_gallery.card",
+        "demo.webxgallery.card",
+      ];
+      for (const typeId of schemas) {
+        const registered = await request(ctx.app, "POST", "/types", {
+          key: ctx.adminKey,
+          body: {
+            id: typeId,
+            version: 1,
+            fields: { title: { type: "string" } },
+          },
+        });
+        expect(registered.status).toBe(201);
+        const created = await request(ctx.app, "POST", "/items", {
+          key: ctx.adminKey,
+          body: { type: typeId, properties: { title: typeId } },
+        });
+        expect(created.status).toBe(201);
+      }
+
+      const { rawToken } = await mintOAuthToken({
+        scopes: ["demo.web_gallery.*:read"],
+      });
+      const response = await request(ctx.app, "GET", "/items", {
+        key: rawToken,
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: { type: string }[];
+      };
+      expect(body.data.map((item) => item.type).sort()).toEqual([
+        "demo.web_gallery",
+        "demo.web_gallery.card",
+      ]);
+    });
+
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
       const admin = ctx.adminKey;
       const created = (await (
@@ -271,7 +310,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         body: {
           id: "demo.test_t045",
           version: 1,
-          fields: [{ name: "name", type: "string" }],
+          fields: { name: { type: "string" } },
         },
       });
       expect(res.status).toBe(403);
@@ -288,7 +327,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         body: {
           id: "demo.t045_accepted",
           version: 1,
-          fields: [{ name: "name", type: "string" }],
+          fields: { name: { type: "string" } },
         },
       });
       expect(res.status).toBe(201);
@@ -305,7 +344,11 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
-          body: { type: "core.note", properties: { body: "secret" } },
+          body: {
+            type: "core.note",
+            properties: { body: "secret" },
+            tags: ["nonsense-scope-canary"],
+          },
         })
       ).json()) as { item: { id: string } };
 
@@ -320,6 +363,19 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(list.status).toBe(200);
       const body = (await list.json()) as { data: unknown[] };
       expect(body.data).toEqual([]);
+      // The tag aggregate reads the same empty allow-list and has to agree.
+      // It used to skip the type clause on an empty list and hand back the
+      // tenant's whole vocabulary, naming what exists to a token that can
+      // read none of it.
+      const tags = await request(ctx.app, "GET", "/metadata/tags", {
+        key: rawToken,
+      });
+      expect(tags.status).toBe(200);
+      const tagsBody = (await tags.json()) as { tags: { tag: string }[] };
+      expect(tagsBody.tags.map((t) => t.tag)).not.toContain(
+        "nonsense-scope-canary",
+      );
+      expect(tagsBody.tags).toEqual([]);
       // Direct read — requireTypeAccess fires and rejects.
       const direct = await request(
         ctx.app,
@@ -348,7 +404,7 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
       body: {
         id: typeId,
         version: 1,
-        fields: [{ name: "title", type: "string" }],
+        fields: { title: { type: "string" } },
       },
     });
     expect(reg.status).toBe(201);

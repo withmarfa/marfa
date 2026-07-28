@@ -8,7 +8,7 @@ Typed data layer. This monorepo holds eight active workspace packages, fourteen 
 
 **Core packages (`packages/`):**
 
-- **@withmarfa/types** — JSON schemas for the core type set plus validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`, `ALL_SYSTEM_TYPES`). Consumed by `@withmarfa/shared`; private (bundled into shared's dist, not published).
+- **@withmarfa/types** — JSON schemas for the platform-shipped type set, the validator both authoring paths share, plus the generate script that emits the TypeScript registries (`ALL_TYPES`, `ALL_CONNECTOR_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES`). Consumed by `@withmarfa/shared`; private (bundled into shared's dist, not published).
 - **@withmarfa/shared** — Wire types, Zod validation schemas, error codes, type-registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation every other package imports.
 - **@withmarfa/server** — Hono HTTP server exposing the Marfa API (private). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
 - **@withmarfa/sdk** — TypeScript HTTP client. The `@withmarfa/sdk/auth` subpath holds the OAuth helpers (`MarfaAuth`, PKCE helpers, token storages, `startDeviceFlow`).
@@ -109,6 +109,8 @@ Server package only (not needed for shared or SDK development):
 - `PORT` — server port (default: 8600)
 - `DB_DIALECT` — `sqlite` or `pg` (default: sqlite)
 - `DATABASE_URL` — Postgres connection string (required when dialect is pg)
+- `MARFA_DB_POOL_MODE` — `session` (default) or `transaction`, describing the endpoint `DATABASE_URL` points at. A direct Postgres connection is `session`. Set `transaction` when the app talks to a transaction-mode pooler (PgBouncer, Neon's `-pooler` endpoint); that makes `MARFA_DATABASE_URL_DIRECT` mandatory and the server refuses to boot without it. An unrecognized value throws at boot rather than falling back to the permissive mode.
+- `MARFA_DATABASE_URL_DIRECT` — direct (unpooled, session-mode) URL for the same database as `DATABASE_URL`, used **only** by streaming RLS. Streaming issues a session-level `SET ROLE marfa_app`, which over a transaction-mode pooler strands on a shared backend and is inherited by later, unrelated queries — including Better Auth's session reads, which then fail with `permission denied`. Required when `MARFA_DB_POOL_MODE=transaction`; unnecessary otherwise, and streaming then shares the main client. It must address a **different endpoint** than `DATABASE_URL`: pointing it back at the pooled one satisfies every presence check while reproducing the failure exactly, so the server compares host and port and refuses to start when they match. Port is part of the comparison so the common self-hosted shape — PgBouncer beside Postgres on one machine — still starts.
 - `SQLITE_PATH` — database file path (default: `./data/marfa.db`)
 - `BLOB_BACKEND` — `filesystem` or `s3` (default: filesystem)
 - `BLOB_PATH` — blob storage directory (default: `./data/blobs`)
@@ -119,6 +121,7 @@ Server package only (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+- `MARFA_REPLICA_COUNT` — how many server processes share this database. Purely declarative: it changes no behavior and exists so the boot-time multi-replica guard can warn. **Only one process per database is supported** — realtime delivery (SSE, outbound webhooks) runs through a process-local emitter in `pubsub.ts`, so additional processes drop events silently. Node cluster and PM2 workers are detected automatically; container orchestrators expose nothing readable, so set this when scaling that way.
 - `MARFA_DEFAULT_QUOTA_ITEMS` / `_WEBHOOKS` / `_BLOBS` / `_STORAGE_BYTES` / `_RATE_PER_MINUTE` — default per-tenant ceilings. Unset = unlimited. Per-tenant `tenant_quotas` rows take precedence. All five (`items`, `webhooks`, `blobs`, `storage_bytes`, `rate_per_minute`) are enforced.
 - `MARFA_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so per-table RLS policies filter queries (defense-in-depth beneath application-layer scoping). **Defaults to `true`**; opt out with `false`. SQLite is unaffected (the middleware skips when `storage.pgDb` is undefined). Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (`storage/pg/streaming-rls.ts`) — exempt from the transaction wrapper but not from RLS.
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
@@ -219,7 +222,9 @@ The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs d
 
 **Trigger files** — any change under these paths means you owe a freshness run before merge:
 
-- `packages/types/core/**` — core type and edge-type JSON
+- `packages/types/core/**` — core type, system type and edge-type JSON
+- `packages/types/connectors/**` — connector type JSON
+- `packages/types/src/**` — schema shape contract and the shared schema validator
 - `packages/types/scripts/**` — type-registry generator
 - `packages/shared/src/**` — wire schemas, error codes, ID utilities
 - `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
@@ -259,6 +264,16 @@ Per-target helpers for narrow runs:
 
 **Why slim by default.** A pre-push hook that runs the full ~1800-test dual-dialect suite invites `--no-verify` bypassing, and a hook that's bypassed isn't a gate. The slim gate gives fast feedback on what you touched; CI's full matrix is the authoritative dual-dialect check.
 
+### A push costs real money — verify locally first
+
+The Postgres jobs need a service container, so they run on GitHub-hosted runners while everything else runs on self-hosted ones. Past the included allowance those hosted minutes are billed, and **a whole matrix fires on every push to a pull request**. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
+
+- **Run `pnpm test:full` locally before pushing, not the hook.** It covers both dialects against a throwaway container, so it catches essentially everything CI would. The hook is SQLite-only and scoped to changed files; it has already gone green on a commit whose Postgres job failed.
+- **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the bill by the number of commits for no extra signal.
+- **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — several tests in this repository fail on a fixed budget when the machine is loaded, and re-running until green is both expensive and how a real defect gets waved through.
+
+`workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the three freshness jobs.
+
 ## Deploy
 
 `deploy.sh` at the repo root drives deployment against the operator's configured hosts: git pull + build + migrate + service restart. SSH options (`ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) cap any transient hang at ~45s. Restarts use an atomic kill-and-relaunch so there's no port-handoff race. Service-log rotation runs as a separate per-host scheduled job; details (hostnames, service-manager labels, log-rotator paths) are operator-specific and live outside this repo.
@@ -269,9 +284,17 @@ The base error class is `MarfaError` (in `@withmarfa/shared`). All structured er
 
 ## Type registration
 
-Core types live in `packages/types/core/*.json`. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry — useful for parking a stub between iterations. Custom types register at runtime via `POST /types` (admin only) and persist in the `custom_types` table. Core types cannot be modified or deleted via the API.
+Three families of type ship with the platform, all registering into the same runtime registry and all resolving identically:
 
-Inheritance rule: child types may add new fields but cannot redefine fields declared by any ancestor in their parent chain. Enforced on `POST /types`.
+- **Core** (`packages/types/core/*.json`, 22 types) — the shared vocabulary: life-nouns any app can agree on.
+- **Connector** (`packages/types/connectors/*.json`, 13 types) — one vendor's payload shape, so a connector has somewhere faithful to write. `google.*`, `raindrop.*`, `readwise.*`, `todoist.task`, `withmarfa.captured_email`.
+- **System** (`packages/types/core/system/*.json`, 7 types) — platform-internal records, with the restrictions described under System types below.
+
+The split is provenance, not behavior: it exists so a catalog can tell a tenant which types are the common vocabulary and which exist because a specific upstream service does. The codegen in `packages/types/scripts/generate.ts` emits one array per family into `generated/type-registry.ts`; shared bundles them at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry. Custom types register at runtime via `POST /types` and persist in the `custom_types` table. Platform-shipped types — all three families — cannot be modified or deleted via the API.
+
+**One validator across both authoring paths.** `validateTypeSchema` lives in `@withmarfa/types` and is called by the in-tree codegen and by `POST /types` alike, so an in-tree JSON schema is a valid runtime submission verbatim. Every error it raises carries `field`, `expected`, `actual` and `hint`. See `packages/types/AGENTS.md`.
+
+Inheritance rule: child types may add new fields, and may re-state an inherited field only to sharpen its description or tighten it to required. Changing an inherited field's shape, or loosening a required field, is rejected with `inheritance_violation`.
 
 Types may declare an optional `display_hints: { title_field?, body_field? }` block pointing generic readers at the canonical title/body fields; hints are inherited from the nearest ancestor when a subtype omits them.
 

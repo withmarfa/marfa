@@ -32,14 +32,14 @@ describe("filterToRawSql", () => {
     it("generates system field contains", () => {
       const expr = parseFilter('source contains "import"');
       const result = filterToRawSql(expr, "sqlite", "i");
-      expect(result.clause).toBe("i.source LIKE ?");
+      expect(result.clause).toBe("i.source LIKE ? ESCAPE '\\'");
       expect(result.params).toEqual(["%import%"]);
     });
 
     it("generates system field starts_with", () => {
       const expr = parseFilter('type starts_with "core.media"');
       const result = filterToRawSql(expr, "sqlite", "i");
-      expect(result.clause).toBe("i.type LIKE ?");
+      expect(result.clause).toBe("i.type LIKE ? ESCAPE '\\'");
       expect(result.params).toEqual(["core.media%"]);
     });
 
@@ -76,7 +76,9 @@ describe("filterToRawSql", () => {
     it("generates property contains (substring)", () => {
       const expr = parseFilter('properties.title contains "adventure"');
       const result = filterToRawSql(expr, "sqlite", "i");
-      expect(result.clause).toBe("json_extract(i.properties, ?) LIKE ?");
+      expect(result.clause).toBe(
+        "json_extract(i.properties, ?) LIKE ? ESCAPE '\\'",
+      );
       expect(result.params).toEqual(["$.title", "%adventure%"]);
     });
 

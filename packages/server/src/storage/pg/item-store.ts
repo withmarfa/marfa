@@ -9,10 +9,10 @@ import {
   gt,
   desc,
   asc,
-  like,
   sql,
   inArray,
   isNull,
+  type SQL,
 } from "drizzle-orm";
 import {
   generateId,
@@ -25,9 +25,12 @@ import {
   MarfaError,
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
+  typePatternToSql,
+  typeSubtreeToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
-import { filterToSqlConditions } from "../filter-sql.js";
+import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import type {
   Item,
   CreateItemInput,
@@ -116,6 +119,39 @@ import type { PgDb } from "./connection.js";
 import type { PgVersionStore } from "./version-store.js";
 import type { PgSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
+
+/**
+ * Compiles the caller's readable-type patterns into one predicate.
+ *
+ * Shared by `list` and `stats` so the two cannot disagree about what a
+ * credential can see. Both directions of disagreement have bitten: comparing
+ * the patterns as literal identifiers reports zero rows for every
+ * wildcard-scoped credential, and ignoring an empty list reports the whole
+ * tenant to a credential that may read nothing.
+ *
+ * `undefined` in means "no filter" — an admin or tenant_admin, whose tenant
+ * isolation is enforced separately. An empty array is the opposite: a member
+ * credential or an OAuth token whose scopes project into no type permission at
+ * all, which must see nothing rather than everything. `undefined` out means "no
+ * predicate", so a caller pushes the result only when it is present.
+ */
+function allowedTypesCondition(
+  patterns: string[] | undefined,
+): SQL | undefined {
+  if (!patterns) return undefined;
+  if (patterns.length === 0) return sql`1=0`;
+  const clauses = patterns.map((pattern) => {
+    const { global, exact, descendantPattern } = typePatternToSql(pattern);
+    if (global) return sql`1=1`;
+    if (!exact) return sql`1=0`;
+    if (!descendantPattern) return eq(items.type, exact);
+    return or(
+      eq(items.type, exact),
+      sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+    );
+  });
+  return or(...clauses);
+}
 
 export class PgItemStore implements ItemStore {
   constructor(
@@ -306,6 +342,20 @@ export class PgItemStore implements ItemStore {
     sourceId: string,
     tenantId?: string,
   ): Promise<Item | null> {
+    const item = await this.findBySourceIdIncludingTrashed(
+      source,
+      sourceId,
+      tenantId,
+    );
+    if (item?.state === "trashed") return null;
+    return item;
+  }
+
+  async findBySourceIdIncludingTrashed(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null> {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),
@@ -316,7 +366,6 @@ export class PgItemStore implements ItemStore {
       .from(items)
       .where(and(...conditions));
     if (!row) return null;
-    if (row.state === "trashed") return null;
     return rowToItem(row);
   }
 
@@ -363,13 +412,16 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.type) {
-      if (filters.type.endsWith(".*")) {
-        conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
-      } else {
-        // Include subtypes: `core.entity` also matches `core.entity.person`, etc.
+      // `core.entity` and `core.entity.*` mean the same thing: the type and
+      // everything under it. A bare identifier has always included its
+      // subtypes here, so the explicit wildcard must too.
+      const { global, exact, descendantPattern } = typeSubtreeToSql(
+        filters.type,
+      );
+      if (!global && exact && descendantPattern) {
         const typeClause = or(
-          eq(items.type, filters.type),
-          like(items.type, filters.type + ".%"),
+          eq(items.type, exact),
+          sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
         );
         if (typeClause) conditions.push(typeClause);
       }
@@ -391,10 +443,6 @@ export class PgItemStore implements ItemStore {
       }
     }
     if (filters.source) conditions.push(eq(items.source, filters.source));
-
-    if (filters.sources && filters.sources.length > 0) {
-      conditions.push(inArray(items.source, filters.sources));
-    }
 
     if (filters.tier !== undefined) {
       conditions.push(eq(items.tier, filters.tier));
@@ -428,22 +476,16 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      // Empty allowed_types means "no readable types" — must filter to zero
-      // rows. See SqliteItemStore.list for the rationale.
-      if (filters.allowed_types.length === 0) {
-        conditions.push(sql`1=0`);
-      } else {
-        const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return sql`1=1`;
-          if (pattern.endsWith(".*")) {
-            return like(items.type, pattern.slice(0, -1) + "%");
-          }
-          return eq(items.type, pattern);
-        });
-        const clause = or(...typeClauses);
-        if (clause) conditions.push(clause);
-      }
+      const clause = allowedTypesCondition(filters.allowed_types);
+      if (clause) conditions.push(clause);
     }
+
+    const sourceLever = sourceFilterToSql(
+      filters.source_filter,
+      items.type,
+      items.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
@@ -919,14 +961,22 @@ export class PgItemStore implements ItemStore {
   async stats(
     tenantId?: string,
     allowedTypes?: string[],
+    sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>> {
     const conditions = [];
     if (tenantId) {
       conditions.push(eq(items.tenant_id, tenantId));
     }
-    if (allowedTypes && allowedTypes.length > 0) {
-      conditions.push(inArray(items.type, allowedTypes));
-    }
+    const typeClause = allowedTypesCondition(allowedTypes);
+    if (typeClause) conditions.push(typeClause);
+    // Counts have to agree with the listing they summarize, so the read
+    // lever applies here too.
+    const sourceLever = sourceFilterToSql(
+      sourceFilter,
+      items.type,
+      items.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
 
     // Use ::int (matches sibling counters in version-store, webhook-store,
     // type-store). ::bigint is serialized as a string by node-postgres, which

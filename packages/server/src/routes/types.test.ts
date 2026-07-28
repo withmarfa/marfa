@@ -139,10 +139,46 @@ describe("GET /types", () => {
   });
 });
 
+// The shipped set spans three families and all three are equally immutable:
+// they come from codegen, so a tenant editing one would change what the
+// identifier means for every other tenant and for items already written
+// against it. Naming a representative of each family here is what stops the
+// guard being narrowed back to the core family without a test noticing.
+describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () => {
+  const SHIPPED = [
+    ["core", "core.note"],
+    ["connector", "todoist.task"],
+    ["connector", "google.calendar.event"],
+    ["system", "system.connection"],
+  ] as const;
+
+  for (const [family, id] of SHIPPED) {
+    it(`refuses to update the ${family} type ${id}`, async () => {
+      const res = await request(ctx.app, "PUT", `/types/${id}`, {
+        key: ctx.adminKey,
+        body: { ...baseType, version: 2 },
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("core_type_immutable");
+    });
+
+    it(`refuses to delete the ${family} type ${id}`, async () => {
+      const res = await request(ctx.app, "DELETE", `/types/${id}`, {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("core_type_immutable");
+    });
+  }
+});
+
 describe("inheritance rule enforcement", () => {
-  it("rejects a child type that redefines an ancestor field with INHERITANCE_VIOLATION", async () => {
-    // core.bookmark declares `body` (the user's annotation on the bookmark).
-    // A child that re-declares `body` violates the inheritance rule.
+  it("rejects a child type that reshapes an ancestor field with INHERITANCE_VIOLATION", async () => {
+    // core.bookmark declares `body` as a string. A child that redeclares it
+    // as something else leaves two incompatible readings of one property
+    // name on items a bookmark-aware reader expects to understand.
     const res = await request(ctx.app, "POST", "/types", {
       key: ctx.adminKey,
       body: {
@@ -151,7 +187,7 @@ describe("inheritance rule enforcement", () => {
         version: 1,
         parent: "core.bookmark",
         fields: {
-          body: { type: "string" },
+          body: { type: "integer" },
         },
       },
     });
@@ -160,14 +196,43 @@ describe("inheritance rule enforcement", () => {
       error: {
         code: string;
         message: string;
-        details?: { errors?: { field: string; message: string }[] };
+        details?: {
+          errors?: {
+            field: string;
+            message: string;
+            expected?: string;
+            actual?: string;
+            hint?: string;
+          }[];
+        };
       };
     };
     expect(payload.error.code).toBe("inheritance_violation");
     const errors = payload.error.details?.errors ?? [];
-    const collision = errors.find((e) => e.field === "fields.body");
+    const collision = errors.find((e) => e.field === "fields.body.type");
     expect(collision).toBeTruthy();
     expect(collision?.message).toContain("core.bookmark");
+    // The API surfaces the structured halves too, so a client can render the
+    // failure without parsing prose.
+    expect(collision?.expected).toBeTruthy();
+    expect(collision?.actual).toBeTruthy();
+    expect(collision?.hint).toBeTruthy();
+  });
+
+  it("allows a child type that sharpens an inherited field's description", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.bookmark_refine",
+        label: "Bookmark Refine",
+        version: 1,
+        parent: "core.bookmark",
+        fields: {
+          body: { type: "string", description: "Why this link was saved" },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
   });
 
   it("allows a child type that adds a new field on top of the parent", async () => {

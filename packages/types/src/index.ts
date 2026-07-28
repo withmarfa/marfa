@@ -4,6 +4,7 @@ export type {
   EdgeCascade,
   EdgeTypeSchema,
   FieldDefinition,
+  FieldFormat,
   FieldType,
   ItemState,
   MergePolicy,
@@ -12,5 +13,23 @@ export type {
   VersionPolicy,
 } from "./schema-types.js";
 
-export { ALL_TYPES, ALL_SYSTEM_TYPES } from "../generated/type-registry.js";
+export type {
+  SchemaValidationContext,
+  SchemaValidationIssue,
+  TypeSchemaValidationResult,
+} from "./schema-validation.js";
+export {
+  FIELD_FORMATS,
+  FIELD_TYPES,
+  MERGE_STRATEGIES,
+  RESERVED_ITEM_FIELDS,
+  normalizeFieldDefinition,
+  validateTypeSchema,
+} from "./schema-validation.js";
+
+export {
+  ALL_TYPES,
+  ALL_CONNECTOR_TYPES,
+  ALL_SYSTEM_TYPES,
+} from "../generated/type-registry.js";
 export { ALL_EDGE_TYPES } from "../generated/edge-type-registry.js";

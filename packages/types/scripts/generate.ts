@@ -1,124 +1,198 @@
 /**
- * Generates TypeScript type definitions from JSON schemas.
- * Output: generated/type-registry.ts
+ * Generates the TypeScript registries from the in-tree JSON schemas.
+ *
+ * Output: generated/type-registry.ts, generated/edge-type-registry.ts
+ *
+ * Every schema goes through the same `validateTypeSchema` the runtime
+ * `POST /types` endpoint uses, so a schema that builds here is one a tenant
+ * could have submitted over the wire — there is no build-time dialect.
  *
  * Usage: pnpm generate
  */
 
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { FieldDefinition, TypeSchema } from "../src/schema-types.js";
+import {
+  normalizeFieldDefinition,
+  validateTypeSchema,
+} from "../src/schema-validation.js";
 
-interface JsonField {
-  type: string;
-  description: string;
-  enum_values?: string[];
-  items_type?: string;
-  format?: string;
+const typesRoot = resolve(import.meta.dirname, "..");
+const coreDir = join(typesRoot, "core");
+const connectorsDir = join(typesRoot, "connectors");
+const systemDir = join(coreDir, "system");
+const edgesDir = join(coreDir, "edges");
+const outDir = join(typesRoot, "generated");
+
+interface RawSchema {
+  file: string;
+  data: Record<string, unknown>;
 }
 
-interface JsonDisplayHints {
-  title_field?: string;
-  body_field?: string;
+function loadDir(dir: string): RawSchema[] {
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  return files.sort().map((file) => ({
+    file: join(dir, file),
+    data: JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<
+      string,
+      unknown
+    >,
+  }));
 }
 
-type JsonMergeStrategy = "last_writer_wins" | "keep_both_copies";
+// Dormant stubs stay on disk as a record of shape but never reach the runtime
+// registry, so they are neither validated nor emitted.
+const active = (schemas: RawSchema[]): RawSchema[] =>
+  schemas.filter((s) => s.data._deferred !== true);
 
-interface JsonMergePolicy {
-  fields?: Record<string, JsonMergeStrategy>;
-  default?: JsonMergeStrategy;
+const coreRaw = active(loadDir(coreDir));
+const connectorRaw = active(loadDir(connectorsDir));
+const systemRaw = active(loadDir(systemDir));
+
+/** The declared identifier, or "" when the file omits one — the validator
+ *  reports that as an error, so ordering just needs to be stable. */
+function schemaId(s: RawSchema): string {
+  return typeof s.data.id === "string" ? s.data.id : "";
 }
 
-interface JsonSchema {
-  id: string;
-  parent?: string;
-  label: string;
-  description: string;
-  version: number;
-  fields: Record<string, JsonField>;
-  required: string[];
-  display_hints?: JsonDisplayHints;
-  merge_policy?: JsonMergePolicy;
-  _deferred?: boolean;
+// Parents must be validated and registered before their children, and
+// `compatible_with` targets before the connector types that claim them. Sorting
+// by identifier depth puts every ancestor ahead of its descendants, and the
+// family order below puts core ahead of the connectors that reference it.
+function byDepth(a: RawSchema, b: RawSchema): number {
+  const depth = (s: RawSchema) => schemaId(s).split(".").length;
+  return depth(a) - depth(b) || schemaId(a).localeCompare(schemaId(b));
 }
 
-const coreDir = resolve(import.meta.dirname, "..", "core");
-const systemDir = resolve(coreDir, "system");
-const outDir = resolve(import.meta.dirname, "..", "generated");
+const registry = new Map<string, TypeSchema>();
+const failures: string[] = [];
 
-// Load all schemas — skip dormant stubs (_deferred: true). Top-level core/*.json
-// is the regular type set; core/system/*.json is the platform-internal
-// `system.*` set which gets emitted into a separate registry.
-const coreFiles = readdirSync(coreDir).filter((f) => f.endsWith(".json"));
-const schemas: JsonSchema[] = coreFiles
-  .map((f) => {
-    const raw = readFileSync(join(coreDir, f), "utf-8");
-    return JSON.parse(raw) as JsonSchema;
-  })
-  .filter((s) => s._deferred !== true);
-
-let systemFiles: string[];
-try {
-  systemFiles = readdirSync(systemDir).filter((f) => f.endsWith(".json"));
-} catch {
-  systemFiles = [];
-}
-const systemSchemas: JsonSchema[] = systemFiles.map((f) => {
-  const raw = readFileSync(join(systemDir, f), "utf-8");
-  return JSON.parse(raw) as JsonSchema;
-});
-
-// Shadow rule (parallel to the server-side check in `validateTypeSchema`):
-// in-tree core/system types may not declare a field whose name shadows a
-// first-class field on the `Item` wire shape. Belt-and-braces against
-// future regressions on first-party schemas. Authoritative list mirrors
-// `RESERVED_ITEM_FIELDS` in `packages/shared/src/type-registry.ts`, which
-// is itself derived from the `Item` interface in
-// `packages/shared/src/types.ts`. Keep these two lists in sync — the
-// freshness test in `type-registry.test.ts` covers the runtime side; this
-// is the build-time gate.
-const RESERVED_ITEM_FIELDS = new Set([
-  "id",
-  "type",
-  "state",
-  "tier",
-  "tenant_id",
-  "properties",
-  "created_at",
-  "updated_at",
-  "timestamp",
-  "source",
-  "source_id",
-  "version",
-  "schema_version",
-  "device",
-  "capture_latitude",
-  "capture_longitude",
-]);
-
-const shadowViolations: { typeId: string; field: string }[] = [];
-for (const schema of [...schemas, ...systemSchemas]) {
-  for (const fieldName of Object.keys(schema.fields)) {
-    if (RESERVED_ITEM_FIELDS.has(fieldName)) {
-      shadowViolations.push({ typeId: schema.id, field: fieldName });
+/**
+ * Merges an ancestor chain into one field map. The emitted registry entries
+ * carry fully resolved fields so a consumer reading a subtype sees everything
+ * an item of that type may hold without walking parents itself.
+ */
+function resolveFields(schema: TypeSchema): Record<string, FieldDefinition> {
+  const chain: TypeSchema[] = [];
+  const seen = new Set<string>();
+  let cursor: TypeSchema | undefined = schema;
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    chain.unshift(cursor);
+    cursor = cursor.parent ? registry.get(cursor.parent) : undefined;
+  }
+  const fields: Record<string, FieldDefinition> = {};
+  for (const ancestor of chain) {
+    for (const [name, def] of Object.entries(ancestor.fields)) {
+      // A child may sharpen an inherited field's description or tighten it to
+      // required; required-ness is never lost on the way down.
+      const inherited = fields[name];
+      fields[name] = inherited?.required ? { ...def, required: true } : def;
     }
   }
+  return fields;
 }
-if (shadowViolations.length > 0) {
-  const lines = shadowViolations.map(
-    (v) =>
-      `  - ${v.typeId}: field "${v.field}" shadows a first-class Item field`,
-  );
+
+/** Nearest declaration wins; an omitted block inherits the ancestor's. */
+function resolveInherited<K extends "display_hints" | "merge_policy">(
+  schema: TypeSchema,
+  key: K,
+): TypeSchema[K] {
+  const seen = new Set<string>();
+  let cursor: TypeSchema | undefined = schema;
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    if (cursor[key]) return cursor[key];
+    cursor = cursor.parent ? registry.get(cursor.parent) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * `merge_policy` is the one inherited block that composes rather than
+ * replaces: a child's per-field entries layer over the ancestors' and its
+ * `default` replaces theirs, so a subtype can override one field's strategy
+ * without restating the rest.
+ */
+function resolveMergePolicy(schema: TypeSchema): TypeSchema["merge_policy"] {
+  const chain: TypeSchema[] = [];
+  const seen = new Set<string>();
+  let cursor: TypeSchema | undefined = schema;
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    chain.unshift(cursor);
+    cursor = cursor.parent ? registry.get(cursor.parent) : undefined;
+  }
+  const fields: Record<string, string> = {};
+  let defaultStrategy: string | undefined;
+  let saw = false;
+  for (const ancestor of chain) {
+    const policy = ancestor.merge_policy;
+    if (!policy) continue;
+    saw = true;
+    if (policy.fields) Object.assign(fields, policy.fields);
+    if (policy.default) defaultStrategy = policy.default;
+  }
+  if (!saw) return undefined;
+  const out = {} as NonNullable<TypeSchema["merge_policy"]>;
+  if (Object.keys(fields).length > 0) {
+    out.fields = fields as NonNullable<TypeSchema["merge_policy"]>["fields"];
+  }
+  if (defaultStrategy) {
+    out.default = defaultStrategy as NonNullable<
+      TypeSchema["merge_policy"]
+    >["default"];
+  }
+  return out;
+}
+
+function buildFamily(raws: RawSchema[]): TypeSchema[] {
+  const built: TypeSchema[] = [];
+  for (const raw of [...raws].sort(byDepth)) {
+    const result = validateTypeSchema(raw.data, {
+      resolveSchema: (id) => registry.get(id),
+    });
+    if (!result.success) {
+      for (const error of result.errors) {
+        failures.push(`  ${raw.file}\n    ${error.field}: ${error.message}`);
+      }
+      continue;
+    }
+    const schema: TypeSchema = {
+      ...result.data,
+      fields: {},
+    };
+    registry.set(schema.id, schema);
+    schema.fields = resolveFields(result.data);
+    const hints = resolveInherited(result.data, "display_hints");
+    if (hints) schema.display_hints = hints;
+    const mergePolicy = resolveMergePolicy(result.data);
+    if (mergePolicy) schema.merge_policy = mergePolicy;
+    built.push(schema);
+  }
+  return built;
+}
+
+const coreTypes = buildFamily(coreRaw);
+const connectorTypes = buildFamily(connectorRaw);
+const systemTypes = buildFamily(systemRaw);
+
+if (failures.length > 0) {
   console.error(
-    `Build aborted: in-tree types declare ${String(shadowViolations.length)} field name(s) that shadow first-class Item wire fields.\n${lines.join("\n")}\n\nFirst-class fields live as top-level columns on the items table; custom-type properties that reuse those names produce ambiguous data. Rename the property, or use the first-class field directly. Authoritative list: RESERVED_ITEM_FIELDS in packages/shared/src/type-registry.ts.`,
+    `Build aborted: ${String(failures.length)} in-tree schema error(s). The build-time and runtime validators are the same module, so every one of these would also be rejected by POST /types.\n\n${failures.join("\n")}\n`,
   );
   process.exit(1);
 }
 
-schemas.sort((a, b) => {
-  const depthA = a.id.split(".").length;
-  const depthB = b.id.split(".").length;
-  return depthA - depthB;
-});
+// ---------------------------------------------------------------------------
+// Emission
+// ---------------------------------------------------------------------------
 
 function varName(id: string): string {
   return id
@@ -128,198 +202,113 @@ function varName(id: string): string {
     .replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-// JSON schemas use type:"string" + format:"url"; FieldDefinition uses type:"url" directly.
-const FORMAT_TO_TYPE: Record<string, string> = {
-  url: "url",
-  email: "email",
-  datetime: "datetime",
-  date: "date",
-};
+function quote(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
-function fieldLiteral(field: JsonField, isRequired: boolean): string {
-  const effectiveType =
-    (field.format && FORMAT_TO_TYPE[field.format]) ?? field.type;
-  const parts: string[] = [`type: "${effectiveType}"`];
-  if (field.description) {
-    const escaped = field.description
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"');
-    parts.push(`description: "${escaped}"`);
-  }
-  if (isRequired) parts.push("required: true");
+function fieldLiteral(field: FieldDefinition): string {
+  const parts: string[] = [`type: ${quote(field.type)}`];
+  if (field.description) parts.push(`description: ${quote(field.description)}`);
+  if (field.required) parts.push("required: true");
   if (field.enum_values) {
-    parts.push(
-      `enum_values: [${field.enum_values.map((v) => `"${v}"`).join(", ")}]`,
-    );
+    parts.push(`enum_values: [${field.enum_values.map(quote).join(", ")}]`);
   }
-  if (field.items_type) parts.push(`items_type: "${field.items_type}"`);
+  if (field.items_type) parts.push(`items_type: ${quote(field.items_type)}`);
+  if (field.format) parts.push(`format: ${quote(field.format)}`);
+  if (field.searchable === false) parts.push("searchable: false");
+  if (field.maxLength !== undefined) {
+    parts.push(`maxLength: ${String(field.maxLength)}`);
+  }
+  if (field.maxItems !== undefined) {
+    parts.push(`maxItems: ${String(field.maxItems)}`);
+  }
   return `{ ${parts.join(", ")} }`;
 }
 
-const lines: string[] = [];
-lines.push("// Auto-generated from core/*.json — do not edit manually.");
-lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
-lines.push("");
-lines.push('import type { TypeSchema } from "../src/schema-types.js";');
-lines.push("");
-
-const schemaMap = new Map<string, JsonSchema>();
-for (const s of schemas) schemaMap.set(s.id, s);
-
-function resolveFields(schema: JsonSchema): {
-  fields: Record<string, JsonField>;
-  required: Set<string>;
-} {
-  const chain: JsonSchema[] = [];
-  let current: JsonSchema | undefined = schema;
-  while (current) {
-    chain.unshift(current);
-    current = current.parent ? schemaMap.get(current.parent) : undefined;
-  }
-  const fields: Record<string, JsonField> = {};
-  const required = new Set<string>();
-  for (const ancestor of chain) {
-    Object.assign(fields, ancestor.fields);
-    for (const r of ancestor.required) required.add(r);
-  }
-  return { fields, required };
-}
-
-function resolveDisplayHints(schema: JsonSchema): JsonDisplayHints | undefined {
-  let current: JsonSchema | undefined = schema;
-  while (current) {
-    if (current.display_hints) return current.display_hints;
-    current = current.parent ? schemaMap.get(current.parent) : undefined;
-  }
-  return undefined;
-}
-
-// Resolve merge_policy — walk parent chain and merge field-by-field.
-// Child `fields` entries merge over parent `fields` (per-key); child `default`
-// replaces parent `default`. An absent `fields` on a child does not erase the
-// parent's entries.
-function resolveMergePolicy(schema: JsonSchema): JsonMergePolicy | undefined {
-  const chain: JsonSchema[] = [];
-  let current: JsonSchema | undefined = schema;
-  while (current) {
-    chain.unshift(current);
-    current = current.parent ? schemaMap.get(current.parent) : undefined;
-  }
-  const fields: Record<string, JsonMergeStrategy> = {};
-  let defaultStrategy: JsonMergeStrategy | undefined;
-  let saw = false;
-  for (const ancestor of chain) {
-    const p = ancestor.merge_policy;
-    if (!p) continue;
-    saw = true;
-    if (p.fields) Object.assign(fields, p.fields);
-    if (p.default) defaultStrategy = p.default;
-  }
-  if (!saw) return undefined;
-  const out: JsonMergePolicy = {};
-  if (Object.keys(fields).length > 0) out.fields = fields;
-  if (defaultStrategy) out.default = defaultStrategy;
-  return out;
-}
-
-for (const schema of schemas) {
-  const name = varName(schema.id);
-  const { fields: resolvedFields, required: resolvedRequired } =
-    resolveFields(schema);
-
-  lines.push(`const ${name}: TypeSchema = {`);
-  lines.push(`  id: "${schema.id}",`);
-  if (schema.parent) lines.push(`  parent: "${schema.parent}",`);
-  lines.push(`  label: "${schema.label}",`);
+function emitSchema(schema: TypeSchema, lines: string[]): void {
+  lines.push(`const ${varName(schema.id)}: TypeSchema = {`);
+  lines.push(`  id: ${quote(schema.id)},`);
+  if (schema.parent) lines.push(`  parent: ${quote(schema.parent)},`);
+  if (schema.label) lines.push(`  label: ${quote(schema.label)},`);
   if (schema.description) {
-    const escapedDescription = schema.description
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"');
-    lines.push(`  description: "${escapedDescription}",`);
+    lines.push(`  description: ${quote(schema.description)},`);
   }
   lines.push(`  version: ${String(schema.version)},`);
   lines.push("  fields: {");
-  for (const [fieldName, fieldDef] of Object.entries(resolvedFields)) {
-    const isReq = resolvedRequired.has(fieldName);
-    lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
+  for (const [name, def] of Object.entries(schema.fields)) {
+    lines.push(`    ${name}: ${fieldLiteral(def)},`);
   }
   lines.push("  },");
-  const resolvedHints = resolveDisplayHints(schema);
-  if (resolvedHints) {
+  if (schema.display_hints) {
     const parts: string[] = [];
-    if (resolvedHints.title_field) {
-      parts.push(`title_field: "${resolvedHints.title_field}"`);
+    if (schema.display_hints.title_field) {
+      parts.push(`title_field: ${quote(schema.display_hints.title_field)}`);
     }
-    if (resolvedHints.body_field) {
-      parts.push(`body_field: "${resolvedHints.body_field}"`);
+    if (schema.display_hints.body_field) {
+      parts.push(`body_field: ${quote(schema.display_hints.body_field)}`);
     }
     if (parts.length > 0) {
       lines.push(`  display_hints: { ${parts.join(", ")} },`);
     }
   }
-  const resolvedPolicy = resolveMergePolicy(schema);
-  if (resolvedPolicy) {
+  if (schema.merge_policy) {
     const parts: string[] = [];
-    if (
-      resolvedPolicy.fields &&
-      Object.keys(resolvedPolicy.fields).length > 0
-    ) {
-      const entries = Object.entries(resolvedPolicy.fields)
-        .map(([k, v]) => `${k}: "${v}"`)
+    const policyFields = schema.merge_policy.fields;
+    if (policyFields && Object.keys(policyFields).length > 0) {
+      const entries = Object.entries(policyFields)
+        .map(([k, v]) => `${k}: ${quote(v)}`)
         .join(", ");
       parts.push(`fields: { ${entries} }`);
     }
-    if (resolvedPolicy.default) {
-      parts.push(`default: "${resolvedPolicy.default}"`);
+    if (schema.merge_policy.default) {
+      parts.push(`default: ${quote(schema.merge_policy.default)}`);
     }
     if (parts.length > 0) {
       lines.push(`  merge_policy: { ${parts.join(", ")} },`);
     }
   }
+  if (schema.compatible_with && schema.compatible_with.length > 0) {
+    lines.push(
+      `  compatible_with: [${schema.compatible_with.map(quote).join(", ")}],`,
+    );
+  }
   lines.push("};");
   lines.push("");
 }
 
+const lines: string[] = [];
+lines.push(
+  "// Auto-generated from core/*.json, connectors/*.json and core/system/*.json — do not edit manually.",
+);
+lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
+lines.push("");
+lines.push('import type { TypeSchema } from "../src/schema-types.js";');
+lines.push("");
+
+for (const schema of coreTypes) emitSchema(schema, lines);
 lines.push("export const ALL_TYPES: TypeSchema[] = [");
-for (const schema of schemas) {
-  lines.push(`  ${varName(schema.id)},`);
-}
+for (const schema of coreTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
-// system.* set — emitted as a separate registry; the consuming runtime
-// registers these alongside ALL_TYPES but tracks them separately so search
-// defaults can exclude them and the bounded lifecycle (`active | revoked`)
-// applies only to this set.
-for (const schema of systemSchemas) {
-  const name = varName(schema.id);
-  const { fields: resolvedFields, required: resolvedRequired } =
-    resolveFields(schema);
-  lines.push(`const ${name}: TypeSchema = {`);
-  lines.push(`  id: "${schema.id}",`);
-  if (schema.parent) lines.push(`  parent: "${schema.parent}",`);
-  lines.push(`  label: "${schema.label}",`);
-  if (schema.description) {
-    const escapedDescription = schema.description
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"');
-    lines.push(`  description: "${escapedDescription}",`);
-  }
-  lines.push(`  version: ${String(schema.version)},`);
-  lines.push("  fields: {");
-  for (const [fieldName, fieldDef] of Object.entries(resolvedFields)) {
-    const isReq = resolvedRequired.has(fieldName);
-    lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
-  }
-  lines.push("  },");
-  lines.push("};");
-  lines.push("");
-}
+// Connector types ship in the same package but are a separate family: they
+// describe one vendor's payload shape rather than a life-noun the whole
+// platform agrees on, and a deployment that talks to none of those vendors
+// carries them purely as a compatibility target. Emitting them separately is
+// what lets the catalog say which is which; both families register into the
+// same runtime registry, so the identifiers a tenant sees are unchanged.
+for (const schema of connectorTypes) emitSchema(schema, lines);
+lines.push("export const ALL_CONNECTOR_TYPES: TypeSchema[] = [");
+for (const schema of connectorTypes) lines.push(`  ${varName(schema.id)},`);
+lines.push("];");
+lines.push("");
 
+// The `system.*` set is registered alongside the rest but tracked separately so
+// search defaults can exclude it and the bounded `active | revoked` lifecycle
+// applies only here.
+for (const schema of systemTypes) emitSchema(schema, lines);
 lines.push("export const ALL_SYSTEM_TYPES: TypeSchema[] = [");
-for (const schema of systemSchemas) {
-  lines.push(`  ${varName(schema.id)},`);
-}
+for (const schema of systemTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
@@ -327,16 +316,12 @@ mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
 console.log(
-  `Generated ${String(schemas.length)} core types + ${String(systemSchemas.length)} system types -> ${outPath}`,
+  `Generated ${String(coreTypes.length)} core + ${String(connectorTypes.length)} connector + ${String(systemTypes.length)} system types -> ${outPath}`,
 );
 
-interface JsonFieldLike {
-  type: string;
-  description?: string;
-  enum_values?: string[];
-  items_type?: string;
-  format?: string;
-}
+// ---------------------------------------------------------------------------
+// Edge types
+// ---------------------------------------------------------------------------
 
 interface JsonEdgeSchema {
   id: string;
@@ -346,50 +331,18 @@ interface JsonEdgeSchema {
   source_type_constraints?: string[];
   target_type_constraints?: string[];
   cascade_on_delete?: "cascade" | "orphan" | "block";
-  property_schema?: Record<string, JsonFieldLike>;
+  property_schema?: Record<string, Record<string, unknown>>;
 }
 
-const edgesDir = resolve(import.meta.dirname, "..", "core", "edges");
-
-function loadEdgeSchemas(): JsonEdgeSchema[] {
-  try {
-    const edgeFiles = readdirSync(edgesDir).filter((f) => f.endsWith(".json"));
-    return edgeFiles.map((f) => {
-      const raw = readFileSync(join(edgesDir, f), "utf-8");
-      return JSON.parse(raw) as JsonEdgeSchema;
-    });
-  } catch {
-    // No edges directory yet — emit empty registry.
-    return [];
-  }
-}
-
-const edgeSchemas: JsonEdgeSchema[] = loadEdgeSchemas();
+const edgeSchemas = loadDir(edgesDir).map(
+  (raw) => raw.data as unknown as JsonEdgeSchema,
+);
 
 function edgeVarName(id: string): string {
   return id
     .split("-")
     .map((s, i) => (i === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1)))
     .join("");
-}
-
-function fieldLiteralForEdge(field: JsonFieldLike): string {
-  const effectiveType =
-    (field.format && FORMAT_TO_TYPE[field.format]) ?? field.type;
-  const parts: string[] = [`type: "${effectiveType}"`];
-  if (field.description) {
-    const escaped = field.description
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"');
-    parts.push(`description: "${escaped}"`);
-  }
-  if (field.enum_values) {
-    parts.push(
-      `enum_values: [${field.enum_values.map((v) => `"${v}"`).join(", ")}]`,
-    );
-  }
-  if (field.items_type) parts.push(`items_type: "${field.items_type}"`);
-  return `{ ${parts.join(", ")} }`;
 }
 
 const edgeLines: string[] = [];
@@ -404,33 +357,32 @@ edgeLines.push('import type { EdgeTypeSchema } from "../src/schema-types.js";');
 edgeLines.push("");
 
 for (const edge of edgeSchemas) {
-  const name = edgeVarName(edge.id);
-  edgeLines.push(`const ${name}: EdgeTypeSchema = {`);
-  edgeLines.push(`  id: "${edge.id}",`);
-  if (edge.label) edgeLines.push(`  label: "${edge.label}",`);
+  edgeLines.push(`const ${edgeVarName(edge.id)}: EdgeTypeSchema = {`);
+  edgeLines.push(`  id: ${quote(edge.id)},`);
+  if (edge.label) edgeLines.push(`  label: ${quote(edge.label)},`);
   if (edge.description) {
-    const esc = edge.description.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    edgeLines.push(`  description: "${esc}",`);
+    edgeLines.push(`  description: ${quote(edge.description)},`);
   }
-  edgeLines.push(`  cardinality: "${edge.cardinality}",`);
+  edgeLines.push(`  cardinality: ${quote(edge.cardinality)},`);
   const src = edge.source_type_constraints ?? ["*"];
   const tgt = edge.target_type_constraints ?? ["*"];
+  edgeLines.push(`  source_type_constraints: [${src.map(quote).join(", ")}],`);
+  edgeLines.push(`  target_type_constraints: [${tgt.map(quote).join(", ")}],`);
   edgeLines.push(
-    `  source_type_constraints: [${src.map((t) => `"${t}"`).join(", ")}],`,
-  );
-  edgeLines.push(
-    `  target_type_constraints: [${tgt.map((t) => `"${t}"`).join(", ")}],`,
-  );
-  edgeLines.push(
-    `  cascade_on_delete: "${edge.cascade_on_delete ?? "orphan"}",`,
+    `  cascade_on_delete: ${quote(edge.cascade_on_delete ?? "orphan")},`,
   );
   const propSchema = edge.property_schema ?? {};
   if (Object.keys(propSchema).length === 0) {
     edgeLines.push(`  property_schema: {},`);
   } else {
     edgeLines.push("  property_schema: {");
-    for (const [fieldName, fieldDef] of Object.entries(propSchema)) {
-      edgeLines.push(`    ${fieldName}: ${fieldLiteralForEdge(fieldDef)},`);
+    for (const [name, def] of Object.entries(propSchema)) {
+      // Edge properties reuse the item-field model, so they go through the
+      // same normalizer — a `format: "url"` on an edge property collapses to
+      // `type: "url"` exactly as it does on an item field.
+      edgeLines.push(
+        `    ${name}: ${fieldLiteral(normalizeFieldDefinition(def))},`,
+      );
     }
     edgeLines.push("  },");
   }
@@ -439,9 +391,7 @@ for (const edge of edgeSchemas) {
 }
 
 edgeLines.push("export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [");
-for (const edge of edgeSchemas) {
-  edgeLines.push(`  ${edgeVarName(edge.id)},`);
-}
+for (const edge of edgeSchemas) edgeLines.push(`  ${edgeVarName(edge.id)},`);
 edgeLines.push("];");
 edgeLines.push("");
 

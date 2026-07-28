@@ -200,11 +200,17 @@ describe("per-tenant quota enforcement", () => {
 
   it("GET / PUT /tenants/:id/quotas — admin round-trip", async () => {
     ctx = await createTestContext();
+    const tenant = await ctx.storage.tenants!.create();
 
     // Initial GET returns null fields
-    const initial = await request(ctx.app, "GET", "/tenants/tenant-x/quotas", {
-      key: ctx.adminKey,
-    });
+    const initial = await request(
+      ctx.app,
+      "GET",
+      `/tenants/${tenant.id}/quotas`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(initial.status).toBe(200);
     const initialBody = (await initial.json()) as {
       items_limit: number | null;
@@ -212,7 +218,7 @@ describe("per-tenant quota enforcement", () => {
     expect(initialBody.items_limit).toBeNull();
 
     // PUT a quota
-    const put = await request(ctx.app, "PUT", "/tenants/tenant-x/quotas", {
+    const put = await request(ctx.app, "PUT", `/tenants/${tenant.id}/quotas`, {
       key: ctx.adminKey,
       body: { items_limit: 100, webhooks_limit: 5 },
     });
@@ -225,9 +231,14 @@ describe("per-tenant quota enforcement", () => {
     expect(putBody.webhooks_limit).toBe(5);
 
     // GET reflects
-    const after = await request(ctx.app, "GET", "/tenants/tenant-x/quotas", {
-      key: ctx.adminKey,
-    });
+    const after = await request(
+      ctx.app,
+      "GET",
+      `/tenants/${tenant.id}/quotas`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as { items_limit: number };
     expect(afterBody.items_limit).toBe(100);

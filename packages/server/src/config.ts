@@ -1,6 +1,7 @@
 import type { PermissionBundle } from "@withmarfa/shared";
 import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
+import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
 
 /**
  * Numeric env-var read with explicit "missing or empty → default" semantics.
@@ -19,6 +20,20 @@ export function envNumber(raw: string | undefined, fallback: number): number {
   return raw !== undefined && raw !== "" ? Number(raw) : fallback;
 }
 
+/**
+ * How the endpoint `DATABASE_URL` points at multiplexes connections.
+ *
+ * `session` — one client link maps 1:1 to a real backend for its lifetime.
+ * True of a direct Postgres connection and of a session-mode pooler.
+ *
+ * `transaction` — a pooler (PgBouncer, Neon's `-pooler` endpoint) hands out a
+ * backend per transaction, so session-level state set outside a transaction
+ * lands on whichever backend served that statement and is inherited by later,
+ * unrelated queries. Streaming RLS sets exactly that kind of state, so this
+ * mode requires a separate direct endpoint to reserve from.
+ */
+export type DbPoolMode = "session" | "transaction";
+
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -31,14 +46,22 @@ export interface AppConfig {
   sqlitePath: string;
   databaseUrl: string;
   /**
-   * Optional direct (session-mode) Postgres URL for streaming RLS. `databaseUrl`
-   * points at the transaction-mode pooled endpoint; streaming issues a
-   * session-level `SET ROLE`, which must run on a direct connection so it never
-   * strands on a shared pooled backend and leak into a later write. Unset →
-   * streaming reuses the pooled client (fine for self-hosts not behind a
-   * transaction-mode pooler).
+   * Direct (session-mode) Postgres URL for streaming RLS, from
+   * `MARFA_DATABASE_URL_DIRECT`. Streaming issues a session-level `SET ROLE`,
+   * which must run on a connection that owns its backend outright. Required
+   * when `dbPoolMode` is `transaction`; unset is fine otherwise, and streaming
+   * then reuses the main client.
    */
   databaseUrlDirect?: string;
+  /**
+   * What kind of endpoint `databaseUrl` points at, from `MARFA_DB_POOL_MODE`.
+   * Defaults to `session`, which is what a self-host talking straight to
+   * Postgres has. Hosted deployments behind a transaction-mode pooler declare
+   * `transaction`, which makes `databaseUrlDirect` mandatory. Optional on the
+   * type so test contexts constructing `AppConfig` literals compile; readers
+   * treat `undefined` as `session`, and `loadConfig` always populates it.
+   */
+  dbPoolMode?: DbPoolMode;
   blobPath: string;
   blobBackend: "fs" | "s3";
   /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
@@ -527,10 +550,66 @@ export function getPermissionBundles(): PermissionBundle[] {
   return loadPermissionBundles(process.env.MARFA_PERMISSION_BUNDLES);
 }
 
+/**
+ * Parse `MARFA_DB_POOL_MODE`. Unset → `session`, so a self-host connecting
+ * straight to Postgres is unaffected by the guard below.
+ *
+ * Unlike the other enum parsers in this file, an unrecognized value throws
+ * rather than warning and falling back. The fallback here is the permissive
+ * mode, and resolving a typo to it would silently re-open exactly the
+ * misconfiguration this setting exists to close.
+ */
+export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
+  if (raw === undefined || raw === "") return "session";
+  if (raw === "session" || raw === "transaction") return raw;
+  throw new Error(
+    `Unknown MARFA_DB_POOL_MODE=${raw}. Legal values: session | transaction.`,
+  );
+}
+
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
   const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
+  const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
+  const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
+  const databaseUrl = process.env.DATABASE_URL ?? "";
+  const databaseUrlDirect = process.env.MARFA_DATABASE_URL_DIRECT ?? "";
+
+  if (storageDialect === "pg" && dbPoolMode === "transaction") {
+    // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;
+    // over a transaction-mode pooler that role strands on a shared backend and
+    // is inherited by later, unrelated queries, including Better Auth's session
+    // reads on tables the role holds no grant on. Falling back to the pooled
+    // client when the direct endpoint is missing is a silent downgrade from
+    // "isolated" to "leaks across the whole instance", so refuse to start
+    // instead. Disabling streaming RLS as the fallback would be no better: that
+    // trades a visible outage for an invisible loss of tenant isolation.
+    if (databaseUrlDirect === "") {
+      throw new Error(
+        "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
+          "Streaming RLS sets a session-level role, which strands on a shared backend " +
+          "over a transaction-mode pooler; point this at the direct (unpooled) " +
+          "endpoint of the same database as DATABASE_URL.",
+      );
+    }
+    // Presence is not directness. The two hosts are resolved from adjacent
+    // variable names in the deploy tooling, and on Neon they differ by the
+    // six characters of the `-pooler` suffix, so the plausible misconfiguration
+    // is not "unset" but "set to the pooled endpoint again" — which satisfies
+    // every other signal (a distinct client, a `direct` boot log) while
+    // reproducing the outage exactly.
+    if (isSamePgEndpoint(databaseUrl, databaseUrlDirect)) {
+      throw new Error(
+        "MARFA_DATABASE_URL_DIRECT points at the same endpoint as DATABASE_URL " +
+          `(${pgEndpointLabel(databaseUrlDirect)}), so it is the pooled one. ` +
+          "Streaming RLS needs an endpoint that owns its backend outright; a " +
+          "session-level SET ROLE over a transaction-mode pooler strands on a " +
+          "shared backend. On Neon the direct host is the pooled host without " +
+          "the `-pooler` suffix.",
+      );
+    }
+  }
 
   if (process.env.NODE_ENV === "production") {
     if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
@@ -563,10 +642,11 @@ export function loadConfig(): AppConfig {
   return {
     isProduction: process.env.NODE_ENV === "production",
     port,
-    storageDialect: process.env.DB_DIALECT === "pg" ? "pg" : "sqlite",
+    storageDialect,
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
-    databaseUrl: process.env.DATABASE_URL ?? "",
-    databaseUrlDirect: process.env.MARFA_DATABASE_URL_DIRECT ?? "",
+    databaseUrl,
+    databaseUrlDirect,
+    dbPoolMode,
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),

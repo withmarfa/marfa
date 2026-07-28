@@ -16,7 +16,7 @@ import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 35 core types and 7 system types", () => {
+  it("contains 22 core, 13 connector and 7 system types", () => {
     expect(TYPE_REGISTRY.size).toBe(42);
     expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
     expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
@@ -520,13 +520,13 @@ describe("validateTransition", () => {
 });
 
 describe("validateTypeSchema — inheritance rule", () => {
-  it("rejects a child type that redefines a direct parent field", () => {
+  it("rejects a child type that reshapes a direct parent field", () => {
     const result = validateTypeSchema({
       id: "acme.bookmark_ext",
       parent: "core.bookmark",
       version: 1,
       fields: {
-        title: { type: "string", description: "Different title meaning" },
+        title: { type: "integer", description: "Different title meaning" },
       },
     });
     expect(result.success).toBe(false);
@@ -534,30 +534,84 @@ describe("validateTypeSchema — inheritance rule", () => {
       expect(
         result.errors.some(
           (e) =>
-            e.field === "fields.title" && e.message.includes("core.bookmark"),
+            e.field === "fields.title.type" &&
+            e.message.includes("core.bookmark"),
         ),
       ).toBe(true);
     }
   });
 
-  it("rejects a child type that redefines a deep-ancestor field", () => {
+  it("rejects a child type that reshapes a deep-ancestor field", () => {
     // core.entity.person inherits name from core.entity; a child of
-    // core.entity.person must not redeclare name.
+    // core.entity.person must not change what name is.
     const result = validateTypeSchema({
       id: "acme.employee",
       parent: "core.entity.person",
       version: 1,
       fields: {
-        name: { type: "string", description: "Override" },
+        name: { type: "integer", description: "Override" },
       },
     });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(
         result.errors.some(
-          (e) => e.field === "fields.name" && e.message.includes("core.entity"),
+          (e) =>
+            e.field === "fields.name.type" &&
+            e.message.includes("core.entity") &&
+            e.code === "inheritance_violation",
         ),
       ).toBe(true);
+    }
+  });
+
+  it("rejects a child type that loosens an inherited required field", () => {
+    // core.note requires body; a child cannot make it optional and still be
+    // readable by anything that expects a note.
+    const result = validateTypeSchema({
+      id: "acme.loose_note",
+      parent: "core.note",
+      version: 1,
+      fields: {
+        body: { type: "string", description: "Optional here", required: false },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.code === "inheritance_violation"),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a child type that sharpens an inherited field's description", () => {
+    // Resolution is unambiguous — the child's prose wins — and the shipped
+    // subtypes (core.file.audio, core.media.article) are written this way.
+    const result = validateTypeSchema({
+      id: "acme.bookmark_ext",
+      parent: "core.bookmark",
+      version: 1,
+      fields: {
+        title: {
+          type: "string",
+          description: "The headline of the saved page",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a child type that tightens an inherited field to required", () => {
+    const result = validateTypeSchema({
+      id: "acme.titled_bookmark",
+      parent: "core.bookmark",
+      version: 1,
+      fields: { title: { type: "string" } },
+      required: ["title"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.fields.title?.required).toBe(true);
     }
   });
 
@@ -726,13 +780,13 @@ describe("validateTypeSchema — circular inheritance", () => {
   });
 
   it("still surfaces inheritance violations from the immediate parent in a cycle", () => {
-    // afield is declared on cycle.a. A child of cycle.a redeclaring it must
+    // afield is declared on cycle.a. A child of cycle.a reshaping it must
     // be caught — even though the walker enters a cycle.
     const result = validateTypeSchema({
       id: "test.cycle_redeclare_a",
       parent: "cycle.a",
       version: 1,
-      fields: { afield: { type: "string", description: "override" } },
+      fields: { afield: { type: "integer", description: "override" } },
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -750,7 +804,7 @@ describe("validateTypeSchema — circular inheritance", () => {
       id: "test.cycle_redeclare_b",
       parent: "cycle.a",
       version: 1,
-      fields: { bfield: { type: "string", description: "override" } },
+      fields: { bfield: { type: "integer", description: "override" } },
     });
     expect(result.success).toBe(false);
     if (!result.success) {

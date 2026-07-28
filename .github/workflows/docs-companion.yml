@@ -31,9 +31,13 @@ concurrency:
 jobs:
   check:
     name: Flag documented-surface PRs without a docs companion
-    # Hardcoded hosted: a trivial API-only job — no pnpm, no build — so it does
-    # not consume a self-hosted runner slot the way the test matrix does.
-    runs-on: ubuntu-latest
+    # Routed like the test matrix. This was pinned hosted on the reasoning that
+    # a trivial API-only job should not occupy a self-hosted runner slot, which
+    # holds only while hosted minutes are free. Past the included allowance the
+    # trade inverts: the job runs in about twelve seconds but bills a whole
+    # minute on every pull-request push, whereas the runner slot it borrows is
+    # returned before the matrix needs it.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: write

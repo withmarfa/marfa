@@ -1,9 +1,8 @@
 {
   "id": "readwise.highlight",
   "label": "Readwise Highlight",
-  "description": "A highlight / annotation captured in Readwise. The highlight text is the body; the user's personal `note` is an attached annotation. `compatible_with: core.note` because a highlight is structurally a note with a quoted body.",
+  "description": "A highlight / annotation captured in Readwise. The quoted text lands in `text` and the user's personal annotation in `note`. Deliberately not `compatible_with: core.note` — a note requires `body`, and renaming this type's `text` field would orphan the property on every highlight already captured. Readers wanting the cross-app shape should project through the display hints.",
   "version": 1,
-  "compatible_with": ["core.note"],
   "fields": {
     "text": {
       "type": "string",

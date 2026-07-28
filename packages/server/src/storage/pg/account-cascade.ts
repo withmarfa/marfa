@@ -113,6 +113,16 @@ export async function pgDeleteAccountCascade(
     const tenantId = userRow?.tenant_id ?? null;
 
     if (tenantId) {
+      // Serialize tenant-scoped teardown against quota updates that require
+      // the tenant to exist. This lock must come before deleting the quota
+      // row; taking it only at the final tenant DELETE would allow an update
+      // to reinsert quotas after step 6 and strand an orphan row.
+      await tx
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .for("update");
+
       // ---- 2. Connection-tied artifacts. --------------------------------
       // The full uninstall pipeline isn't reachable from storage; do the
       // minimal subset. system.connection items themselves drop in step 4.

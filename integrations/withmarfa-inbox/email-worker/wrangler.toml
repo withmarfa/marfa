@@ -35,12 +35,29 @@ main = "src/index.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# No public HTTP surface. This Worker exports only an `email` handler,
+# invoked by Cloudflare Email Routing — it has no `fetch` handler at
+# all, so a `workers.dev` name would only ever serve unsolicited
+# traffic.
+#
+# Both keys are stated because `preview_urls` has no dependable
+# default. Wrangler's deploy path resolves none locally: an unset
+# value is dropped from the request body and the API decides. Its
+# config schema documents a default of `false`, and the helper it
+# mocks that API with computes a third answer. Left unset, per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames can keep
+# serving the Worker.
+workers_dev = false
+preview_urls = false
+
 [vars]
 ENVIRONMENT = "dev"
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "marfa-withmarfa-inbox-email-worker-staging"
+workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
@@ -52,6 +69,8 @@ service = "marfa-runtime-control-staging"
 # ---- Production -----------------------------------------------------------
 [env.prod]
 name = "marfa-withmarfa-inbox-email-worker-prod"
+workers_dev = false
+preview_urls = false
 
 [env.prod.vars]
 ENVIRONMENT = "prod"

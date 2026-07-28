@@ -1,4 +1,5 @@
 import { createApp } from "./app.js";
+import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
@@ -407,6 +408,45 @@ export async function waitForAudit<T>(
     result = await probe();
   }
   return result;
+}
+
+/**
+ * Longest a competing request may take to reach the consent lock before
+ * the caller treats it as a failure. Generous on purpose: it only has to
+ * outlast the slowest legitimate arrival on a loaded machine, and
+ * exhausting it means the request never got there at all, which is a real
+ * problem and is reported as one rather than passed over.
+ */
+const LOCK_ARRIVAL_BUDGET_MS = 10_000;
+
+/**
+ * Block until `expected` callers are holding or queued on the
+ * (client, user) consent lock.
+ *
+ * Tests that pin an interleaving need the competing request to be waiting
+ * on the lock before they release the request holding it. Observing the
+ * arrival is what makes that a fact. Pausing for a fixed span instead
+ * proves nothing either way: a request that arrives after the holder has
+ * already finished leaves the same end state as one that arrived in time,
+ * so the assertions still pass while the race goes untested — and on a
+ * loaded machine, late is the ordering a fixed pause actually produces.
+ */
+export async function waitForConsentLockDepth(
+  clientId: string,
+  authUserId: string,
+  expected: number,
+): Promise<void> {
+  const deadline = Date.now() + LOCK_ARRIVAL_BUDGET_MS;
+  while (consentLockDepth(clientId, authUserId) < expected) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `competing request never reached the consent lock: depth ` +
+          `${String(consentLockDepth(clientId, authUserId))}, expected ` +
+          `${String(expected)}, after ${String(LOCK_ARRIVAL_BUDGET_MS)}ms`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
 }
 
 export async function createTestContext(

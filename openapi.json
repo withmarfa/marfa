@@ -5481,7 +5481,7 @@
           "Items"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Only the credential that created the job or an admin can read it.",
+        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it, by an admin within the same space, and by a platform credential. A job in another space reads as absent.",
         "security": [
           {
             "bearerAuth": []
@@ -5656,7 +5656,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential and not an admin",
+            "description": "Not the originating credential, and not an admin for this space",
             "content": {
               "application/json": {
                 "schema": {
@@ -5916,7 +5916,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential and not an admin",
+            "description": "Not the originating credential, and not an admin for this space",
             "content": {
               "application/json": {
                 "schema": {
@@ -16723,6 +16723,14 @@
                       "type": "integer",
                       "minimum": 0
                     },
+                    "schedules_disarmed": {
+                      "type": "boolean",
+                      "description": "Whether a schedule alarm was actually cancelled for this connection. False when there was nothing to cancel — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed disarm; check `schedule_disarm_error` to tell those apart."
+                    },
+                    "schedule_disarm_error": {
+                      "type": "string",
+                      "description": "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm."
+                    },
                     "activity_id": {
                       "type": "string"
                     }
@@ -16733,6 +16741,7 @@
                     "oauth_tokens_deleted",
                     "leased_tokens_revoked",
                     "inbound_webhooks_disabled",
+                    "schedules_disarmed",
                     "activity_id"
                   ]
                 }

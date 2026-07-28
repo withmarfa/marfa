@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
+import { pgEndpointHost } from "./storage/pg/endpoint.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
@@ -38,6 +39,7 @@ import {
 import { createEmailTransport } from "./email/index.js";
 import { checkRedirectAllowlist } from "./routes/redirect-allowlist-check.js";
 import { checkCorsOrigins } from "./routes/cors-origins-check.js";
+import { checkMultiReplica } from "./multi-replica-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
@@ -68,12 +70,22 @@ async function main() {
     if (!config.databaseUrl) {
       throw new Error("DATABASE_URL is required when DB_DIALECT=pg");
     }
+    const directUrl = config.databaseUrlDirect ?? "";
     storage = await createPgStorage(config.databaseUrl, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
       authMode: config.authMode,
-      // Empty string (env unset) is treated as "no direct endpoint" by
-      // createConnection, which falls back to the pooled client.
-      directConnectionString: config.databaseUrlDirect,
+      directConnectionString: directUrl,
+      poolMode: config.dbPoolMode,
+    });
+    // Which endpoint streaming RLS reserves from is not otherwise observable
+    // from outside the process, and getting it wrong strands a role on shared
+    // pooler backends, where it surfaces as permission errors on requests that
+    // never touched a stream. State it once, at boot. Host only: connection
+    // strings carry credentials.
+    log("info", "Streaming RLS endpoint", {
+      db_pool_mode: config.dbPoolMode ?? "session",
+      streaming_endpoint: directUrl ? "direct" : "shared_with_app_pool",
+      streaming_endpoint_host: pgEndpointHost(directUrl || config.databaseUrl),
     });
   } else {
     storage = await createSqliteStorage(config.sqlitePath, {
@@ -404,6 +416,11 @@ async function main() {
     authMode: config.authMode,
     corsOrigins: config.corsOrigins,
   });
+
+  // Boot guard: warn loud when several server processes appear to share one
+  // database. Realtime delivery is process-local, so the extra processes drop
+  // events silently — nothing surfaces at the API, so nothing else would say.
+  checkMultiReplica();
 
   const app = createApp(
     storage,

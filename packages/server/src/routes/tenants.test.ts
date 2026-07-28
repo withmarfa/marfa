@@ -16,6 +16,7 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { tenantRoutes } from "./tenants.js";
 
 const SALT = "test-salt";
 
@@ -26,6 +27,7 @@ const SALT = "test-salt";
 interface HostedContext {
   app: Hono<AppEnv>;
   storage: Storage;
+  platformAdminKey: string;
   tenantAdminKey: string;
   tenantId: string;
   cleanup: () => Promise<void>;
@@ -92,11 +94,24 @@ async function createHostedContext(): Promise<HostedContext> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 10);
+  const platformAdminKey = `marfa_k1_platform_quotas_${suffix}`;
   const tenantAdminKey = `marfa_k1_tenant_cfg_${suffix}`;
 
   // Create the tenant row first (required for FK under hosted-mode pg).
   const tenant = await storage.tenants!.create();
   const tenantId = tenant.id;
+
+  await storage.keys.create(
+    {
+      label: "platform-quotas-admin",
+      source: `platform-quotas-${suffix}`,
+      role: "admin",
+      is_platform: true,
+      type_permissions: {},
+      default_tier: "feed",
+    },
+    hashApiKey(platformAdminKey, SALT),
+  );
 
   await storage.keys.create(
     {
@@ -114,6 +129,7 @@ async function createHostedContext(): Promise<HostedContext> {
   return {
     app,
     storage,
+    platformAdminKey,
     tenantAdminKey,
     tenantId,
     cleanup: async () => {
@@ -249,5 +265,74 @@ describe("Tenant config — hosted mode", () => {
     );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
     expect(auditResult.data[0]?.resource_type).toBe("tenant");
+  });
+
+  it("GET /tenants/:id/quotas returns not_found for an unknown tenant", async () => {
+    const unknownTenantId = "tenant_unknown_get";
+    const res = await request(
+      hosted.app,
+      "GET",
+      `/tenants/${unknownTenantId}/quotas`,
+      { key: hosted.platformAdminKey },
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_found");
+  });
+
+  it("PUT /tenants/:id/quotas returns not_found without creating an orphan quota row", async () => {
+    const unknownTenantId = "tenant_unknown_put";
+    const res = await request(
+      hosted.app,
+      "PUT",
+      `/tenants/${unknownTenantId}/quotas`,
+      {
+        key: hosted.platformAdminKey,
+        body: { items_limit: 10 },
+      },
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("not_found");
+    expect(await hosted.storage.tenantQuotas.get(unknownTenantId)).toBeNull();
+  });
+
+  it("PUT and GET /tenants/:id/quotas preserve the known-tenant happy path", async () => {
+    const putRes = await request(
+      hosted.app,
+      "PUT",
+      `/tenants/${hosted.tenantId}/quotas`,
+      {
+        key: hosted.platformAdminKey,
+        body: { items_limit: 25 },
+      },
+    );
+    expect(putRes.status).toBe(200);
+
+    const getRes = await request(
+      hosted.app,
+      "GET",
+      `/tenants/${hosted.tenantId}/quotas`,
+      { key: hosted.platformAdminKey },
+    );
+    expect(getRes.status).toBe(200);
+    const body = (await getRes.json()) as { items_limit: number | null };
+    expect(body.items_limit).toBe(25);
+  });
+
+  it("documents not_found on both explicit quota operations", () => {
+    // The published and live specs intentionally filter platform-internal
+    // operations, so inspect this route group's pre-finalization document.
+    const spec = tenantRoutes(hosted.storage).getOpenAPIDocument({
+      openapi: "3.1.0",
+      info: { title: "Tenant route test", version: "1" },
+    });
+    const quotaPath = spec.paths["/{id}/quotas"];
+    if (!quotaPath) throw new Error("quota path missing from route document");
+
+    expect(quotaPath.get?.responses).toHaveProperty("404");
+    expect(quotaPath.put?.responses).toHaveProperty("404");
   });
 });
