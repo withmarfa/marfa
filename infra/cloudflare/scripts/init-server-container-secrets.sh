@@ -35,8 +35,8 @@
 #   MARFA_DATABASE_URL_DIRECT  staging  <- NEON_DATABASE_URL_STAGING || NEON_DATABASE_URL_MARFA
 #   MARFA_DATABASE_URL_DIRECT  prod     <- NEON_DATABASE_URL_PROD
 #
-#   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
-#   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
+#   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (see "Stable secrets")
+#   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (see "Stable secrets")
 #   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN
 #   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer <per-env PostHog token>"
 #     staging <- POSTHOG_PROJECT_KEY_STAGING
@@ -49,9 +49,22 @@
 #   S3_ACCESS_KEY_ID            <- R2_ACCESS_KEY_ID                (R2 S3-API creds)
 #   S3_SECRET_ACCESS_KEY        <- R2_SECRET_ACCESS_KEY
 #
-# Generated auth secret/salt are PRINTED once — persist them (e.g. into the
-# per-machine secrets file as MARFA_SERVER_AUTH_SECRET / MARFA_SERVER_API_KEY_SALT)
-# so re-runs don't rotate them (rotating API_KEY_SALT invalidates every key).
+# Stable secrets (MARFA_AUTH_SECRET, API_KEY_SALT)
+#
+# These two are destructive to replace: a new API_KEY_SALT invalidates every API
+# key on the deployment, and a new MARFA_AUTH_SECRET signs out every session.
+# Cloudflare cannot read a secret back, so the previous value is gone the moment
+# it is overwritten. The script therefore resolves them in this order:
+#
+#   1. An explicit MARFA_SERVER_AUTH_SECRET / MARFA_SERVER_API_KEY_SALT wins.
+#   2. Otherwise, if the Worker already carries the secret, it is LEFT ALONE —
+#      re-running this script to add one new secret must never take the
+#      deployment's credentials with it.
+#   3. Otherwise (genuine first-time init) a value is generated and PRINTED
+#      once. Persist it immediately, e.g. into the per-machine secrets file.
+#
+# To replace them deliberately, set MARFA_ROTATE_SERVER_SECRETS=1 and expect
+# every key and session on that environment to stop working.
 
 set -euo pipefail
 
@@ -139,16 +152,52 @@ if [[ -z "$POSTHOG_TOKEN" ]]; then
   exit 1
 fi
 
-AUTH_SECRET="${MARFA_SERVER_AUTH_SECRET:-}"
-SALT="${MARFA_SERVER_API_KEY_SALT:-}"
-if [[ -z "$AUTH_SECRET" ]]; then AUTH_SECRET="$(openssl rand -hex 32)"; GEN_AUTH=1; fi
-if [[ -z "$SALT" ]]; then SALT="$(openssl rand -hex 32)"; GEN_SALT=1; fi
+# API_KEY_SALT and MARFA_AUTH_SECRET are the two secrets here whose replacement
+# is destructive and unrecoverable: a new salt invalidates every API key on the
+# deployment, and a new auth secret signs out every session. Neither old value
+# can be recovered afterwards, because Cloudflare does not read a secret back.
+#
+# So when the operator supplies no explicit value, the only safe reading of
+# "init" is "fill the gap", never "replace what is already there". Generating
+# unconditionally turns a re-run — the natural thing to do when adding one new
+# secret to an existing Worker — into a total credential wipe, and the operator
+# only finds out from a warning printed after the write has already happened.
+EXISTING_SECRETS="$(wrangler secret list --name "$WORKER" 2>/dev/null || true)"
+worker_has_secret() { grep -q "\"$1\"" <<<"$EXISTING_SECRETS"; }
+
+ROTATE="${MARFA_ROTATE_SERVER_SECRETS:-}"
+if [[ "$ROTATE" == "1" ]]; then
+  echo "⚠ MARFA_ROTATE_SERVER_SECRETS=1 — replacing MARFA_AUTH_SECRET and API_KEY_SALT."
+  echo "  Every API key on $WORKER stops working and every session is signed out."
+fi
+
+# resolve_stable <secret name> <explicit value> <outvar> — decide whether to
+# set, keep, or generate. Echoes the decision; sets <outvar> to the value to
+# write, or empty to leave the Worker's existing secret alone.
+resolve_stable() {
+  local name="$1" explicit="$2" outvar="$3"
+  if [[ -n "$explicit" ]]; then
+    printf -v "$outvar" '%s' "$explicit"
+  elif worker_has_secret "$name" && [[ "$ROTATE" != "1" ]]; then
+    echo "  – keep $name (already set on $WORKER; pass MARFA_ROTATE_SERVER_SECRETS=1 to replace)"
+    printf -v "$outvar" '%s' ""
+  else
+    printf -v "$outvar" '%s' "$(openssl rand -hex 32)"
+    GENERATED+=("$name")
+  fi
+}
+
+GENERATED=()
+resolve_stable MARFA_AUTH_SECRET "${MARFA_SERVER_AUTH_SECRET:-}" AUTH_SECRET
+resolve_stable API_KEY_SALT "${MARFA_SERVER_API_KEY_SALT:-}" SALT
 
 echo "→ Setting secrets on $WORKER"
 put_secret DATABASE_URL "$POOLED_DB_URL"
 put_secret MARFA_DATABASE_URL_DIRECT "$DIRECT_DB_URL"
-put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
-put_secret API_KEY_SALT "$SALT"
+# Empty here means "resolve_stable decided to keep the Worker's existing value",
+# which is not the same as put_secret's "the source env var was unset".
+if [[ -n "$AUTH_SECRET" ]]; then put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"; fi
+if [[ -n "$SALT" ]]; then put_secret API_KEY_SALT "$SALT"; fi
 put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CF_TOKEN"
 put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_TOKEN}"
 
@@ -161,12 +210,16 @@ put_secret MARFA_RUNTIME_BROKER_KEY "${MARFA_RUNTIME_BROKER_KEY:-}"
 put_secret S3_ACCESS_KEY_ID "${R2_ACCESS_KEY_ID:-}"
 put_secret S3_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
 
-if [[ "${GEN_AUTH:-}" == "1" || "${GEN_SALT:-}" == "1" ]]; then
+if (( ${#GENERATED[@]} > 0 )); then
   echo ""
-  echo "⚠ Generated secret(s) — persist these so re-runs don't rotate them:"
-  [[ "${GEN_AUTH:-}" == "1" ]] && echo "  MARFA_SERVER_AUTH_SECRET=$AUTH_SECRET"
-  [[ "${GEN_SALT:-}" == "1" ]] && echo "  MARFA_SERVER_API_KEY_SALT=$SALT"
-  echo "(rotating API_KEY_SALT invalidates every API key.)"
+  echo "⚠ Generated secret(s) — persist these now; Cloudflare cannot read a secret"
+  echo "  back, so an unrecorded value is unrecoverable:"
+  for name in "${GENERATED[@]}"; do
+    case "$name" in
+      MARFA_AUTH_SECRET) echo "  MARFA_SERVER_AUTH_SECRET=$AUTH_SECRET" ;;
+      API_KEY_SALT) echo "  MARFA_SERVER_API_KEY_SALT=$SALT" ;;
+    esac
+  done
 fi
 
 echo "→ Done. Re-run deploy-server-container.sh $ENV_NAME so the container restarts with these."

@@ -76,6 +76,12 @@ export default [
       "**/coverage/",
       "**/node_modules/",
       "**/seed/",
+      // Wrangler's local cache and its mid-deploy scratch bundles. These are
+      // generated tool output, not source: `wrangler deploy` writes a rolled-up
+      // worker.js under .wrangler/tmp/ while it uploads. Linting them fails on
+      // a parse error, because a generated bundle is in no tsconfig project —
+      // so an unrelated deploy running in parallel breaks the lint gate.
+      "**/.wrangler/",
       "packages/*/scripts/*.mjs",
       // The scheduled health check runs standalone on a CI runner with no
       // install step, so it is plain ESM outside every tsconfig project and

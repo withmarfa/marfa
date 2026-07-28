@@ -59,3 +59,6 @@ deploy.env
 .claude/settings.local.json
 .claude/plans/
 .claude/scheduled_tasks.lock
+
+# Wrangler local cache and mid-deploy scratch bundles (generated tool output).
+.wrangler/
