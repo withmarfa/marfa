@@ -17,6 +17,11 @@
 #   - CLOUDFLARE_API_TOKEN    (marfa-account token)
 #   - CLOUDFLARE_ACCOUNT_ID   (account hosting the Workers)
 #
+# The account is named back before anything is deployed, because the
+# integration configs carry no `account_id` and Wrangler takes it from
+# the environment. Two variables from two places is all it takes to
+# create the whole fleet somewhere unintended.
+#
 # DEPLOY THE CONTROL PLANE FIRST.
 #
 #   ./infra/cloudflare/scripts/deploy-control.sh <env>
@@ -79,6 +84,50 @@ if (( DRY_RUN == 0 && LIST_ONLY == 0 )); then
     printf '  - %s\n' "${MISSING[@]}" >&2
     exit 1
   fi
+
+  # Confirm the credentials and the account agree, and say which
+  # account out loud, before creating anything in it.
+  #
+  # Neither variable proves anything about the other. The integration
+  # configs declare no `account_id`, so Wrangler resolves the target
+  # from CLOUDFLARE_ACCOUNT_ID, while CLOUDFLARE_API_TOKEN is scoped to
+  # whichever account minted it. A shell holding one from each, an easy
+  # state for an operator with more than one Cloudflare account, either
+  # fails partway through a serial rollout or succeeds against the
+  # wrong account and creates the whole fleet in it under names that
+  # say they belong somewhere else.
+  #
+  # One read-only request, and it names the account rather than
+  # matching it against an expected value: no operator's account
+  # belongs in a committed file, and whoever runs a deploy can
+  # recognize their own.
+  #
+  # deploy-control.sh has the same gap and wants the same pre-flight.
+  # Left alone here because this change is scoped to the Worker
+  # surface, not because the gap is acceptable there.
+  ACCOUNT_JSON="$(
+    curl -sS \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" \
+      || true
+  )"
+  ACCOUNT_NAME="$(
+    printf '%s' "$ACCOUNT_JSON" \
+      | node -p "try { JSON.parse(require('fs').readFileSync(0, 'utf8')).result?.name ?? '' } catch { '' }"
+  )"
+  if [[ -z "$ACCOUNT_NAME" ]]; then
+    echo "error: CLOUDFLARE_API_TOKEN cannot read account $CLOUDFLARE_ACCOUNT_ID." >&2
+    echo "  Either the token belongs to a different account, or the id is wrong." >&2
+    ACCOUNT_ERROR="$(
+      printf '%s' "$ACCOUNT_JSON" \
+        | node -p "try { (JSON.parse(require('fs').readFileSync(0, 'utf8')).errors ?? []).map((e) => e.message).join('; ') } catch { '' }"
+    )"
+    if [[ -n "$ACCOUNT_ERROR" ]]; then
+      echo "  Cloudflare said: $ACCOUNT_ERROR" >&2
+    fi
+    exit 1
+  fi
+  echo "→ Deploying into Cloudflare account: $ACCOUNT_NAME ($CLOUDFLARE_ACCOUNT_ID)"
 fi
 
 # Targets are discovered from the tree rather than listed here, so an
