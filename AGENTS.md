@@ -263,6 +263,16 @@ Per-target helpers for narrow runs:
 
 **Why slim by default.** A pre-push hook that runs the full ~1800-test dual-dialect suite invites `--no-verify` bypassing, and a hook that's bypassed isn't a gate. The slim gate gives fast feedback on what you touched; CI's full matrix is the authoritative dual-dialect check.
 
+### A push costs real money — verify locally first
+
+The Postgres jobs need a service container, so they run on GitHub-hosted runners while everything else runs on self-hosted ones. Past the included allowance those hosted minutes are billed, and **a whole matrix fires on every push to a pull request**. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
+
+- **Run `pnpm test:full` locally before pushing, not the hook.** It covers both dialects against a throwaway container, so it catches essentially everything CI would. The hook is SQLite-only and scoped to changed files; it has already gone green on a commit whose Postgres job failed.
+- **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the bill by the number of commits for no extra signal.
+- **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — several tests in this repository fail on a fixed budget when the machine is loaded, and re-running until green is both expensive and how a real defect gets waved through.
+
+`workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the three freshness jobs.
+
 ## Deploy
 
 `deploy.sh` at the repo root drives deployment against the operator's configured hosts: git pull + build + migrate + service restart. SSH options (`ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) cap any transient hang at ~45s. Restarts use an atomic kill-and-relaunch so there's no port-handoff race. Service-log rotation runs as a separate per-host scheduled job; details (hostnames, service-manager labels, log-rotator paths) are operator-specific and live outside this repo.
