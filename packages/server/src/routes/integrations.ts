@@ -487,6 +487,7 @@ export function integrationRoutes(
     const installed = await performInstall(storage, salt, {
       apiKeyId: caller.apiKeyId,
       tenantId: caller.tenantId,
+      authMode: c.get("config").authMode,
       clientIp: c.get("clientIp") ?? null,
       integrationItemId: id,
       manifest: props.manifest,

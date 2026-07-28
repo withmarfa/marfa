@@ -44,6 +44,55 @@ function manifest(): IntegrationManifest {
   };
 }
 
+/**
+ * The Connection row the mint re-reads under the lifecycle lock. The
+ * stubs below never persist anything, so the read has to be answered
+ * with a row in the state the pipeline just created.
+ */
+function activeConnection(id: string): {
+  id: string;
+  type: string;
+  state: string;
+  tenant_id: string | null;
+  properties: Record<string, unknown>;
+} {
+  return {
+    id,
+    type: "system.connection",
+    state: "active",
+    tenant_id: null,
+    properties: { kind: "integration", status: "active" },
+  };
+}
+
+/**
+ * A `CoordinationStore` that records the bracket around whatever runs
+ * inside it. Recording both edges is what lets the sequence assertions
+ * below say the credential mint happens *under* the lock rather than
+ * merely near it.
+ */
+function lockRecorder(calls: string[]): {
+  withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
+} {
+  return {
+    async withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+      calls.push(`lock:${name}`);
+      try {
+        return await fn();
+      } finally {
+        calls.push(`unlock:${name}`);
+      }
+    },
+    withJobLock<T>(
+      _name: string,
+      fn: () => Promise<T>,
+    ): Promise<T | undefined> {
+      return fn();
+    },
+  };
+}
+
 describe("performInstall — happy path", () => {
   it("creates connection + credential + activity and returns their ids", async () => {
     const adminKey = await ctx.storage.keys
@@ -70,6 +119,7 @@ describe("performInstall — happy path", () => {
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
       tenantId: undefined,
+      authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
       label: "direct install",
@@ -93,7 +143,9 @@ describe("performInstall — compensating writes on activity failure", () => {
     // full Storage implementation — just enough surface for performInstall
     // to traverse: items.create (succeeds for connection), keys.createRuntimeCredential
     // (succeeds), items.create (THROWS for activity), then the rollback
-    // must fire for credential.revoke + items.transition(connection, trashed).
+    // must fire for credential.revoke + items.transition(connection,
+    // revoked). `revoked` because `system.*` types carry the bounded
+    // lifecycle and have no trash state.
     const calls: string[] = [];
     const stubStorage = {
       items: {
@@ -110,6 +162,8 @@ describe("performInstall — compensating writes on activity failure", () => {
           calls.push("create:activity:throw");
           throw new Error("forced activity failure");
         },
+        get: (id: string): Promise<unknown> =>
+          Promise.resolve(activeConnection(id)),
         transition: async (id: string, state: string): Promise<unknown> => {
           calls.push(`transition:${id}:${state}`);
           return await Promise.resolve(null);
@@ -125,6 +179,7 @@ describe("performInstall — compensating writes on activity failure", () => {
           await Promise.resolve();
         },
       },
+      coordination: lockRecorder(calls),
       audit: {
         log: async (): Promise<void> => {
           calls.push("audit:log");
@@ -140,6 +195,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         {
           apiKeyId: "api_admin",
           tenantId: undefined,
+          authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
           label: "rollback test",
@@ -147,13 +203,16 @@ describe("performInstall — compensating writes on activity failure", () => {
       ),
     ).rejects.toThrow(/forced activity failure/);
 
-    // Rollback fires in reverse: credential revoke, then connection trash.
+    // Rollback fires in reverse: credential revoke, then the Connection
+    // to its terminal state. The lock brackets the mint and nothing else.
     expect(calls).toEqual([
       "create:connection",
+      "lock:connection-lifecycle:itm_conn_fake",
       "create:credential",
+      "unlock:connection-lifecycle:itm_conn_fake",
       "create:activity:throw",
       "revoke:api_cred_fake",
-      "transition:itm_conn_fake:trashed",
+      "transition:itm_conn_fake:revoked",
     ]);
   });
 
@@ -177,6 +236,8 @@ describe("performInstall — compensating writes on activity failure", () => {
             properties: {},
           });
         },
+        get: (id: string): Promise<unknown> =>
+          Promise.resolve(activeConnection(id)),
         transition: async (id: string, state: string): Promise<unknown> => {
           calls.push(`transition:${id}:${state}`);
           return await Promise.resolve(null);
@@ -192,6 +253,7 @@ describe("performInstall — compensating writes on activity failure", () => {
           await Promise.resolve();
         },
       },
+      coordination: lockRecorder(calls),
       audit: {
         log: (): Promise<void> => {
           calls.push("audit:log:throw");
@@ -207,6 +269,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         {
           apiKeyId: "api_admin",
           tenantId: undefined,
+          authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
           label: "audit-failure test",
@@ -215,14 +278,16 @@ describe("performInstall — compensating writes on activity failure", () => {
     ).rejects.toThrow(/audit DB unavailable/);
 
     // The audit failure throws, the rollback walks the stack, and the
-    // connection is trashed.
+    // Connection reaches its terminal state.
     expect(calls).toEqual([
       "create:connection",
+      "lock:connection-lifecycle:itm_conn_audit",
       "create:credential",
+      "unlock:connection-lifecycle:itm_conn_audit",
       "create:activity",
       "audit:log:throw",
       "revoke:api_cred_audit",
-      "transition:itm_conn_audit:trashed",
+      "transition:itm_conn_audit:revoked",
     ]);
   });
 
@@ -246,6 +311,8 @@ describe("performInstall — compensating writes on activity failure", () => {
             properties: {},
           });
         },
+        get: (id: string): Promise<unknown> =>
+          Promise.resolve(activeConnection(id)),
         transition: (id: string, state: string): Promise<unknown> => {
           calls.push(`transition:${id}:${state}`);
           return Promise.resolve(null);
@@ -261,6 +328,7 @@ describe("performInstall — compensating writes on activity failure", () => {
           return Promise.resolve();
         },
       },
+      coordination: lockRecorder(calls),
       audit: {
         log: (): Promise<void> => Promise.resolve(),
       },
@@ -273,6 +341,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         {
           apiKeyId: "api_admin",
           tenantId: undefined,
+          authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
           label: "rollback-reinvoke test",
@@ -282,8 +351,10 @@ describe("performInstall — compensating writes on activity failure", () => {
 
     expect(calls).toEqual([
       "create:system.connection",
+      "lock:connection-lifecycle:itm_1",
       "create:credential:throw",
-      "transition:itm_1:trashed",
+      "unlock:connection-lifecycle:itm_1",
+      "transition:itm_1:revoked",
     ]);
   });
 });
@@ -360,6 +431,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
       tenantId: undefined,
+      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
       label: "with-credential-ref",
@@ -391,6 +463,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       performInstall(ctx.storage, "test-salt", {
         apiKeyId: adminKey.id,
         tenantId: undefined,
+        authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
         label: "bad-credential-ref",
@@ -418,6 +491,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       performInstall(ctx.storage, "test-salt", {
         apiKeyId: adminKey.id,
         tenantId: undefined,
+        authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
         label: "wrong-kind-credential-ref",
@@ -450,6 +524,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
       tenantId: undefined,
+      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
       label: "with-api-token-credential",
@@ -473,6 +548,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
       tenantId: undefined,
+      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
       label: "no-credential-ref",

@@ -97,6 +97,7 @@ async function installScheduled(
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
     tenantId: undefined,
+    authMode: "keys",
     integrationItemId: integration.id,
     manifest,
     label: `scheduled uninstall test ${Date.now().toString()}`,

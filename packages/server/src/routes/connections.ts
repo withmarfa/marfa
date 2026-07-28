@@ -417,6 +417,7 @@ export function connectionRoutes(
     const result = await performInstall(storage, salt, {
       apiKeyId: apiKey.id,
       tenantId,
+      authMode: c.get("config").authMode,
       integrationItemId: integration.id,
       manifest: props.manifest,
       label: effectiveLabel,

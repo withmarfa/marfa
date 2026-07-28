@@ -72,10 +72,7 @@ function manifest(name: string): IntegrationManifest {
   };
 }
 
-async function makeConnection(
-  tenantId: string | undefined,
-  name = INTEGRATION,
-): Promise<string> {
+async function makeIntegration(name = INTEGRATION): Promise<string> {
   const m = manifest(name);
   const integration = await ctx.storage.items.create(
     {
@@ -90,6 +87,14 @@ async function makeConnection(
     },
     undefined,
   );
+  return integration.id;
+}
+
+async function makeConnection(
+  tenantId: string | undefined,
+  name = INTEGRATION,
+): Promise<string> {
+  const integrationId = await makeIntegration(name);
   const connection = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -97,7 +102,7 @@ async function makeConnection(
         kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
-        integration_ref: integration.id,
+        integration_ref: integrationId,
       },
     },
     tenantId,
@@ -144,6 +149,35 @@ describe("a runtime credential is fenced by a tenant", () => {
     const body = (await res.json()) as ErrorResponse;
     expect(body.error.code).toBe("forbidden");
     expect(body.error.message).toMatch(/no tenant/i);
+  });
+
+  it("refuses the install pipeline's mint for a tenant-less Connection", async () => {
+    // The third mint path. A platform admin's credential carries no
+    // tenant, so `POST /connections/install` stamps none on the
+    // Connection it creates and the credential minted for it comes out
+    // at the platform tier. The refusal has to reach this door too, or
+    // the rule is enforced on two of three.
+    const integrationId = await makeIntegration("acme.install-fence");
+    const res = await request(ctx.app, "POST", "/connections/install", {
+      key: ctx.adminKey,
+      body: { integration_id: integrationId },
+    });
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.message).toMatch(/no tenant/i);
+
+    // The compensating writes ran: nothing is left installed, and no
+    // credential outlives the refusal.
+    const connections = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(
+      connections.data.filter(
+        (c) => c.properties.integration_ref === integrationId,
+      ),
+    ).toHaveLength(0);
   });
 
   it("keeps minting for a Connection that has one", async () => {

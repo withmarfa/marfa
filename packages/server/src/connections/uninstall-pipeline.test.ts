@@ -75,6 +75,7 @@ async function installFresh(): Promise<{
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
     tenantId: undefined,
+    authMode: "keys",
     integrationItemId: integration.id,
     manifest: {
       ...manifest(),
