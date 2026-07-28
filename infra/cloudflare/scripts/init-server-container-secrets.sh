@@ -9,8 +9,11 @@
 #   ./infra/cloudflare/scripts/init-server-container-secrets.sh <staging|prod>
 #
 # Reads values from the calling shell's environment (source your per-machine
-# secrets file first). Secret slots use consumer-scoped names; the source env
-# vars carry the *_MARFA / *_STAGING / *_PROD developer suffix.
+# secrets file first). Both the secret slots and the source env vars use
+# consumer-scoped names, so a deployer with no knowledge of any particular
+# operator's shell can run this. A handful of suffixed legacy names are still
+# accepted as fallbacks, marked below; they are a compatibility shim and new
+# deployments should not rely on them.
 #
 # The DATABASE_URL Worker secret is the POOLED (PgBouncer) endpoint and is
 # resolved PER-ENV, with a backward-compat fallback to the legacy shared
@@ -24,22 +27,23 @@
 #
 # MARFA_DATABASE_URL_DIRECT is the DIRECT (unpooled, session-mode) endpoint,
 # used by the app ONLY for streaming RLS: its session-level SET ROLE must not
-# run on the transaction-mode pooled endpoint, where the role can strand on a
-# shared backend and leak into a later write. Resolved per-env; OPTIONAL (the
-# app falls back to the pooled client if unset, with the role-leak risk):
+# run on the transaction-mode pooled endpoint, where the role strands on a
+# shared backend and is inherited by later, unrelated queries. Resolved per-env
+# and REQUIRED — the container declares MARFA_DB_POOL_MODE=transaction, so the
+# server refuses to boot without this:
 #
 #   MARFA_DATABASE_URL_DIRECT  staging  <- NEON_DATABASE_URL_STAGING || NEON_DATABASE_URL_MARFA
 #   MARFA_DATABASE_URL_DIRECT  prod     <- NEON_DATABASE_URL_PROD
 #
 #   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
 #   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
-#   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
+#   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN
 #   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer <per-env PostHog token>"
 #     staging <- POSTHOG_PROJECT_KEY_STAGING
 #     prod    <- POSTHOG_PROJECT_KEY_PROD || POSTHOG_PROJECT_KEY_MARFA (legacy)
 #     (per-env so staging and prod telemetry land in separate PostHog projects)
 # Optional (set only when the source var is present):
-#   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN_MARFA      (only if MARFA_SET_QUEUES=1)
+#   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN            (only if MARFA_SET_QUEUES=1)
 #   CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS <- CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
 #   MARFA_RUNTIME_BROKER_KEY    <- MARFA_RUNTIME_BROKER_KEY
 #   S3_ACCESS_KEY_ID            <- R2_ACCESS_KEY_ID                (R2 S3-API creds)
@@ -89,15 +93,33 @@ if [[ -z "$POOLED_DB_URL" ]]; then
 fi
 
 # Resolve the DIRECT (session-mode, unpooled) DB URL per-env for streaming RLS.
-# Optional: if unset, the app falls back to the pooled client (the role-switch
-# can then strand on the pooler — only safe off a transaction-mode pooler).
+# Required: the container sets MARFA_DB_POOL_MODE=transaction, and the server
+# fails closed at boot rather than reusing the pooled client for a session-level
+# role switch. Fail here instead, where the operator can act on it.
 if [[ "$ENV_NAME" == "staging" ]]; then
   DIRECT_DB_URL="${NEON_DATABASE_URL_STAGING:-${NEON_DATABASE_URL_MARFA:-}}"
 else
   DIRECT_DB_URL="${NEON_DATABASE_URL_PROD:-}"
 fi
+if [[ -z "$DIRECT_DB_URL" ]]; then
+  echo "error: no direct (unpooled) Neon URL resolved for $ENV_NAME" >&2
+  if [[ "$ENV_NAME" == "staging" ]]; then
+    echo "  set NEON_DATABASE_URL_STAGING (or legacy NEON_DATABASE_URL_MARFA)" >&2
+  else
+    echo "  set NEON_DATABASE_URL_PROD" >&2
+  fi
+  exit 1
+fi
 
-: "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
+# Consumer-scoped name first, so a deployer with no knowledge of any
+# particular operator's shell can run this. The suffixed name stays as a
+# fallback only.
+CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN_MARFA:-}}"
+if [[ -z "$CF_TOKEN" ]]; then
+  echo "error: no Cloudflare API token resolved" >&2
+  echo "  set CLOUDFLARE_API_TOKEN to a token with Workers write on the target account" >&2
+  exit 1
+fi
 
 # Resolve the PostHog ingestion token per-env so staging and prod telemetry land
 # in their OWN PostHog projects. Prod falls back to the legacy shared name so
@@ -127,12 +149,12 @@ put_secret DATABASE_URL "$POOLED_DB_URL"
 put_secret MARFA_DATABASE_URL_DIRECT "$DIRECT_DB_URL"
 put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
 put_secret API_KEY_SALT "$SALT"
-put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CF_TOKEN"
 put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_TOKEN}"
 
 # Optional — reactive runs / schedule arming / R2 blobs.
 if [[ "${MARFA_SET_QUEUES:-}" == "1" ]]; then
-  put_secret CLOUDFLARE_QUEUES_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+  put_secret CLOUDFLARE_QUEUES_API_TOKEN "$CF_TOKEN"
   put_secret CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS "${CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS:-}"
 fi
 put_secret MARFA_RUNTIME_BROKER_KEY "${MARFA_RUNTIME_BROKER_KEY:-}"

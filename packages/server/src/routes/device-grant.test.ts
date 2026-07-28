@@ -499,13 +499,14 @@ describe("POST /auth/device/consent — approve / deny", () => {
     );
     expect(res.status).toBe(200);
 
-    // Tiny wait — audit.log is fire-and-forget.
-    await new Promise((r) => setTimeout(r, 50));
-
-    const audits = await ctx.storage.audit.list({
-      action: "auth.grant.created",
-      limit: 10,
-    });
+    // The audit insert is fire-and-forget, so poll for it rather than
+    // sleeping a fixed span: on a loaded Postgres run a single INSERT
+    // outlasts any figure short enough to be worth waiting.
+    const storage = ctx.storage;
+    const audits = await waitForAudit(
+      () => storage.audit.list({ action: "auth.grant.created", limit: 10 }),
+      (result) => result.data.length >= 1,
+    );
     expect(audits.data.length).toBe(1);
     const row = audits.data[0];
     expect(row?.resource_id).toBe(clientId);

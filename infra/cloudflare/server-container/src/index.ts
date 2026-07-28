@@ -43,6 +43,11 @@ interface Env {
   MARFA_OTEL_ENVIRONMENT?: string;
   // Secrets (wrangler secret put — not in wrangler config).
   DATABASE_URL?: string;
+  // Direct (unpooled, session-mode) endpoint on the same database as
+  // DATABASE_URL. Streaming RLS reserves from this one because it issues a
+  // session-level SET ROLE, which strands on a shared backend when it runs
+  // over the transaction-mode pooler DATABASE_URL points at.
+  MARFA_DATABASE_URL_DIRECT?: string;
   MARFA_AUTH_SECRET?: string;
   API_KEY_SALT?: string;
   MARFA_RUNTIME_BROKER_KEY?: string;
@@ -115,6 +120,11 @@ export class MarfaServerContainer extends Container<Env> {
   envVars = definedEnv({
     // Static (hosted) configuration.
     DB_DIALECT: "pg",
+    // The hosted DATABASE_URL is Neon's pooled (PgBouncer, transaction-mode)
+    // endpoint. Declaring that makes the server refuse to boot without a
+    // direct endpoint for streaming RLS, rather than quietly reusing the
+    // pooled client and stranding a role on a shared backend.
+    MARFA_DB_POOL_MODE: "transaction",
     AUTH_MODE: "hosted",
     MARFA_AUTH_ALLOW_SIGNUP: "true",
     MARFA_SEED_STARTER_CONTENT: "true",
@@ -142,6 +152,7 @@ export class MarfaServerContainer extends Container<Env> {
     MARFA_OTEL_ENVIRONMENT: cfEnv.MARFA_OTEL_ENVIRONMENT,
     // Secrets.
     DATABASE_URL: cfEnv.DATABASE_URL,
+    MARFA_DATABASE_URL_DIRECT: cfEnv.MARFA_DATABASE_URL_DIRECT,
     MARFA_AUTH_SECRET: cfEnv.MARFA_AUTH_SECRET,
     API_KEY_SALT: cfEnv.API_KEY_SALT,
     MARFA_RUNTIME_BROKER_KEY: cfEnv.MARFA_RUNTIME_BROKER_KEY,
