@@ -71,8 +71,13 @@ interface SubdomainKeys {
   preview_urls?: boolean;
 }
 
+interface IntegrationVars {
+  INTEGRATION_NAME?: string;
+}
+
 interface WranglerConfig extends SubdomainKeys {
-  env?: Record<string, SubdomainKeys>;
+  vars?: IntegrationVars;
+  env?: Record<string, SubdomainKeys & { vars?: IntegrationVars }>;
 }
 
 /** Every `wrangler.toml` under `integrations/`, found rather than listed. */
@@ -143,6 +148,65 @@ describe("integration Wrangler configs match the registry", () => {
       findIntegrationByDir(dir) !== undefined ||
       UNREGISTERED_DIRS.includes(dir);
     expect(known, `no registry entry for integrations/${dir}`).toBe(true);
+  });
+});
+
+/**
+ * `INTEGRATION_NAME` is the name a Worker's identity key is derived
+ * from, and it is the only place that name is written down twice.
+ *
+ * `infra/cloudflare/scripts/init-integration-worker-secrets.sh` reads it
+ * out of the config and sets `MARFA_WORKER_IDENTITY_KEY` to
+ * `HMAC-SHA256(root, <that value>)`. Both hops that check the key derive
+ * the expected value from the manifest name instead: the Worker sends
+ * `config.integrationName` (the manifest's `name`) in the
+ * `x-marfa-integration` header for the control plane to select a key by,
+ * and the control plane's own dispatch derives from the registry name it
+ * resolved the Service Binding under. The registry and the manifest are
+ * kept in step by review and by each integration's `manifest.test.ts`;
+ * this variable is not in that loop.
+ *
+ * So a divergence here is a Worker holding a key nobody computes. Every
+ * lease, arm-schedule, disarm-schedule and verify answers 401, and it
+ * only starts answering that way after the next identity-root rotation
+ * and redeploy — long after the edit that caused it. Nothing else in the
+ * repository reads the variable, so nothing else can notice.
+ *
+ * Driven from the registry rather than from the walk, because the
+ * invariant is a comparison against a registry entry and a config
+ * without one has nothing to be compared to. The orphan direction is
+ * covered above by "belongs to a known integration".
+ */
+describe("every Worker derives its identity from its registry name", () => {
+  const WORKER_INTEGRATIONS = IN_TREE_INTEGRATIONS.filter((i) => i.hasWorker);
+
+  it("has integrations to check", () => {
+    // Vacuity guard. An empty registry filter would leave the assertion
+    // below iterating nothing and passing.
+    expect(WORKER_INTEGRATIONS.length).toBeGreaterThan(0);
+  });
+
+  it.each(WORKER_INTEGRATIONS)("$name", ({ name, dirName }) => {
+    const config = parseToml(
+      readFileSync(join(INTEGRATIONS_ROOT, dirName, "wrangler.toml"), "utf8"),
+    ) as WranglerConfig;
+
+    // The provisioning script takes the first occurrence in the file,
+    // which is this one. It is also the value inherited by any env that
+    // omits its own.
+    expect(config.vars?.INTEGRATION_NAME, "[vars].INTEGRATION_NAME").toBe(name);
+
+    // Per-env blocks restate it, and a restatement that disagrees is a
+    // lie in the file even while the script keeps deriving from the
+    // top-level value — until a later edit drops that one and the
+    // script's first-match reaches an env block instead.
+    for (const [envName, env] of Object.entries(config.env ?? {})) {
+      if (env.vars?.INTEGRATION_NAME === undefined) continue;
+      expect(
+        env.vars.INTEGRATION_NAME,
+        `[env.${envName}.vars].INTEGRATION_NAME`,
+      ).toBe(name);
+    }
   });
 });
 

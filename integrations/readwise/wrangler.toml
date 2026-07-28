@@ -33,7 +33,7 @@ workers_dev = false
 preview_urls = false
 
 [vars]
-INTEGRATION_NAME = "readwise"
+INTEGRATION_NAME = "readwise.highlights"
 MANIFEST_CRON = "0 * * * *"
 ENVIRONMENT = "dev"
 
@@ -52,7 +52,7 @@ workers_dev = false
 preview_urls = false
 
 [env.staging.vars]
-INTEGRATION_NAME = "readwise"
+INTEGRATION_NAME = "readwise.highlights"
 MANIFEST_CRON = "0 0 * * *"
 ENVIRONMENT = "staging"
 
@@ -86,7 +86,7 @@ workers_dev = false
 preview_urls = false
 
 [env.prod.vars]
-INTEGRATION_NAME = "readwise"
+INTEGRATION_NAME = "readwise.highlights"
 MANIFEST_CRON = "0 * * * *"
 ENVIRONMENT = "prod"
 
