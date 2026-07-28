@@ -26,8 +26,8 @@
  * itself lives, deliberately compiles against Workers types only.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,22 +35,36 @@ const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const INTEGRATIONS_ROOT = resolve(REPO_ROOT, "integrations");
 
 /**
- * The standard entry path. A deployable that answers by some other
- * route has no `src/worker.ts` and is out of scope here by
- * construction: the withmarfa-inbox Email Worker, whose entry is
- * `src/index.ts` and whose only handler is `email`, is the one such
- * deployable in the tree.
+ * The standard entry filename. A deployable that answers by some other
+ * route has no `worker.ts` and is out of scope here by construction:
+ * the withmarfa-inbox Email Worker, whose entry is `src/index.ts` and
+ * whose only handler is `email`, is the one such deployable today.
  */
-const ENTRY = join("src", "worker.ts");
+const ENTRY = "worker.ts";
 
+/**
+ * Every `src/worker.ts` under `integrations/`, found by walking rather
+ * than by joining a known depth. Integrations are one level down today
+ * and the sibling Email Worker is two, so a per-Integration Worker
+ * nested the same way is a shape the tree already has, and a guard
+ * that only looks where it expects is the same blind spot as one that
+ * counts files instead of call sites.
+ */
 function workerEntries(): { label: string; path: string }[] {
   const found: { label: string; path: string }[] = [];
-  for (const entry of readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const path = join(INTEGRATIONS_ROOT, entry.name, ENTRY);
-    if (!existsSync(path)) continue;
-    found.push({ label: relative(REPO_ROOT, path), path });
-  }
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // Build output and installed packages carry other projects' code.
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
+        walk(path);
+      } else if (entry.name === ENTRY && dirname(path).endsWith(`${sep}src`)) {
+        found.push({ label: relative(REPO_ROOT, path), path });
+      }
+    }
+  };
+  walk(INTEGRATIONS_ROOT);
   return found.sort((a, b) => a.label.localeCompare(b.label));
 }
 
@@ -63,7 +77,7 @@ describe("per-Integration Worker entries use the gated bootstrap", () => {
     // passing against no Worker at all.
     expect(ENTRIES.length).toBeGreaterThan(0);
     expect(ENTRIES.map((e) => e.label)).toContain(
-      join("integrations", "_template", ENTRY),
+      join("integrations", "_template", "src", ENTRY),
     );
   });
 
