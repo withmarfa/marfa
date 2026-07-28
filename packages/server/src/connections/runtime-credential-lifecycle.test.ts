@@ -305,6 +305,220 @@ describe("a runtime credential speaks only for its own Connection", () => {
     expect(rows.data).toHaveLength(0);
   });
 
+  it("refuses to edit a sibling's activity row through the bulk door", async () => {
+    // `POST /items/bulk` in upsert mode reaches an existing row two
+    // ways, and only one of them is fenced by the credential's own
+    // source. Supplying `id` addresses any row in the tenant directly,
+    // so authorizing the body's claims leaves the update judged on what
+    // the caller says rather than on what it is about to overwrite —
+    // the same intent `PATCH` refuses, through a door that admitted it.
+    const tenant = await ctx.storage.tenants!.create("activity-bulk-patch");
+    const mine = await credentialFor(tenant.id, "acme.bulk-patch-mine");
+    const sibling = await credentialFor(tenant.id, "acme.bulk-patch-sibling");
+
+    const created = await request(ctx.app, "POST", "/items", {
+      key: sibling.key,
+      body: {
+        type: "system.activity",
+        properties: {
+          connection_id: sibling.connectionId,
+          severity: "info",
+          summary: "sync complete",
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const row = ((await created.json()) as { item: { id: string } }).item;
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        items: [
+          {
+            id: row.id,
+            type: "system.activity",
+            properties: {
+              connection_id: mine.connectionId,
+              severity: "action_required",
+              summary: "hijacked via bulk",
+            },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const after = await ctx.storage.items.get(row.id, tenant.id);
+    expect(after?.properties.connection_id).toBe(sibling.connectionId);
+    expect(after?.properties.severity).toBe("info");
+    expect(after?.properties.summary).toBe("sync complete");
+  });
+
+  it("refuses a bulk update whose claimed type is not the target row's", async () => {
+    // The type the batch entry declares is the caller's to choose, and
+    // the update path never uses it — the write lands on whatever type
+    // the addressed row already is. Authorizing the claim therefore
+    // checks a type nothing is about to be written to, and every gate
+    // keyed on the real type is skipped: the attribution check never
+    // runs because the claimed type is not `system.activity`.
+    const tenant = await ctx.storage.tenants!.create("activity-bulk-type");
+    const mine = await credentialFor(tenant.id, "acme.bulk-type-mine");
+    const sibling = await credentialFor(tenant.id, "acme.bulk-type-sibling");
+
+    const created = await request(ctx.app, "POST", "/items", {
+      key: sibling.key,
+      body: {
+        type: "system.activity",
+        properties: {
+          connection_id: sibling.connectionId,
+          severity: "info",
+          summary: "sync complete",
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const row = ((await created.json()) as { item: { id: string } }).item;
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        items: [
+          {
+            id: row.id,
+            // A type this credential genuinely holds write on, so the
+            // claim passes every check that reads it.
+            type: "core.note",
+            properties: { body: "clobbered" },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const after = await ctx.storage.items.get(row.id, tenant.id);
+    expect(after?.properties.summary).toBe("sync complete");
+    expect(after?.properties.body).toBeUndefined();
+  });
+
+  it("refuses a bulk update against a type the credential cannot write", async () => {
+    // Same claimed-type bypass, aimed at a row whose real type this
+    // credential could never write directly. `system.connection` needs a
+    // platform credential; naming `core.note` in the batch entry is what
+    // used to get past that.
+    const tenant = await ctx.storage.tenants!.create("connection-bulk-type");
+    const mine = await credentialFor(tenant.id, "acme.conn-type-mine");
+    const sibling = await credentialFor(tenant.id, "acme.conn-type-sibling");
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        items: [
+          {
+            id: sibling.connectionId,
+            type: "core.note",
+            properties: { status: "revoked" },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const after = await ctx.storage.items.get(sibling.connectionId, tenant.id);
+    expect(after?.properties.status).toBe("active");
+  });
+
+  it("refuses to re-attribute its own activity row through the bulk door", async () => {
+    // The post-merge half of the update check, reached past the gate on
+    // the entry's own claims: the row starts out this credential's, so
+    // nothing about it as it stands is wrong, and the claimed type is
+    // not `system.activity`, so the check on the entry never looks at
+    // the `connection_id` it carries. Only judging the merged result
+    // against the row's real type refuses it.
+    const tenant = await ctx.storage.tenants!.create("activity-bulk-reattr");
+    const mine = await credentialFor(tenant.id, "acme.bulk-reattr-mine");
+    const sibling = await credentialFor(tenant.id, "acme.bulk-reattr-sibling");
+
+    const created = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "system.activity",
+        properties: {
+          connection_id: mine.connectionId,
+          severity: "info",
+          summary: "sync complete",
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const row = ((await created.json()) as { item: { id: string } }).item;
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        items: [
+          {
+            id: row.id,
+            type: "core.note",
+            properties: { connection_id: sibling.connectionId },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const after = await ctx.storage.items.get(row.id, tenant.id);
+    expect(after?.properties.connection_id).toBe(mine.connectionId);
+  });
+
+  it("still lets a credential bulk-upsert its own activity row by id", async () => {
+    // The fix authorizes against the target row, so the legitimate
+    // upsert-by-id path a client takes when it already holds the row's
+    // id has to keep working.
+    const tenant = await ctx.storage.tenants!.create("activity-bulk-own");
+    const mine = await credentialFor(tenant.id, "acme.bulk-own");
+
+    const created = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "system.activity",
+        properties: {
+          connection_id: mine.connectionId,
+          severity: "info",
+          summary: "sync started",
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const row = ((await created.json()) as { item: { id: string } }).item;
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        items: [
+          {
+            id: row.id,
+            type: "system.activity",
+            properties: {
+              connection_id: mine.connectionId,
+              severity: "info",
+              summary: "sync complete",
+            },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { updated: number };
+      results: { outcome: string }[];
+    };
+    expect(body.counts.updated).toBe(1);
+    expect(body.results[0]?.outcome).toBe("updated");
+
+    const after = await ctx.storage.items.get(row.id, tenant.id);
+    expect(after?.properties.summary).toBe("sync complete");
+  });
+
   it("refuses to edit a sibling's activity row", async () => {
     const tenant = await ctx.storage.tenants!.create("activity-patch");
     const mine = await credentialFor(tenant.id, "acme.patch-mine");

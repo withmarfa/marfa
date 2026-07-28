@@ -469,8 +469,29 @@ async function processBulkItem(
      * written by a runtime credential is also checked against whose
      * activity it claims to be. Passing the item is what keeps both
      * call sites covered by construction rather than by remembering.
+     *
+     * Authorizes the *claim*, which is the whole story only on the
+     * create path, where the row that lands is the one the entry
+     * describes. An update is authorized by `checkUpdate` instead.
      */
     checkWrite: (raw: { type: string; properties?: unknown }) => void;
+    /**
+     * Authorization for the update half of an upsert, against the row
+     * being overwritten rather than the entry describing it.
+     *
+     * An entry that carries an `id` addresses a row directly, and the
+     * update ignores the entry's `type` entirely — the write lands on
+     * whatever type that row already is. Authorizing the claim therefore
+     * checks a type nothing is about to be written to: naming a type the
+     * credential does hold write on admits an update to a row of any
+     * other type, and skips every gate keyed on the real one. `PATCH
+     * /items/{id}` has no type in its body and so cannot make that
+     * mistake; this is what makes the two doors agree.
+     */
+    checkUpdate: (
+      existing: Item,
+      raw: { properties?: Record<string, unknown> },
+    ) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -484,7 +505,8 @@ async function processBulkItem(
     };
   }
 
-  const { mode, tenantId, stampedSource, atomic, checkWrite } = options;
+  const { mode, tenantId, stampedSource, atomic, checkWrite, checkUpdate } =
+    options;
 
   // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
   // recreates and needs a transaction so a validation failure rolls the
@@ -555,6 +577,22 @@ async function processBulkItem(
   // upsert + existing: update properties/tier/timestamp in place,
   // optionally reconciling edges.
   if (existing) {
+    // Authorize against the row about to be overwritten. The entry's own
+    // `type` was cleared for a create that is no longer happening.
+    try {
+      checkUpdate(existing, { properties: raw.properties });
+    } catch (err) {
+      if (err instanceof MarfaError) {
+        return {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: { code: err.code, message: err.message },
+        };
+      }
+      throw err;
+    }
+
     const updated = await storage.items.update(
       existing.id,
       {
@@ -653,6 +691,29 @@ export function bulkRoutes(storage: Storage) {
       requireTypeAccess(c, raw.type, "write");
       requireActivityAttribution(c.get("apiKey"), raw.type, raw.properties);
     };
+    // The update half of an upsert, judged on the target row. Mirrors
+    // `PATCH /items/{id}` gate for gate, because the two are the same
+    // operation reached through different doors: the row's real type
+    // decides the type gate, and the attribution check runs on the row
+    // both as it stands and as it will stand. Before, so a connector
+    // cannot edit a sibling's activity without naming a connection at
+    // all; after, so it cannot re-point its own. The merge mirrors the
+    // shallow property merge the storage layer performs.
+    const checkUpdate = (
+      existing: Item,
+      raw: { properties?: Record<string, unknown> },
+    ): void => {
+      const key = c.get("apiKey");
+      requireTypeAccess(c, existing.type, "write");
+      requireActivityAttribution(key, existing.type, existing.properties);
+      requireActivityAttribution(
+        key,
+        existing.type,
+        raw.properties !== undefined
+          ? { ...existing.properties, ...raw.properties }
+          : existing.properties,
+      );
+    };
 
     const body = c.req.valid("json");
     const items = body.items;
@@ -737,6 +798,7 @@ export function bulkRoutes(storage: Storage) {
           stampedSource,
           atomic,
           checkWrite,
+          checkUpdate,
         });
         if (atomic && result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw
