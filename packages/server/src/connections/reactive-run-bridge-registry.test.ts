@@ -1202,6 +1202,105 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
+  it("re-arms the retry when its backoff timer fires before the deadline", async () => {
+    const integrationName = "acme.unmapped-early-backoff-timer";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    const connectionId = await createConnection({
+      integrationRef: integrationId,
+    });
+
+    const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
+    let activityWriteAttempts = 0;
+    ctx.storage.items.create = async (input, tenantId) => {
+      const properties = input.properties as { summary?: string } | undefined;
+      if (
+        input.type === "system.activity" &&
+        properties?.summary?.includes(integrationName)
+      ) {
+        activityWriteAttempts++;
+        if (activityWriteAttempts === 1) {
+          throw new Error("forced first activity write failure");
+        }
+      }
+      return originalCreate(input, tenantId);
+    };
+
+    // Node fires a `setTimeout` up to a millisecond before its deadline, so a
+    // backoff callback can re-enter the write path while the deadline it just
+    // waited out still reads as in the future. Holding the bridge's clock
+    // still until this test releases it turns that sub-millisecond race into a
+    // fixed condition: the timer has fired, the deadline has not passed, and
+    // only a re-armed timer can carry the chain forward.
+    let now = 5_000;
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: (name) =>
+        name === integrationName ? null : "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: () => Promise.resolve(new Response(null, { status: 202 })),
+      maxAttempts: 1,
+      unmappedActivityRetryBaseMs: 20,
+      unmappedActivityRetryMaxMs: 20,
+      unmappedActivityNow: () => now,
+    });
+    expect(bridge).not.toBeNull();
+
+    try {
+      await bridge!.start();
+      const note = await originalCreate({
+        type: "core.note",
+        properties: { body: "backoff timer fires before the deadline" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 1,
+        ),
+      ).toBe(1);
+
+      // Give the 20 ms timer several chances to fire against the frozen clock.
+      // Every one of those firings is early, so none of them may write.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(activityWriteAttempts).toBe(1);
+
+      // Release the deadline without publishing anything else: the retry chain
+      // is the only thing left that can produce a second attempt.
+      now += 20;
+      expect(
+        await waitFor(
+          () => Promise.resolve(activityWriteAttempts),
+          (attempts) => attempts === 2,
+        ),
+      ).toBe(2);
+
+      const activity = await waitFor(
+        async () => {
+          const activities = await ctx.storage.items.list({
+            type: "system.activity",
+            limit: 100,
+          });
+          return activities.data.find((row) => {
+            const properties = row.properties as { summary?: string };
+            return properties.summary?.includes(integrationName);
+          });
+        },
+        (row) => row !== undefined,
+      );
+      expect(activity?.properties).toMatchObject({
+        connection_id: connectionId,
+      });
+    } finally {
+      ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+
   it("does not arm a retry after stop retires an in-flight write", async () => {
     const integrationName = "acme.unmapped-stop-during-write";
     const integrationId = await createIntegration(

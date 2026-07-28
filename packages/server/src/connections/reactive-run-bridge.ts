@@ -735,7 +735,28 @@ function handleUnmappedIntegration(
   }
 
   const now = config.unmappedActivityNow?.() ?? Date.now();
-  if (state.reported || state.inFlight || state.retryAfter > now) return null;
+  if (state.reported || state.inFlight) return null;
+  if (state.retryAfter > now) {
+    // The backoff timer's own callback lands here whenever Node fires it ahead
+    // of its deadline, which it is documented to do by up to a millisecond.
+    // The callback has already cleared `retryTimer`, so returning without
+    // re-arming would strand the chain: no further event is guaranteed to
+    // arrive, and the alert would never be written. Re-arm for whatever wait
+    // is left, and only when no timer is already holding the chain — an event
+    // arriving mid-backoff must still be turned away without a write.
+    if (!state.retryTimer) {
+      armUnmappedActivityRetry(
+        key,
+        state,
+        tenantId,
+        states,
+        config,
+        storage,
+        state.retryAfter - now,
+      );
+    }
+    return null;
+  }
 
   const attempt = (async (): Promise<void> => {
     try {
@@ -758,23 +779,15 @@ function handleUnmappedIntegration(
         `[reactive-run-bridge] unmapped-integration activity write failed for ${entry.integration_name}:`,
         err instanceof Error ? err.message : String(err),
       );
-      if (states.get(key) !== state) return;
-      if (state.retryTimer) clearTimeout(state.retryTimer);
-      state.retryTimer = setTimeout(() => {
-        state.retryTimer = null;
-        if (states.get(key) !== state || state.reported) return;
-        if (config.resolveQueueUrl(entry.integration_name) !== null) {
-          states.delete(key);
-          return;
-        }
-        void handleUnmappedIntegration(
-          state.entry,
-          tenantId,
-          states,
-          config,
-          storage,
-        );
-      }, retryDelay);
+      armUnmappedActivityRetry(
+        key,
+        state,
+        tenantId,
+        states,
+        config,
+        storage,
+        retryDelay,
+      );
       // Don't crash the drainer over an activity-row write failure.
     } finally {
       state.inFlight = null;
@@ -782,6 +795,52 @@ function handleUnmappedIntegration(
   })();
   state.inFlight = attempt;
   return attempt;
+}
+
+/**
+ * Arm the backoff timer for one unmapped-integration alert retry.
+ *
+ * Shared by the failure path and by the backoff gate, which re-arms whenever a
+ * timer fires ahead of its own deadline. The callback re-enters
+ * `handleUnmappedIntegration` rather than writing directly, so every retry
+ * passes the same reported / in-flight / resolver checks a fresh event would.
+ *
+ * Arming is skipped once the state has left the registry: `stop()` retires
+ * every state, and a timer armed after that would outlive the bridge and write
+ * an alert for a connection nobody is watching any more.
+ */
+function armUnmappedActivityRetry(
+  key: string,
+  state: UnmappedActivityState,
+  tenantId: string | undefined,
+  states: Map<string, UnmappedActivityState>,
+  config: BridgeConfig,
+  storage: Storage,
+  delayMs: number,
+): void {
+  if (states.get(key) !== state) return;
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  state.retryTimer = setTimeout(
+    () => {
+      state.retryTimer = null;
+      if (states.get(key) !== state || state.reported) return;
+      // The operator may have closed the env-config gap in the meantime. A
+      // mapped integration needs no alert, so retire the state rather than
+      // writing one for a problem that no longer exists.
+      if (config.resolveQueueUrl(state.entry.integration_name) !== null) {
+        states.delete(key);
+        return;
+      }
+      void handleUnmappedIntegration(
+        state.entry,
+        tenantId,
+        states,
+        config,
+        storage,
+      );
+    },
+    Math.max(1, delayMs),
+  );
 }
 
 function unmappedActivityKey(
