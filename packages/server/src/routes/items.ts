@@ -5,6 +5,8 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
+  isValidTypePattern,
+  GLOBAL_TYPE_WILDCARD,
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
@@ -13,7 +15,6 @@ import {
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
-  getSourceFilter,
 } from "@withmarfa/shared";
 import type { Item, ItemState, Metadata } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -1194,9 +1195,20 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const callerKey = c.get("apiKey");
+    const tenantId = callerKey?.tenant_id;
     const allowedTypes = getTypeFilter(c);
-    const stats = await storage.items.stats(tenantId, allowedTypes);
+    // These counts summarize the listing, so they narrow with it.
+    const tenantConfig =
+      tenantId && storage.tenants
+        ? await storage.tenants.getConfig(tenantId)
+        : null;
+    const enforcement = resolveEnforcement(tenantConfig, callerKey);
+    const stats = await storage.items.stats(
+      tenantId,
+      allowedTypes,
+      enforcement.source_filter,
+    );
     return c.json(stats, 200);
   });
 
@@ -1206,7 +1218,13 @@ export function itemRoutes(storage: Storage) {
     const query = c.req.valid("query");
 
     const type = query.type;
-    if (type && !isValidTypeIdentifier(type) && !type.endsWith(".*")) {
+    // The value compiles into a `LIKE` predicate, so it has to clear the
+    // pattern grammar rather than a bare "ends with `.*`" shape check —
+    // otherwise `%.*` reaches the query as a SQL wildcard. The global `*` is
+    // rejected on top: "everything" is `GET /items` with no type at all, and
+    // a type filter that matches every type would slip past the per-type
+    // enforcement levers keyed off this parameter.
+    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
@@ -1276,17 +1294,16 @@ export function itemRoutes(storage: Storage) {
       tenantConfigForRead,
       callerKeyForRead,
     );
-    const sourcesFilter =
-      typeof type === "string"
-        ? (getSourceFilter(enforcementForRead, type) ?? undefined)
-        : undefined;
-
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
       source: query.source,
-      sources: sourcesFilter,
+      // The lever is decided per row from the row's own type, not from the
+      // `?type=` parameter: a bare listing, an ancestor wildcard, a tier
+      // filter and a state filter all reach a covered row without naming it,
+      // so keying off the request made a read-narrowing control optional.
+      source_filter: enforcementForRead.source_filter,
       tier,
       exclude_system_types: excludeSystemTypes,
       tags,

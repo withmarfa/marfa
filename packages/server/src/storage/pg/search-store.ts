@@ -1,8 +1,12 @@
 import { safeJsonParse } from "../json-utils.js";
-import { parseFilter, type SearchResult } from "@withmarfa/shared";
+import {
+  parseFilter,
+  typePatternToSql,
+  type SearchResult,
+} from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
-import { filterToRawSql } from "../filter-sql.js";
+import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { PgClient, PgDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -138,14 +142,6 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.tier = $${String(paramIdx++)}`);
     }
 
-    if (filters.sources && filters.sources.length > 0) {
-      const placeholders = filters.sources
-        .map(() => `$${String(paramIdx++)}`)
-        .join(", ");
-      params.push(...filters.sources);
-      conditions.push(`AND i.source IN (${placeholders})`);
-    }
-
     if (filters.exclude_system_types) {
       conditions.push(`AND i.type NOT LIKE 'system.%'`);
     }
@@ -163,16 +159,31 @@ export class PgSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return "1=1";
-          if (pattern.endsWith(".*")) {
-            params.push(pattern.slice(0, -1) + "%");
-            return `i.type LIKE $${String(paramIdx++)}`;
+          const { global, exact, descendantPattern } =
+            typePatternToSql(pattern);
+          if (global) return "1=1";
+          if (!exact) return "1=0";
+          if (!descendantPattern) {
+            params.push(exact);
+            return `i.type = $${String(paramIdx++)}`;
           }
-          params.push(pattern);
-          return `i.type = $${String(paramIdx++)}`;
+          params.push(exact, descendantPattern);
+          return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)} ESCAPE '\\')`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    const sourceLever = sourceFilterToRawSql(
+      filters.source_filter,
+      "pg",
+      "i",
+      paramIdx,
+    );
+    if (sourceLever) {
+      conditions.push(`AND ${sourceLever.clause}`);
+      params.push(...(sourceLever.params as (string | number)[]));
+      paramIdx = sourceLever.nextParamIdx;
     }
 
     if (filters.filter) {

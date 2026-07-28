@@ -1,7 +1,11 @@
 import { sql } from "drizzle-orm";
-import { parseFilter, type SearchResult } from "@withmarfa/shared";
+import {
+  parseFilter,
+  typePatternToSql,
+  type SearchResult,
+} from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
-import { filterToRawSql } from "../filter-sql.js";
+import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -79,12 +83,6 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.tier);
     }
 
-    if (filters.sources && filters.sources.length > 0) {
-      const placeholders = filters.sources.map(() => "?").join(", ");
-      conditions.push(`AND i.source IN (${placeholders})`);
-      params.push(...filters.sources);
-    }
-
     if (filters.exclude_system_types) {
       conditions.push("AND i.type NOT LIKE 'system.%'");
     }
@@ -106,16 +104,29 @@ export class SqliteSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          if (pattern === "*") return "1=1";
-          if (pattern.endsWith(".*")) {
-            params.push(pattern.slice(0, -1) + "%");
-            return "i.type LIKE ?";
+          const { global, exact, descendantPattern } =
+            typePatternToSql(pattern);
+          if (global) return "1=1";
+          if (!exact) return "1=0";
+          if (!descendantPattern) {
+            params.push(exact);
+            return "i.type = ?";
           }
-          params.push(pattern);
-          return "i.type = ?";
+          params.push(exact, descendantPattern);
+          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    const sourceLever = sourceFilterToRawSql(
+      filters.source_filter,
+      "sqlite",
+      "i",
+    );
+    if (sourceLever) {
+      conditions.push(`AND ${sourceLever.clause}`);
+      params.push(...sourceLever.params);
     }
 
     if (filters.filter) {

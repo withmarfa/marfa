@@ -5,7 +5,6 @@ import {
   ITEM_STATES,
   isValidTypeIdentifier,
   resolveEnforcement,
-  getSourceFilter,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -166,17 +165,13 @@ export function searchRoutes(storage: Storage) {
       tenantConfigForSearch,
       callerKeyForSearch,
     );
-    const sourcesFilter =
-      typeof type === "string"
-        ? (getSourceFilter(enforcementForSearch, type) ?? undefined)
-        : undefined;
-
     const results = await storage.search.search(q.trim(), {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
       tier: tierFilter,
-      sources: sourcesFilter,
+      // Per row, from the row's own type — see the note on `ItemFilters`.
+      source_filter: enforcementForSearch.source_filter,
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,

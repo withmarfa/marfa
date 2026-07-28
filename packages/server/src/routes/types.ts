@@ -5,6 +5,8 @@ import {
   getTypeSchema,
   listTypes,
   ALL_TYPES,
+  ALL_CONNECTOR_TYPES,
+  ALL_SYSTEM_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
   classifyNamespace,
@@ -29,8 +31,19 @@ import {
 // Constants & helpers
 // ---------------------------------------------------------------------------
 
-/** Check if a type is a built-in core type (from codegen, not user-registered). */
-const CORE_TYPE_IDS = new Set(ALL_TYPES.map((t) => t.id));
+/**
+ * Every platform-shipped type, across all three families. These come from
+ * codegen rather than a tenant registration, so `PUT` and `DELETE` refuse
+ * them: a tenant editing a shipped schema would change what the identifier
+ * means for every other tenant, and items already written against it.
+ *
+ * The set spans core, connector and system types deliberately — a connector
+ * type is no more mutable than a core one, and reading only `ALL_TYPES` here
+ * would leave the connector family editable.
+ */
+const SHIPPED_TYPE_IDS = new Set(
+  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((t) => t.id),
+);
 
 const MAX_INHERITANCE_DEPTH = 10;
 
@@ -488,10 +501,10 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    if (CORE_TYPE_IDS.has(id)) {
+    if (SHIPPED_TYPE_IDS.has(id)) {
       throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
-        `Cannot modify core types`,
+        `Cannot modify platform-shipped types`,
       );
     }
 
@@ -558,10 +571,10 @@ export function typeRoutes(storage: Storage) {
     // custom types; another tenant's id resolves as not-found.
     const tenantId = c.get("apiKey")?.tenant_id;
 
-    if (CORE_TYPE_IDS.has(id)) {
+    if (SHIPPED_TYPE_IDS.has(id)) {
       throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
-        `Cannot delete core types`,
+        `Cannot delete platform-shipped types`,
       );
     }
 

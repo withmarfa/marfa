@@ -22,12 +22,37 @@ export type FieldType =
   | "array"
   | "object";
 
+/**
+ * Semantic refinements on top of a `FieldType`. Four of them (`url`, `email`,
+ * `datetime`, `date`) have a first-class `FieldType` of the same name and
+ * normalize into `type`, so `{ type: "string", format: "url" }` and
+ * `{ type: "url" }` are the same declaration. The remaining two annotate a
+ * `string` field whose contents follow a published standard but which has no
+ * dedicated `FieldType`; they survive normalization as `format`.
+ */
+export type FieldFormat =
+  | "url"
+  | "email"
+  | "datetime"
+  | "date"
+  | "bcp47"
+  | "iso3166";
+
 export interface FieldDefinition {
   type: FieldType;
   description?: string;
   required?: boolean;
   enum_values?: string[];
   items_type?: string;
+  /**
+   * Semantic refinement of a `string` field. Only the annotation-only formats
+   * (`bcp47`, `iso3166`) survive here — the four formats that have a matching
+   * `FieldType` normalize into `type` instead, so there is exactly one way to
+   * read a field's shape. Carried through the registry and the type diff so a
+   * schema round-trips unchanged; value-level enforcement of the annotation
+   * formats is not applied at write time.
+   */
+  format?: FieldFormat;
   /**
    * Opt-out flag for full-text search indexing. When `false`, the field's
    * content is excluded from FTS — both the SQLite FTS5 `extra` column and
@@ -118,13 +143,14 @@ export interface TypeSchema {
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
   /**
-   * Sibling-type compatibility declaration. When set, this type asserts a
-   * structural-superset relationship with the named target — every required
-   * field on the target is present here with a matching shape. Server
-   * verifies at registration; mismatched claims are rejected with
+   * Sibling-type compatibility declarations. For each named target this type
+   * asserts a structural-superset relationship — every required field on the
+   * target is present here with a matching shape — so a reader that
+   * understands the target can read this type without knowing it. Server
+   * verifies every entry at registration; a mismatched claim is rejected with
    * `compatible_with_violation`.
    */
-  compatible_with?: string;
+  compatible_with?: string[];
 }
 
 /**

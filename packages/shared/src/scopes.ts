@@ -1,4 +1,6 @@
 import type { MetadataPermission, TypePermission } from "./types.js";
+import { isValidTypePattern } from "./validation.js";
+import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
 
 // ---------------------------------------------------------------------------
 // Scope parsing
@@ -41,13 +43,13 @@ export interface ParsedScope {
   oidcScope?: OidcScope;
 }
 
-// The bare `*` alternative admits the global wildcard scope (`*:read` /
-// `*:write`) — a single grant covering every item type, including runtime
-// `user.*` types that are never enumerated in the static scope allowlist.
-// It projects to a `{ "*": <verb> }` type-permission, which `resolveTypePermission`
-// matches against any type. `parent.*` subtree wildcards already match the
-// second alternative (they start with a letter).
-const SCOPE_RE = /^(\*|[a-z][a-z0-9_./*-]+):(read|write)$/;
+// Splits a type scope into its pattern and verb. The pattern half is only
+// shape-checked here — `isValidTypePattern` is the authority, so the scope
+// grammar and the type-identifier grammar can never drift apart. The bare `*`
+// pattern is the global wildcard: a single grant covering every item type,
+// including runtime `user.*` types that never appear in the static scope
+// allowlist.
+const SCOPE_RE = /^(\*|[a-z][a-z0-9_.*-]*):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
 const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
@@ -114,6 +116,7 @@ export function parseScope(scope: string): ParsedScope | null {
   const match = scope.match(SCOPE_RE);
   if (!match) return null;
   const typePattern = match[1] ?? "";
+  if (!isValidTypePattern(typePattern)) return null;
   return { typePattern, operation: match[2] as "read" | "write" };
 }
 
@@ -127,7 +130,8 @@ export function isValidScope(scope: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Expands wildcard scopes against a list of known type identifiers.
+ * Expands subtree-wildcard scopes against a list of known type identifiers, so
+ * the consent screen can name what a grant actually covers.
  * "core.media.*:read" → ["core.media:read", "core.media.book:read", ...]
  * Non-wildcard scopes pass through unchanged.
  */
@@ -142,10 +146,9 @@ export function expandWildcardScopes(
     const parsed = parseScope(scope);
     if (!parsed) continue;
 
-    if (parsed.typePattern.endsWith(".*")) {
-      const prefix = parsed.typePattern.slice(0, -1); // "core.media."
+    if (subtreeWildcardRoot(parsed.typePattern) !== null) {
       for (const type of knownTypes) {
-        if (type.startsWith(prefix) || type === prefix.slice(0, -1)) {
+        if (typeMatchesPattern(type, parsed.typePattern)) {
           const expanded = `${type}:${parsed.operation}`;
           if (!seen.has(expanded)) {
             seen.add(expanded);

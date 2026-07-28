@@ -1,4 +1,9 @@
 import type { TypePermission } from "./types.js";
+import {
+  GLOBAL_TYPE_WILDCARD,
+  subtreeWildcardRoot,
+  typeMatchesAnyPattern,
+} from "./type-patterns.js";
 
 // Full ISO 8601 with timezone (e.g. 2026-03-15T14:30:00Z)
 const STRICT_TIMESTAMP =
@@ -259,29 +264,49 @@ export function isValidTypeIdentifier(value: string): boolean {
   }
 }
 
+// A dotted run of identifier segments with no arity rule — the prefix half of
+// a subtree wildcard, which names a namespace rather than a concrete type.
+const TYPE_ID_PREFIX = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
+
+/**
+ * Returns true if the value is a valid *type pattern*: the global `*`, a
+ * subtree wildcard (`core.media.*`), or a concrete type identifier.
+ *
+ * The pattern grammar is the identifier grammar plus wildcards, and nothing
+ * else. Keeping the two in step matters because a scope string is where a
+ * pattern first enters the system: a scope loose enough to admit
+ * `core/note:read` or `core..note:read` would mint a permission-map key that
+ * can never match a real type, and the credential would look granted while
+ * resolving to nothing.
+ */
+export function isValidTypePattern(value: string): boolean {
+  if (value === "*") return true;
+  if (value.length > 128) return false;
+  if (value.endsWith(".*")) {
+    const root = value.slice(0, -2);
+    return root.length > 0 && TYPE_ID_PREFIX.test(root);
+  }
+  return isValidTypeIdentifier(value);
+}
+
 // ---------------------------------------------------------------------------
 // Type permission resolution
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the type matches any of the given patterns.
- * Patterns can be exact matches, prefix wildcards (core.media.*), or global (*).
+ * Returns true if the type matches any of the given patterns. Patterns are
+ * exact identifiers, subtree wildcards (`core.media.*`), or the global `*`.
+ * Matching semantics live in `type-patterns.ts`.
  */
 export function matchesTypePattern(type: string, patterns: string[]): boolean {
-  for (const pattern of patterns) {
-    if (pattern === "*") return true;
-    if (pattern === type) return true;
-    if (pattern.endsWith(".*") && type.startsWith(pattern.slice(0, -1))) {
-      return true;
-    }
-  }
-  return false;
+  return typeMatchesAnyPattern(type, patterns);
 }
 
 /**
  * Resolves the effective permission for a type against a permissions map.
- * Resolution order: exact match, then longest wildcard prefix, then global
- * wildcard (*), then implicit 'none'.
+ * Resolution order: exact match, then longest matching subtree wildcard, then
+ * the global wildcard, then implicit `none`. Subtree wildcards are
+ * parent-inclusive, so `core.media.*` also resolves `core.media`.
  */
 export function resolveTypePermission(
   type: string,
@@ -298,7 +323,7 @@ export function resolveTypePermission(
   let bestLength = 0;
 
   for (const [pattern, permission] of Object.entries(permissions)) {
-    if (pattern === "*") {
+    if (pattern === GLOBAL_TYPE_WILDCARD) {
       // Global wildcard — use only if nothing more specific matches
       if (bestLength === 0) {
         bestMatch = permission;
@@ -306,12 +331,12 @@ export function resolveTypePermission(
       continue;
     }
 
-    if (pattern.endsWith(".*")) {
-      const prefix = pattern.slice(0, -1);
-      if (type.startsWith(prefix) && prefix.length > bestLength) {
-        bestMatch = permission;
-        bestLength = prefix.length;
-      }
+    const root = subtreeWildcardRoot(pattern);
+    if (root === null) continue;
+    if (type !== root && !type.startsWith(`${root}.`)) continue;
+    if (root.length > bestLength) {
+      bestMatch = permission;
+      bestLength = root.length;
     }
   }
 
