@@ -152,6 +152,11 @@ fi
 
 # Shared / derived.
 export SERVER_INSTANCE_TYPE="standard-1"
+# Load-bearing, not a capacity choice. The OAuth consent flows serialize their
+# writes to a user's standing grant through an in-process mutex, which only
+# covers one process. Raise this and a permission the user just revoked can
+# come back, silently and without an error anywhere. Scaling out needs a
+# shared lock first — see the consent-skip notes in packages/server/AGENTS.md.
 export SERVER_MAX_INSTANCES="1"
 export V_EMAIL_FROM="Marfa <hello@mail.marfa.so>"
 export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"

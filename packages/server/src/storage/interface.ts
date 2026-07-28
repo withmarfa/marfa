@@ -1170,6 +1170,42 @@ export interface OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<readonly string[] | undefined>;
+  /**
+   * Overwrite the scope literals on the same `auth_oauth_consent` row
+   * `getPriorConsent` reads (most recent by `updated_at`), but only while
+   * that row still holds exactly `expectedScopes`. Returns true when the
+   * write landed, false when there was no row or its scopes had moved on.
+   *
+   * Exists for one caller: the silent re-authorization path in
+   * `routes/auth-consent.ts`. The OAuth Provider plugin rewrites the
+   * stored consent scopes to the *requested* set on every accept, so a
+   * narrower request against a wider standing grant would silently shrink
+   * what the user approved — with no interaction to authorize the
+   * narrowing. The route restores the wider set afterwards.
+   *
+   * The guard exists because `scopes` was read before the plugin ran, so
+   * it is only still the truth if nothing else has touched the grant
+   * since. Passing the value the plugin was told to write means a
+   * revocation or a narrowing that landed after that write is left alone
+   * instead of being overwritten by a stale set.
+   *
+   * **It narrows the window rather than closing it.** A competing write
+   * that lands *before* the plugin's own rewrite is erased by that
+   * rewrite, so the row still holds `expectedScopes` when the restoration
+   * arrives and the guard admits it. Serializing the whole read-decide-
+   * write sequence is what actually closes the race; the caller does that
+   * per (client, user) in-process, and this check is the fence that still
+   * stands when the competing write comes from another process.
+   *
+   * Not a general-purpose consent editor: widening a grant must go
+   * through the consent screen.
+   */
+  setConsentScopes(
+    clientId: string,
+    authUserId: string,
+    scopes: readonly string[],
+    expectedScopes: readonly string[],
+  ): Promise<boolean>;
   /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
    *  row keyed by the hashed token output of `storeTokens.hash` (which is
    *  `hashApiKey(token, salt)`), or null if the token isn't recognized or
