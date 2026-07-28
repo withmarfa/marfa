@@ -7,6 +7,7 @@ import {
   ErrorCode,
   isValidTypeIdentifier,
   ITEM_STATES,
+  resolveEnforcement,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 import * as tar from "tar-stream";
@@ -14,6 +15,7 @@ import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -162,7 +164,7 @@ export function exportRoutes(
 ) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(exportRoute, (c) => {
+  router.openapi(exportRoute, async (c) => {
     requireAuth(c);
 
     const query = c.req.valid("query");
@@ -198,8 +200,27 @@ export function exportRoutes(
       },
     });
 
+    // An export is a list read, so the tenant's read-narrowing lever applies
+    // to it. Leaving it out would make the control bypassable by swapping
+    // endpoint rather than by rewording the query.
+    const tenantConfigForExport =
+      tenantId && storage.tenants
+        ? await storage.tenants.getConfig(tenantId)
+        : null;
+    const sourceFilter = resolveEnforcement(
+      tenantConfigForExport,
+      c.get("apiKey"),
+    ).source_filter;
+
     if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobBackend, options, tenantId);
+      return handleArchiveExport(
+        c,
+        storage,
+        blobBackend,
+        options,
+        tenantId,
+        sourceFilter,
+      );
     }
 
     const type = query.type;
@@ -243,6 +264,7 @@ export function exportRoutes(
                 since,
                 until,
                 allowed_types: allowedTypes,
+                source_filter: sourceFilter,
                 limit: 200,
                 cursor,
               });
@@ -314,6 +336,8 @@ async function handleArchiveExport(
   /** Already resolved by the route handler — passed in rather than
    *  re-resolved so the tenant decision happens exactly once per request. */
   tenantId: string | undefined,
+  /** The tenant's `source_filter` lever, resolved alongside `tenantId`. */
+  sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
@@ -349,6 +373,7 @@ async function handleArchiveExport(
           since,
           until,
           allowed_types: allowedTypes,
+          source_filter: sourceFilter,
           limit: 200,
           cursor,
         });

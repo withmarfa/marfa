@@ -6,7 +6,7 @@ import {
 } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
-import { filterToRawSql } from "../filter-sql.js";
+import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { PgClient, PgDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -180,6 +180,18 @@ export class PgSearchStore implements SearchStore {
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    const sourceLever = sourceFilterToRawSql(
+      filters.source_filter,
+      "pg",
+      "i",
+      paramIdx,
+    );
+    if (sourceLever) {
+      conditions.push(`AND ${sourceLever.clause}`);
+      params.push(...(sourceLever.params as (string | number)[]));
+      paramIdx = sourceLever.nextParamIdx;
     }
 
     if (filters.filter) {

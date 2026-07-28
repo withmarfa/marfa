@@ -29,7 +29,8 @@ import {
   typeSubtreeToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
-import { filterToSqlConditions } from "../filter-sql.js";
+import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import type {
   Item,
   CreateItemInput,
@@ -469,6 +470,13 @@ export class PgItemStore implements ItemStore {
       const clause = allowedTypesCondition(filters.allowed_types);
       if (clause) conditions.push(clause);
     }
+
+    const sourceLever = sourceFilterToSql(
+      filters.source_filter,
+      items.type,
+      items.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
@@ -944,6 +952,7 @@ export class PgItemStore implements ItemStore {
   async stats(
     tenantId?: string,
     allowedTypes?: string[],
+    sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>> {
     const conditions = [];
     if (tenantId) {
@@ -951,6 +960,14 @@ export class PgItemStore implements ItemStore {
     }
     const typeClause = allowedTypesCondition(allowedTypes);
     if (typeClause) conditions.push(typeClause);
+    // Counts have to agree with the listing they summarize, so the read
+    // lever applies here too.
+    const sourceLever = sourceFilterToSql(
+      sourceFilter,
+      items.type,
+      items.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
 
     // Use ::int (matches sibling counters in version-store, webhook-store,
     // type-store). ::bigint is serialized as a string by node-postgres, which

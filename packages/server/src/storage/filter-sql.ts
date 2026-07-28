@@ -9,6 +9,7 @@
  */
 
 import { sql, type SQL } from "drizzle-orm";
+import { typeSubtreeToSql } from "@withmarfa/shared";
 import type {
   FilterExpression,
   FilterCondition,
@@ -747,4 +748,142 @@ export function filterToRawSql(
       : `(${fragments.join(joiner)})`;
 
   return { clause, params, nextParamIdx: paramIdx };
+}
+
+// ---------------------------------------------------------------------------
+// The `source_filter` enforcement lever
+// ---------------------------------------------------------------------------
+
+/**
+ * The lever's configured shape, as the storage layer consumes it: for each
+ * listed type, reads return only rows whose `source` is in `sources`.
+ */
+export interface SourceFilterSettings {
+  types: string[];
+  sources: string[];
+}
+
+/**
+ * Which configured entries the predicate has to compile, pre-decomposed so
+ * the two emitters below bind parameters in their own order.
+ *
+ * A configured identifier covers its subtree, because that is what a read of
+ * that identifier has always selected: `?type=core.note` returns
+ * `core.note.private` too, so a lever listing `core.note` that skipped the
+ * subtype would narrow only part of the view it is meant to narrow.
+ */
+function decomposeCoveredTypes(types: string[]): {
+  global: boolean;
+  pairs: { exact: string; descendantPattern: string }[];
+} {
+  const pairs: { exact: string; descendantPattern: string }[] = [];
+  for (const configured of types) {
+    const { global, exact, descendantPattern } = typeSubtreeToSql(configured);
+    if (global) return { global: true, pairs: [] };
+    if (exact !== null && descendantPattern !== null) {
+      pairs.push({ exact, descendantPattern });
+    }
+  }
+  return { global: false, pairs };
+}
+
+/**
+ * The `source_filter` lever as a row predicate, for the Drizzle query path.
+ *
+ * The lever is per-type: a covered row must carry an approved source, and
+ * every row it does not cover passes untouched. Coverage is decided from the
+ * row's own type rather than from the request's `?type=` parameter, which is
+ * what stops a caller switching the control off by broadening the query — a
+ * bare listing, an ancestor wildcard, a tier filter and a state filter all
+ * select a covered row without naming its type.
+ *
+ * Returns undefined when the lever is off for every type it lists, so callers
+ * push the result only when it is present.
+ */
+export function sourceFilterToSql(
+  filter: SourceFilterSettings | undefined,
+  typeCol: unknown,
+  sourceCol: unknown,
+): SQL | undefined {
+  if (!filter) return undefined;
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  if (!global && pairs.length === 0) return undefined;
+
+  const covered = global
+    ? sql`1=1`
+    : pairs
+        .map(
+          (p) =>
+            sql`(${typeCol} = ${p.exact} OR ${typeCol} LIKE ${p.descendantPattern} ESCAPE '\\')`,
+        )
+        .reduce(
+          (acc, clause, i) => (i === 0 ? clause : sql`${acc} OR ${clause}`),
+          sql``,
+        );
+
+  // An empty source list approves nothing, so covered rows drop out entirely.
+  // Emitting `IN ()` instead is a syntax error on both dialects.
+  if (filter.sources.length === 0) return sql`NOT (${covered})`;
+
+  const list = filter.sources
+    .map((s) => sql`${s}`)
+    .reduce(
+      (acc, value, i) => (i === 0 ? value : sql`${acc}, ${value}`),
+      sql``,
+    );
+  return sql`(NOT (${covered}) OR ${sourceCol} IN (${list}))`;
+}
+
+/**
+ * The same predicate for the raw-SQL query path the search stores build.
+ *
+ * Returns null when the lever is off, mirroring `sourceFilterToSql`'s
+ * undefined. The clause is unparenthesized at the top level; callers append
+ * it with their own `AND `.
+ */
+export function sourceFilterToRawSql(
+  filter: SourceFilterSettings | undefined,
+  dialect: SqlDialect,
+  tableAlias: string,
+  startParamIdx = 1,
+): RawSqlResult | null {
+  if (!filter) return null;
+  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  if (!global && pairs.length === 0) return null;
+
+  const params: unknown[] = [];
+  let idx = startParamIdx;
+  const typeCol = `${tableAlias}.type`;
+
+  let covered: string;
+  if (global) {
+    covered = "1=1";
+  } else {
+    covered = pairs
+      .map((p) => {
+        const exactPh = placeholder(dialect, idx++);
+        params.push(p.exact);
+        const likePh = placeholder(dialect, idx++);
+        params.push(p.descendantPattern);
+        return `(${typeCol} = ${exactPh} OR ${typeCol} LIKE ${likePh}${LIKE_ESCAPE_CLAUSE})`;
+      })
+      .join(" OR ");
+  }
+
+  if (filter.sources.length === 0) {
+    return { clause: `NOT (${covered})`, params, nextParamIdx: idx };
+  }
+
+  const list = filter.sources
+    .map((s) => {
+      const ph = placeholder(dialect, idx++);
+      params.push(s);
+      return ph;
+    })
+    .join(", ");
+  return {
+    clause: `(NOT (${covered}) OR ${tableAlias}.source IN (${list}))`,
+    params,
+    nextParamIdx: idx,
+  };
 }

@@ -24,6 +24,7 @@ import type {
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { SourceFilterSettings } from "./filter-sql.js";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -110,6 +111,11 @@ export interface ItemFilters {
    *  `source` is in the array. `source` and `sources` may both be set;
    *  the single-source filter is AND'd with the multi-source filter. */
   sources?: string[];
+  /** The tenant's `source_filter` enforcement lever, applied per row: a row
+   *  whose type the lever lists must carry an approved source, every other
+   *  row passes. Distinct from `sources`, which narrows the whole result set
+   *  regardless of type. */
+  source_filter?: SourceFilterSettings;
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
   /** When true, items whose type starts with `system.` are excluded from
@@ -136,6 +142,8 @@ export interface SearchFilters {
   tier?: "library" | "feed";
   /** Multi-source filter. Narrows results to items whose `source` is in the array. */
   sources?: string[];
+  /** Mirrors `ItemFilters.source_filter`. */
+  source_filter?: SourceFilterSettings;
   /** Mirrors `ItemFilters.exclude_system_types`. */
   exclude_system_types?: boolean;
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
@@ -286,6 +294,7 @@ export interface ItemStore {
   stats(
     tenantId?: string,
     allowedTypes?: string[],
+    sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>>;
   /**
    * Hard-delete every trashed item whose `updated_at` is strictly older

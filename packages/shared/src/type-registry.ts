@@ -176,8 +176,14 @@ export function getSourceAllowlist(
 }
 
 /**
- * Returns the source-filter list for the given type, or null when the lever
- * is off. Callers narrow read results to items whose source is in the array.
+ * Returns the source-filter list configured for exactly this type, or null
+ * when the lever does not list it.
+ *
+ * This answers "which sources are approved for this identifier", which is a
+ * question about configuration. It is deliberately NOT how a read narrows its
+ * results: a list read must decide the lever from each row's own type, or a
+ * caller switches the control off by broadening the query until it no longer
+ * names the filtered type. The read predicate lives in the storage layer.
  */
 export function getSourceFilter(
   enforcement: EnforcementSettings,

@@ -5,7 +5,7 @@ import {
   type SearchResult,
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
-import { filterToRawSql } from "../filter-sql.js";
+import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -123,6 +123,16 @@ export class SqliteSearchStore implements SearchStore {
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    const sourceLever = sourceFilterToRawSql(
+      filters.source_filter,
+      "sqlite",
+      "i",
+    );
+    if (sourceLever) {
+      conditions.push(`AND ${sourceLever.clause}`);
+      params.push(...sourceLever.params);
     }
 
     if (filters.filter) {

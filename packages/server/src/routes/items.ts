@@ -7,7 +7,6 @@ import {
   isValidTypeIdentifier,
   isValidTypePattern,
   GLOBAL_TYPE_WILDCARD,
-  subtreeWildcardRoot,
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
@@ -16,7 +15,6 @@ import {
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
-  getSourceFilter,
 } from "@withmarfa/shared";
 import type { Item, ItemState, Metadata } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -1197,9 +1195,20 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const callerKey = c.get("apiKey");
+    const tenantId = callerKey?.tenant_id;
     const allowedTypes = getTypeFilter(c);
-    const stats = await storage.items.stats(tenantId, allowedTypes);
+    // These counts summarize the listing, so they narrow with it.
+    const tenantConfig =
+      tenantId && storage.tenants
+        ? await storage.tenants.getConfig(tenantId)
+        : null;
+    const enforcement = resolveEnforcement(tenantConfig, callerKey);
+    const stats = await storage.items.stats(
+      tenantId,
+      allowedTypes,
+      enforcement.source_filter,
+    );
     return c.json(stats, 200);
   });
 
@@ -1285,23 +1294,16 @@ export function itemRoutes(storage: Storage) {
       tenantConfigForRead,
       callerKeyForRead,
     );
-    // `core.note` and `core.note.*` select the same rows, so the lever has to
-    // resolve to the same configured type either way. Matching the raw query
-    // string would let a caller switch a read-narrowing control off by
-    // appending two characters to it.
-    const sourceFilterType =
-      typeof type === "string" ? (subtreeWildcardRoot(type) ?? type) : null;
-    const sourcesFilter =
-      sourceFilterType !== null
-        ? (getSourceFilter(enforcementForRead, sourceFilterType) ?? undefined)
-        : undefined;
-
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
       source: query.source,
-      sources: sourcesFilter,
+      // The lever is decided per row from the row's own type, not from the
+      // `?type=` parameter: a bare listing, an ancestor wildcard, a tier
+      // filter and a state filter all reach a covered row without naming it,
+      // so keying off the request made a read-narrowing control optional.
+      source_filter: enforcementForRead.source_filter,
       tier,
       exclude_system_types: excludeSystemTypes,
       tags,
