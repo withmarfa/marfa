@@ -182,7 +182,15 @@ export V_BLOB_BACKEND="${V_BLOB_BACKEND:-fs}"
 
 if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_WORKER_NAME="marfa-server-staging"
-  export SERVER_WORKERS_DEV="true"
+  # Closed, matching prod. An enabled subdomain is a second hostname for the
+  # same origin, so anything attached to the named one — WAF rules, zone rate
+  # limiting, an access policy — is bypassed by addressing the Worker directly,
+  # and CORS origin lists and cookie domains stop describing the whole surface.
+  # Staging holds real accounts and real tokens, which makes "it is only
+  # staging" a reason this ranked lower, not a reason it was acceptable.
+  # Override per-invocation if a throwaway Worker genuinely needs a URL before
+  # its route exists.
+  export SERVER_WORKERS_DEV="${SERVER_WORKERS_DEV:-false}"
   export SERVER_ROUTES="[]"
   # Tag staging telemetry so its logs are distinguishable from prod's in their
   # separate PostHog projects (the container's NODE_ENV is "production" on both,
