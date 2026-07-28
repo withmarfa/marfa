@@ -1,5 +1,6 @@
 import { filterExtensionsByPermission } from "@withmarfa/shared";
 import type { ApiKey, Metadata } from "@withmarfa/shared";
+import { roleBypassesPermissionMaps } from "../middleware/auth.js";
 
 export function parseIntParam(
   raw: string | undefined,
@@ -23,8 +24,7 @@ export function filterMetadataForCaller(
   metadata: Metadata,
   apiKey: ApiKey | undefined,
 ): Metadata {
-  const isAdmin = apiKey?.role === "admin";
-  if (isAdmin) return metadata;
+  if (roleBypassesPermissionMaps(apiKey)) return metadata;
   return {
     ...metadata,
     extensions: filterExtensionsByPermission(

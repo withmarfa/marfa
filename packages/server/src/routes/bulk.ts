@@ -38,6 +38,7 @@ import {
   permitsActivityAttribution,
   itemProvenanceSource,
   getTypeFilter,
+  hasPlatformAuthority,
 } from "../middleware/auth.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -1110,8 +1111,11 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
+  // Platform authority reaches every job: `bulkActionJobs.getById` is
+  // deliberately unscoped, so this is the only fence, and a purge job
+  // carries no tenant at all.
+  if (hasPlatformAuthority(apiKey)) return;
   if (apiKey.role === "admin") {
-    if (!apiKey.tenant_id) return;
     if (apiKey.tenant_id === job.tenant_id) return;
     // Cloaked as absent rather than refused, so a cross-tenant probe
     // cannot enumerate job ids. Matches the treatment of `/keys/:id`.

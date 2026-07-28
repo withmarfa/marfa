@@ -1,6 +1,7 @@
 import { filterExtensionsByPermission } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
+import { roleBypassesPermissionMaps } from "../middleware/auth.js";
 
 /**
  * Batched hydration for `GET /items?include=extensions` and friends. One
@@ -20,7 +21,7 @@ export async function hydrateExtensionsForItems(
 ): Promise<Map<string, Record<string, Record<string, unknown>>>> {
   if (itemIds.length === 0) return new Map();
   const raw = await storage.metadata.getExtensionsForItems(itemIds);
-  if (apiKey?.role === "admin") return raw;
+  if (roleBypassesPermissionMaps(apiKey)) return raw;
   const out = new Map<string, Record<string, Record<string, unknown>>>();
   for (const [id, extensions] of raw) {
     out.set(

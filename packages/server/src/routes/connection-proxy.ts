@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   encryptSecret,
@@ -624,7 +624,12 @@ async function requireConnectionProxyAccess(
       "Connection not found",
     );
   }
-  const isAdmin = key.role === "admin" || key.is_platform;
+  // A connection is a tenant resource, so the gate is tenant-bounded
+  // admin authority, not platform authority — every hosted account is
+  // provisioned `tenant_admin` and owns the connections it installed.
+  // The lookup above is already fenced on `key.tenant_id`, so a
+  // tenant-bound caller of any rank sees only its own connections.
+  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
   // Two connector-credential shapes accept here:
   //   1. OAuth-token grants the user issued for a kind:app connection —
   //      synthetic credentials minted in middleware/auth.ts with

@@ -18,6 +18,7 @@ import {
   requireAuth,
   hashApiKey,
   stampOAuthGrantLastUsed,
+  hasPlatformAuthority,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type {
@@ -383,12 +384,12 @@ export function authRoutes(
 
   router.get("/grants", async (c) => {
     const key = requireAuth(c);
-    // Tenant-scope the listing. Admin keys can list cross-tenant (their
-    // `tenant_id` is undefined by design); any other credential must
-    // carry a resolved tenant_id, otherwise the storage call would fall
-    // through and return every tenant's grants.
-    const isAdmin = key.role === "admin" || key.is_platform;
-    if (!isAdmin && !key.tenant_id) {
+    // Tenant-scope the listing. A credential carrying a tenant_id is
+    // fenced by the `tenantId` argument below whatever its rank; one
+    // without a tenant would fall through to every tenant's grants, so
+    // that shape needs platform authority (or an explicit platform
+    // credential) to reach here.
+    if (!key.tenant_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Tenant scope required for this credential",
@@ -429,8 +430,10 @@ export function authRoutes(
 
   router.delete("/grants/:id", async (c) => {
     const key = requireAuth(c);
-    const isAdmin = key.role === "admin" || key.is_platform;
-    if (!isAdmin && !key.tenant_id) {
+    // Same fence as `GET /grants`: only an unbound credential with
+    // platform authority may resolve `tenantId` to undefined and address
+    // a grant in any tenant.
+    if (!key.tenant_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Tenant scope required for this credential",
