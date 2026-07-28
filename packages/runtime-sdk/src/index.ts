@@ -13,7 +13,12 @@
  * `@withmarfa/runtime-sdk/cloudflare`.
  */
 export { PerConnectionStateCore } from "./per-connection-state.js";
-export type { PerConnectionInternalState } from "./per-connection-state.js";
+export type {
+  PerConnectionInternalState,
+  ScheduleDisarmRecord,
+} from "./per-connection-state.js";
+
+export { ConnectionGoneError } from "./errors.js";
 
 export {
   registerScheduleHandler,

@@ -130,10 +130,22 @@ const createRuntimeCredentialRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "connection_not_active",
+          ]),
         },
       },
-      description: "Caller lacks is_platform: true",
+      description:
+        "Caller lacks is_platform: true (forbidden), or the connection has left the active state (connection_not_active). Only the latter is specific to the connection; a broker that treats both as terminal deschedules every connection it brokers for.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
+      description: "No such connection",
     },
     409: {
       content: {
@@ -373,16 +385,25 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
 
     // Refuse to mint for non-active connections — the lease broker calls this
     // on every cache miss, so this gate cuts all downstream paths on revocation.
+    //
+    // Both refusals below carry connection-specific codes rather than the
+    // generic `not_found` / `forbidden` they share a status with. The broker
+    // treats a per-connection refusal as terminal and permanently tears the
+    // connection's schedule down; nothing re-arms it without an operator. So
+    // the two refusals here must be distinguishable from the route-level
+    // failures that share their status — a misrouted request (404) and a
+    // caller lacking `is_platform` (403) — or one misconfiguration silently
+    // deschedules every connection that reaches this endpoint.
     const connection = await storage.items.get(body.connection_id);
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
-        ErrorCode.NOT_FOUND,
+        ErrorCode.CONNECTION_NOT_FOUND,
         `Connection ${body.connection_id} not found`,
       );
     }
     if (connection.state !== "active") {
       throw new MarfaError(
-        ErrorCode.FORBIDDEN,
+        ErrorCode.CONNECTION_NOT_ACTIVE,
         `Connection ${body.connection_id} is ${connection.state}; cannot mint runtime credential`,
       );
     }

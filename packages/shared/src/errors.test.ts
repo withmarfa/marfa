@@ -28,6 +28,7 @@ describe("ErrorCode", () => {
     );
     expect(ErrorCode.WEBHOOK_PAYLOAD_INVALID).toBe("webhook_payload_invalid");
     expect(ErrorCode.CONNECTION_NOT_FOUND).toBe("connection_not_found");
+    expect(ErrorCode.CONNECTION_NOT_ACTIVE).toBe("connection_not_active");
     expect(ErrorCode.API_KEY_NOT_FOUND).toBe("api_key_not_found");
     expect(ErrorCode.INTEGRATION_NOT_FOUND).toBe("integration_not_found");
     expect(ErrorCode.OAUTH_GRANT_NOT_FOUND).toBe("oauth_grant_not_found");
@@ -56,6 +57,9 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.WEBHOOK_SECRET_NOT_CONFIGURED)).toBe(503);
     expect(httpStatus(ErrorCode.WEBHOOK_PAYLOAD_INVALID)).toBe(400);
     expect(httpStatus(ErrorCode.CONNECTION_NOT_FOUND)).toBe(404);
+    // Shares 403 with FORBIDDEN by design — the code is what separates a
+    // per-connection verdict from a global authorization failure.
+    expect(httpStatus(ErrorCode.CONNECTION_NOT_ACTIVE)).toBe(403);
     expect(httpStatus(ErrorCode.API_KEY_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.INTEGRATION_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.OAUTH_GRANT_NOT_FOUND)).toBe(404);

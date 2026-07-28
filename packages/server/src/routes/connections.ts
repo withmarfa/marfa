@@ -157,6 +157,17 @@ const UninstallResultSchema = z.object({
   oauth_tokens_deleted: z.boolean(),
   leased_tokens_revoked: z.number().int().nonnegative(),
   inbound_webhooks_disabled: z.number().int().nonnegative(),
+  schedules_disarmed: z
+    .boolean()
+    .describe(
+      "Whether a schedule alarm was actually cancelled for this connection. False when there was nothing to cancel — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed disarm; check `schedule_disarm_error` to tell those apart.",
+    ),
+  schedule_disarm_error: z
+    .string()
+    .optional()
+    .describe(
+      "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm.",
+    ),
   activity_id: z.string(),
 });
 
@@ -346,7 +357,23 @@ const previewEventRoute = createRoute({
   },
 });
 
-export function connectionRoutes(storage: Storage, salt: string) {
+export interface ConnectionRoutesOptions {
+  /**
+   * Which integrations substrate this deployment runs, from
+   * `AppConfig.integrationRuntime`. The uninstall pipeline needs the
+   * declared value rather than an inference from whether the
+   * runtime-control coordinates happen to be present, so a hosted
+   * deployment that has lost a secret fails loudly instead of quietly
+   * behaving like a self-host.
+   */
+  integrationRuntime: "hosted" | "local";
+}
+
+export function connectionRoutes(
+  storage: Storage,
+  salt: string,
+  options: ConnectionRoutesOptions,
+) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
@@ -569,11 +596,19 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const clientIp = c.var.clientIp;
 
     try {
+      // Hosted-substrate coordinates for the schedule-disarm step. The
+      // substrate itself comes from config, not from whether these are
+      // set — see ConnectionRoutesOptions.
+      const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
+      const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
         tenantId,
         connectionId,
         clientIp,
+        integrationRuntime: options.integrationRuntime,
+        ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
+        ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
       });
       return c.json(result, 200);
     } catch (err) {

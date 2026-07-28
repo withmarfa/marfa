@@ -9,6 +9,8 @@
  *   - error:<index>                 — bounded ring of recent failures
  *   - retry:<key>                   — per-failing-target retry state
  *   - next_run_at_ms                — alarm() target
+ *   - schedule_disarmed             — tombstone: schedule deliberately
+ *                                     not armed
  *   - runtime_credential_cached     — short-TTL RuntimeCredential
  *
  * This file holds only the substrate-agnostic surface — the storage
@@ -23,10 +25,25 @@ import type { RuntimeCredential } from "./types.js";
 export const IDEMPOTENCY_WINDOW_SIZE = 1024;
 export const RECENT_ERRORS_SIZE = 32;
 
+const SCHEDULE_DISARMED_KEY = "schedule_disarmed";
+const NEXT_RUN_AT_KEY = "next_run_at_ms";
+
 interface RecordedError {
   at: number;
   message: string;
   attempt: number;
+}
+
+/**
+ * Tombstone written when a Connection's schedule is deliberately taken
+ * down (uninstall, or the runtime discovering the Connection is gone).
+ * Its presence — not the absence of a stored alarm — is what stops the
+ * schedule re-arming, so a tick already in flight when the teardown
+ * landed cannot resurrect it.
+ */
+export interface ScheduleDisarmRecord {
+  at: number;
+  reason: string;
 }
 
 export interface PerConnectionInternalState {
@@ -94,11 +111,30 @@ export class PerConnectionStateCore {
 
   // ---- alarm scheduling -----------------------------------------------
   async setNextRunAt(ms: number): Promise<void> {
-    await this.state.storage.put("next_run_at_ms", ms);
+    await this.state.storage.put(NEXT_RUN_AT_KEY, ms);
   }
 
   async getNextRunAt(): Promise<number | null> {
-    const raw = await this.state.storage.get("next_run_at_ms");
+    const raw = await this.state.storage.get(NEXT_RUN_AT_KEY);
     return typeof raw === "number" ? raw : null;
+  }
+
+  async clearNextRunAt(): Promise<void> {
+    await this.state.storage.delete(NEXT_RUN_AT_KEY);
+  }
+
+  // ---- schedule disarm tombstone ---------------------------------------
+  async getScheduleDisarmed(): Promise<ScheduleDisarmRecord | null> {
+    const raw = await this.state.storage.get(SCHEDULE_DISARMED_KEY);
+    return raw ? (raw as ScheduleDisarmRecord) : null;
+  }
+
+  async setScheduleDisarmed(reason: string): Promise<void> {
+    const record: ScheduleDisarmRecord = { at: Date.now(), reason };
+    await this.state.storage.put(SCHEDULE_DISARMED_KEY, record);
+  }
+
+  async clearScheduleDisarmed(): Promise<void> {
+    await this.state.storage.delete(SCHEDULE_DISARMED_KEY);
   }
 }

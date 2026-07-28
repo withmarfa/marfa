@@ -117,6 +117,16 @@ export enum ErrorCode {
    */
   CONNECTION_NOT_FOUND = "connection_not_found",
   /**
+   * The `system.connection` exists but has left `active` — the bounded
+   * `system.*` lifecycle's terminal `revoked` state. Distinct from the
+   * generic `FORBIDDEN` it shares a status with: a caller has to be able
+   * to tell "this one connection is finished" from "your credential is
+   * not allowed to do this at all". The runtime lease broker branches on
+   * exactly that difference, and reads the wrong branch as permission to
+   * tear a connection's schedule down for good.
+   */
+  CONNECTION_NOT_ACTIVE = "connection_not_active",
+  /**
    * API key lookup by id returned no row. Replaces generic `NOT_FOUND`
    * on `/keys/:id` routes.
    */
@@ -309,6 +319,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.OAUTH_PROXY_TOKEN_MISSING]: 404,
   [ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID]: 422,
   [ErrorCode.CONNECTION_NOT_FOUND]: 404,
+  [ErrorCode.CONNECTION_NOT_ACTIVE]: 403,
   [ErrorCode.API_KEY_NOT_FOUND]: 404,
   [ErrorCode.INTEGRATION_NOT_FOUND]: 404,
   [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,

@@ -695,7 +695,12 @@ export function createApp(
   // Connection management — POST /connections/:id/uninstall (admin-gated)
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
-  app.route("/connections", connectionRoutes(storage, config.apiKeySalt));
+  app.route(
+    "/connections",
+    connectionRoutes(storage, config.apiKeySalt, {
+      integrationRuntime: config.integrationRuntime ?? "local",
+    }),
+  );
   app.route("/connections", connectionConfigureRoutes(storage));
   app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));

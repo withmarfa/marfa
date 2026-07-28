@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, afterEach, type Mock } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  type Mock,
+} from "vitest";
 import {
   buildConsumerEnv,
   createIntegrationWorker,
@@ -6,6 +14,7 @@ import {
   type IntegrationWorkerConfig,
 } from "./worker-entry.js";
 import type { DlqProducer } from "../queue-consumer.js";
+import { ConnectionGoneError } from "../errors.js";
 
 /**
  * Routing tests for `buildConsumerEnv`. The queue-consumer tests mock
@@ -144,6 +153,105 @@ describe("buildConsumerEnv.mintCredential broker URL", () => {
 });
 
 /**
+ * Which broker refusals mean "this Connection can never run again".
+ *
+ * A terminal verdict makes the consumer tear the schedule down, and
+ * nothing re-arms it without an operator working one Connection at a
+ * time. A transient verdict costs a retry. The asymmetry is why the
+ * negative cases below matter more than the positive ones: every
+ * refusal that is not specifically about this Connection has to stay
+ * transient, however plausible its status looks.
+ */
+describe("buildConsumerEnv.mintCredential broker classification", () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function stubBroker(status: number, body: unknown): void {
+    globalThis.fetch = () =>
+      Promise.resolve(
+        new Response(typeof body === "string" ? body : JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+  }
+
+  function mintError(): Promise<unknown> {
+    return buildConsumerEnv(makeBaseEnv(), CONFIG)
+      .mintCredential("conn_a")
+      .catch((e: unknown) => e);
+  }
+
+  it.each([
+    ["connection_not_found", 404],
+    ["connection_not_active", 403],
+  ])(
+    "converts a lease-broker %s into ConnectionGoneError",
+    async (error, status) => {
+      stubBroker(status, { error, message: "gone" });
+      expect(await mintError()).toBeInstanceOf(ConnectionGoneError);
+    },
+  );
+
+  it("does NOT convert an unrecognized 404 — a routing miss is transient", async () => {
+    // The control plane answers 404 from its own notFound handler for any
+    // unmatched path, so a misconfigured URL or a renamed lease route
+    // would otherwise make every healthy connection disarm itself on its
+    // first tick, permanently and silently.
+    stubBroker(404, { error: "not_found", path: "/lease/conn_a/runtime" });
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+
+  it("does NOT convert an unauthorized 401 from the control plane", async () => {
+    // The lease route is gated on the broker key. A Worker holding a
+    // stale key is refused for every connection it serves, which says
+    // nothing about any of them.
+    stubBroker(401, { error: "unauthorized" });
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+
+  it("does NOT convert a platform-credential 403 — it is fleet-wide, not per-connection", async () => {
+    // The server refuses a mint from a non-platform credential with 403
+    // `forbidden`. A broker key rotated to a valid but tenant-scoped
+    // admin key produces exactly this for every connection in every
+    // tenant, so reading it as terminal deschedules the whole fleet
+    // inside one cron period.
+    stubBroker(403, {
+      error: "forbidden",
+      message: "requires a platform credential (is_platform: true)",
+    });
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+
+  it("does NOT convert a WAF-style 403 with no recognizable body", async () => {
+    stubBroker(403, "<html>blocked</html>");
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+
+  it("does NOT convert a recognized code arriving on an unexpected status", async () => {
+    // The code alone is not proof: a cached or proxied 200/500 body could
+    // carry it. Status and code must agree before the terminal verdict.
+    stubBroker(500, { error: "connection_not_found" });
+    const err = await mintError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConnectionGoneError);
+  });
+});
+
+/**
  * Auth gate on the Worker's fetch surface.
  *
  * The routes here mint a runtime credential and run the real handler
@@ -207,6 +315,8 @@ describe("createIntegrationWorker fetch auth gate", () => {
     ["/verify", { authorization: BROKER_KEY }],
     ["/arm-schedule", {}],
     ["/arm-schedule", { authorization: "Bearer wrong_key" }],
+    ["/disarm-schedule", {}],
+    ["/disarm-schedule", { authorization: "Bearer wrong_key" }],
   ])("refuses POST %s with headers %o", async (path, headers) => {
     const { env, doStub, idFromName } = makeFetchEnv();
     const res = await worker.fetch(post(path, headers), env, CTX);
@@ -287,6 +397,54 @@ describe("createIntegrationWorker fetch auth gate", () => {
     expect(doStub.fetch).not.toHaveBeenCalled();
   });
 
+  it("admits an authorized /disarm-schedule call through to the Durable Object", async () => {
+    const { env, doStub, idFromName } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/disarm-schedule?connection_id=conn_1&reason=uninstall", {
+        authorization: `Bearer ${BROKER_KEY}`,
+      }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith("conn_1");
+    expect(doStub.fetch).toHaveBeenCalledTimes(1);
+    const forwarded = new URL((doStub.fetch.mock.calls[0] as [Request])[0].url);
+    expect(forwarded.pathname).toBe("/disarm-schedule");
+    // The reason rides through to the Durable Object's tombstone, so an
+    // operator reading DO state later can tell an uninstall teardown
+    // from a manual one.
+    expect(forwarded.searchParams.get("reason")).toBe("uninstall");
+  });
+
+  it("defaults the disarm reason when the caller omits one", async () => {
+    const { env, doStub } = makeFetchEnv();
+    await worker.fetch(
+      post("/disarm-schedule?connection_id=conn_1", {
+        authorization: `Bearer ${BROKER_KEY}`,
+      }),
+      env,
+      CTX,
+    );
+    const forwarded = new URL((doStub.fetch.mock.calls[0] as [Request])[0].url);
+    expect(forwarded.searchParams.get("reason")).toBe("control_plane");
+  });
+
+  it("admits an authorized /disarm-schedule call and still validates its payload", async () => {
+    const { env, doStub } = makeFetchEnv();
+    const res = await worker.fetch(
+      post("/disarm-schedule", { authorization: `Bearer ${BROKER_KEY}` }),
+      env,
+      CTX,
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      reason: "missing_connection_id",
+    });
+    expect(doStub.fetch).not.toHaveBeenCalled();
+  });
+
   it("admits an authorized /verify call through to the verify handler", async () => {
     const { env } = makeFetchEnv();
     const res = await worker.fetch(
@@ -326,7 +484,7 @@ describe("createIntegrationWorker fetch routing", () => {
   it.each([
     "/",
     "/arm-schedule/",
-    "/disarm-schedule",
+    "/disarm-schedule/",
     "/verify/x",
     "/anything",
   ])("404s an unknown path (%s) instead of reporting success", async (path) => {
@@ -342,16 +500,20 @@ describe("createIntegrationWorker fetch routing", () => {
     });
   });
 
-  it("404s a GET to a route that only accepts POST", async () => {
-    const { env } = makeFetchEnv();
-    const res = await worker.fetch(
-      new Request("https://integration.invalid/verify", {
-        method: "GET",
-        headers: auth,
-      }),
-      env,
-      CTX,
-    );
-    expect(res.status).toBe(404);
-  });
+  it.each(["/verify", "/arm-schedule", "/disarm-schedule"])(
+    "404s a GET to %s, which only accepts POST",
+    async (path) => {
+      const { env, doStub } = makeFetchEnv();
+      const res = await worker.fetch(
+        new Request(`https://integration.invalid${path}`, {
+          method: "GET",
+          headers: auth,
+        }),
+        env,
+        CTX,
+      );
+      expect(res.status).toBe(404);
+      expect(doStub.fetch).not.toHaveBeenCalled();
+    },
+  );
 });
