@@ -111,10 +111,19 @@ const stub = createServer((req, res) => {
   });
 });
 
-const STUB_PORT = "8722";
+// Port 0 lets the OS assign a free one. A fixed port made this script
+// unrunnable twice at once on a machine, which is exactly what a runner
+// pool does: two jobs picked up together both bound the same port and the
+// second died with EADDRINUSE, reported as a failure of whatever change
+// happened to be under test.
 await new Promise<void>((res) => {
-  stub.listen(Number(STUB_PORT), "127.0.0.1", res);
+  stub.listen(0, "127.0.0.1", res);
 });
+const address = stub.address();
+if (address === null || typeof address === "string") {
+  fail("stub HTTP server did not report a numeric address after listen");
+}
+const STUB_PORT = String(address.port);
 info(`stub HTTP server listening on 127.0.0.1:${STUB_PORT}`);
 
 // Spawn the built worker-entry directly. The protocol mirrors what
