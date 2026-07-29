@@ -23,6 +23,7 @@ import {
 } from "./reactive-run-bridge.js";
 import { isValidId, type IntegrationManifest } from "@withmarfa/shared";
 import { publish } from "../pubsub.js";
+import type { ItemEventWithId } from "../pubsub.js";
 
 /**
  * Poll `read` until `settled` accepts its result, or the budget expires;
@@ -59,6 +60,19 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  probeTenantId = `tenant-drain-probe-${Math.random().toString(36).slice(2, 8)}`;
+  const probeIntegrationId = await createIntegration(
+    manifest({ name: PROBE_INTEGRATION_NAME }),
+  );
+  probeConnectionId = await createConnection({
+    integrationRef: probeIntegrationId,
+    tenantId: probeTenantId,
+  });
+  // The bridge drops self-originated events, so a probe stamped with its
+  // own connection id would never be dispatched and every barrier below
+  // would fail as an opaque timeout. Assert the two stay distinct here,
+  // where the cause is obvious.
+  expect(PROBE_EVENT_ORIGIN).not.toBe(probeConnectionId);
 });
 
 afterAll(async () => {
@@ -132,6 +146,144 @@ async function createConnection(opts: {
     opts.tenantId,
   );
   return item.id;
+}
+
+/**
+ * Drain barrier for the bridge's fanout loop.
+ *
+ * The bridge consumes the in-process event bus in a single sequential
+ * loop — it awaits one event's full fanout (every subscriber's send, plus
+ * the failure handler's storage writes) before pulling the next — and
+ * `events.on()` buffers in publish order. So dispatching a marker event
+ * and waiting for it to come out the other side proves that every event
+ * published before it has been fully processed. That is an actual
+ * completion signal; a fixed sleep is only a guess about how long the
+ * slowest of those steps took.
+ *
+ * The marker rides a dedicated subscription in its own tenant. The
+ * bridge's cross-tenant gate then keeps probe traffic away from every
+ * subscriber under test, so the barrier can't perturb delivery counts or
+ * a subscriber's consecutive-failure ladder. Each test wraps its own stub
+ * transport with `interceptProbeTraffic` so probe messages are answered
+ * and swallowed before the test's own handler sees them.
+ */
+const PROBE_INTEGRATION_NAME = "acme.drain-probe";
+/** Origin stamped on probe events. Any value other than the probe
+ *  connection's own id works; the bridge drops self-originated events. */
+const PROBE_EVENT_ORIGIN = "itm_drain_probe_origin";
+
+let probeTenantId: string;
+let probeConnectionId: string;
+/** item_id → resolver, for probe events currently in flight. */
+const probeWaiters = new Map<string, () => void>();
+
+/** Wrap a test's stub transport so probe messages are absorbed here and
+ *  never reach the test's own assertions. */
+function interceptProbeTraffic(inner: typeof fetch): typeof fetch {
+  return (input: string | URL | Request, init?: RequestInit) => {
+    const message = JSON.parse(init?.body as string) as {
+      body: { integration_name: string; item_id: string };
+    };
+    if (message.body.integration_name === PROBE_INTEGRATION_NAME) {
+      probeWaiters.get(message.body.item_id)?.();
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+    return inner(input, init);
+  };
+}
+
+let probeSequence = 0;
+
+/**
+ * Publish one probe event; resolve true once the bridge dispatches it,
+ * false if `deadlineMs` passes first.
+ *
+ * The event carries a synthetic, never-persisted item — the same shape the
+ * bridge's own `stop()` sentinel publishes. That keeps the barrier free of
+ * database writes, which is load-bearing rather than tidiness: the bridge
+ * writes to storage while draining (activity rows, escalation updates), a
+ * barrier issued mid-drain would contend with those, and SQLite's
+ * single-writer lock surfaces the loser as a `SQLITE_BUSY` that the code
+ * under test swallows by design. A writing barrier would therefore delete
+ * the very rows the assertions look for. Nothing here needs the item to
+ * exist: the bridge reads only its id, tenant, and origin.
+ */
+async function probeRoundTrip(deadlineMs: number): Promise<boolean> {
+  const itemId = `itm_drain_probe_${String(++probeSequence)}`;
+  const dispatched = new Promise<"dispatched">((resolve) => {
+    probeWaiters.set(itemId, () => {
+      resolve("dispatched");
+    });
+  });
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<"expired">((resolve) => {
+    expiryTimer = setTimeout(() => {
+      resolve("expired");
+    }, deadlineMs);
+  });
+  const now = new Date().toISOString();
+  try {
+    await publish({
+      type: "created",
+      item: {
+        id: itemId,
+        type: "core.note",
+        state: "active",
+        tier: "library",
+        properties: {},
+        created_at: now,
+        updated_at: now,
+        timestamp: now,
+        version: 1,
+        schema_version: 1,
+        source: "drain-probe",
+      } as unknown as ItemEventWithId["item"],
+      tenantId: probeTenantId,
+      originatingConnectionId: PROBE_EVENT_ORIGIN,
+    });
+    return (await Promise.race([dispatched, expiry])) === "dispatched";
+  } finally {
+    clearTimeout(expiryTimer);
+    probeWaiters.delete(itemId);
+  }
+}
+
+/**
+ * Block until the bridge's drainer is actually listening.
+ *
+ * `start()` resolves once the subscription registry is loaded, but the
+ * drainer attaches its bus listener later, inside a fire-and-forget
+ * `withJobLock` callback. The emitter has no replay buffer, so an event
+ * published in that window is lost outright — which is why this retries
+ * the probe rather than waiting for a single one. Every lost probe is
+ * inert: it reaches no subscriber, and the ones that land only reach the
+ * probe's own connection.
+ */
+async function waitForDrainerAttached(deadlineMs = 15_000): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    if (await probeRoundTrip(100)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `bridge drainer never attached to the event bus within ${String(deadlineMs)}ms`,
+      );
+    }
+  }
+}
+
+/**
+ * Block until every event published before this call has been fully
+ * fanned out. Requires the drainer to already be attached
+ * (`waitForDrainerAttached`), so a single probe suffices; the deadline is
+ * a failure budget, not a settle window, and is never waited out on the
+ * happy path.
+ */
+async function drained(deadlineMs = 15_000): Promise<void> {
+  if (!(await probeRoundTrip(deadlineMs))) {
+    throw new Error(
+      `bridge did not drain the event bus within ${String(deadlineMs)}ms`,
+    );
+  }
 }
 
 describe("buildEntryForConnection", () => {
@@ -347,13 +499,12 @@ describe("bridge fanout via in-process pubsub", () => {
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: stubFetch,
+      fetch: interceptProbeTraffic(stubFetch),
       maxAttempts: 1,
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    // Yield so the eager-load + invalidation subscriber spin up.
-    await new Promise((r) => setTimeout(r, 20));
+    await waitForDrainerAttached();
 
     // Publish an event from a third (unrelated) connection so neither
     // A nor B is the originator.
@@ -366,7 +517,7 @@ describe("bridge fanout via in-process pubsub", () => {
       item: unrelated,
       originatingConnectionId: "itm_unrelated_origin",
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await drained();
 
     const fanoutMessages = captured.filter((c) =>
       c.body.body.integration_name.startsWith("acme.fanout-"),
@@ -384,7 +535,9 @@ describe("bridge fanout via in-process pubsub", () => {
       item: unrelated,
       originatingConnectionId: connA,
     });
-    await new Promise((r) => setTimeout(r, 20));
+    // Barrier, not a settle window: the assertion below is a negative, so
+    // it is only meaningful once this event's fanout has provably finished.
+    await drained();
     const selfFiltered = captured.filter(
       (c) => c.body.body.connection_id === connA,
     );
@@ -431,18 +584,14 @@ describe("bridge fanout via in-process pubsub", () => {
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: stubFetch,
+      fetch: interceptProbeTraffic(stubFetch),
       maxAttempts: 1,
       // Tight timeout so the test finishes quickly.
       sendTimeoutMs: 100,
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    // The bridge spins up `coordination.withJobLock` + the subscribe()
-    // iterator on a fire-and-forget async path; PG storage adds a real
-    // round-trip per setup step. Give it a generous head-start so the
-    // subscribe() listener is actually live before we publish.
-    await new Promise((r) => setTimeout(r, 200));
+    await waitForDrainerAttached();
 
     const unrelated = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "slow-test" } },
@@ -453,9 +602,11 @@ describe("bridge fanout via in-process pubsub", () => {
       item: unrelated,
       originatingConnectionId: "itm_slow_origin",
     });
-    // Slow timeout (100ms) + first backoff (100ms) + tail-of-fanout
-    // wait. Generous on PG to absorb test-container jitter.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Fanout awaits every subscriber, so this returns only after the slow
+    // subscriber's abort has fired and its failure handling has settled —
+    // no guess about how long the timeout plus backoff plus storage writes
+    // actually took on this machine.
+    await drained();
 
     expect(slowAttempts).toBeGreaterThan(0);
     expect(fastDeliveries).toContain(connFast);
@@ -518,12 +669,12 @@ describe("bridge fanout via in-process pubsub", () => {
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: stubFetch,
+      fetch: interceptProbeTraffic(stubFetch),
       maxAttempts: 1,
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    await new Promise((r) => setTimeout(r, 20));
+    await waitForDrainerAttached();
 
     // Publish an event scoped to tenant A. Only connA (tenant A) should
     // receive a queue message; connB (tenant B) must not.
@@ -537,7 +688,7 @@ describe("bridge fanout via in-process pubsub", () => {
       tenantId: tenantAId,
       originatingConnectionId: "itm_unrelated_a",
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await drained();
 
     const tenantAFanout = captured.filter(
       (c) => c.body.body.integration_name === "acme.tenant-a-int",
@@ -563,7 +714,7 @@ describe("bridge fanout via in-process pubsub", () => {
       tenantId: tenantBId,
       originatingConnectionId: "itm_unrelated_b",
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await drained();
 
     const reverseA = captured.filter(
       (c) => c.body.body.integration_name === "acme.tenant-a-int",
@@ -635,13 +786,13 @@ describe("bridge fanout via in-process pubsub", () => {
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: stubFetch,
+      fetch: interceptProbeTraffic(stubFetch),
       maxAttempts: 1,
       sendTimeoutMs: SLOW_TIMEOUT_MS,
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    await new Promise((r) => setTimeout(r, 200));
+    await waitForDrainerAttached();
 
     const unrelated = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "par-test" } },
@@ -653,11 +804,12 @@ describe("bridge fanout via in-process pubsub", () => {
       item: unrelated,
       originatingConnectionId: "itm_par_origin",
     });
-    // Wait long enough for both the slow timeout and every fast
-    // delivery to land. The slow timeout fires at ~SLOW_TIMEOUT_MS;
-    // the fast deliveries should land much earlier under parallel
-    // fanout.
-    await new Promise((r) => setTimeout(r, SLOW_TIMEOUT_MS + 300));
+    // Fanout awaits every subscriber, including the wedged one, so this
+    // returns once the slow timeout has fired and all fast deliveries have
+    // landed. The latency assertion below still measures real elapsed time
+    // from `publishAt` — the barrier only decides when it is safe to read,
+    // it does not affect what is being measured.
+    await drained();
 
     expect(captured.slowResolveAt).not.toBeNull();
     expect(connSlow).toBeTruthy();
@@ -746,7 +898,7 @@ describe("bridge failure-tracking", () => {
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
       resolveQueueUrl: () => "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: stubFetch,
+      fetch: interceptProbeTraffic(stubFetch),
       maxAttempts: 1,
       sendTimeoutMs: 50,
       failureCooldownThreshold: opts.failureCooldownThreshold,
@@ -756,7 +908,10 @@ describe("bridge failure-tracking", () => {
     });
     if (!bridge) throw new Error("bridge not constructed");
     await bridge.start();
-    await new Promise((r) => setTimeout(r, 100));
+    // Probe traffic is tenant-scoped away from both rig subscribers, so
+    // establishing the barrier leaves the attempt counters and the
+    // consecutive-failure ladder these tests assert on untouched.
+    await waitForDrainerAttached();
 
     return {
       bridge,
@@ -777,9 +932,11 @@ describe("bridge failure-tracking", () => {
       item,
       originatingConnectionId: "itm_t171_origin",
     });
-    // Allow the per-attempt timeout (50ms) and the catch handler's
-    // storage writes to settle.
-    await new Promise((r) => setTimeout(r, 250));
+    // Fanout resolves only after every subscriber task settles, and the
+    // dead subscriber's task includes the failure handler — its
+    // system.activity write, ladder increment, and any escalation. So this
+    // barrier covers the whole cascade the assertions read back.
+    await drained();
   }
 
   it("arms cooldown after N consecutive failures and skips dispatch within the window", async () => {
@@ -926,12 +1083,23 @@ describe("bridge failure-tracking", () => {
       });
       if ("error" in updated) throw new Error("unexpected conflict");
       await publish({ type: "updated", item: updated });
-      // Cache invalidation propagates through the in-process pubsub.
-      await new Promise((r) => setTimeout(r, 150));
 
-      // Next publish should reach the dead subscriber again.
-      await publishOne("op-recovery-after-flip");
-      expect(rig.deadAttempts.count).toBe(deadAttemptsAtEscalation + 1);
+      // Cache invalidation runs as its own loop over the bus, so the
+      // fanout drain barrier says nothing about when it has re-evaluated
+      // this connection. Retry the publish until dispatch resumes instead:
+      // an attempt made while the subscriber is still gated out is inert
+      // (there is no registry entry to dispatch to), and the first attempt
+      // after invalidation lands moves the counter. Retrying is why the
+      // assertion is a lower bound rather than an exact `+1` — what is
+      // under test is that dispatch resumes at all.
+      const attemptsAfterFlip = await waitFor(
+        async () => {
+          await publishOne("op-recovery-after-flip");
+          return rig.deadAttempts.count;
+        },
+        (count) => count > deadAttemptsAtEscalation,
+      );
+      expect(attemptsAfterFlip).toBeGreaterThan(deadAttemptsAtEscalation);
     } finally {
       await rig.bridge.stop();
     }
@@ -955,14 +1123,21 @@ describe("bridge — unmapped integration handling", () => {
       integrationRef: intUnmapped,
     });
 
-    const stubFetch: typeof fetch = () =>
-      Promise.resolve(new Response(null, { status: 202 }));
-    const stubFetchSpy = ((...args: Parameters<typeof fetch>) =>
-      stubFetch(...args)) as typeof fetch;
-    let fetchCalls = 0;
-    const trackingFetch: typeof fetch = (...args: Parameters<typeof fetch>) => {
-      fetchCalls++;
-      return stubFetchSpy(...args);
+    // Record which integration each producer call was addressed to, so the
+    // "dispatch was skipped" assertion can be made against the actual
+    // traffic rather than against a bare call count (sibling tests share
+    // this context, so other integrations legitimately fire calls here).
+    const dispatchedIntegrations: string[] = [];
+    const trackingFetch: typeof fetch = (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      void input;
+      const message = JSON.parse(init?.body as string) as {
+        body: { integration_name: string };
+      };
+      dispatchedIntegrations.push(message.body.integration_name);
+      return Promise.resolve(new Response(null, { status: 202 }));
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -974,12 +1149,12 @@ describe("bridge — unmapped integration handling", () => {
           ? null
           : "http://queue.local/produce",
       apiToken: "stub-token",
-      fetch: trackingFetch,
+      fetch: interceptProbeTraffic(trackingFetch),
       maxAttempts: 1,
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    await new Promise((r) => setTimeout(r, 20));
+    await waitForDrainerAttached();
 
     const note1 = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "first" } },
@@ -990,7 +1165,7 @@ describe("bridge — unmapped integration handling", () => {
       item: note1,
       originatingConnectionId: "itm_unrelated_origin",
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await drained();
 
     // Activity row for the unmapped integration was emitted.
     const countUnmappedRows = async (): Promise<number> => {
@@ -1022,22 +1197,23 @@ describe("bridge — unmapped integration handling", () => {
       item: note2,
       originatingConnectionId: "itm_unrelated_origin",
     });
-    await new Promise((r) => setTimeout(r, 50));
+    await drained();
 
     // Dedup: still only ONE row for this integration after the second
     // event (other integrations on this context might have written their
     // own rows, but acme.unmapped-integration's count is unchanged).
-    // No poll here — a second row appearing late would be the bug, so the
-    // assertion must read after the settle window rather than race to a
-    // passing value.
+    // Deliberately not polled — a second row appearing late is the bug, so
+    // polling could only race to a passing read. The barrier above is what
+    // makes the single read sound: the second event's fanout has already
+    // completed, so a duplicate row would exist by now if it were going to.
     expect(await countUnmappedRows()).toBe(1);
 
-    // Fanout never invoked the producer fetch for this integration.
-    // Other integrations created by sibling tests on the same context
-    // may have fired fetch calls (they share the bridge), so we assert
-    // the unmapped integration didn't appear in any captured body —
-    // any fetch that DID fire was for some other integration.
-    void fetchCalls;
+    // Dispatch was skipped, not merely unmapped: no producer call was ever
+    // addressed to this integration. Sibling tests share this context and
+    // this bridge, so other integrations do legitimately appear here —
+    // hence an absence assertion over the recorded targets rather than a
+    // call count.
+    expect(dispatchedIntegrations).not.toContain("acme.unmapped-integration");
 
     await bridge!.stop();
   });
