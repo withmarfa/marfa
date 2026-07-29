@@ -20,7 +20,7 @@
  *     own-tenant items.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ApiKey } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
 import {
@@ -29,6 +29,33 @@ import {
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
+
+/**
+ * One context for every integration test in this file.
+ *
+ * Standing up a context is expensive on Postgres — it clones the template
+ * database and drops the clone afterwards, and that DDL serializes against
+ * every other test file doing the same. Per-test contexts put that cost
+ * inside the test body, which is budgeted by `testTimeout`; a shared
+ * context puts it in a hook, budgeted by the much larger `hookTimeout`
+ * (see this package's `vitest.config.ts`). Under a loaded runner the
+ * per-test shape is what pushes this file over its budget.
+ *
+ * Sharing is safe because none of these tests rely on database isolation:
+ * every one mints its own randomized tenant id, and the assertions are all
+ * scoped to that tenant. Rows left behind by a sibling test belong to a
+ * different tenant and are invisible to the route under test — which is
+ * itself the property being verified.
+ */
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+
+afterAll(async () => {
+  await ctx.cleanup();
+});
 
 function fakeKey(
   role: ApiKey["role"],
@@ -130,14 +157,7 @@ describe("tenant_admin bypasses type_permissions", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /tenants/me/quotas", () => {
-  let ctx: TestContext;
-
-  afterEach(async () => {
-    await ctx.cleanup();
-  });
-
   it("returns the calling tenant's quota row for tenant_admin", async () => {
-    ctx = await createTestContext();
     const tenantA = `tenant-quota-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-quota",
@@ -159,7 +179,6 @@ describe("GET /tenants/me/quotas", () => {
   });
 
   it("rejects platform-admin (no tenant_id) with 400", async () => {
-    ctx = await createTestContext();
     // ctx.adminKey is the bootstrap platform admin — no tenant_id.
     const res = await request(ctx.app, "GET", "/tenants/me/quotas", {
       key: ctx.adminKey,
@@ -168,7 +187,6 @@ describe("GET /tenants/me/quotas", () => {
   });
 
   it("rejects member with FORBIDDEN", async () => {
-    ctx = await createTestContext();
     const tenantA = `tenant-quota-mem-${Math.random().toString(36).slice(2, 10)}`;
     const member = await mintKey(ctx, {
       label: "member-quota",
@@ -183,14 +201,7 @@ describe("GET /tenants/me/quotas", () => {
 });
 
 describe("widened routes — keys + items.purge", () => {
-  let ctx: TestContext;
-
-  afterEach(async () => {
-    await ctx.cleanup();
-  });
-
   it("tenant_admin GET /keys lists only own-tenant keys", async () => {
-    ctx = await createTestContext();
     const tenantA = `tenant-keys-a-${Math.random().toString(36).slice(2, 10)}`;
     const tenantB = `tenant-keys-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
@@ -216,7 +227,6 @@ describe("widened routes — keys + items.purge", () => {
   });
 
   it("tenant_admin DELETE /keys/:id of cross-tenant key returns 404", async () => {
-    ctx = await createTestContext();
     const tenantA = `tenant-rev-a-${Math.random().toString(36).slice(2, 10)}`;
     const tenantB = `tenant-rev-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
@@ -245,7 +255,6 @@ describe("widened routes — keys + items.purge", () => {
   });
 
   it("tenant_admin can purge an item in own tenant", async () => {
-    ctx = await createTestContext();
     const tenantA = `tenant-purge-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-purge",
