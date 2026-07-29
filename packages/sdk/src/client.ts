@@ -55,6 +55,11 @@ import {
   type ConflictAutoMergeListener,
 } from "./conflict.js";
 import { pollUntilTerminal } from "./poll.js";
+import {
+  subscribeToEvents,
+  type SubscribeOptions,
+  type Subscription,
+} from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Config and option types
@@ -1958,6 +1963,28 @@ export class MarfaClient {
    * instead — this surface is for first-party callers (CLI, MCP, the
    * user themselves) holding a tenant-scoped bearer.
    */
+  /**
+   * The change stream.
+   *
+   * Every write the caller can see arrives here as a full payload, so a client
+   * that has applied an optimistic update locally can converge on the server's
+   * version without refetching.
+   */
+  readonly events = {
+    /**
+     * Subscribe to `GET /events`.
+     *
+     * Persist `subscription.lastEventId` and pass it back as
+     * `options.lastEventId` to resume across restarts. Handle
+     * `onCatchupTooOld`: it means the cursor has aged out of the retention
+     * window, and the only correct response is to re-read state and subscribe
+     * again from nothing.
+     */
+    subscribe: (options: SubscribeOptions): Subscription => {
+      return subscribeToEvents(this.transport, options);
+    },
+  };
+
   readonly profile = {
     /** Read the calling user's profile. */
     get: async (): Promise<Profile> => {

@@ -38,6 +38,15 @@ export interface RawRequestOptions {
   headers?: Record<string, string>;
   /** Per-call timeout override (ms). Falls back to transport default. */
   timeoutMs?: number;
+  /** Caller-owned cancellation, aborting in addition to the timeout.
+   *
+   *  The timeout alone cannot serve a long-lived response: it is cleared once
+   *  the headers arrive, which is the point, since a streaming body must
+   *  outlive it. That leaves the caller with no way to stop reading. Passing a
+   *  signal here gives one, and keeps auth and refresh handling in the
+   *  transport rather than forcing streaming callers to build their own
+   *  request. */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -280,6 +289,16 @@ export class HttpTransport {
     const timeout = setTimeout(() => {
       controller.abort();
     }, effectiveTimeoutMs);
+    // A signal that has already fired must abort immediately: `addEventListener`
+    // never fires for an event that is in the past, so an already-aborted signal
+    // would otherwise start a request nobody can stop.
+    if (options?.signal) {
+      if (options.signal.aborted) controller.abort();
+      else
+        options.signal.addEventListener("abort", () => {
+          controller.abort();
+        });
+    }
 
     const init: RequestInit = { method, headers, signal: controller.signal };
 
