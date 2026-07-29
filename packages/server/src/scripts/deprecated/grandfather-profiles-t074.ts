@@ -24,8 +24,8 @@
  * migration shape.
  *
  * Usage:
- *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=sqlite
- *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=pg
+ *   pnpm --filter @withmarfa/server exec tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=sqlite
+ *   pnpm --filter @withmarfa/server exec tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=pg
  *
  * Environment:
  *   - SQLITE_PATH (sqlite default ./data/marfa.db)

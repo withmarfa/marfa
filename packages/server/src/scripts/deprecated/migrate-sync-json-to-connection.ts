@@ -24,8 +24,8 @@
  *
  * Usage:
  *   pnpm --filter @withmarfa/server migrate:sync-json-to-connection
- *   SYNC_JSON_PATH=/path/to/sync.json pnpm tsx \
- *     packages/server/src/scripts/deprecated/migrate-sync-json-to-connection.ts
+ *   SYNC_JSON_PATH=/path/to/sync.json pnpm --filter @withmarfa/server exec tsx \
+ *     src/scripts/deprecated/migrate-sync-json-to-connection.ts
  *     [--dialect=sqlite|pg]
  *
  * Environment:

@@ -325,16 +325,6 @@ export interface ApiKey {
    * grant's `metadata.<subresource>:<verb>` scopes.
    */
   metadata_permissions?: Record<string, MetadataPermission>;
-  /**
-   * Standard OIDC scopes (`openid` / `profile` / `email`) granted to this
-   * credential, plus `offline_access` which signals refresh-token issuance.
-   * Only ever populated on synthetic `ApiKey` records derived from an OAuth
-   * access token; raw API keys leave it absent. Consumed by `/oauth/userinfo`
-   * to gate field visibility — never projected into the type / edge / metadata
-   * permission maps. `offline_access` is informational here (it doesn't widen
-   * userinfo claims) but kept for surface consistency.
-   */
-  oidc_scopes?: readonly ("openid" | "profile" | "email" | "offline_access")[];
   created_at: string;
   /**
    * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is

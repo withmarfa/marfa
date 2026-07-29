@@ -8,10 +8,10 @@ import {
 } from "./security-page.js";
 
 /**
- * Security page renderer + handler smoke. Full round-trip
- * (sign-in cookie → /auth/security → revoke → reload) lives in
- * `security-flow.test.ts`; this file covers the renderer states +
- * the route auth gate.
+ * Security page renderer + handler smoke: the renderer states and the
+ * route auth gates (every handler redirects to sign-in without a
+ * session cookie). The signed-in round-trip — real session cookie
+ * through /auth/security, revoke, reload — is not covered here.
  */
 
 let ctx: TestContext | undefined;

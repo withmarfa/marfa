@@ -13,7 +13,7 @@
  *
  * Not committed-runtime code; not exercised by tests.
  *
- *   pnpm --filter @withmarfa/server tsx scripts/preview-consent.ts
+ *   pnpm --filter @withmarfa/server exec tsx scripts/preview-consent.ts
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";

@@ -20,7 +20,7 @@
  * Usage (against staging):
  *   MARFA_API_URL=https://staging.marfa.so \
  *   MARFA_API_KEY=<admin-key> \
- *   pnpm --filter @withmarfa/server tsx scripts/soak-fanout.ts \
+ *   pnpm --filter @withmarfa/server exec tsx scripts/soak-fanout.ts \
  *     [--connections 50] [--events 100]
  *
  * Implementation note: this script uses raw `fetch` rather than depending

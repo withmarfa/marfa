@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx --import ./src/instrumentation.ts watch src/index.ts",
+    "dev": "tsx watch --import ./src/instrumentation.ts src/index.ts",
     "migrate": "tsx src/storage/migrate.ts",
     "migrate:oauth-to-credential": "tsx src/scripts/deprecated/migrate-oauth-to-credential.ts",
     "migrate:sync-json-to-connection": "tsx src/scripts/deprecated/migrate-sync-json-to-connection.ts",

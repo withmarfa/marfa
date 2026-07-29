@@ -1,6 +1,6 @@
 /**
  * Single-shot benchmark for hydrated GET /items/:id latency.
- * Usage: pnpm --filter @withmarfa/server tsx scripts/bench-hydration.ts
+ * Usage: pnpm --filter @withmarfa/server exec tsx scripts/bench-hydration.ts
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

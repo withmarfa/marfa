@@ -21,9 +21,12 @@ import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
  * mirroring the `<type>:<verb>` shape used for item-type scopes. Metadata
  * sub-resource scopes (e.g. `metadata.types:write`) gate metadata-layer
  * mutations like type registration. OIDC literals carry no operation —
- * they're standard OAuth/OIDC scope strings consumed only by the
- * `/oauth/userinfo` endpoint to gate field visibility, and never project
- * into `type_permissions` / `edge_permissions` / `metadata_permissions`.
+ * they're standard OAuth/OIDC scope strings whose only Marfa-side job is
+ * to be recognized as valid so the consent route accepts them. Claim
+ * gating happens in the OAuth provider's userinfo / id_token callbacks,
+ * which read the grant's own scope list; parsing them here exists so they
+ * never project into `type_permissions` / `edge_permissions` /
+ * `metadata_permissions`.
  */
 export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 
@@ -271,23 +274,6 @@ export function scopesToMetadataPermissions(
     }
   }
   return perms;
-}
-
-/**
- * Filters a granted scope list down to the standard OIDC literals
- * (`openid` / `profile` / `email`). Surfaced on the synthetic OAuth
- * `ApiKey` as `oidc_scopes` and consumed only by `/oauth/userinfo` to
- * gate field visibility. Unrecognized scopes — type, edge, metadata,
- * malformed — are ignored.
- */
-export function scopesToOidcScopes(scopes: string[]): Set<OidcScope> {
-  const out = new Set<OidcScope>();
-  for (const scope of scopes) {
-    const parsed = parseScope(scope);
-    if (parsed?.kind !== "oidc") continue;
-    if (parsed.oidcScope) out.add(parsed.oidcScope);
-  }
-  return out;
 }
 
 /**
