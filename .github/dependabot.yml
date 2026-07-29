@@ -1,12 +1,21 @@
 version: 2
 updates:
+  # Globs rather than an enumerated list. The list named five of the
+  # twenty-five workspace packages, so twenty received no dependency updates at
+  # all — including `packages/webhooks`, which is published to npm and verifies
+  # inbound signatures. Nothing reports a package that is merely absent from
+  # this file, so the gap is silent, and adding a workspace package would
+  # otherwise mean remembering to add it here too.
+  #
+  # `directories` supports globbing; the singular `directory` key does not.
   - package-ecosystem: "npm"
     directories:
       - "/"
-      - "/packages/server"
-      - "/packages/sdk"
-      - "/packages/shared"
-      - "/packages/types"
+      - "/packages/*"
+      - "/infra/cloudflare"
+      - "/infra/cloudflare/server-container"
+      - "/integrations/*"
+      - "/integrations/withmarfa-inbox/email-worker"
     schedule:
       interval: "monthly"
     groups:
