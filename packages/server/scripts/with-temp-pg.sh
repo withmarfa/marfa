@@ -46,7 +46,7 @@ CONTAINER_NAME="marfa-schema-dump-pg-${PG_PORT}"
 cleanup() {
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 echo "→ Starting ${CONTAINER_NAME} (postgres:17) on port ${PG_PORT}" >&2
 docker run -d --rm \
@@ -79,4 +79,14 @@ export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}
 # version-matched pg_dump (avoids a host pg_dump install requirement).
 export PG_CONTAINER_NAME="${CONTAINER_NAME}"
 
-exec "$@"
+# Run the command as a child, NOT via `exec`. `exec` replaces this shell with
+# the command, and a shell that no longer exists cannot run its EXIT trap, so
+# the container above outlives every invocation. That is not hypothetical: it
+# leaked one postgres:17 container per run for days, and `--rm` does not help
+# because it only fires when a container stops and nothing was left to stop it.
+#
+# `set -e` would exit here before the status could be captured, so the failure
+# is caught explicitly. Either way the trap runs and the container goes.
+STATUS=0
+"$@" || STATUS=$?
+exit "$STATUS"
