@@ -2,6 +2,7 @@ import { safeJsonParse } from "../json-utils.js";
 import {
   parseFilter,
   typePatternToSql,
+  typeSubtreeToSql,
   type SearchResult,
 } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
@@ -133,8 +134,28 @@ export class PgSearchStore implements SearchStore {
     }
 
     if (filters.type) {
-      params.push(filters.type);
-      conditions.push(`AND i.type = $${String(paramIdx++)}`);
+      // Subtree, not an exact identifier — the same reading `GET /items`
+      // gives the parameter. `core.entity` and `core.entity.*` both mean
+      // the type and everything under it, by name prefix and by declared
+      // parent, so a caller who narrows a search the way they narrow a
+      // listing gets the same set.
+      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+        filters.type,
+        filters.tenantId ?? null,
+      );
+      if (!global && exact && descendantPattern) {
+        params.push(exact, descendantPattern);
+        const clauses = [
+          `i.type = $${String(paramIdx++)}`,
+          `i.type LIKE $${String(paramIdx++)} ESCAPE '\\'`,
+        ];
+        if (extraTypes.length > 0) {
+          const placeholders = extraTypes.map(() => `$${String(paramIdx++)}`);
+          params.push(...extraTypes);
+          clauses.push(`i.type IN (${placeholders.join(", ")})`);
+        }
+        conditions.push(`AND (${clauses.join(" OR ")})`);
+      }
     }
 
     if (filters.tier !== undefined) {

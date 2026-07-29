@@ -3,7 +3,8 @@ import {
   MarfaError,
   ErrorCode,
   ITEM_STATES,
-  isValidTypeIdentifier,
+  GLOBAL_TYPE_WILDCARD,
+  isValidTypePattern,
   resolveEnforcement,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
@@ -123,7 +124,17 @@ export function searchRoutes(storage: Storage) {
     const { q, type, state, tier, tags, limit, offset, filter, include } =
       c.req.valid("query");
 
-    if (type && !isValidTypeIdentifier(type)) {
+    // Same grammar as `GET /items?type=`, because the parameter means the
+    // same thing on both: the named type and everything under it. Validating
+    // it as a bare identifier here made the explicit `parent.*` spelling a
+    // 400 on search while it was a subtree read on the listing.
+    //
+    // The value compiles into a `LIKE` predicate, so it has to clear the
+    // pattern grammar rather than an "ends with `.*`" shape check. The global
+    // `*` is rejected on top, matching the listing: "everything" is a search
+    // with no type at all, and a type filter matching every type would slip
+    // past the per-type enforcement levers keyed off this parameter.
+    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
