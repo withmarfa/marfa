@@ -34,6 +34,7 @@ import {
   requireAdmin,
   requireAuth,
   requireTypeAccess,
+  requireEdgePermission,
   requireActivityAttribution,
   permitsActivityAttribution,
   itemProvenanceSource,
@@ -494,6 +495,16 @@ async function processBulkItem(
       existing: Item,
       raw: { properties?: Record<string, unknown> },
     ) => void;
+    /**
+     * The edge half of the dual gate, mirroring `requireEdgePermission` on
+     * `POST /edges` and on `POST /items` with an inline `edges` payload.
+     * Edge writes need write on the source item's type AND on the edge
+     * type; `checkWrite` above is only the first of those, so without this
+     * a credential refused an edge on the direct routes could create the
+     * same edge here — and clear existing ones, since an empty target list
+     * is a delete instruction.
+     */
+    checkEdgeWrite: (edgeType: string) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -507,8 +518,15 @@ async function processBulkItem(
     };
   }
 
-  const { mode, tenantId, stampedSource, atomic, checkWrite, checkUpdate } =
-    options;
+  const {
+    mode,
+    tenantId,
+    stampedSource,
+    atomic,
+    checkWrite,
+    checkUpdate,
+    checkEdgeWrite,
+  } = options;
 
   // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
   // recreates and needs a transaction so a validation failure rolls the
@@ -521,10 +539,10 @@ async function processBulkItem(
     edgeSet: Record<string, string[]>,
   ): Promise<void> => {
     if (atomic) {
-      await applyInlineEdges(storage, id, edgeSet, tenantId);
+      await applyInlineEdges(storage, id, edgeSet, tenantId, checkEdgeWrite);
     } else {
       await storage.runInTransaction(() =>
-        applyInlineEdges(storage, id, edgeSet, tenantId),
+        applyInlineEdges(storage, id, edgeSet, tenantId, checkEdgeWrite),
       );
     }
   };
@@ -716,6 +734,11 @@ export function bulkRoutes(storage: Storage) {
           : existing.properties,
       );
     };
+    // The edge half of the dual gate. Same call the direct routes make,
+    // so the three doors that accept an inline `edges` payload agree.
+    const checkEdgeWrite = (edgeType: string): void => {
+      requireEdgePermission(c, edgeType, "write");
+    };
 
     const body = c.req.valid("json");
     const items = body.items;
@@ -801,6 +824,7 @@ export function bulkRoutes(storage: Storage) {
           atomic,
           checkWrite,
           checkUpdate,
+          checkEdgeWrite,
         });
         if (atomic && result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw

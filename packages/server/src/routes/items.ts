@@ -1001,9 +1001,13 @@ export function itemRoutes(storage: Storage) {
         // Permission gate: atomic POST /items edges require the same
         // edge-type write permission as POST /edges. Item-type write is
         // already enforced above via requireTypeAccess(type, "write").
-        if (targets.length > 0) {
-          requireEdgePermission(c, edgeType, "write");
-        }
+        //
+        // Gated regardless of target count. On the natural-key upsert
+        // branch an empty list reaches `applyInlineEdges`, which reads it
+        // as "delete every edge of this type" — so exempting the empty
+        // case handed the delete primitive to a caller with no edge
+        // permission at all.
+        requireEdgePermission(c, edgeType, "write");
       }
     }
 
@@ -1108,7 +1112,15 @@ export function itemRoutes(storage: Storage) {
               await storage.metadata.set(updated.id, body.tags);
             }
             if (body.edges) {
-              await applyInlineEdges(storage, updated.id, body.edges, tenantId);
+              await applyInlineEdges(
+                storage,
+                updated.id,
+                body.edges,
+                tenantId,
+                (edgeType) => {
+                  requireEdgePermission(c, edgeType, "write");
+                },
+              );
             }
 
             const meta = await storage.metadata.get(updated.id);

@@ -60,6 +60,15 @@ export async function seedStarterContent(
   // proposed set and must run inside a transaction (its delete-then-create
   // needs rollback on a rejected set).
   await storage.runInTransaction(() =>
-    applyInlineEdges(storage, welcome.id, { references: [docs.id] }, tenantId),
+    applyInlineEdges(
+      storage,
+      welcome.id,
+      { references: [docs.id] },
+      tenantId,
+      // No permission gate: this runs inside sign-up provisioning, on a
+      // space with no credentials yet and no caller to check. Every other
+      // call site passes the request's edge-type gate.
+      () => undefined,
+    ),
   );
 }
