@@ -30,22 +30,14 @@ export class SqliteMetadataStore implements MetadataStore {
     // readable.
     if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
       const typeClauses = filters.allowedTypes.map((pattern) => {
-        const { exact, descendantPattern, extraTypes } = typePatternToSql(
-          pattern,
-          filters.tenantId ?? null,
-        );
+        const { exact, descendantPattern } = typePatternToSql(pattern);
         if (!exact) return "1=0";
         if (!descendantPattern) {
           params.push(exact);
           return "i.type = ?";
         }
         params.push(exact, descendantPattern);
-        if (extraTypes.length === 0) {
-          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
-        }
-        params.push(...extraTypes);
-        const placeholders = extraTypes.map(() => "?").join(", ");
-        return `(i.type = ? OR i.type LIKE ? ESCAPE '\\' OR i.type IN (${placeholders}))`;
+        return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
       });
       conditions.push(
         typeClauses.length > 0 ? `(${typeClauses.join(" OR ")})` : "1=0",

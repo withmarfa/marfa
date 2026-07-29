@@ -1,10 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   subtreeWildcardRoot,
   typeMatchesPattern,
   typePatternToSql,
   typeSubtreeToSql,
 } from "./type-patterns.js";
+import {
+  declaredDescendantsOutsideNamespace,
+  registerTypeSchema,
+  unregisterTypeSchema,
+  type TypeSchema,
+} from "./type-registry.js";
 import { matchesTypePattern, resolveTypePermission } from "./validation.js";
 import { expandWildcardScopes } from "./scopes.js";
 
@@ -166,8 +172,58 @@ describe("resolving names alone", () => {
     // Webhook filters and scope parsing match on identifiers only. Omitting the
     // scope has to keep them on exactly the predicate they always emitted, so
     // the declared half is opt-in rather than something a pure caller inherits.
-    expect(typePatternToSql("core.note.*").extraTypes).toEqual([]);
+    // `typePatternToSql` never resolves it at all — see its own comment.
     expect(typeSubtreeToSql("core.note").extraTypes).toEqual([]);
     expect(typeMatchesPattern("user.elsewhere", "core.note.*")).toBe(false);
+    // A permission pattern never consults the registry, whatever is registered.
+    expect(typePatternToSql("core.note.*").extraTypes).toEqual([]);
+  });
+});
+
+describe("declared descendants are resolved per tenant", () => {
+  const child = (id: string, parent: string): TypeSchema =>
+    ({
+      id,
+      name: id,
+      description: "test",
+      parent,
+      version: 1,
+      fields: {},
+    }) as unknown as TypeSchema;
+
+  afterEach(() => {
+    unregisterTypeSchema("user.alpha_child", "tenant-alpha");
+    unregisterTypeSchema("user.beta_child", "tenant-beta");
+  });
+
+  it("resolves only the asking tenant's declared children", () => {
+    registerTypeSchema(child("user.alpha_child", "core.note"), "tenant-alpha");
+    registerTypeSchema(child("user.beta_child", "core.note"), "tenant-beta");
+
+    expect(
+      declaredDescendantsOutsideNamespace("core.note", "tenant-alpha"),
+    ).toEqual(["user.alpha_child"]);
+    expect(
+      declaredDescendantsOutsideNamespace("core.note", "tenant-beta"),
+    ).toEqual(["user.beta_child"]);
+  });
+
+  // The item store's tenant fence would drop another tenant's rows anyway, so a
+  // cross-tenant resolver leaks no data today. This is the second layer, and it
+  // is asserted here rather than left to the first: a resolver that reaches the
+  // global set is wrong on its own terms, and proving it through the query path
+  // only proves the fence.
+  it("does not reach another tenant's registry", () => {
+    registerTypeSchema(child("user.beta_child", "core.note"), "tenant-beta");
+    expect(
+      declaredDescendantsOutsideNamespace("core.note", "tenant-alpha"),
+    ).not.toContain("user.beta_child");
+  });
+
+  it("returns nothing for a root nothing declares", () => {
+    registerTypeSchema(child("user.alpha_child", "core.note"), "tenant-alpha");
+    expect(
+      declaredDescendantsOutsideNamespace("core.bookmark", "tenant-alpha"),
+    ).toEqual([]);
   });
 });

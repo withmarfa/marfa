@@ -9,23 +9,26 @@
 // A subtree has two roots, not one. The dotted identifier is a namespace, and
 // the registry's `parent` field is a declared lineage; a type may sit in one
 // without sitting in the other, because registration validates the parent chain
-// and never requires the child's name to start with the parent's. So a subtree
-// resolves to the union: everything under the name, plus everything that
-// declares its way there. Taking only the first is the defect this module now
-// closes — a declared child named elsewhere was absent from every read and
-// every permission check, silently. Taking only the second would drop the
-// namespace, which is load-bearing in its own right (nothing declares a parent
-// of `google`, yet `google.*` plainly means the Google types).
+// and never requires the child's name to start with the parent's.
+//
+// The `?type=` READ FILTER resolves both: everything under the name, plus
+// everything that declares its way there. Resolving names alone is the defect
+// this closes — a declared child named elsewhere was missing from a query
+// against its own parent, with no error. Resolving declarations alone would
+// break the other half, since nothing declares a parent of `google` yet
+// `google.*` plainly means the Google types.
+//
+// PERMISSION PATTERNS resolve names only. That asymmetry is deliberate and is
+// explained at `typePatternToSql`: a permission map is ranked by longest-prefix
+// precedence, and there is no defensible way to rank a name match against a
+// declared one, so expanding grants put the list query and the single-item gate
+// into disagreement in the fail-open direction.
 //
 // Resolving the declared half needs the registry, and the registry is
-// tenant-scoped because custom types are. Hence the optional `tenantId` on the
-// helpers below: omit it and they behave exactly as before, which keeps every
-// pure caller (webhook filters, scope parsing) working on names alone.
+// tenant-scoped because custom types are. Hence the optional `tenantId` on
+// `typeSubtreeToSql`: omit it and it behaves exactly as before.
 
-import {
-  declaredDescendantsOutsideNamespace,
-  isSubtypeOf,
-} from "./type-registry.js";
+import { declaredDescendantsOutsideNamespace } from "./type-registry.js";
 
 /** Matches every type, including the reserved namespaces. */
 export const GLOBAL_TYPE_WILDCARD = "*";
@@ -51,31 +54,21 @@ export function subtreeWildcardRoot(pattern: string): string | null {
  * mean a token whose granted scope list and whose permission map disagree
  * about the parent type.
  */
-export function typeMatchesPattern(
-  type: string,
-  pattern: string,
-  tenantId?: string | null,
-): boolean {
+export function typeMatchesPattern(type: string, pattern: string): boolean {
   if (pattern === GLOBAL_TYPE_WILDCARD) return true;
   if (pattern === type) return true;
   const root = subtreeWildcardRoot(pattern);
   if (root === null) return false;
-  if (type === root || type.startsWith(`${root}.`)) return true;
-  // The declared half of the subtree. Checked second because the name answers
-  // it for almost every type, and only reachable when a tenant scope was
-  // supplied — a caller matching names alone gets exactly the old behavior.
-  if (tenantId === undefined) return false;
-  return isSubtypeOf(type, root, tenantId);
+  return type === root || type.startsWith(`${root}.`);
 }
 
 /** Whether any pattern in the list covers the type. */
 export function typeMatchesAnyPattern(
   type: string,
   patterns: readonly string[],
-  tenantId?: string | null,
 ): boolean {
   for (const pattern of patterns) {
-    if (typeMatchesPattern(type, pattern, tenantId)) return true;
+    if (typeMatchesPattern(type, pattern)) return true;
   }
   return false;
 }
@@ -85,6 +78,18 @@ export function typeMatchesAnyPattern(
  * identifier to compare, and an escaped LIKE pattern for descendants.
  * Keeping the decomposition here is what stops each dialect's query builder from
  * re-deriving (and re-getting-wrong) the parent-inclusion rule.
+ *
+ * **Permission patterns resolve by name only, deliberately.** Only the read
+ * filter below consults declared parentage. Expanding a grant through the
+ * registry looked symmetrical and is not: a permission map is resolved by
+ * longest-prefix precedence, and the two hierarchies give no way to rank a
+ * name match against a declared one. The concrete failure was a map of
+ * `{"user.*": "none", "core.note.*": "read"}` against a type named under
+ * `user` that declares `core.note` as its parent — the deny won at the
+ * single-item gate, which resolves names, while the expanded grant won in the
+ * list query, so a row the credential was explicitly denied came back in a
+ * listing and 403'd when fetched by id. Names are also what the grant was
+ * written against: whoever wrote `user.*: none` meant the namespace.
  *
  * - `*`               → `{ global: true }`
  * - `core.media.*`    → `{ exact: "core.media", descendantPattern: "core.media.%" }`
@@ -122,10 +127,7 @@ function escapeLikeLiteral(value: string): string {
     .replaceAll("_", "\\_");
 }
 
-export function typePatternToSql(
-  pattern: string,
-  tenantId?: string | null,
-): TypePatternSql {
+export function typePatternToSql(pattern: string): TypePatternSql {
   if (pattern === GLOBAL_TYPE_WILDCARD) {
     return {
       global: true,
@@ -149,7 +151,7 @@ export function typePatternToSql(
     global: false,
     exact: root,
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
-    extraTypes: declaredExtras(root, tenantId),
+    extraTypes: [],
   };
 }
 

@@ -159,8 +159,8 @@ export class PgSearchStore implements SearchStore {
         conditions.push("AND 1=0");
       } else {
         const typeClauses = filters.allowed_types.map((pattern) => {
-          const { global, exact, descendantPattern, extraTypes } =
-            typePatternToSql(pattern, filters.tenantId ?? null);
+          const { global, exact, descendantPattern } =
+            typePatternToSql(pattern);
           if (global) return "1=1";
           if (!exact) return "1=0";
           if (!descendantPattern) {
@@ -168,13 +168,7 @@ export class PgSearchStore implements SearchStore {
             return `i.type = $${String(paramIdx++)}`;
           }
           params.push(exact, descendantPattern);
-          const nameClause = `i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)} ESCAPE '\\'`;
-          if (extraTypes.length === 0) return `(${nameClause})`;
-          params.push(...extraTypes);
-          const placeholders = extraTypes
-            .map(() => `$${String(paramIdx++)}`)
-            .join(", ");
-          return `(${nameClause} OR i.type IN (${placeholders}))`;
+          return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)} ESCAPE '\\')`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }

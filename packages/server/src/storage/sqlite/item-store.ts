@@ -122,22 +122,17 @@ function isPrimaryKeyViolation(err: unknown): boolean {
  */
 function allowedTypesCondition(
   patterns: string[] | undefined,
-  tenantId?: string | null,
 ): SQL | undefined {
   if (!patterns) return undefined;
   if (patterns.length === 0) return sql`1=0`;
   const clauses = patterns.map((pattern) => {
-    const { global, exact, descendantPattern, extraTypes } = typePatternToSql(
-      pattern,
-      tenantId,
-    );
+    const { global, exact, descendantPattern } = typePatternToSql(pattern);
     if (global) return sql`1=1`;
     if (!exact) return sql`1=0`;
     if (!descendantPattern) return eq(items.type, exact);
     return or(
       eq(items.type, exact),
       sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-      ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
     );
   });
   return or(...clauses);
@@ -473,10 +468,7 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      const clause = allowedTypesCondition(
-        filters.allowed_types,
-        filters.tenantId ?? null,
-      );
+      const clause = allowedTypesCondition(filters.allowed_types);
       if (clause) conditions.push(clause);
     }
 
@@ -979,7 +971,7 @@ export class SqliteItemStore implements ItemStore {
     if (tenantId) {
       conditions.push(eq(items.tenant_id, tenantId));
     }
-    const typeClause = allowedTypesCondition(allowedTypes, tenantId ?? null);
+    const typeClause = allowedTypesCondition(allowedTypes);
     if (typeClause) conditions.push(typeClause);
     // Counts have to agree with the listing they summarize, so the read
     // lever applies here too.

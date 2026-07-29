@@ -167,17 +167,19 @@ describe("a subtree query reaches a child declared outside its namespace", () =>
   });
 });
 
-describe("the permission gate and the query agree about the same subtree", () => {
-  it("lets a key scoped to the parent subtree read the declared child", async () => {
+describe("a permission map still resolves names, and only names", () => {
+  it("does not let a subtree grant reach a child declared from another namespace", async () => {
     ctx = await createTestContext();
     const child = await registerChild(ctx);
+    await createNote(ctx, "core.note", "plain");
     await createNote(ctx, child, "annotated");
     await createNote(ctx, "core.bookmark", "https://example.test");
 
-    // A credential granted the parent subtree and nothing else. If the
-    // permission projection resolved names while the query resolved the
-    // registry, this key would be admitted and then shown nothing — the two
-    // halves disagreeing is the failure mode `type-patterns` exists to prevent.
+    // The read filter resolves declared parentage; a permission map does not.
+    // Expanding grants through the registry is what put the list query and the
+    // single-item gate into disagreement, in the direction that shows a row a
+    // fetch would refuse — so a grant covers the namespace it names, and a
+    // credential reaches this child only through a `user.*` grant of its own.
     const keyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
@@ -194,7 +196,8 @@ describe("the permission gate and the query agree about the same subtree", () =>
     const scoped = ((await keyRes.json()) as { key: string }).key;
 
     const types = await listTypes(ctx, "type=core.note", scoped);
-    expect(types).toContain(child);
+    expect(types).toContain("core.note");
+    expect(types).not.toContain(child);
     expect(types).not.toContain("core.bookmark");
   });
 
