@@ -10,7 +10,9 @@ on:
       - "LICENSE"
   pull_request:
     # No paths-ignore here: a required status check must report on every PR,
-    # including docs-only ones, or branch protection blocks the merge.
+    # including documentation-only ones, or branch protection blocks the
+    # merge waiting for a check that will never arrive. Skipping the work
+    # rather than the trigger is the `changes` job's job.
     branches: [main]
   # Freshness jobs are also triggerable manually so agents can verify
   # generated-artifact drift (types registry, openapi.json) before merging
@@ -31,6 +33,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Classifies the diff so the expensive jobs below can skip work they cannot
+  # be affected by. Gating happens at STEP level, not job level: `CI (SQLite)`
+  # is a required status check, and a job skipped by an `if:` never reports,
+  # which leaves branch protection waiting forever on a check that will never
+  # arrive. Keeping the job and emptying it is the only shape that both skips
+  # the work and satisfies the gate.
+  #
+  # Fails open by design. Anything this cannot classify counts as code, so an
+  # unrecognized path runs the full suite rather than silently skipping it.
+  # A missed run is a bad merge; a redundant run is a few minutes on a runner
+  # the project already owns.
+  changes:
+    name: Detect changed paths
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      sqlite_migrations: ${{ steps.filter.outputs.sqlite_migrations }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # A first push to a branch reports an all-zero `before`, and a shallow
+          # or grafted history can leave the base unreachable. Either way the
+          # diff is unknowable, so run everything.
+          if [ -z "${BASE_SHA:-}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "Base commit unavailable — treating as a code change."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed="$(git diff --name-only "${BASE_SHA}" "${GITHUB_SHA}")"
+          echo "Changed files:"; echo "${changed}" | sed 's/^/  /'
+
+          # Paths that cannot alter runtime behavior. Everything else is code.
+          docs_only='^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|[^/]*\.md$|.*/[^/]*\.md$)'
+          if [ -z "${changed}" ] || [ -z "$(echo "${changed}" | grep -Ev "${docs_only}" || true)" ]; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if echo "${changed}" | grep -qE '^packages/server/drizzle/sqlite/'; then
+            echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sqlite_migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Freshness jobs — catch generated-artifact drift. Run on main pushes and
   # on manual dispatch, but NOT on every PR push. Agents are expected to
   # fire these via `gh workflow run ci.yml --ref <branch>` before merging
@@ -210,6 +266,8 @@ jobs:
   # gate prevents the next one from landing.
   sqlite-migrations-lint:
     name: SQLite migrations — statement-breakpoint lint
+    needs: changes
+    if: needs.changes.outputs.sqlite_migrations == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -241,16 +299,26 @@ jobs:
   # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:
     name: CI (SQLite)
+    needs: changes
     if: github.event_name != 'workflow_dispatch'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      # This job always runs so the required check reports. When the diff is
+      # documentation only it reports green without doing the work.
+      - name: Nothing to test
+        if: needs.changes.outputs.code != 'true'
+        run: echo "Documentation-only change — the suite cannot be affected by it."
+
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.code == 'true'
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -263,20 +331,32 @@ jobs:
           # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
+        if: needs.changes.outputs.code == 'true'
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm test
-      - run: pnpm --filter @withmarfa/server run smoke:worker-entry
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm build
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm typecheck
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm lint
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm format:check
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm test
+      - if: needs.changes.outputs.code == 'true'
+        run: pnpm --filter @withmarfa/server run smoke:worker-entry
 
   ci-pg:
     name: CI (Postgres)
-    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true'
+    needs: changes
+    # Also gated on the diff: this is the one job billed to the hosted
+    # allowance, so a documentation-only pull request must never reach it even
+    # in a release window with `RUN_HOSTED_CI` switched on.
+    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -342,7 +422,8 @@ jobs:
   # breakage on PR before it lands.
   ci-fresh-migrate-sqlite:
     name: CI (Fresh migrate, SQLite)
-    if: github.event_name != 'workflow_dispatch'
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -381,7 +462,8 @@ jobs:
 
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
-    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true'
+    needs: changes
+    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
