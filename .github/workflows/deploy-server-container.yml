@@ -90,7 +90,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
@@ -128,7 +128,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
@@ -159,7 +159,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
