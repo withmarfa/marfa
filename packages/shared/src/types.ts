@@ -1109,13 +1109,17 @@ export interface User {
 }
 
 /**
- * Wire shape returned by the profile endpoints (`GET /profile/me`, OIDC
- * userinfo, etc.). There is no `items`-table row per user — the profile is
- * served by joining `users` to `auth_user` for the canonical email. Avatar
- * URL is reconstructed at read time (either `/blobs/<hash>` for an uploaded
- * avatar or `/profile/placeholder/<username>.svg` when unset). Apps compose
- * any display name from `first_name` / `last_name` / `username` — there is
- * no `display_name` field by design.
+ * Wire shape returned by the profile endpoints (`GET /profile/me`). The
+ * profile's own fields are served by joining `users` to `auth_user` for the
+ * canonical email, not read from an item. Avatar URL is reconstructed at
+ * read time (either `/blobs/<hash>` for an uploaded avatar or
+ * `/profile/placeholder/<username>.svg` when unset). Apps compose any
+ * display name from `first_name` / `last_name` / `username` — there is no
+ * `display_name` field by design.
+ *
+ * `account_holder_item_id` is the one link into the item graph: the id of
+ * the `system.account_holder` row an edge can target. The fields above it
+ * are still not stored there.
  */
 export interface Profile {
   /** Same as `users.handle`. Required (the API rejects users without
@@ -1133,6 +1137,13 @@ export interface Profile {
   email_verified: boolean;
   created_at: string;
   updated_at: string;
+  /**
+   * Id of the account holder's `system.account_holder` item — the graph
+   * handle to aim an `authored-by` (or any other) edge at, so a client never
+   * has to guess or invent a stand-in. Read-only and absent only on an
+   * instance whose backfill has not run.
+   */
+  account_holder_item_id?: string;
 }
 
 /** `PATCH /profile/me` body. Every field is optional; `null` clears the

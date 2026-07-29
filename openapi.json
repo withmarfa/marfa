@@ -10986,7 +10986,7 @@
           "Profile"
         ],
         "summary": "Get the calling user's profile",
-        "description": "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead.",
+        "description": "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
         "security": [
           {
             "bearerAuth": []
@@ -11029,6 +11029,9 @@
                       "type": "string"
                     },
                     "updated_at": {
+                      "type": "string"
+                    },
+                    "account_holder_item_id": {
                       "type": "string"
                     }
                   },
@@ -11205,6 +11208,9 @@
                       "type": "string"
                     },
                     "updated_at": {
+                      "type": "string"
+                    },
+                    "account_holder_item_id": {
                       "type": "string"
                     }
                   },
@@ -11444,6 +11450,9 @@
                     },
                     "updated_at": {
                       "type": "string"
+                    },
+                    "account_holder_item_id": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -11630,6 +11639,9 @@
                       "type": "string"
                     },
                     "updated_at": {
+                      "type": "string"
+                    },
+                    "account_holder_item_id": {
                       "type": "string"
                     }
                   },

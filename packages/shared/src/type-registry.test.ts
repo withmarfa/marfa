@@ -16,8 +16,8 @@ import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 22 core, 13 connector and 7 system types", () => {
-    expect(TYPE_REGISTRY.size).toBe(42);
+  it("contains 22 core, 13 connector and 8 system types", () => {
+    expect(TYPE_REGISTRY.size).toBe(43);
     expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
     expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
     expect(TYPE_REGISTRY.has("google.contacts.contact")).toBe(true);
@@ -38,6 +38,7 @@ describe("TYPE_REGISTRY", () => {
     expect(TYPE_REGISTRY.has("system.connection")).toBe(true);
     expect(TYPE_REGISTRY.has("system.activity")).toBe(true);
     expect(TYPE_REGISTRY.has("system.integration")).toBe(true);
+    expect(TYPE_REGISTRY.has("system.account_holder")).toBe(true);
   });
 
   it("contains all media group types", () => {
