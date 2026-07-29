@@ -3,9 +3,10 @@
  * the lock + cursor merge + activity emit path against a real
  * Postgres-backed test context using a `directDispatch` registration.
  *
- * The worker_thread boundary is integration-tested separately via the
- * `worker-thread-executor.test.ts` smoke; this file focuses on the
- * substrate's other invariants:
+ * The worker_thread boundary is covered separately — `executor.test.ts`
+ * for the pool's spawn/error handling, `in-tree-smoke.test.ts` for
+ * loading a real compiled integration through it. This file focuses on
+ * the substrate's other invariants:
  *
  *   - cursor snapshot → handler writes → applyCursorDelta merge
  *   - permanent failure → recent_errors tail entry + action_required

@@ -380,7 +380,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  *     code-bearing registered callback. The explicit handler retains the
  *     verified client context needed to gate those side effects.
  *   - revoke cascade + audit: `DELETE /auth/grants/:id` and
- *     `POST /auth/grants/:id/revoke` (`routes/oauth.ts`) call
+ *     `POST /auth/grants/:id/revoke` (`routes/auth-pages.ts`) call
  *     `storage.oauthProvider.revokeTokensForGrant` and emit
  *     `auth.grant.revoked`. The plugin's `/oauth2/revoke` takes a
  *     token-in-hand, not a (client, user) pair, so resolving the right

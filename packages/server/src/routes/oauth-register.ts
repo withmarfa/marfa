@@ -77,7 +77,7 @@ const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
  * `/auth/oauth2/token` endpoint still only knows how to dispatch the
  * first three (verified at `dist/index.mjs:300-318`). Device-code
  * exchange targets the Marfa-owned `POST /auth/device/token` route in
- * `routes/oauth.ts:1549-1750`, not the plugin's `/oauth2/token`. The
+ * `routes/auth-pages.ts`, not the plugin's `/oauth2/token`. The
  * discovery doc advertises both endpoints accordingly.
  */
 const ACCEPTED_GRANT_TYPES = [

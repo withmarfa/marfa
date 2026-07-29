@@ -25,8 +25,8 @@
  * `credential_ref`. Calendar uses `/oauth/callback/google`; future
  * connectors use their own paths but share this route.
  *
- * Why this lives in routes/oauth-callback.ts (not in oauth.ts):
- * `oauth.ts` covers the Marfa-as-IdP surface (Better Auth + the
+ * Why this lives in routes/oauth-callback.ts (not in auth-pages.ts):
+ * `auth-pages.ts` covers the Marfa-as-IdP surface (Better Auth + the
  * /auth/* routes for human sign-in + OAuth grants to apps). This
  * file covers Marfa-as-OAuth-client (the connector's outbound OAuth
  * flow). Different concern, different file.
