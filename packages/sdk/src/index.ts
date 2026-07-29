@@ -50,6 +50,17 @@ export type {
   ConflictAutoMergeListener,
 } from "./conflict.js";
 
+// Change stream
+export { CatchupTooOldError, SseParser } from "./events.js";
+export type {
+  MarfaEvent,
+  MarfaItemEvent,
+  MarfaEdgeEvent,
+  CatchupTooOld,
+  SubscribeOptions,
+  Subscription,
+} from "./events.js";
+
 // Type authoring helper
 export { defineType } from "./define-type.js";
 
