@@ -28,13 +28,34 @@ import type { Storage } from "../storage/interface.js";
  * short-circuit and both bulk branches). Validation runs after the deletes
  * but before any create, so a rejected set never lands a write; the
  * transaction unwinds the deletes.
+ *
+ * `assertEdgeWritable` is the caller's edge-type permission gate, run once
+ * per listed edge type. It lives here rather than at each call site because
+ * every route reaching this function reaches the same state, and a gate that
+ * has to be remembered per route is a gate one of them will be missing — as
+ * both bulk branches were. It is a required parameter for the same reason:
+ * a new call site has to state an answer rather than inherit a default.
+ *
+ * The gate runs for every listed type including one whose target list is
+ * empty. An empty list is not a no-op, it is a delete instruction: the
+ * loop below removes every existing edge of that type and then creates
+ * nothing. Gating only non-empty lists leaves the delete primitive
+ * ungated, which is the half a create-only test passes straight over.
  */
 export async function applyInlineEdges(
   storage: Storage,
   itemId: string,
   edges: Record<string, string[]>,
   tenantId: string | undefined,
+  assertEdgeWritable: (edgeType: string) => void,
 ): Promise<void> {
+  // Permission first, before any shape validation or write. A caller with
+  // no edge permission must not be able to distinguish a malformed target
+  // from a well-formed one it still may not write.
+  for (const edgeType of Object.keys(edges)) {
+    assertEdgeWritable(edgeType);
+  }
+
   // Build and shape the proposals up front so a malformed target id is
   // rejected before any write — preserves the prior fail-fast behavior.
   const proposals: EdgeProposal[] = [];
