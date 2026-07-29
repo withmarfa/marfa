@@ -499,12 +499,20 @@ describe("POST /auth/device/consent — approve / deny", () => {
     );
     expect(res.status).toBe(200);
 
-    // The audit insert is fire-and-forget, so poll for it rather than
-    // sleeping a fixed span: on a loaded Postgres run a single INSERT
-    // outlasts any figure short enough to be worth waiting.
+    // The consent handler emits its audit row fire-and-forget (`void
+    // storage.audit.log(...)`) so an audit failure can never block the
+    // user-facing response, which means the row lands some time after the
+    // 200. Poll until it does rather than sleeping a guessed interval: the
+    // wait tracks actual write latency instead of assuming one, and it
+    // keeps the in-flight write inside the test body, so per-test teardown
+    // can't close the database connection out from under it.
     const storage = ctx.storage;
     const audits = await waitForAudit(
-      () => storage.audit.list({ action: "auth.grant.created", limit: 10 }),
+      () =>
+        storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        }),
       (result) => result.data.length >= 1,
     );
     expect(audits.data.length).toBe(1);
