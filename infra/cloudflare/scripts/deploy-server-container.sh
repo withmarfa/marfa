@@ -23,21 +23,28 @@
 #   - CLOUDFLARE_API_TOKEN     (token with Workers write on the target account)
 #   - CLOUDFLARE_ACCOUNT_ID    (marfa account id)
 #
-# ALSO REQUIRED for a hand-run deploy, and easy to miss because these are not
-# secrets and are not in the per-machine file: <ENV>_API_BASE_URL and
-# <ENV>_CORS_ORIGINS live as repository Actions variables, so CI has them and a
-# local shell does not. Their fallbacks resolve to a workers.dev URL, and that
-# does not fail — it deploys a server whose OAuth issuer and cookie domain are
-# wrong and whose CORS list holds a single origin, silently cutting off every
-# browser client. Export them from the repository first:
+# <ENV>_API_BASE_URL and <ENV>_CORS_ORIGINS live as repository Actions
+# variables, so CI has them in scope and a local shell does not. The script
+# resolves them itself via `gh` when the shell lacks them, and REFUSES TO
+# DEPLOY if it cannot, rather than defaulting.
 #
-#   export STAGING_API_BASE_URL="$(gh variable list --repo withmarfa/marfa \
-#     --json name,value --jq '.[]|select(.name=="STAGING_API_BASE_URL")|.value')"
-#   export STAGING_CORS_ORIGINS="$(gh variable list --repo withmarfa/marfa \
-#     --json name,value --jq '.[]|select(.name=="STAGING_CORS_ORIGINS")|.value')"
+# That refusal is deliberate and was added after the guess shipped. The old
+# fallbacks looked reasonable — a workers.dev host for the base URL, the API's
+# own origin for the CORS list — and neither fails anything. They deploy a
+# server whose OAuth issuer and cookie domain are wrong and whose CORS list
+# admits nobody, and report success. The auth base URL is worse than the CORS
+# list, because every signed-in surface breaks at once with no error anywhere
+# that points at the deploy.
 #
-# The rendered values are printed before the roll. Read them rather than
-# assuming, because a wrong one looks exactly like a healthy deploy.
+# So: nothing here is inferred. Export the values to override, or let the
+# script read them. The rendered values are printed before the roll; read them
+# rather than assuming, because a wrong one still looks like a healthy deploy.
+#
+# One thing the printout cannot tell you: the container reads `envVars` ONCE at
+# launch, so changing them and redeploying the Worker does not move a running
+# container. It keeps the old values until it next restarts. Staging sleeps
+# after 2m idle and cycles on its own; a warm or busy environment needs an
+# image roll to force it.
 #
 # Migrate-before-deploy (canonical ordering: migrate-then-deploy):
 #   Unless SKIP_MIGRATE=1, this runs pending Drizzle migrations against the
@@ -201,6 +208,37 @@ export V_S3_ENDPOINT="${S3_ENDPOINT:-https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudfl
 # blob writes.
 export V_BLOB_BACKEND="${V_BLOB_BACKEND:-fs}"
 
+# Resolve a deploy-critical value that lives as a repository Actions variable.
+# CI has these in scope and a local shell does not, so both used to fall back to
+# something plausible: the auth base URL to a workers.dev host, and the CORS
+# allow-list to whatever the auth base URL resolved to. Both deploy cleanly and
+# report nothing wrong. The auth base URL drives cookie domain and the OAuth
+# issuer, so a wrong one breaks every signed-in surface; a truncated CORS list
+# breaks one app's reads against the API and nothing else notices. A deploy that
+# silently misconfigures auth is worse than a deploy that refuses to run.
+#
+# Sets the named variable in place rather than echoing, so the `exit` below
+# leaves the script instead of a command-substitution subshell, which would
+# assign an empty value and carry on.
+resolve_repo_var() {
+  local name="$1"
+  [[ -n "${!name:-}" ]] && return 0
+  local fetched
+  fetched="$(gh variable list --repo withmarfa/marfa --json name,value \
+    --jq ".[]|select(.name==\"${name}\")|.value" 2>/dev/null || true)"
+  if [[ -z "$fetched" ]]; then
+    echo "error: ${name} is unset and could not be read from the repository." >&2
+    echo "  It decides the auth base URL and the CORS allow-list. Guessing it" >&2
+    echo "  produces a deploy that succeeds and a server that cannot sign anyone" >&2
+    echo "  in, so this refuses rather than defaulting." >&2
+    echo "  Export it, or authenticate gh so it can be resolved." >&2
+    exit 1
+  fi
+  printf -v "$name" '%s' "$fetched"
+  export "${name?}"
+  echo "resolved ${name} from the repository (not set in this shell)"
+}
+
 if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_WORKER_NAME="marfa-server-staging"
   # Closed, matching prod. An enabled subdomain is a second hostname for the
@@ -237,9 +275,11 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   if [[ -n "$SUB" ]]; then
     export V_AUTH_BASE_URL="https://marfa-server-staging.${SUB}.workers.dev"
   else
-    export V_AUTH_BASE_URL="${STAGING_API_BASE_URL:-https://marfa-server-staging.workers.dev}"
+    resolve_repo_var STAGING_API_BASE_URL
+    export V_AUTH_BASE_URL="$STAGING_API_BASE_URL"
   fi
-  export V_CORS_ORIGINS="${STAGING_CORS_ORIGINS:-$V_AUTH_BASE_URL}"
+  resolve_repo_var STAGING_CORS_ORIGINS
+  export V_CORS_ORIGINS="$STAGING_CORS_ORIGINS"
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-staging-${GIT_SHA}}"
 else
   export SERVER_WORKER_NAME="marfa-server"
@@ -259,7 +299,12 @@ else
   export V_RUNTIME_CONTROL_URL="https://runtime.marfa.so"
   export V_S3_BUCKET="${PROD_R2_BUCKET:-marfa-blobs-prod}"
   export V_AUTH_BASE_URL="https://api.marfa.so"
-  export V_CORS_ORIGINS="${PROD_CORS_ORIGINS:-https://api.marfa.so}"
+  # Resolved rather than defaulted. The old fallback was the API's own origin,
+  # which is not a cross-origin caller at all, so it dropped every real one:
+  # a local prod deploy silently cut `app.marfa.so` off from the API and the
+  # deploy still reported success.
+  resolve_repo_var PROD_CORS_ORIGINS
+  export V_CORS_ORIGINS="$PROD_CORS_ORIGINS"
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod-${GIT_SHA}}"
 fi
 
