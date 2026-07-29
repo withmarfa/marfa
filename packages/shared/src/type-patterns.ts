@@ -5,6 +5,30 @@
 // layer's `allowed_types` filter — and they have to agree, or a credential is
 // admitted by one gate and filtered out by the next. Everything that resolves
 // a `.*` pattern goes through this module.
+//
+// A subtree has two roots, not one. The dotted identifier is a namespace, and
+// the registry's `parent` field is a declared lineage; a type may sit in one
+// without sitting in the other, because registration validates the parent chain
+// and never requires the child's name to start with the parent's.
+//
+// The `?type=` READ FILTER resolves both: everything under the name, plus
+// everything that declares its way there. Resolving names alone is the defect
+// this closes — a declared child named elsewhere was missing from a query
+// against its own parent, with no error. Resolving declarations alone would
+// break the other half, since nothing declares a parent of `google` yet
+// `google.*` plainly means the Google types.
+//
+// PERMISSION PATTERNS resolve names only. That asymmetry is deliberate and is
+// explained at `typePatternToSql`: a permission map is ranked by longest-prefix
+// precedence, and there is no defensible way to rank a name match against a
+// declared one, so expanding grants put the list query and the single-item gate
+// into disagreement in the fail-open direction.
+//
+// Resolving the declared half needs the registry, and the registry is
+// tenant-scoped because custom types are. Hence the optional `tenantId` on
+// `typeSubtreeToSql`: omit it and it behaves exactly as before.
+
+import { declaredDescendantsOutsideNamespace } from "./type-registry.js";
 
 /** Matches every type, including the reserved namespaces. */
 export const GLOBAL_TYPE_WILDCARD = "*";
@@ -55,6 +79,18 @@ export function typeMatchesAnyPattern(
  * Keeping the decomposition here is what stops each dialect's query builder from
  * re-deriving (and re-getting-wrong) the parent-inclusion rule.
  *
+ * **Permission patterns resolve by name only, deliberately.** Only the read
+ * filter below consults declared parentage. Expanding a grant through the
+ * registry looked symmetrical and is not: a permission map is resolved by
+ * longest-prefix precedence, and the two hierarchies give no way to rank a
+ * name match against a declared one. The concrete failure was a map of
+ * `{"user.*": "none", "core.note.*": "read"}` against a type named under
+ * `user` that declares `core.note` as its parent — the deny won at the
+ * single-item gate, which resolves names, while the expanded grant won in the
+ * list query, so a row the credential was explicitly denied came back in a
+ * listing and 403'd when fetched by id. Names are also what the grant was
+ * written against: whoever wrote `user.*: none` meant the namespace.
+ *
  * - `*`               → `{ global: true }`
  * - `core.media.*`    → `{ exact: "core.media", descendantPattern: "core.media.%" }`
  * - `core.note`       → `{ exact: "core.note" }`
@@ -66,6 +102,22 @@ export interface TypePatternSql {
   exact: string | null;
   /** Descendant matcher for `LIKE ... ESCAPE '\\'`. */
   descendantPattern: string | null;
+  /**
+   * Declared descendants the name-based clauses above cannot reach, for an
+   * `IN (...)` term. Empty unless a tenant scope was supplied, so a caller that
+   * resolves names alone emits exactly the predicate it always did.
+   */
+  extraTypes: string[];
+}
+
+/**
+ * `undefined` means the caller resolves names only, so the registry is never
+ * consulted and the result is empty. `null` is a real scope — the null-tenant
+ * bucket a single-tenant self-host registers into — and does resolve.
+ */
+function declaredExtras(root: string, tenantId?: string | null): string[] {
+  if (tenantId === undefined) return [];
+  return declaredDescendantsOutsideNamespace(root, tenantId);
 }
 
 function escapeLikeLiteral(value: string): string {
@@ -77,16 +129,29 @@ function escapeLikeLiteral(value: string): string {
 
 export function typePatternToSql(pattern: string): TypePatternSql {
   if (pattern === GLOBAL_TYPE_WILDCARD) {
-    return { global: true, exact: null, descendantPattern: null };
+    return {
+      global: true,
+      exact: null,
+      descendantPattern: null,
+      extraTypes: [],
+    };
   }
   const root = subtreeWildcardRoot(pattern);
   if (root === null) {
-    return { global: false, exact: pattern, descendantPattern: null };
+    // A bare identifier is an exact grant here; widening it to a subtree would
+    // hand a narrowly-scoped credential everything under the type.
+    return {
+      global: false,
+      exact: pattern,
+      descendantPattern: null,
+      extraTypes: [],
+    };
   }
   return {
     global: false,
     exact: root,
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
+    extraTypes: [],
   };
 }
 
@@ -105,14 +170,23 @@ export function typePatternToSql(pattern: string): TypePatternSql {
  * - `core.entity`     → `{ exact: "core.entity", descendantPattern: "core.entity.%" }`
  * - `core.entity.*`   → identical to the line above
  */
-export function typeSubtreeToSql(type: string): TypePatternSql {
+export function typeSubtreeToSql(
+  type: string,
+  tenantId?: string | null,
+): TypePatternSql {
   if (type === GLOBAL_TYPE_WILDCARD) {
-    return { global: true, exact: null, descendantPattern: null };
+    return {
+      global: true,
+      exact: null,
+      descendantPattern: null,
+      extraTypes: [],
+    };
   }
   const root = subtreeWildcardRoot(type) ?? type;
   return {
     global: false,
     exact: root,
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
+    extraTypes: declaredExtras(root, tenantId),
   };
 }

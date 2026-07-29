@@ -179,6 +179,7 @@ export class PgSearchStore implements SearchStore {
       "pg",
       "i",
       paramIdx,
+      filters.tenantId ?? null,
     );
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);

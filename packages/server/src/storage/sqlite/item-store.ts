@@ -421,13 +421,15 @@ export class SqliteItemStore implements ItemStore {
       // `core.entity` and `core.entity.*` mean the same thing: the type and
       // everything under it. A bare identifier has always included its
       // subtypes here, so the explicit wildcard must too.
-      const { global, exact, descendantPattern } = typeSubtreeToSql(
+      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
+        filters.tenantId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const typeClause = or(
           eq(items.type, exact),
           sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+          ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
         );
         if (typeClause) conditions.push(typeClause);
       }
@@ -474,6 +476,7 @@ export class SqliteItemStore implements ItemStore {
       filters.source_filter,
       items.type,
       items.source,
+      filters.tenantId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 
@@ -976,6 +979,7 @@ export class SqliteItemStore implements ItemStore {
       sourceFilter,
       items.type,
       items.source,
+      tenantId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 

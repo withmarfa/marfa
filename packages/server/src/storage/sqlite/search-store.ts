@@ -123,6 +123,8 @@ export class SqliteSearchStore implements SearchStore {
       filters.source_filter,
       "sqlite",
       "i",
+      1,
+      filters.tenantId ?? null,
     );
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);

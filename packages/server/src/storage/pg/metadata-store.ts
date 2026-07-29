@@ -30,7 +30,9 @@ export class PgMetadataStore implements MetadataStore {
     if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
       const decomposed = filters.allowedTypes.map(typePatternToSql);
       // A subtree wildcard contributes its own root to the equality list as
-      // well as a prefix match, so `core.media.*` covers `core.media`.
+      // well as a prefix match, so `core.media.*` covers `core.media`. A
+      // descendant that declares its parent rather than inheriting the name
+      // joins the same list, since its identifier is already exact.
       const exact = decomposed
         .map((d) => d.exact)
         .filter((v): v is string => v !== null);
