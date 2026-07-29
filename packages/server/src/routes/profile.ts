@@ -1,7 +1,13 @@
-// system.profile is a virtual type — no items-table row, served entirely
-// from the `users` table joined to `auth_user` for the canonical email.
-// The wire shape is defined in @withmarfa/shared (`Profile`,
-// `UpdateProfileInput`) and validated by the Zod schemas below.
+// The profile itself is virtual: its fields are served from the `users`
+// table joined to `auth_user` for the canonical email, never from an item,
+// so there is one writer for a username and one place to read it. The wire
+// shape is defined in @withmarfa/shared (`Profile`, `UpdateProfileInput`)
+// and validated by the Zod schemas below.
+//
+// The one exception is `account_holder_item_id`, the id of the tenant's
+// `system.account_holder` row. That row is a graph handle and nothing else:
+// it exists so an edge has something to point at when it means "the person
+// who owns this space", and it carries none of the fields above.
 //
 // Apps consume profile data through `/oauth/userinfo` gated on the
 // standard OIDC `profile` and `email` scopes; first-party callers
@@ -28,6 +34,7 @@ import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { findAccountHolderItem } from "../auth/account-holder.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -43,6 +50,7 @@ const ProfileSchema = z.object({
   email_verified: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
+  account_holder_item_id: z.string().optional(),
 });
 
 // PATCH input — every field optional. `username` collides with handle
@@ -90,7 +98,7 @@ const getProfileRoute = createRoute({
   tags: ["Profile"],
   summary: "Get the calling user's profile",
   description:
-    "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead.",
+    "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -273,6 +281,7 @@ interface ResolvedProfile {
   email_verified: boolean;
   created_at: string;
   updated_at: string;
+  account_holder_item_id?: string;
 }
 
 /**
@@ -281,6 +290,12 @@ interface ResolvedProfile {
  * `users` row with no `auth_user_id` falls back to empty string +
  * unverified. Routes upstream of this helper decide whether to surface
  * the partial state or 404.
+ *
+ * `accountHolderItemId` is omitted from the response rather than sent as
+ * null when absent: null would read as "this account has no graph handle",
+ * a state the model does not have. Absence means the instance has not
+ * backfilled yet, and a client that cannot see the field falls back to the
+ * same path it took before the field existed.
  */
 function buildProfile(
   user: {
@@ -293,6 +308,7 @@ function buildProfile(
     updated_at: string;
   },
   authEmail: { email: string; email_verified: boolean } | null,
+  accountHolderItemId?: string | null,
 ): ResolvedProfile {
   const username = user.handle;
   const avatar_url = user.avatar_blob_hash
@@ -308,6 +324,9 @@ function buildProfile(
     email_verified: authEmail?.email_verified ?? false,
     created_at: user.created_at,
     updated_at: user.updated_at,
+    ...(accountHolderItemId
+      ? { account_holder_item_id: accountHolderItemId }
+      : {}),
   };
 }
 
@@ -403,16 +422,17 @@ export function profileRoutes(
     const authEmail = user.auth_user_id
       ? await storage.users.getAuthUserEmail(user.auth_user_id)
       : null;
-    return { user, authEmail };
+    const accountHolder = await findAccountHolderItem(storage, tenantId);
+    return { user, authEmail, accountHolderItemId: accountHolder?.id ?? null };
   }
 
   router.openapi(getProfileRoute, async (c) => {
-    const { user, authEmail } = await resolveOwnProfile(c);
-    return c.json(buildProfile(user, authEmail), 200);
+    const { user, authEmail, accountHolderItemId } = await resolveOwnProfile(c);
+    return c.json(buildProfile(user, authEmail, accountHolderItemId), 200);
   });
 
   router.openapi(updateProfileRoute, async (c) => {
-    const { user } = await resolveOwnProfile(c);
+    const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       // resolveOwnProfile already threw for this case; the redundant
       // guard satisfies TypeScript's flow analysis below.
@@ -495,11 +515,14 @@ export function profileRoutes(
     const authEmail = updatedUser.auth_user_id
       ? await userStore.getAuthUserEmail(updatedUser.auth_user_id)
       : null;
-    return c.json(buildProfile(updatedUser, authEmail), 200);
+    return c.json(
+      buildProfile(updatedUser, authEmail, accountHolderItemId),
+      200,
+    );
   });
 
   router.openapi(setAvatarRoute, async (c) => {
-    const { user } = await resolveOwnProfile(c);
+    const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
     }
@@ -583,11 +606,14 @@ export function profileRoutes(
     const authEmail = updatedUser.auth_user_id
       ? await userStore.getAuthUserEmail(updatedUser.auth_user_id)
       : null;
-    return c.json(buildProfile(updatedUser, authEmail), 200);
+    return c.json(
+      buildProfile(updatedUser, authEmail, accountHolderItemId),
+      200,
+    );
   });
 
   router.openapi(deleteAvatarRoute, async (c) => {
-    const { user } = await resolveOwnProfile(c);
+    const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
     }
@@ -607,7 +633,10 @@ export function profileRoutes(
     const authEmail = updatedUser.auth_user_id
       ? await userStore.getAuthUserEmail(updatedUser.auth_user_id)
       : null;
-    return c.json(buildProfile(updatedUser, authEmail), 200);
+    return c.json(
+      buildProfile(updatedUser, authEmail, accountHolderItemId),
+      200,
+    );
   });
 
   // GET /profile/placeholder/:filename — public, deterministic SVG.
@@ -645,7 +674,7 @@ export function profileRoutes(
   return router;
 }
 
-// Exposed for tests + the OIDC userinfo endpoint.
+// Exposed for tests.
 export {
   buildProfile,
   renderPlaceholderSvg,

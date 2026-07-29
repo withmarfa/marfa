@@ -85,6 +85,7 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 - `system.connection` — approved relationships (the two kinds described under Authentication).
 - `system.integration` — published Integration manifests. One row per `(name, version)` pair; the install pipeline persists the manifest onto the `system.connection` it produces.
 - `system.activity` — operator-visible state: sync progress, errors, reauth prompts. Severity-tagged; the `severity: action_required` slice surfaces as a Repairs-style inbox.
+- `system.account_holder` — the graph handle for the person who owns a space, so edges such as `authored-by` can name them. One row per tenant, created by the sign-up provisioning hook and backfilled for existing tenants. Carries no fields: the profile endpoints stay the source of truth, and the item id is exposed on the profile wire shape as `account_holder_item_id`.
 
 ## Reserved extension namespaces
 
@@ -288,7 +289,7 @@ Three families of type ship with the platform, all registering into the same run
 
 - **Core** (`packages/types/core/*.json`, 22 types) — the shared vocabulary: life-nouns any app can agree on.
 - **Connector** (`packages/types/connectors/*.json`, 13 types) — one vendor's payload shape, so a connector has somewhere faithful to write. `google.*`, `raindrop.*`, `readwise.*`, `todoist.task`, `withmarfa.captured_email`.
-- **System** (`packages/types/core/system/*.json`, 7 types) — platform-internal records, with the restrictions described under System types below.
+- **System** (`packages/types/core/system/*.json`, 8 types) — platform-internal records, with the restrictions described under System types below.
 
 The split is provenance, not behavior: it exists so a catalog can tell a tenant which types are the common vocabulary and which exist because a specific upstream service does. The codegen in `packages/types/scripts/generate.ts` emits one array per family into `generated/type-registry.ts`; shared bundles them at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry. Custom types register at runtime via `POST /types` and persist in the `custom_types` table. Platform-shipped types — all three families — cannot be modified or deleted via the API.
 

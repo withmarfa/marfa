@@ -45,7 +45,13 @@ describe("starter content seeding on sign-up", () => {
     });
     const tenantId = await signUpAndGetTenant(ctx, "sam@example.com");
 
-    const items = await ctx.storage.items.list({ tenantId });
+    // Every space is provisioned with the account holder's `system.*` graph
+    // handle regardless of this setting, so the reads here narrow to the
+    // user-facing content the seeder owns.
+    const items = await ctx.storage.items.list({
+      tenantId,
+      exclude_system_types: true,
+    });
     expect(items.data.length).toBe(3);
     const types = items.data.map((i) => i.type).sort();
     expect(types).toEqual(["core.bookmark", "core.note", "core.task"]);
@@ -76,7 +82,10 @@ describe("starter content seeding on sign-up", () => {
     });
     const tenantId = await signUpAndGetTenant(ctx, "lee@example.com");
 
-    const items = await ctx.storage.items.list({ tenantId });
+    const items = await ctx.storage.items.list({
+      tenantId,
+      exclude_system_types: true,
+    });
     expect(items.data.length).toBe(0);
   });
 });

@@ -19,6 +19,7 @@ import {
   placeholderInitials,
   placeholderColor,
 } from "./profile.js";
+import { ensureAccountHolderItem } from "../auth/account-holder.js";
 
 /**
  * Profile endpoint coverage.
@@ -256,6 +257,7 @@ interface ProfileBody {
   avatar_url: string;
   email: string;
   email_verified: boolean;
+  account_holder_item_id?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +295,27 @@ describe("Profile routes", () => {
     it("rejects unauthenticated requests with 401", async () => {
       const res = await request(hosted.app, "GET", "/profile/me");
       expect(res.status).toBe(401);
+    });
+
+    // The account holder's graph handle is provisioned by the sign-up hook,
+    // which this fixture bypasses. That makes it the one place both states
+    // are reachable: absent means "not backfilled", not "no handle exists",
+    // so the field is omitted rather than sent as null.
+    it("carries the account holder's item id once the handle exists", async () => {
+      const u = await provisionUser(hosted, {
+        handle: "hana",
+        email: "hana@example.com",
+      });
+      const before = (await (
+        await request(hosted.app, "GET", "/profile/me", { key: u.apiKey })
+      ).json()) as ProfileBody;
+      expect(before.account_holder_item_id).toBeUndefined();
+
+      const handle = await ensureAccountHolderItem(hosted.storage, u.tenantId);
+      const after = (await (
+        await request(hosted.app, "GET", "/profile/me", { key: u.apiKey })
+      ).json()) as ProfileBody;
+      expect(after.account_holder_item_id).toBe(handle.id);
     });
 
     // Confirm /profile/me resolves the same user payload when the bearer

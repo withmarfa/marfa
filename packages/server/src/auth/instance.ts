@@ -25,6 +25,7 @@ import {
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { seedStarterContent } from "./starter-content.js";
+import { ensureAccountHolderItem } from "./account-holder.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -539,6 +540,13 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                   // user of the tenant".
                   role: "tenant_admin",
                 });
+                // The account holder's graph handle rides with the tenant
+                // and the users row rather than following as a separate
+                // step, so a space can never exist without an addressable
+                // owner for an edge to point at. Not best-effort like the
+                // starter content below: a missing handle is a hole in the
+                // data model, not a missing decoration.
+                await ensureAccountHolderItem(storage, tenant.id);
                 return tenant;
               };
               const tenant =

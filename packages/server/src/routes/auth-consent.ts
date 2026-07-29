@@ -1574,6 +1574,7 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.tv_episode": "TV episodes.",
 
   // System
+  "system.account_holder": "You, as something items can link to.",
   "system.activity": "Background activity and notifications.",
   "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",

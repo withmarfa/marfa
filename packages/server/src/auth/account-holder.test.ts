@@ -1,0 +1,420 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { isValidId } from "@withmarfa/shared";
+import { createTestContext, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
+import type { Storage } from "../storage/interface.js";
+import {
+  ACCOUNT_HOLDER_TYPE,
+  accountHolderSourceId,
+  ensureAccountHolderItem,
+} from "./account-holder.js";
+
+/**
+ * The account holder's graph handle.
+ *
+ * Without it, "I wrote this" is inexpressible: `assertEdgesCanBeCreated`
+ * resolves both endpoints against `items`, and a profile's identity lives in
+ * the disjoint `users` id-space, so an `authored-by` aimed at the account
+ * holder has no id to carry. Each test below pins one link in the chain that
+ * makes it expressible instead.
+ */
+
+let ctx: TestContext | undefined;
+
+afterEach(async () => {
+  await ctx?.cleanup();
+  ctx = undefined;
+});
+
+const ORIGIN = "http://localhost:0";
+const SALT = "test-salt";
+
+const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
+
+/** Sign up through the real hosted path so the provisioning hook runs. */
+async function signUp(
+  c: TestContext,
+  email: string,
+): Promise<{ authUserId: string; tenantId: string }> {
+  const res = await request(c.app, "POST", "/auth/sign-up/email", {
+    body: { email, password: "correct horse battery", name: "Test User" },
+    headers: { origin: ORIGIN },
+  });
+  expect(res.status).toBe(200);
+  const authUserId = ((await res.json()) as { user?: { id?: string } }).user
+    ?.id;
+  expect(authUserId).toBeTruthy();
+  const row = await c.storage.users?.getByAuthUserId(authUserId ?? "");
+  expect(row?.tenant_id).toBeTruthy();
+  return { authUserId: authUserId ?? "", tenantId: row?.tenant_id ?? "" };
+}
+
+/**
+ * Mint a bearer inside a tenant. `role` is the axis under test in the write
+ * gate: `admin` bypasses the permission maps but never the platform gate,
+ * `member` is bound by `type_permissions`.
+ */
+async function mintKey(
+  storage: Storage,
+  tenantId: string,
+  role: "admin" | "member",
+): Promise<string> {
+  const raw = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
+  await storage.keys.create(
+    {
+      label: `test-${role}`,
+      source: `test-${role}`,
+      role,
+      type_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+    },
+    hashApiKey(raw, SALT),
+    tenantId,
+  );
+  return raw;
+}
+
+async function countHandles(
+  storage: Storage,
+  tenantId: string,
+): Promise<number> {
+  const page = await storage.items.list({
+    tenantId,
+    type: ACCOUNT_HOLDER_TYPE,
+    limit: 50,
+  });
+  return page.data.length;
+}
+
+/** Apply the backfill migration for the running dialect, verbatim. */
+async function runBackfillMigration(storage: Storage): Promise<void> {
+  const file = isPg()
+    ? "../../drizzle/pg/0072_backfill_account_holder_items.sql"
+    : "../../drizzle/sqlite/0059_backfill_account_holder_items.sql";
+  const sql = readFileSync(new URL(file, import.meta.url), "utf8");
+  if (isPg()) {
+    const s = storage as unknown as {
+      __pgClient: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(sql);
+  } else {
+    const s = storage as unknown as {
+      __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+    };
+    await s.__sqliteRun(sql, []);
+  }
+}
+
+describe("account-holder provisioning", () => {
+  it("creates exactly one handle for a new account", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-one@example.com");
+
+    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+
+    const page = await ctx.storage.items.list({
+      tenantId,
+      type: ACCOUNT_HOLDER_TYPE,
+      limit: 50,
+    });
+    const handle = page.data[0];
+    // The natural key is what makes "one per space" a database constraint
+    // rather than a convention, so assert the row actually carries it.
+    expect(handle?.source).toBe("system");
+    expect(handle?.source_id).toBe(accountHolderSourceId(tenantId));
+    expect(handle?.state).toBe("active");
+    expect(handle?.properties).toEqual({});
+    // Route-layer path params are validated against the UUIDv7 grammar; an
+    // id that fails it makes the row unreachable and unusable as an edge
+    // endpoint, which is the whole point of the row.
+    expect(isValidId(handle?.id ?? "")).toBe(true);
+  });
+
+  it("does not create a second handle when the same email signs up twice", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-dupe@example.com");
+    // Better Auth's no-enumeration sign-up returns the existing user id, so
+    // the hook runs a second time against an account that already has one.
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "holder-dupe@example.com",
+        password: "correct horse battery",
+        name: "Test User",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+
+    // The hook short-circuits on an existing `users` row, so the assertion
+    // above would hold even for a helper that blindly inserted. Drive the
+    // helper directly to pin its own idempotency: it must resolve the
+    // existing row, not race the unique index for a second one.
+    const first = await ensureAccountHolderItem(ctx.storage, tenantId);
+    const second = await ensureAccountHolderItem(ctx.storage, tenantId);
+    expect(second.id).toBe(first.id);
+    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+  });
+
+  it("exposes the handle id on the profile wire shape", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-profile@example.com");
+    const key = await mintKey(ctx.storage, tenantId, "admin");
+
+    const res = await request(ctx.app, "GET", "/profile/me", { key });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { account_holder_item_id?: string };
+    const page = await ctx.storage.items.list({
+      tenantId,
+      type: ACCOUNT_HOLDER_TYPE,
+      limit: 50,
+    });
+    expect(body.account_holder_item_id).toBe(page.data[0]?.id);
+  });
+});
+
+describe("account-holder edges", () => {
+  it("accepts an authored-by edge from a note and hydrates it back out", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-edge@example.com");
+    const key = await mintKey(ctx.storage, tenantId, "admin");
+
+    const profile = (await (
+      await request(ctx.app, "GET", "/profile/me", { key })
+    ).json()) as { account_holder_item_id?: string };
+    const holderId = profile.account_holder_item_id;
+    expect(holderId).toBeTruthy();
+
+    const noteRes = await request(ctx.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties: { body: "I wrote this" } },
+    });
+    expect(noteRes.status).toBe(201);
+    const noteId = ((await noteRes.json()) as { item: { id: string } }).item.id;
+
+    const edgeRes = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: {
+        source_id: noteId,
+        target_id: holderId,
+        edge_type: "authored-by",
+      },
+    });
+    expect(edgeRes.status).toBe(201);
+
+    // A write that lands but does not read back is not a usable edge.
+    const readRes = await request(ctx.app, "GET", `/items/${noteId}`, { key });
+    expect(readRes.status).toBe(200);
+    const read = (await readRes.json()) as {
+      item: {
+        edges?: Record<string, { edges: { target_id: string }[] }>;
+      };
+    };
+    expect(read.item.edges?.["authored-by"]?.edges[0]?.target_id).toBe(
+      holderId,
+    );
+  });
+
+  it("rejects the same edge when the space has no handle", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-unfixed@example.com");
+    const key = await mintKey(ctx.storage, tenantId, "admin");
+
+    const profile = (await (
+      await request(ctx.app, "GET", "/profile/me", { key })
+    ).json()) as { account_holder_item_id?: string };
+    const holderId = profile.account_holder_item_id ?? "";
+
+    // Reproduce the pre-fix state: a space provisioned without a handle.
+    // The id is kept so the edge attempt is identical to the one above.
+    // `bulkPurge` rather than `purge` because the single-item path requires
+    // a trashed row, and `trashed` is not reachable on the bounded
+    // `system.*` lifecycle.
+    await ctx.storage.items.bulkPurge([holderId], tenantId);
+
+    const noteRes = await request(ctx.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties: { body: "I wrote this" } },
+    });
+    const noteId = ((await noteRes.json()) as { item: { id: string } }).item.id;
+
+    const edgeRes = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: {
+        source_id: noteId,
+        target_id: holderId,
+        edge_type: "authored-by",
+      },
+    });
+    expect(edgeRes.status).toBe(404);
+    expect(
+      ((await edgeRes.json()) as { error?: { code?: string } }).error?.code,
+    ).toBe("item_not_found");
+
+    // And the profile stops advertising an id that resolves to nothing,
+    // rather than handing clients a dangling target.
+    const after = (await (
+      await request(ctx.app, "GET", "/profile/me", { key })
+    ).json()) as { account_holder_item_id?: string };
+    expect(after.account_holder_item_id).toBeUndefined();
+  });
+});
+
+describe("account-holder backfill migration", () => {
+  it("creates exactly one handle per existing space and is re-runnable", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const tenants = ctx.storage.tenants;
+    expect(tenants).toBeTruthy();
+
+    // Two spaces that predate the provisioning hook, plus one that already
+    // has its handle: the guard has to skip the third without duplicating it.
+    const older = await tenants!.create("Older Space");
+    const oldest = await tenants!.create("Oldest Space");
+    const current = await tenants!.create("Current Space");
+    const alreadyProvisioned = await ensureAccountHolderItem(
+      ctx.storage,
+      current.id,
+    );
+
+    await runBackfillMigration(ctx.storage);
+
+    for (const tenantId of [older.id, oldest.id, current.id]) {
+      expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    }
+    const backfilled = await ctx.storage.items.list({
+      tenantId: older.id,
+      type: ACCOUNT_HOLDER_TYPE,
+      limit: 50,
+    });
+    const row = backfilled.data[0];
+    expect(isValidId(row?.id ?? "")).toBe(true);
+    expect(row?.source_id).toBe(accountHolderSourceId(older.id));
+    expect(row?.state).toBe("active");
+
+    // The pre-existing row is left alone, not rewritten under a new id.
+    const currentAfter = await ctx.storage.items.list({
+      tenantId: current.id,
+      type: ACCOUNT_HOLDER_TYPE,
+      limit: 50,
+    });
+    expect(currentAfter.data[0]?.id).toBe(alreadyProvisioned.id);
+
+    // Re-runnable: a second application adds nothing.
+    await runBackfillMigration(ctx.storage);
+    for (const tenantId of [older.id, oldest.id, current.id]) {
+      expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    }
+  });
+});
+
+describe("account-holder lifecycle", () => {
+  it("is removed with its edges when the account is deleted", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { authUserId, tenantId } = await signUp(
+      ctx,
+      "holder-delete@example.com",
+    );
+    const key = await mintKey(ctx.storage, tenantId, "admin");
+
+    const profile = (await (
+      await request(ctx.app, "GET", "/profile/me", { key })
+    ).json()) as { account_holder_item_id?: string };
+    const holderId = profile.account_holder_item_id ?? "";
+
+    const noteId = (
+      (await (
+        await request(ctx.app, "POST", "/items", {
+          key,
+          body: { type: "core.note", properties: { body: "Mine" } },
+        })
+      ).json()) as { item: { id: string } }
+    ).item.id;
+    await request(ctx.app, "POST", "/edges", {
+      key,
+      body: {
+        source_id: noteId,
+        target_id: holderId,
+        edge_type: "authored-by",
+      },
+    });
+    expect((await ctx.storage.edges.listToTarget(holderId)).data.length).toBe(
+      1,
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
+    await lifecycle!.markPendingDeletion(authUserId, new Date().toISOString());
+    const cutoff = new Date(Date.now() + 86_400_000).toISOString();
+    expect(await ctx.storage.deleteAccountCascade(authUserId, cutoff)).toBe(
+      true,
+    );
+
+    expect(await ctx.storage.items.getIncludingTrashed(holderId)).toBeNull();
+    expect((await ctx.storage.edges.listToTarget(holderId)).data.length).toBe(
+      0,
+    );
+  });
+});
+
+describe("account-holder write gate", () => {
+  it("refuses create, update and delete from an ordinary tenant credential", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { tenantId } = await signUp(ctx, "holder-gate@example.com");
+    const memberKey = await mintKey(ctx.storage, tenantId, "member");
+
+    const page = await ctx.storage.items.list({
+      tenantId,
+      type: ACCOUNT_HOLDER_TYPE,
+      limit: 50,
+    });
+    const holderId = page.data[0]?.id ?? "";
+
+    // A wildcard `type_permissions` grant is deliberately not enough: the
+    // reserved-namespace gate runs ahead of the permission maps.
+    const create = await request(ctx.app, "POST", "/items", {
+      key: memberKey,
+      body: { type: ACCOUNT_HOLDER_TYPE, properties: {} },
+    });
+    expect(create.status).toBe(403);
+    expect(
+      ((await create.json()) as { error?: { code?: string } }).error?.code,
+    ).toBe("type_not_permitted");
+
+    const patch = await request(ctx.app, "PATCH", `/items/${holderId}`, {
+      key: memberKey,
+      body: { properties: { spoofed: true } },
+    });
+    expect(patch.status).toBe(403);
+
+    const del = await request(ctx.app, "DELETE", `/items/${holderId}`, {
+      key: memberKey,
+    });
+    expect(del.status).toBe(403);
+
+    // The row is untouched by all three attempts.
+    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+  });
+});

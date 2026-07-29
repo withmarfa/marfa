@@ -863,6 +863,15 @@ export const ALL_CONNECTOR_TYPES: TypeSchema[] = [
   googleYoutubeVideo,
 ];
 
+const systemAccountHolder: TypeSchema = {
+  id: "system.account_holder",
+  label: "Account holder",
+  description: "The graph handle for the person who owns this space. Exactly one row per space, created at provisioning, so edges such as authored-by can name the account holder instead of a free-floating stand-in. It carries no profile fields: the profile endpoints remain the source of truth for username, name, bio and avatar, and mirroring them here would give the same facts two writers. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
+  version: 1,
+  fields: {
+  },
+};
+
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
@@ -975,6 +984,7 @@ const systemWebhook: TypeSchema = {
 };
 
 export const ALL_SYSTEM_TYPES: TypeSchema[] = [
+  systemAccountHolder,
   systemActivity,
   systemApp,
   systemConnection,

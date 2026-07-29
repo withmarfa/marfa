@@ -65,6 +65,7 @@ const CONNECTOR_TYPE_IDENTIFIERS = [
 ];
 
 const SYSTEM_TYPE_IDENTIFIERS = [
+  "system.account_holder",
   "system.activity",
   "system.app",
   "system.connection",
