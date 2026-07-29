@@ -5,7 +5,8 @@ import type { Context } from "hono";
 import {
   MarfaError,
   ErrorCode,
-  isValidTypeIdentifier,
+  GLOBAL_TYPE_WILDCARD,
+  isValidTypePattern,
   ITEM_STATES,
   resolveEnforcement,
 } from "@withmarfa/shared";
@@ -223,8 +224,11 @@ export function exportRoutes(
       );
     }
 
+    // Pattern grammar, matching `GET /items` and `/search`: the parameter
+    // means the type and everything under it on all three, so the explicit
+    // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    if (type && !isValidTypeIdentifier(type)) {
+    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
@@ -340,7 +344,7 @@ async function handleArchiveExport(
   sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
-  if (type && !isValidTypeIdentifier(type)) {
+  if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
   const state = c.req.query("state") as ItemState | undefined;

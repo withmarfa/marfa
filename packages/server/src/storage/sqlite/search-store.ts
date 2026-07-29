@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   parseFilter,
   typePatternToSql,
+  typeSubtreeToSql,
   type SearchResult,
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
@@ -74,8 +75,24 @@ export class SqliteSearchStore implements SearchStore {
     }
 
     if (filters.type) {
-      conditions.push("AND i.type = ?");
-      params.push(filters.type);
+      // Subtree, not an exact identifier — the same reading `GET /items`
+      // gives the parameter. `core.entity` and `core.entity.*` both mean
+      // the type and everything under it, by name prefix and by declared
+      // parent, so a caller who narrows a search the way they narrow a
+      // listing gets the same set.
+      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+        filters.type,
+        filters.tenantId ?? null,
+      );
+      if (!global && exact && descendantPattern) {
+        const clauses = ["i.type = ?", "i.type LIKE ? ESCAPE '\\'"];
+        params.push(exact, descendantPattern);
+        if (extraTypes.length > 0) {
+          clauses.push(`i.type IN (${extraTypes.map(() => "?").join(", ")})`);
+          params.push(...extraTypes);
+        }
+        conditions.push(`AND (${clauses.join(" OR ")})`);
+      }
     }
 
     if (filters.tier !== undefined) {
