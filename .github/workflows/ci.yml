@@ -46,7 +46,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -83,7 +83,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -148,7 +148,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -218,7 +218,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -250,7 +250,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -313,7 +313,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -352,7 +352,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -413,7 +413,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
