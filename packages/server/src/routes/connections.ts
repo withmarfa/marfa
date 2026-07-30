@@ -8,6 +8,11 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
+  performPause,
+  performResume,
+  PauseError,
+} from "../connections/pause-pipeline.js";
+import {
   performUninstall,
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
@@ -169,6 +174,87 @@ const UninstallResultSchema = z.object({
       "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm.",
     ),
   activity_id: z.string(),
+});
+
+const PauseResultSchema = z.object({
+  connection_id: z.string(),
+  runtime_status: z.enum(["paused", "healthy"]),
+  schedule_changed: z
+    .boolean()
+    .describe(
+      "Whether a schedule alarm actually changed state. False when there was nothing to change — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed call; check `schedule_error` to tell those apart.",
+    ),
+  schedule_error: z
+    .string()
+    .optional()
+    .describe(
+      "Present only when the schedule call ran and failed. The status write still happened, so the connection reads as paused with its alarm possibly still armed. Retry.",
+    ),
+  activity_id: z.string(),
+});
+
+const pauseResponses = {
+  200: {
+    content: { "application/json": { schema: PauseResultSchema } },
+    description: "Runtime status updated and the schedule changed to match.",
+  },
+  400: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["validation_error"]),
+      },
+    },
+    description:
+      "Connection is not an integration, is revoked, or is already in the requested state.",
+  },
+  401: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["unauthorized"]),
+      },
+    },
+    description: "Unauthorized.",
+  },
+  403: {
+    content: {
+      "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+    },
+    description: "Caller is not an admin.",
+  },
+  404: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["connection_not_found"]),
+      },
+    },
+    description: "Connection not found.",
+  },
+} as const;
+
+const pauseRoute = createRoute({
+  operationId: "pauseConnection",
+  method: "post",
+  path: "/{id}/pause",
+  tags: ["Connections"],
+  summary: "Pause an integration connection",
+  description:
+    "Stops a connection without tearing it down: sets `runtime_status` to `paused` and disarms its schedule, so scheduled runs and item-event dispatches both stop. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
+  security: [{ bearerAuth: [] }],
+  request: { params: ConnectionIdParam },
+  responses: pauseResponses,
+});
+
+const resumeRoute = createRoute({
+  operationId: "resumeConnection",
+  method: "post",
+  path: "/{id}/resume",
+  tags: ["Connections"],
+  summary: "Resume a paused integration connection",
+  description:
+    "Reverses `pause`: sets `runtime_status` back to `healthy` and re-arms the schedule. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
+  security: [{ bearerAuth: [] }],
+  request: { params: ConnectionIdParam },
+  responses: pauseResponses,
 });
 
 const uninstallRoute = createRoute({
@@ -587,6 +673,60 @@ export function connectionRoutes(
         used: effectiveHopCount,
       },
     };
+    return c.json(result, 200);
+  });
+
+  // Pause and resume are the same mediated write with a different target.
+  // One body serves both so they cannot drift the way the two direct
+  // implementations did.
+  const applyRuntimeState = async (
+    verb: "pause" | "resume",
+    connectionId: string,
+    apiKey: { id: string; tenant_id?: string },
+    clientIp: string | null,
+  ) => {
+    const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
+    const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
+    const run = verb === "pause" ? performPause : performResume;
+    try {
+      return await run(storage, {
+        apiKeyId: apiKey.id,
+        tenantId: apiKey.tenant_id ?? undefined,
+        connectionId,
+        clientIp,
+        integrationRuntime: options.integrationRuntime,
+        ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
+        ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
+      });
+    } catch (err) {
+      if (err instanceof PauseError) {
+        if (err.code === "connection_not_found") {
+          throw new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, err.message);
+        }
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, err.message, {
+          pause_error_code: err.code,
+        });
+      }
+      throw err;
+    }
+  };
+
+  r.openapi(pauseRoute, async (c) => {
+    const apiKey = requireTenantAdmin(c);
+    const { id } = c.req.valid("param");
+    const result = await applyRuntimeState("pause", id, apiKey, c.var.clientIp);
+    return c.json(result, 200);
+  });
+
+  r.openapi(resumeRoute, async (c) => {
+    const apiKey = requireTenantAdmin(c);
+    const { id } = c.req.valid("param");
+    const result = await applyRuntimeState(
+      "resume",
+      id,
+      apiKey,
+      c.var.clientIp,
+    );
     return c.json(result, 200);
   });
 

@@ -34,6 +34,7 @@ import type {
   ConnectionInstallInput,
   ConnectionInstallResult,
   ConnectionUninstallResult,
+  ConnectionRuntimeStateResult,
   PreviewEventRequest,
   PreviewEventResult,
 } from "@withmarfa/shared";
@@ -1674,6 +1675,41 @@ export class MarfaClient {
       return this.transport.request<ConnectionUninstallResult>(
         "POST",
         `/connections/${id}/uninstall`,
+      );
+    },
+    /**
+     * Pause an `integration` connection: sets `runtime_status` to
+     * `paused` and disarms its schedule, so scheduled runs and
+     * item-event dispatches both stop.
+     *
+     * Credentials and the upstream OAuth grant survive, which is the
+     * point — `resume` restores the connection without a fresh consent
+     * round trip, where `uninstall` would require one. Rejects with 400
+     * on a connection that is already paused, or revoked.
+     *
+     * Mediated server-side rather than a direct item write: pausing
+     * means writing a `system.*` item, which ordinary tenant
+     * credentials are correctly refused, so this route does the
+     * privileged write on the owner's behalf.
+     */
+    pause: async (id: string): Promise<ConnectionRuntimeStateResult> => {
+      return this.transport.request<ConnectionRuntimeStateResult>(
+        "POST",
+        `/connections/${id}/pause`,
+      );
+    },
+    /**
+     * Resume a paused `integration` connection: restores
+     * `runtime_status` to `healthy` and re-arms its schedule.
+     *
+     * Rejects with 400 on a connection that is not paused, and on one
+     * that is revoked — reviving a revoked connection is what
+     * reinstalling is for.
+     */
+    resume: async (id: string): Promise<ConnectionRuntimeStateResult> => {
+      return this.transport.request<ConnectionRuntimeStateResult>(
+        "POST",
+        `/connections/${id}/resume`,
       );
     },
     /**

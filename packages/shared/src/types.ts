@@ -741,6 +741,34 @@ export interface ConnectionInstallResult {
 }
 
 /**
+ * Result of pausing or resuming an `integration` connection.
+ *
+ * `runtime_status` is the field that carries the answer: the
+ * `system.connection` lifecycle is bounded to `active | revoked`, so
+ * there is no paused *state* to move to, and `runtime_status` already
+ * has a `paused` member for exactly this.
+ */
+export interface ConnectionRuntimeStateResult {
+  connection_id: string;
+  runtime_status: "paused" | "healthy";
+  /**
+   * True only when a Durable Object attested the alarm changed state.
+   * False when there was nothing to change — the local substrate, or an
+   * integration deploying no Worker — and false when the call ran and
+   * failed. `schedule_error` tells those apart.
+   */
+  schedule_changed: boolean;
+  /**
+   * Present only when the schedule call ran and failed. The status write
+   * still happened, so the connection reads as paused with its alarm
+   * possibly still armed. Retry rather than assume.
+   */
+  schedule_error?: string;
+  /** id of the system.activity row emitted by the pipeline. */
+  activity_id: string;
+}
+
+/**
  * Wire shape returned by `POST /connections/:id/uninstall`. Records the
  * artifacts the orchestrated uninstall pipeline cleaned up — the runtime
  * credentials it revoked, whether an upstream OAuth tokens row was
