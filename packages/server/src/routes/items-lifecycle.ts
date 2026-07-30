@@ -1,7 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireTypeAccess,
+  requireRowWritable,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -144,6 +148,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, pending.type, "write");
+    requireRowWritable(c.get("apiKey"), pending);
     const restored = await storage.items.restore(id, tenantId);
     const metadata = await storage.metadata.get(id);
     await publish({
@@ -188,6 +193,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     requireTypeAccess(c, item.type, "write");
+    requireRowWritable(c.get("apiKey"), item);
     const updated = await storage.items.transition(id, state, tenantId);
     const metadata = await storage.metadata.get(id);
     await publish({

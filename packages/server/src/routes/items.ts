@@ -27,6 +27,7 @@ import {
   requireActivityAttribution,
   checkTypeAccess,
   requireEdgePermission,
+  requireRowWritable,
   getTypeFilter,
 } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
@@ -40,6 +41,7 @@ import {
   hydrateBackrefsForItem,
 } from "./_edges-hydrate.js";
 import { applyInlineEdges } from "./_edges-inline.js";
+import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
@@ -1596,6 +1598,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+    // Same rule the create door applies, judged on the resolved row's
+    // type rather than on a claim the body never carries here.
+    assertTierApplicable(item.type, body.tier);
 
     // The row has to be this connector's both before and after the
     // update. Before, or a connector could edit a sibling's activity —
@@ -1901,6 +1906,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+    // The metadata layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -1937,6 +1945,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+    // The metadata layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -1982,6 +1993,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+    // The metadata layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -2054,6 +2068,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+    // The metadata layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(c.get("apiKey"), item);
     const tag = decodeURIComponent(rawTag);
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({

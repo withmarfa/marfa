@@ -45,6 +45,7 @@ import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges } from "./_edges-inline.js";
+import { assertTierApplicable } from "./_tier-rules.js";
 import {
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
@@ -613,6 +614,8 @@ async function processBulkItem(
       throw err;
     }
 
+    // The resolved row's type decides, not the entry's claim.
+    assertTierApplicable(existing.type, raw.tier);
     const updated = await storage.items.update(
       existing.id,
       {
@@ -664,6 +667,7 @@ async function processBulkItem(
   // No match → create. Stamp source from credential; caller-supplied source
   // is ignored on the wire (preserves /import non-forgeability contract).
   try {
+    assertTierApplicable(raw.type, raw.tier);
     const createInput: CreateInput = {
       type: raw.type,
       properties: raw.properties ?? {},
