@@ -1,0 +1,86 @@
+# Freshness guard for the published API reference.
+#
+# `openapi.json` is generated here and copied into withmarfa/docs by
+# `sync-openapi-to-docs.yml`. Two things can leave the published reference
+# wrong: a hand-edit in the docs repo, or a sync that silently stopped running.
+# This compares the two copies and fails when they diverge.
+#
+# **It runs here rather than in the docs repo because the credential is here.**
+# A workflow's built-in token reaches only its own repository, and both repos
+# are private, so the comparison needs a cross-repo credential either way. The
+# sync already holds one. Asking the question from this end reuses it; asking
+# from the docs end would mean provisioning and rotating a second token to
+# learn the same thing.
+#
+# **Scheduled rather than on push**, because the sync opens a pull request
+# rather than committing directly. For the window between a spec change landing
+# here and that PR merging, the two copies legitimately differ, and a push
+# trigger would fail on every spec change. A daily check ignores that window
+# and still catches the case that matters: a sync PR nobody merged.
+name: OpenAPI drift
+
+on:
+  schedule:
+    # Early UTC, so a failure is waiting at the start of the day rather than
+    # landing in the middle of one.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  SPEC_TARGET_REPO: withmarfa/docs
+  # The repository the comparison is mandatory on. A fork or a self-hoster's
+  # copy cannot hold the credential, so it skips rather than failing on
+  # something it has no way to fix.
+  SPEC_CANONICAL_REPO: withmarfa/marfa
+
+jobs:
+  drift:
+    name: Published spec matches this one
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the published copy against this one
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            if [ "${GITHUB_REPOSITORY}" = "${SPEC_CANONICAL_REPO}" ]; then
+              echo "::error title=Drift guard cannot run::DOCS_SYNC_TOKEN is not set on ${GITHUB_REPOSITORY}, so openapi.json was never compared against ${SPEC_TARGET_REPO}. Failing rather than passing: a guard that cannot run must not report green."
+              exit 1
+            fi
+            echo "::warning title=Cross-repo check skipped::DOCS_SYNC_TOKEN is not set on ${GITHUB_REPOSITORY}, which is not ${SPEC_CANONICAL_REPO}."
+            exit 0
+          fi
+
+          gh api \
+            -H "Accept: application/vnd.github.raw" \
+            "repos/${SPEC_TARGET_REPO}/contents/openapi.json" > published-openapi.json
+
+          if cmp -s published-openapi.json openapi.json; then
+            echo "${SPEC_TARGET_REPO} matches this spec."
+            exit 0
+          fi
+
+          echo "::error title=Published spec is stale::${SPEC_TARGET_REPO} differs from the spec generated here. Re-run the 'Sync openapi.json to docs' workflow, then merge the pull request it opens."
+          python3 - <<'PY'
+          import json
+
+          published = json.load(open('published-openapi.json'))
+          current = json.load(open('openapi.json'))
+          pub, cur = set(published.get('paths', {})), set(current.get('paths', {}))
+          for label, paths in (('missing from docs', cur - pub), ('no longer generated', pub - cur)):
+              for path in sorted(paths):
+                  print(f'{label}: {path}')
+          if pub == cur:
+              print('path sets match; the difference is inside one or more operations')
+          PY
+          exit 1
