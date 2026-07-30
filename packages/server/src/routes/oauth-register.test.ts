@@ -238,18 +238,20 @@ describe("POST /auth/oauth2/register", () => {
     // origin in CORS_ORIGINS; the DCR validator then accepts it.
     ctx = await createTestContext({
       authAllowSignup: false,
-      corsOrigins: ["http://aic-atlas:9021"],
+      corsOrigins: ["http://home-server:9021"],
     });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
-        redirect_uris: ["http://aic-atlas:9021/auth/callback"],
+        redirect_uris: ["http://home-server:9021/auth/callback"],
         grant_types: ["authorization_code"],
         client_name: "trusted-origin-http",
       },
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.redirect_uris).toEqual(["http://aic-atlas:9021/auth/callback"]);
+    expect(body.redirect_uris).toEqual([
+      "http://home-server:9021/auth/callback",
+    ]);
   });
 
   it("still rejects http:// redirect URIs whose origin is not trusted", async () => {
@@ -257,7 +259,7 @@ describe("POST /auth/oauth2/register", () => {
     // exemption must not fire just because some other origin is trusted.
     ctx = await createTestContext({
       authAllowSignup: false,
-      corsOrigins: ["http://aic-atlas:9021"],
+      corsOrigins: ["http://home-server:9021"],
     });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
