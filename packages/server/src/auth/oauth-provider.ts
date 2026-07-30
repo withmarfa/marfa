@@ -426,6 +426,18 @@ export function buildOauthProjectionPlugin(opts: {
                   guardRefreshTokenGrant(ctx, storage, refreshHasher),
                 ),
               },
+              {
+                // Guards the same endpoint for the authorization_code grant:
+                // a code whose grant the user has revoked must not redeem.
+                // Revocation deletes outstanding codes, so in the ordinary
+                // case this never fires; it holds for a code minted in the
+                // window between the two writes, and for any future
+                // revocation path that forgets to sweep them.
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  guardAuthorizationCodeGrant(ctx, storage, refreshHasher),
+                ),
+              },
             ]
           : []),
       ],
@@ -526,4 +538,76 @@ async function guardRefreshTokenGrant(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Authorization-code grant guard (before-hook)
+// ---------------------------------------------------------------------------
+
+/**
+ * Before-hook for `/oauth2/token` with `grant_type=authorization_code`.
+ * Refuses a code whose grant the user has revoked.
+ *
+ * Revocation now deletes outstanding codes, so in the ordinary case this
+ * never fires. It exists because the deletion alone is a sweep, and a sweep
+ * has a window: a code minted between the consent-row delete and the code
+ * delete would survive one and miss the other. It also holds if some later
+ * revocation path is added and forgets the codes, which is exactly how this
+ * defect arose in the first place — every existing path swept the token
+ * tables and none of them knew codes lived somewhere else.
+ *
+ * Why this is worth two mechanisms rather than one. The obvious reading is
+ * that a code expires in ten minutes so the exposure is ten minutes. That
+ * bounds only when the code can be redeemed. What redemption yields is not
+ * bounded: with `offline_access` the exchange returns a refresh token that
+ * rotates indefinitely. A short race converts into a permanent grant, and
+ * the user's own security page reports the app as revoked the whole time.
+ *
+ * Fails open on a lookup error and on an unrecognised code: the plugin owns
+ * the real validation, and a transient database blip must not turn a
+ * legitimate exchange into a hard failure.
+ */
+async function guardAuthorizationCodeGrant(
+  ctx: HookCtxLite,
+  storage: Storage,
+  hasher: (token: string) => string,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  if (body.grant_type !== "authorization_code") return;
+  const code = body.code;
+  if (typeof code !== "string" || code.length === 0) return;
+  if (
+    typeof storage.oauthProvider?.findAuthorizationCodeGrantKey !== "function"
+  )
+    return;
+
+  let row: Awaited<
+    ReturnType<
+      NonNullable<Storage["oauthProvider"]>["findAuthorizationCodeGrantKey"]
+    >
+  >;
+  try {
+    row = await storage.oauthProvider.findAuthorizationCodeGrantKey(
+      hasher(code),
+    );
+  } catch (err) {
+    log("warn", "oauth authorization-code precheck failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  // Unknown code: not ours to judge. The plugin returns the spec error.
+  if (!row) return;
+  if (row.hasConsent) return;
+
+  log("info", "oauth authorization-code refused: grant revoked", {
+    client_id: row.clientId,
+  });
+  throw new APIError("BAD_REQUEST", {
+    error: "invalid_grant",
+    error_description:
+      "The authorization code is invalid, expired, or revoked.",
+  });
 }

@@ -155,6 +155,51 @@ export class PgOauthProviderStore implements OauthProviderStore {
           eq(auth_oauth_consent.userId, authUserId),
         ),
       );
+    await this.revokeAuthorizationCodesForGrant(clientId, authUserId);
+  }
+
+  async findAuthorizationCodeGrantKey(codeHash: string): Promise<{
+    clientId: string;
+    userId: string;
+    hasConsent: boolean;
+  } | null> {
+    const rows = await this.db.execute<{
+      client_id: string;
+      user_id: string;
+      consent_id: string | null;
+    }>(sql`
+      SELECT v.value::jsonb->'query'->>'client_id' AS client_id,
+             v.value::jsonb->>'userId'             AS user_id,
+             c.id                                   AS consent_id
+      FROM auth_verification v
+      LEFT JOIN auth_oauth_consent c
+        ON c.client_id = v.value::jsonb->'query'->>'client_id'
+       AND c.user_id   = v.value::jsonb->>'userId'
+      WHERE v.identifier = ${codeHash}
+        AND v.value::jsonb->>'type' = 'authorization_code'
+      LIMIT 1
+    `);
+    const row = (rows as unknown as Record<string, unknown>[])[0];
+    if (!row) return null;
+    const clientId = row.client_id;
+    const userId = row.user_id;
+    if (typeof clientId !== "string" || typeof userId !== "string") return null;
+    return { clientId, userId, hasConsent: row.consent_id != null };
+  }
+
+  async revokeAuthorizationCodesForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void> {
+    // Authorization codes are not in the plugin's own tables. They live as
+    // `auth_verification` rows whose `value` is a JSON blob carrying the
+    // grant they belong to, so reaching them means querying inside it.
+    await this.db.execute(sql`
+      DELETE FROM auth_verification
+      WHERE value::jsonb->>'type' = 'authorization_code'
+        AND value::jsonb->'query'->>'client_id' = ${clientId}
+        AND value::jsonb->>'userId' = ${authUserId}
+    `);
   }
 
   /**

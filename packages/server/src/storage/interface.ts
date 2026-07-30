@@ -1307,6 +1307,42 @@ export interface OauthProviderStore {
    *  re-consent on the next authorize attempt). */
   revokeTokensForGrant(clientId: string, authUserId: string): Promise<void>;
   /**
+   * Delete every outstanding authorization code for (clientId, authUserId).
+   *
+   * Codes are not in the plugin's own tables: they are `auth_verification`
+   * rows whose `value` is a JSON blob naming the grant, so they survived
+   * every revocation path that only swept the token and consent tables.
+   * That mattered more than the ten-minute code lifetime suggests, because
+   * redeeming a code after the revoke yields a refresh token that rotates
+   * indefinitely — a short race converting into a permanent grant while the
+   * user's own security page reports the app as revoked.
+   *
+   * Called by `revokeTokensForGrant`, so every revocation path gets it.
+   * Idempotent.
+   */
+  revokeAuthorizationCodesForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void>;
+  /**
+   * Resolve an outstanding authorization code to the grant it belongs to,
+   * and say whether that grant is still consented.
+   *
+   * Backs the exchange-time refusal. Deleting codes on revoke is the
+   * mechanism; this is the check that holds when a code was minted in the
+   * window between the two, or when some future revocation path forgets to
+   * sweep them. `hasConsent: false` means the user has revoked the app and
+   * the code must not be redeemable.
+   *
+   * Returns null for a code this store does not recognise, which the caller
+   * treats as "not ours" and passes through rather than refusing.
+   */
+  findAuthorizationCodeGrantKey(codeHash: string): Promise<{
+    clientId: string;
+    userId: string;
+    hasConsent: boolean;
+  } | null>;
+  /**
    * Delete ONLY access tokens for a grant — leaves refresh tokens + consent
    * intact. Used by the `/oauth2/token` before-hook on refresh-token replay
    * detection: the plugin's own logic deletes the refresh chain on

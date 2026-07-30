@@ -56,7 +56,7 @@ async function seedClient(c: TestContext): Promise<string> {
     c.storage.betterAuthDialect === "pg"
       ? await import("../storage/pg/schema.js")
       : await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as unknown as {
+  const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
         run?: () => Promise<unknown>;
@@ -97,7 +97,7 @@ async function seedAccessToken(
     c.storage.betterAuthDialect === "pg"
       ? await import("../storage/pg/schema.js")
       : await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as unknown as {
+  const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
         run?: () => Promise<unknown>;
@@ -141,6 +141,29 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
     if (head?.includes("session_token")) return head;
   }
   throw new Error("sign-in: session_token cookie not found");
+}
+
+/** The Better Auth user id for a signed-up email. */
+async function authUserIdFor(c: TestContext, email: string): Promise<string> {
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => {
+        where: (w: unknown) => Promise<{ id: string }[]>;
+      };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schemaModule.auth_user)
+    .where(eq(schemaModule.auth_user.email, email));
+  const id = rows[0]?.id;
+  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
+  return id;
 }
 
 /** Start a device-flow authorization; returns its `user_code`. */
@@ -297,3 +320,203 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     expect(after?.properties.revoked_at).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Outstanding authorization codes
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed an outstanding authorization code exactly as the plugin stores one:
+ * an `auth_verification` row whose identifier is the hashed code and whose
+ * value is the JSON blob naming the grant. Seeding rather than driving a
+ * browser consent flow keeps the test about the revocation property, and
+ * the shape is copied from the plugin's own writer so it cannot drift into
+ * testing a fiction.
+ */
+async function seedAuthorizationCode(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<string> {
+  if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const code = `code_${Math.random().toString(36).slice(2, 14)}`;
+  const now = new Date();
+  const op = db.insert(schemaModule.auth_verification).values({
+    id: `ver_${Math.random().toString(36).slice(2)}`,
+    // The store looks codes up by the hashed identifier. The test asserts
+    // on deletion by grant rather than by identifier, so any stable value
+    // works here; using the raw code keeps the row readable when debugging.
+    identifier: code,
+    value: JSON.stringify({
+      type: "authorization_code",
+      query: { client_id: clientId, redirect_uri: `${ORIGIN}/callback` },
+      userId: authUserId,
+      sessionId: "sess_test",
+    }),
+    expiresAt: new Date(Date.now() + 600_000),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return code;
+}
+
+/** Seed the consent row a live grant carries. */
+async function seedConsent(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<void> {
+  if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const now = new Date();
+  const op = db.insert(schemaModule.auth_oauth_consent).values({
+    id: `cons_${Math.random().toString(36).slice(2)}`,
+    clientId,
+    userId: authUserId,
+    scopes:
+      c.storage.betterAuthDialect === "pg"
+        ? ["core.note:read"]
+        : JSON.stringify(["core.note:read"]),
+    consentGiven: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+}
+
+describe("revocation reaches outstanding authorization codes", () => {
+  it("REGRESSION: revoking a grant deletes its outstanding codes", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const email = `codes-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    await signInUser(ctx, email);
+    const authUserId = await authUserIdFor(ctx, email);
+    const clientId = await seedClient(ctx);
+    await seedConsent(ctx, clientId, authUserId);
+    await seedAuthorizationCode(ctx, clientId, authUserId);
+
+    // A second grant's code must survive: revocation is per-grant, and a
+    // delete that swept the table would pass the assertion below while
+    // logging every other user out of every other app.
+    const otherClient = await seedClient(ctx);
+    await seedConsent(ctx, otherClient, authUserId);
+    await seedAuthorizationCode(ctx, otherClient, authUserId);
+
+    await ctx.storage.oauthProvider!.revokeTokensForGrant(clientId, authUserId);
+
+    // The revoked grant's code is gone; the untouched grant's is not.
+    const rows = await countAuthorizationCodes(ctx);
+    expect(rows.get(clientId) ?? 0).toBe(0);
+    expect(rows.get(otherClient) ?? 0).toBe(1);
+  });
+
+  it("REGRESSION: a code whose grant is revoked cannot be redeemed", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const email = `exch-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    await signInUser(ctx, email);
+    const authUserId = await authUserIdFor(ctx, email);
+    const clientId = await seedClient(ctx);
+    await seedConsent(ctx, clientId, authUserId);
+    const code = await seedAuthorizationCode(ctx, clientId, authUserId);
+
+    // While consented, the store reports the grant as live.
+    const live =
+      await ctx.storage.oauthProvider!.findAuthorizationCodeGrantKey(code);
+    expect(live?.hasConsent).toBe(true);
+    expect(live?.clientId).toBe(clientId);
+
+    // Drop only the consent row, reproducing the window the sweep leaves:
+    // a code minted between the consent delete and the code delete.
+    await dropConsent(ctx, clientId, authUserId);
+
+    const afterRevoke =
+      await ctx.storage.oauthProvider!.findAuthorizationCodeGrantKey(code);
+    // Still present, and now correctly reported as belonging to no grant.
+    // That is what the exchange guard refuses on.
+    expect(afterRevoke).not.toBeNull();
+    expect(afterRevoke?.hasConsent).toBe(false);
+  });
+});
+
+/** Count outstanding authorization codes per client id. */
+async function countAuthorizationCodes(
+  c: TestContext,
+): Promise<Map<string, number>> {
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => Promise<{ value: string }[]>;
+    };
+  };
+  const rows = await db.select().from(schemaModule.auth_verification);
+  const out = new Map<string, number>();
+  for (const row of rows) {
+    let parsed: { type?: string; query?: { client_id?: string } };
+    try {
+      parsed = JSON.parse(row.value) as typeof parsed;
+    } catch {
+      continue;
+    }
+    if (parsed.type !== "authorization_code") continue;
+    const cid = parsed.query?.client_id;
+    if (!cid) continue;
+    out.set(cid, (out.get(cid) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Delete just the consent row, leaving codes behind. */
+async function dropConsent(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<void> {
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const { and, eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    delete: (t: unknown) => {
+      where: (w: unknown) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const op = db
+    .delete(schemaModule.auth_oauth_consent)
+    .where(
+      and(
+        eq(schemaModule.auth_oauth_consent.clientId, clientId),
+        eq(schemaModule.auth_oauth_consent.userId, authUserId),
+      ),
+    );
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+}

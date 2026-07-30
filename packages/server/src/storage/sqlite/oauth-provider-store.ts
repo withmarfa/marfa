@@ -172,6 +172,52 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
           eq(auth_oauth_consent.userId, authUserId),
         ),
       );
+    await this.revokeAuthorizationCodesForGrant(clientId, authUserId);
+  }
+
+  async findAuthorizationCodeGrantKey(codeHash: string): Promise<{
+    clientId: string;
+    userId: string;
+    hasConsent: boolean;
+  } | null> {
+    const rows = await this.db.all<{
+      client_id: string | null;
+      user_id: string | null;
+      consent_id: string | null;
+    }>(sql`
+      SELECT json_extract(v.value, '$.query.client_id') AS client_id,
+             json_extract(v.value, '$.userId')          AS user_id,
+             c.id                                        AS consent_id
+      FROM auth_verification v
+      LEFT JOIN auth_oauth_consent c
+        ON c.client_id = json_extract(v.value, '$.query.client_id')
+       AND c.user_id   = json_extract(v.value, '$.userId')
+      WHERE v.identifier = ${codeHash}
+        AND json_extract(v.value, '$.type') = 'authorization_code'
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row?.client_id || !row.user_id) return null;
+    return {
+      clientId: row.client_id,
+      userId: row.user_id,
+      hasConsent: row.consent_id != null,
+    };
+  }
+
+  async revokeAuthorizationCodesForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void> {
+    // Authorization codes are not in the plugin's own tables. They live as
+    // `auth_verification` rows whose `value` is a JSON blob carrying the
+    // grant they belong to, so reaching them means querying inside it.
+    await this.db.run(sql`
+      DELETE FROM auth_verification
+      WHERE json_extract(value, '$.type') = 'authorization_code'
+        AND json_extract(value, '$.query.client_id') = ${clientId}
+        AND json_extract(value, '$.userId') = ${authUserId}
+    `);
   }
 
   /**
