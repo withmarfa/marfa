@@ -328,6 +328,7 @@ async function main() {
     v && v.length > 0 ? v : undefined;
   const emailTransport = await createEmailTransport({
     backend: config.emailBackend ?? "none",
+    authMode: config.authMode,
     from: emptyToUndef(config.emailFrom) ?? "Marfa <hello@mail.marfa.so>",
     replyTo: emptyToUndef(config.emailReplyTo),
     cloudflare:
