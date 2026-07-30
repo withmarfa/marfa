@@ -100,3 +100,48 @@ describe("client.admin.keys.create", () => {
     await client.admin.keys.create("ten/slash", { label: "l", source: "s" });
   });
 });
+
+describe("client.admin.tenants.create", () => {
+  it("POSTs the name and returns the created tenant", async () => {
+    const mockFetch = vi.fn(
+      (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        expect(urlOf(url)).toBe("http://example.test/admin/tenants");
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(init?.body as string)).toEqual({ name: "acme" });
+        return Promise.resolve(
+          makeJsonResponse(201, {
+            id: "ten_new",
+            name: "acme",
+            created_at: "2026-07-30T00:00:00.000Z",
+            status: "active",
+          }),
+        );
+      },
+    );
+    const tenant = await makeClient(mockFetch).admin.tenants.create({
+      name: "acme",
+    });
+    expect(tenant.id).toBe("ten_new");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends an empty body when no name is given", async () => {
+    // Not `undefined`: the route validates a JSON body, so omitting one
+    // entirely would be a 400 rather than an unnamed tenant.
+    const mockFetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        expect(JSON.parse(init?.body as string)).toEqual({});
+        return Promise.resolve(
+          makeJsonResponse(201, {
+            id: "ten_unnamed",
+            name: null,
+            created_at: "2026-07-30T00:00:00.000Z",
+            status: "active",
+          }),
+        );
+      },
+    );
+    const tenant = await makeClient(mockFetch).admin.tenants.create();
+    expect(tenant.name).toBeNull();
+  });
+});

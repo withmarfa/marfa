@@ -1817,6 +1817,22 @@ export class MarfaClient {
    */
   readonly admin = {
     tenants: {
+      /**
+       * Create an empty tenant. Pair with `admin.keys.create(tenantId, …)` to
+       * issue a credential scoped to it.
+       *
+       * Every other operator verb on a tenant predates this one, so a tenant
+       * could previously only come into being through a hosted sign-up. That
+       * left an operator with no way to provision a space, and anything
+       * needing a tenant-scoped credential — a test harness, a conformance
+       * suite, a self-hoster seeding an instance — with no supported path.
+       */
+      create: async (input?: { name?: string }): Promise<Tenant> => {
+        return this.transport.request<Tenant>("POST", "/admin/tenants", {
+          body: input ?? {},
+        });
+      },
+
       /** List every tenant in the instance with current status. */
       list: async (): Promise<Tenant[]> => {
         const res = await this.transport.request<{ data: Tenant[] }>(

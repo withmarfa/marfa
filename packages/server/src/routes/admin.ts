@@ -6,6 +6,7 @@
  *
  * Routes:
  *
+ *   - POST   /admin/tenants                       — create a tenant
  *   - GET    /admin/tenants                       — list all tenants
  *   - GET    /admin/tenants/:id                   — full row + quotas + recent activity
  *   - POST   /admin/tenants/:id/suspend           — flip status to 'suspended'
@@ -144,6 +145,73 @@ const CreateTenantKeyBodySchema = z.object({
 // ---------------------------------------------------------------------------
 // Route definitions
 // ---------------------------------------------------------------------------
+
+const createTenantRoute = createRoute({
+  operationId: "adminCreateTenant",
+  method: "post",
+  path: "/tenants",
+  tags: ["Admin"],
+  summary: "Create a tenant",
+  description:
+    "Creates an empty tenant and returns it. Platform-admin only. Pair with `POST /admin/tenants/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a tenant already existed, so before this a tenant could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a tenant-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            name: z
+              .string()
+              .min(1)
+              .max(200)
+              .optional()
+              .describe(
+                "Human-readable label. Optional; the tenant is identified by its id.",
+              ),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: TenantSchema } },
+      description: "Tenant created",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Invalid body",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "Instance is not multi-tenant",
+    },
+  },
+});
 
 const listTenantsRoute = createRoute({
   operationId: "adminListTenants",
@@ -557,6 +625,36 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       owner_email_verified: owner?.email_verified ?? null,
     };
   }
+
+  router.openapi(createTenantRoute, async (c) => {
+    requireAdmin(c);
+    // A single-tenant deployment has no tenant store at all. `NOT_FOUND`
+    // rather than a dedicated code, matching every sibling route here: the
+    // resource does not exist on this instance.
+    if (!storage.tenants) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    }
+    const body = c.req.valid("json");
+    const tenant = await storage.tenants.create(body.name);
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      tenant_id: tenant.id,
+      key_id: c.get("apiKey")?.id,
+      action: "admin.tenant.create",
+      resource_type: "tenant",
+      resource_id: tenant.id,
+      details: { name: tenant.name },
+    });
+    return c.json(
+      {
+        id: tenant.id,
+        name: tenant.name,
+        created_at: tenant.created_at,
+        status: tenant.status,
+      },
+      201,
+    );
+  });
 
   router.openapi(listTenantsRoute, async (c) => {
     requireAdmin(c);
