@@ -386,7 +386,19 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
     expect(await ctx.storage.keys.get(firstId)).toBeNull();
   });
 
-  it("spares a sibling credential that has not expired", async () => {
+  it("REGRESSION: revokes an unexpired sibling too, so a mint leaves one live credential", async () => {
+    // This asserted the opposite, on the reasoning that a live credential
+    // always belongs to a dispatch that could still be running because the
+    // TTL exceeds the dispatch bound. The reasoning was sound and the bound
+    // it produced was not: nothing retired a live credential on supersede,
+    // so accumulation was limited only by the TTL. Measured on staging,
+    // three consecutive mints left five usable credentials.
+    //
+    // What makes revoking safe is serialisation, not expiry. Dispatches on
+    // one connection are serialised — the supervisor holds
+    // `connection-dispatch:<id>` around the whole dispatch and mints inside
+    // it — so a mint arriving is evidence that no earlier dispatch on this
+    // connection still holds its credential.
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);
 
@@ -407,9 +419,62 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       TTL_MS,
     );
 
-    // Unexpired means still usable: the TTL exceeds the dispatch bound, so a
-    // live credential always belongs to a dispatch that could still be running.
-    expect(await ctx.storage.keys.get(firstId)).not.toBeNull();
+    expect(await ctx.storage.keys.get(firstId)).toBeNull();
+  });
+
+  it("REGRESSION: three consecutive dispatches leave exactly one live credential", async () => {
+    // The measured shape. Counting is the assertion because the defect was
+    // never about one credential surviving — it was about the count growing
+    // with traffic.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    for (let i = 0; i < 3; i++) {
+      await mintLocalRuntimeCredential(
+        ctx.storage,
+        TEST_API_KEY_SALT,
+        connectionId,
+        "keys",
+        TTL_MS,
+      );
+    }
+
+    // listByConnectionId returns live rows only.
+    const live = await ctx.storage.keys.listByConnectionId(
+      connectionId,
+      undefined,
+    );
+    expect(live.filter((k) => k.is_runtime_credential)).toHaveLength(1);
+  });
+
+  it("leaves another connection's credentials alone", async () => {
+    // Revoking unconditionally is only correct per connection. A sweep that
+    // ignored the connection id would pass both cases above while breaking
+    // every other connector in the space.
+    const integrationId = await createIntegrationItem();
+    const mine = await createActiveConnection(integrationId);
+    const theirs = await createActiveConnection(integrationId);
+
+    await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      theirs,
+      "keys",
+      TTL_MS,
+    );
+    await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      mine,
+      "keys",
+      TTL_MS,
+    );
+
+    const theirLive = await ctx.storage.keys.listByConnectionId(
+      theirs,
+      undefined,
+    );
+    expect(theirLive.filter((k) => k.is_runtime_credential)).toHaveLength(1);
   });
 
   it("revokes a legacy sibling with no expiry once it is older than the TTL", async () => {
