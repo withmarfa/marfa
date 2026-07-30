@@ -64,6 +64,8 @@ export class PgCoordinationStore implements CoordinationStore {
     const key = `marfa:${name}`;
     const conn = await this.client.reserve();
     try {
+      // session-scoped-by-design: a try-lock that never waits, held on a
+      // reserved connection for a background job that can run for minutes.
       const rows = await conn<{ acquired: boolean }[]>`
         SELECT pg_try_advisory_lock(hashtextextended(${key}, 0)) AS acquired
       `;
@@ -72,6 +74,7 @@ export class PgCoordinationStore implements CoordinationStore {
       try {
         return await fn();
       } finally {
+        // session-scoped-by-design: releases the try-lock above.
         await conn`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
       }
     } finally {

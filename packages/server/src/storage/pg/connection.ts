@@ -187,14 +187,29 @@ export async function createConnection(
   // drizzle/pg/ migrations by scripts/generate-schema-sql.ts. RLS role +
   // policies are included; activation requires MARFA_RLS_ENFORCE=true.
   if (!options?.skipBootstrap) {
-    await client.unsafe(`SELECT pg_advisory_lock(42)`);
-    try {
-      await client.unsafe(SCHEMA_SQL);
+    // Transaction-scoped lock, taken inside an explicit transaction, for the
+    // same reason `PgCoordinationStore.withExclusiveLock` uses one.
+    //
+    // `pg_advisory_lock` is session-scoped, and a session-scoped lock needs a
+    // session, which a pooled endpoint is not. Behind a transaction-mode
+    // pooler each bare statement is its own transaction, so the acquire lands
+    // on whichever backend happened to be free and the matching unlock need
+    // not reach it. Measured against PgBouncer, that shape lets two callers
+    // hold one lock and leaves a lock alive past the client that took it.
+    // This runs on every real boot, which is exactly when concurrent DDL
+    // would race.
+    //
+    // A transaction is the unit a pooler keeps on one backend, and it
+    // releases on commit, rollback or disconnect rather than on a statement
+    // arriving somewhere. Putting the DDL inside it is not incidental: the
+    // lock only covers the bootstrap if the bootstrap is in the transaction
+    // that holds it, and the whole schema apply becomes atomic as a result.
+    await client.begin(async (tx) => {
+      await tx.unsafe(`SELECT pg_advisory_xact_lock(42)`);
+      await tx.unsafe(SCHEMA_SQL);
       // Stamp __drizzle_migrations so a follow-up `pnpm migrate` short-circuits. Idempotent.
-      await stampPgDrizzleMigrations(client);
-    } finally {
-      await client.unsafe(`SELECT pg_advisory_unlock(42)`);
-    }
+      await stampPgDrizzleMigrations(tx);
+    });
   }
 
   return {
