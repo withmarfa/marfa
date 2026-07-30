@@ -37,7 +37,7 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN
       RAISE NOTICE
-        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before tenant-scoped requests will succeed.',
+        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before space-scoped requests will succeed.',
         current_user, SQLERRM;
   END;
 END
@@ -48,7 +48,7 @@ CREATE SCHEMA IF NOT EXISTS public;
 
 CREATE TABLE IF NOT EXISTS public.api_keys (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     key_hash text NOT NULL,
     label text NOT NULL,
     role text DEFAULT 'member'::text NOT NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS public.audit_log (
     resource_type text NOT NULL,
     resource_id text,
     details text DEFAULT '{}'::text NOT NULL,
-    tenant_id text
+    space_id text
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_account (
@@ -224,12 +224,12 @@ CREATE TABLE IF NOT EXISTS public.blobs (
     mime_type text NOT NULL,
     size integer NOT NULL,
     storage_path text NOT NULL,
-    tenant_id text DEFAULT ''::text NOT NULL
+    space_id text DEFAULT ''::text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.bulk_action_jobs (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     api_key_id text,
     status text NOT NULL,
     action text NOT NULL,
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS public.bulk_action_jobs (
 CREATE TABLE IF NOT EXISTS public.connection_leased_tokens (
     id text NOT NULL,
     connection_id text NOT NULL,
-    tenant_id text,
+    space_id text,
     capability_id text NOT NULL,
     lease_token_hash text NOT NULL,
     scopes text DEFAULT '[]'::text NOT NULL,
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS public.connection_leased_tokens (
 CREATE TABLE IF NOT EXISTS public.connection_oauth_tokens (
     id text NOT NULL,
     connection_id text NOT NULL,
-    tenant_id text,
+    space_id text,
     access_token_encrypted text NOT NULL,
     refresh_token_encrypted text,
     expires_at text NOT NULL,
@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS public.connection_oauth_tokens (
 
 CREATE TABLE IF NOT EXISTS public.custom_edge_types (
     id text NOT NULL,
-    tenant_id text DEFAULT ''::text NOT NULL,
+    space_id text DEFAULT ''::text NOT NULL,
     schema text NOT NULL,
     created_at text NOT NULL,
     updated_at text NOT NULL
@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS public.custom_edge_types (
 
 CREATE TABLE IF NOT EXISTS public.custom_types (
     id text NOT NULL,
-    tenant_id text DEFAULT ''::text NOT NULL,
+    space_id text DEFAULT ''::text NOT NULL,
     schema text NOT NULL,
     created_at text NOT NULL,
     updated_at text NOT NULL
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS public.custom_types (
 
 CREATE TABLE IF NOT EXISTS public.edges (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     source_id text NOT NULL,
     target_id text NOT NULL,
     edge_type text NOT NULL,
@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS public.event_log (
     id bigint NOT NULL,
     event_type text NOT NULL,
     item_id text,
-    tenant_id text,
+    space_id text,
     payload text NOT NULL,
     created_at text NOT NULL,
     edge_id text,
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS public.inbound_webhook_events (
 
 CREATE TABLE IF NOT EXISTS public.inbound_webhooks (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     connection_id text NOT NULL,
     external_service_id text,
     secret_encrypted text NOT NULL,
@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS public.inbound_webhooks (
 
 CREATE TABLE IF NOT EXISTS public.items (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     type text NOT NULL,
     state text DEFAULT 'active'::text NOT NULL,
     properties text NOT NULL,
@@ -416,7 +416,7 @@ CREATE TABLE IF NOT EXISTS public.outbound_webhook_deliveries (
 
 CREATE TABLE IF NOT EXISTS public.outbound_webhooks (
     id text NOT NULL,
-    tenant_id text,
+    space_id text,
     url text NOT NULL,
     secret text NOT NULL,
     events text DEFAULT '[]'::text NOT NULL,
@@ -438,8 +438,8 @@ CREATE TABLE IF NOT EXISTS public.settings (
     value text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS public.tenant_quotas (
-    tenant_id text NOT NULL,
+CREATE TABLE IF NOT EXISTS public.space_quotas (
+    space_id text NOT NULL,
     items_limit integer,
     webhooks_limit integer,
     blobs_limit integer,
@@ -448,7 +448,7 @@ CREATE TABLE IF NOT EXISTS public.tenant_quotas (
     updated_at text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS public.tenants (
+CREATE TABLE IF NOT EXISTS public.spaces (
     id text NOT NULL,
     name text,
     created_at text NOT NULL,
@@ -461,7 +461,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     name text,
     provider text NOT NULL,
     provider_id text NOT NULL,
-    tenant_id text NOT NULL,
+    space_id text NOT NULL,
     created_at text NOT NULL,
     updated_at text NOT NULL,
     handle text,
@@ -727,9 +727,9 @@ WHERE c.conrelid = 'public.blobs'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['tenant_id', 'hash']::text[]) THEN
+      = ARRAY['space_id', 'hash']::text[]) THEN
     ALTER TABLE ONLY public.blobs
-        ADD CONSTRAINT blobs_tenant_id_hash_pk PRIMARY KEY (tenant_id, hash);
+        ADD CONSTRAINT blobs_space_id_hash_pk PRIMARY KEY (space_id, hash);
   END IF;
 END
 $$;
@@ -783,9 +783,9 @@ WHERE c.conrelid = 'public.custom_edge_types'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['tenant_id', 'id']::text[]) THEN
+      = ARRAY['space_id', 'id']::text[]) THEN
     ALTER TABLE ONLY public.custom_edge_types
-        ADD CONSTRAINT custom_edge_types_tenant_id_id_pk PRIMARY KEY (tenant_id, id);
+        ADD CONSTRAINT custom_edge_types_space_id_id_pk PRIMARY KEY (space_id, id);
   END IF;
 END
 $$;
@@ -797,9 +797,9 @@ WHERE c.conrelid = 'public.custom_types'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['tenant_id', 'id']::text[]) THEN
+      = ARRAY['space_id', 'id']::text[]) THEN
     ALTER TABLE ONLY public.custom_types
-        ADD CONSTRAINT custom_types_tenant_id_id_pk PRIMARY KEY (tenant_id, id);
+        ADD CONSTRAINT custom_types_space_id_id_pk PRIMARY KEY (space_id, id);
   END IF;
 END
 $$;
@@ -961,13 +961,13 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
-WHERE c.conrelid = 'public.tenant_quotas'::regclass AND c.contype = 'p'
+WHERE c.conrelid = 'public.space_quotas'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['tenant_id']::text[]) THEN
-    ALTER TABLE ONLY public.tenant_quotas
-        ADD CONSTRAINT tenant_quotas_pkey PRIMARY KEY (tenant_id);
+      = ARRAY['space_id']::text[]) THEN
+    ALTER TABLE ONLY public.space_quotas
+        ADD CONSTRAINT space_quotas_pkey PRIMARY KEY (space_id);
   END IF;
 END
 $$;
@@ -975,13 +975,13 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
-WHERE c.conrelid = 'public.tenants'::regclass AND c.contype = 'p'
+WHERE c.conrelid = 'public.spaces'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
       = ARRAY['id']::text[]) THEN
-    ALTER TABLE ONLY public.tenants
-        ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
+    ALTER TABLE ONLY public.spaces
+        ADD CONSTRAINT spaces_pkey PRIMARY KEY (id);
   END IF;
 END
 $$;
@@ -1046,13 +1046,13 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id ON public.api_keys USING b
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_runtime_credential ON public.api_keys USING btree (is_runtime_credential) WHERE is_runtime_credential;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant ON public.api_keys USING btree (tenant_id, source) WHERE (revoked_at IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_space ON public.api_keys USING btree (space_id, source) WHERE (revoked_at IS NULL);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON public.audit_log USING btree (action);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON public.audit_log USING btree (resource_type);
 
-CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_id ON public.audit_log USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_space_id ON public.audit_log USING btree (space_id);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON public.audit_log USING btree ("timestamp");
 
@@ -1094,11 +1094,11 @@ CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON public.auth_verif
 
 CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_gc ON public.bulk_action_jobs USING btree (status, finished_at);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_action_jobs_idempotency ON public.bulk_action_jobs USING btree (tenant_id, idempotency_key) NULLS NOT DISTINCT WHERE (idempotency_key IS NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_action_jobs_idempotency ON public.bulk_action_jobs USING btree (space_id, idempotency_key) NULLS NOT DISTINCT WHERE (idempotency_key IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_space_id ON public.bulk_action_jobs USING btree (space_id);
 
 CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_status ON public.bulk_action_jobs USING btree (status);
-
-CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_tenant_id ON public.bulk_action_jobs USING btree (tenant_id);
 
 CREATE INDEX IF NOT EXISTS idx_connection_leased_tokens_connection_id ON public.connection_leased_tokens USING btree (connection_id, expires_at);
 
@@ -1106,9 +1106,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_leased_tokens_hash ON public.co
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_oauth_tokens_connection_id ON public.connection_oauth_tokens USING btree (connection_id);
 
-CREATE INDEX IF NOT EXISTS idx_edges_source ON public.edges USING btree (tenant_id, source_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edges_source ON public.edges USING btree (space_id, source_id, edge_type);
 
-CREATE INDEX IF NOT EXISTS idx_edges_target ON public.edges USING btree (tenant_id, target_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON public.edges USING btree (space_id, target_id, edge_type);
 
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON public.event_log USING btree (created_at);
 
@@ -1338,13 +1338,13 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
 WHERE c.conrelid = 'public.users'::regclass AND c.contype = 'f'
-  AND c.confrelid = 'public.tenants'::regclass
+  AND c.confrelid = 'public.spaces'::regclass
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['tenant_id']::text[]) THEN
+      = ARRAY['space_id']::text[]) THEN
     ALTER TABLE ONLY public.users
-        ADD CONSTRAINT users_tenant_id_tenants_id_fk FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
+        ADD CONSTRAINT users_space_id_spaces_id_fk FOREIGN KEY (space_id) REFERENCES public.spaces(id);
   END IF;
 END
 $$;
@@ -1366,125 +1366,125 @@ $$;
 
 ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS api_keys_tenant_isolation ON public.api_keys;
-CREATE POLICY api_keys_tenant_isolation ON public.api_keys TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS api_keys_space_isolation ON public.api_keys;
+CREATE POLICY api_keys_space_isolation ON public.api_keys TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS audit_log_tenant_isolation ON public.audit_log;
-CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS audit_log_space_isolation ON public.audit_log;
+CREATE POLICY audit_log_space_isolation ON public.audit_log TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.auth_user ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS auth_user_self ON public.auth_user;
 CREATE POLICY auth_user_self ON public.auth_user FOR SELECT TO marfa_app USING ((id IN ( SELECT users.auth_user_id
    FROM public.users
-  WHERE (users.tenant_id = current_setting('marfa.tenant_id'::text, true)))));
+  WHERE (users.space_id = current_setting('marfa.space_id'::text, true)))));
 
 ALTER TABLE public.blobs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS blobs_tenant_isolation ON public.blobs;
-CREATE POLICY blobs_tenant_isolation ON public.blobs TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
+DROP POLICY IF EXISTS blobs_space_isolation ON public.blobs;
+CREATE POLICY blobs_space_isolation ON public.blobs TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id = ''::text)));
 
 ALTER TABLE public.bulk_action_jobs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs;
-CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS bulk_action_jobs_space_isolation ON public.bulk_action_jobs;
+CREATE POLICY bulk_action_jobs_space_isolation ON public.bulk_action_jobs TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.connection_leased_tokens ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens;
-CREATE POLICY connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS connection_leased_tokens_space_isolation ON public.connection_leased_tokens;
+CREATE POLICY connection_leased_tokens_space_isolation ON public.connection_leased_tokens TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.connection_oauth_tokens ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens;
-CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS connection_oauth_tokens_space_isolation ON public.connection_oauth_tokens;
+CREATE POLICY connection_oauth_tokens_space_isolation ON public.connection_oauth_tokens TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.custom_edge_types ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS custom_edge_types_tenant_isolation ON public.custom_edge_types;
-CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
+DROP POLICY IF EXISTS custom_edge_types_space_isolation ON public.custom_edge_types;
+CREATE POLICY custom_edge_types_space_isolation ON public.custom_edge_types TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id = ''::text)));
 
 ALTER TABLE public.custom_types ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS custom_types_tenant_isolation ON public.custom_types;
-CREATE POLICY custom_types_tenant_isolation ON public.custom_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
+DROP POLICY IF EXISTS custom_types_space_isolation ON public.custom_types;
+CREATE POLICY custom_types_space_isolation ON public.custom_types TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id = ''::text)));
 
 ALTER TABLE public.edges ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS edges_tenant_isolation ON public.edges;
-CREATE POLICY edges_tenant_isolation ON public.edges TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS edges_space_isolation ON public.edges;
+CREATE POLICY edges_space_isolation ON public.edges TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.event_log ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS event_log_tenant_isolation ON public.event_log;
-CREATE POLICY event_log_tenant_isolation ON public.event_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS event_log_space_isolation ON public.event_log;
+CREATE POLICY event_log_space_isolation ON public.event_log TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.inbound_webhook_events ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS inbound_webhook_events_tenant_isolation ON public.inbound_webhook_events;
-CREATE POLICY inbound_webhook_events_tenant_isolation ON public.inbound_webhook_events TO marfa_app USING ((EXISTS ( SELECT 1
+DROP POLICY IF EXISTS inbound_webhook_events_space_isolation ON public.inbound_webhook_events;
+CREATE POLICY inbound_webhook_events_space_isolation ON public.inbound_webhook_events TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.inbound_webhooks w
-  WHERE ((w.id = inbound_webhook_events.inbound_webhook_id) AND ((w.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (w.tenant_id IS NULL))))));
+  WHERE ((w.id = inbound_webhook_events.inbound_webhook_id) AND ((w.space_id = current_setting('marfa.space_id'::text, true)) OR (w.space_id IS NULL))))));
 
 ALTER TABLE public.inbound_webhooks ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS inbound_webhooks_tenant_isolation ON public.inbound_webhooks;
-CREATE POLICY inbound_webhooks_tenant_isolation ON public.inbound_webhooks TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS inbound_webhooks_space_isolation ON public.inbound_webhooks;
+CREATE POLICY inbound_webhooks_space_isolation ON public.inbound_webhooks TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS items_tenant_isolation ON public.items;
-CREATE POLICY items_tenant_isolation ON public.items TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS items_space_isolation ON public.items;
+CREATE POLICY items_space_isolation ON public.items TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.metadata ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS metadata_tenant_isolation ON public.metadata;
-CREATE POLICY metadata_tenant_isolation ON public.metadata TO marfa_app USING ((EXISTS ( SELECT 1
+DROP POLICY IF EXISTS metadata_space_isolation ON public.metadata;
+CREATE POLICY metadata_space_isolation ON public.metadata TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.items
-  WHERE ((items.id = metadata.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
+  WHERE ((items.id = metadata.item_id) AND ((items.space_id = current_setting('marfa.space_id'::text, true)) OR (items.space_id IS NULL))))));
 
 ALTER TABLE public.outbound_webhook_deliveries ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS outbound_webhook_deliveries_tenant_isolation ON public.outbound_webhook_deliveries;
-CREATE POLICY outbound_webhook_deliveries_tenant_isolation ON public.outbound_webhook_deliveries TO marfa_app USING ((EXISTS ( SELECT 1
+DROP POLICY IF EXISTS outbound_webhook_deliveries_space_isolation ON public.outbound_webhook_deliveries;
+CREATE POLICY outbound_webhook_deliveries_space_isolation ON public.outbound_webhook_deliveries TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.outbound_webhooks w
-  WHERE ((w.id = outbound_webhook_deliveries.webhook_id) AND ((w.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (w.tenant_id IS NULL))))));
+  WHERE ((w.id = outbound_webhook_deliveries.webhook_id) AND ((w.space_id = current_setting('marfa.space_id'::text, true)) OR (w.space_id IS NULL))))));
 
 ALTER TABLE public.outbound_webhooks ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS outbound_webhooks_tenant_isolation ON public.outbound_webhooks;
-CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS outbound_webhooks_space_isolation ON public.outbound_webhooks;
+CREATE POLICY outbound_webhooks_space_isolation ON public.outbound_webhooks TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
-ALTER TABLE public.tenant_quotas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.space_quotas ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS tenant_quotas_tenant_isolation ON public.tenant_quotas;
-CREATE POLICY tenant_quotas_tenant_isolation ON public.tenant_quotas TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS space_quotas_space_isolation ON public.space_quotas;
+CREATE POLICY space_quotas_space_isolation ON public.space_quotas TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
-ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.spaces ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS tenants_self_isolation ON public.tenants;
-CREATE POLICY tenants_self_isolation ON public.tenants TO marfa_app USING ((id = current_setting('marfa.tenant_id'::text, true)));
+DROP POLICY IF EXISTS spaces_self_isolation ON public.spaces;
+CREATE POLICY spaces_self_isolation ON public.spaces TO marfa_app USING ((id = current_setting('marfa.space_id'::text, true)));
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS users_tenant_isolation ON public.users;
-CREATE POLICY users_tenant_isolation ON public.users TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+DROP POLICY IF EXISTS users_space_isolation ON public.users;
+CREATE POLICY users_space_isolation ON public.users TO marfa_app USING (((space_id = current_setting('marfa.space_id'::text, true)) OR (space_id IS NULL)));
 
 ALTER TABLE public.versions ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS versions_tenant_isolation ON public.versions;
-CREATE POLICY versions_tenant_isolation ON public.versions TO marfa_app USING ((EXISTS ( SELECT 1
+DROP POLICY IF EXISTS versions_space_isolation ON public.versions;
+CREATE POLICY versions_space_isolation ON public.versions TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.items
-  WHERE ((items.id = versions.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
+  WHERE ((items.id = versions.item_id) AND ((items.space_id = current_setting('marfa.space_id'::text, true)) OR (items.space_id IS NULL))))));
 
 -- Table grants on the marfa_app role (see role block above).
 -- Schema-qualified (\`public.x\`) so the grants resolve regardless of
 -- search_path — pg_dump emits its CREATE TABLE statements with the
 -- \`public.\` prefix, and grants must match the qualified table for
 -- non-default search_paths (e.g. test schemas) to apply correctly.
-GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "marfa_app";
+GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."space_quotas", "public"."spaces", "public"."users", "public"."versions" TO "marfa_app";
 GRANT SELECT ON "public"."auth_user" TO "marfa_app";
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "marfa_app";
 `;

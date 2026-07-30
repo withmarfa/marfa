@@ -8,7 +8,7 @@ import {
   type InboundWebhook,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
+import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
@@ -47,7 +47,7 @@ function rowToWire(
     | "github";
   const base: InboundWebhook = {
     id: row.id,
-    tenant_id: row.tenant_id ?? undefined,
+    space_id: row.space_id ?? undefined,
     connection_id: row.connection_id,
     external_service_id: row.external_service_id ?? undefined,
     secret_redacted: rawSecret
@@ -68,7 +68,7 @@ function rowToWire(
  * Validates that the caller can mutate inbound webhook subscriptions
  * for the given connection. The caller must be authenticated AND match
  * either:
- *   1. An admin credential whose tenant scope covers the connection.
+ *   1. An admin credential whose space scope covers the connection.
  *   2. The connector's own credential — a credential whose `source` is
  *      `oauth:${connectionId}` (the OAuth-token synthetic credential
  *      pattern from the auth middleware).
@@ -81,21 +81,21 @@ async function requireConnectionAccess(
   c: import("hono").Context<AppEnv>,
   storage: Storage,
   connectionId: string,
-): Promise<{ tenantId: string | undefined }> {
+): Promise<{ spaceId: string | undefined }> {
   const key = requireAuth(c);
-  const tenantId = key.tenant_id ?? undefined;
-  const connection = await storage.items.get(connectionId, tenantId);
+  const spaceId = key.space_id ?? undefined;
+  const connection = await storage.items.get(connectionId, spaceId);
   if (connection?.type !== "system.connection") {
     throw new MarfaError(
       ErrorCode.CONNECTION_NOT_FOUND,
       "Connection not found",
     );
   }
-  // Tenant-bounded admin authority, matching
+  // Space-bounded admin authority, matching
   // `requireConnectionProxyAccess`: the connection lookup above is fenced
-  // on `key.tenant_id`, so rank decides what the caller may do and the
+  // on `key.space_id`, so rank decides what the caller may do and the
   // fence decides which connections it can see.
-  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
+  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
   // Same widening as `requireConnectionProxyAccess` in
   // `routes/connection-proxy.ts` — accept runtime credentials minted
   // for this connection alongside the OAuth-app-grant shape.
@@ -108,7 +108,7 @@ async function requireConnectionAccess(
       "Caller cannot manage inbound webhooks on this connection",
     );
   }
-  return { tenantId };
+  return { spaceId };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ async function requireConnectionAccess(
 
 const InboundWebhookSchema = z.object({
   id: z.string(),
-  tenant_id: z.string().optional(),
+  space_id: z.string().optional(),
   connection_id: z.string(),
   external_service_id: z.string().optional(),
   secret_redacted: z.string(),
@@ -400,17 +400,13 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   // POST /connections/:id/inbound-webhooks
   r.openapi(createInboundWebhookRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
-      tenantId,
+      spaceId,
     );
 
     const verification_method = manifest.webhook_verification.method;
@@ -425,7 +421,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     const id = generateId();
     const row = await storage.inboundWebhooks.create({
       id,
-      tenant_id: tenantId,
+      space_id: spaceId,
       connection_id: connectionId,
       external_service_id: body.external_service_id,
       secret_encrypted,
@@ -436,7 +432,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.create",
       resource_type: "inbound_webhook",
@@ -450,14 +446,10 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   // GET /connections/:id/inbound-webhooks
   r.openapi(listInboundWebhooksRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const rows = await storage.inboundWebhooks.listByConnection(
       connectionId,
-      tenantId,
+      spaceId,
     );
     return c.json({ inbound_webhooks: rows.map((r) => rowToWire(r)) }, 200);
   });
@@ -466,15 +458,8 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   r.openapi(listDeliveriesRoute, async (c) => {
     const { id: connectionId, webhook_id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
-    const subscription = await storage.inboundWebhooks.get(
-      webhook_id,
-      tenantId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
+    const subscription = await storage.inboundWebhooks.get(webhook_id, spaceId);
     if (subscription?.connection_id !== connectionId) {
       throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_NOT_FOUND,
@@ -491,15 +476,8 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   // POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_id/retry
   r.openapi(retryDeliveryRoute, async (c) => {
     const { id: connectionId, webhook_id, event_id } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
-    const subscription = await storage.inboundWebhooks.get(
-      webhook_id,
-      tenantId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
+    const subscription = await storage.inboundWebhooks.get(webhook_id, spaceId);
     if (subscription?.connection_id !== connectionId) {
       throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_NOT_FOUND,
@@ -519,7 +497,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     );
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.retry",
       resource_type: "inbound_webhook_event",
@@ -664,7 +642,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: undefined,
       action: written.inserted
         ? "inbound_webhook.receive"

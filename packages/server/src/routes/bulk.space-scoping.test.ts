@@ -1,17 +1,17 @@
 /**
- * Bulk item operations — tenant scoping.
+ * Bulk item operations — space scoping.
  *
- * `POST /items/bulk` is tenant-admin capable (widened from platform-admin):
- * a tenant_admin can bulk-upsert within their own tenant but never reaches
- * another tenant's rows. This proves the isolation end to end:
+ * `POST /items/bulk` is space-admin capable (widened from platform-admin):
+ * a space_admin can bulk-upsert within their own space but never reaches
+ * another space's rows. This proves the isolation end to end:
  *
- *   - tenant_admin A bulk-creates inside tenant A;
- *   - a cross-tenant id collision does NOT update tenant B's row — it
- *     creates a fresh row in tenant A (the id lookup is tenant-fenced, so
- *     the upsert-by-id branch never matches across tenants);
- *   - a cross-tenant (source, source_id) collision likewise creates rather
+ *   - space_admin A bulk-creates inside space A;
+ *   - a cross-space id collision does NOT update space B's row — it
+ *     creates a fresh row in space A (the id lookup is space-fenced, so
+ *     the upsert-by-id branch never matches across spaces);
+ *   - a cross-space (source, source_id) collision likewise creates rather
  *     than updates;
- *   - platform-admin remains unaffected (cross-tenant authority).
+ *   - platform-admin remains unaffected (cross-space authority).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -25,29 +25,26 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
+const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
 let adminA: string;
 let adminB: string;
 
-async function mintTenantAdmin(
-  label: string,
-  tenantId: string,
-): Promise<string> {
+async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_bulk_scope_${suffix}`;
   await ctx.storage.keys.create(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -64,16 +61,16 @@ interface BulkResponse {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintTenantAdmin("bulk-admin-a", tenantA);
-  adminB = await mintTenantAdmin("bulk-admin-b", tenantB);
+  adminA = await mintSpaceAdmin("bulk-admin-a", spaceA);
+  adminB = await mintSpaceAdmin("bulk-admin-b", spaceB);
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("POST /items/bulk — tenant_admin within own tenant", () => {
-  it("tenant_admin bulk-creates items in their own tenant", async () => {
+describe("POST /items/bulk — space_admin within own space", () => {
+  it("space_admin bulk-creates items in their own space", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: adminA,
@@ -109,13 +106,13 @@ describe("POST /items/bulk — tenant_admin within own tenant", () => {
     }
   });
 
-  it("tenant_admin upsert updates only its own row, never another tenant's", async () => {
+  it("space_admin upsert updates only its own row, never another space's", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const sourceId = `shared-srcid-${suffix}`;
 
     // A and B both bulk-create a row carrying the SAME source_id. Because
-    // `source` is stamped per-credential and the lookup is tenant-fenced,
-    // these are two distinct rows in two tenants.
+    // `source` is stamped per-credential and the lookup is space-fenced,
+    // these are two distinct rows in two spaces.
     const createA = await request(ctx.app, "POST", "/items/bulk", {
       key: adminA,
       body: {
@@ -172,12 +169,12 @@ describe("POST /items/bulk — tenant_admin within own tenant", () => {
     expect(itemB.item.properties.body).toBe("B-orig");
   });
 
-  it("cross-tenant id collision is a clean conflict, never a cross-tenant update", async () => {
+  it("cross-space id collision is a clean conflict, never a cross-space update", async () => {
     // B creates a row, then A bulk-upserts referencing B's id explicitly.
-    // The id lookup is tenant-fenced, so A's call cannot match B's row and
+    // The id lookup is space-fenced, so A's call cannot match B's row and
     // takes the create path. The items PK is `id` alone, so inserting B's id
     // collides — surfaced as a clean per-item `conflict` (409 mapped to an
-    // errored outcome), NOT a cross-tenant update and NOT an opaque 500.
+    // errored outcome), NOT a cross-space update and NOT an opaque 500.
     const suffix = Math.random().toString(36).slice(2, 8);
     const createB = await request(ctx.app, "POST", "/items/bulk", {
       key: adminB,
@@ -221,7 +218,7 @@ describe("POST /items/bulk — tenant_admin within own tenant", () => {
 });
 
 describe("POST /items/bulk — platform-admin unaffected", () => {
-  it("platform-admin bulk-creates cross-tenant (no tenant scope)", async () => {
+  it("platform-admin bulk-creates cross-space (no space scope)", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.adminKey,

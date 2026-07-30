@@ -7,7 +7,7 @@
  * the perf vs per-item transactions; the SQL inside the transaction
  * can stay per-row.
  *
- * Authorization: the worker passes the job's `tenant_id` explicitly
+ * Authorization: the worker passes the job's `space_id` explicitly
  * to every storage method. RLS, if enforced, is belt-and-braces —
  * matched_ids were resolved at job-create-time inside a request
  * context with full type-permission narrowing.
@@ -27,7 +27,7 @@ export interface ChunkOutcome {
 
 export interface RunChunkContext {
   storage: Storage;
-  tenantId: string | null;
+  spaceId: string | null;
   /** The full BulkActionInput sent to `POST /items/bulk-actions`. */
   input: BulkActionInput;
   /** Ids the worker has assigned to this chunk. */
@@ -61,7 +61,7 @@ export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
 
 async function runTransitionChunk({
   storage,
-  tenantId,
+  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -72,7 +72,7 @@ async function runTransitionChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        await storage.items.transition(id, input.state, tenantId ?? undefined);
+        await storage.items.transition(id, input.state, spaceId ?? undefined);
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
@@ -84,14 +84,14 @@ async function runTransitionChunk({
 
 async function runPurgeChunk({
   storage,
-  tenantId,
+  spaceId,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
   await storage.runInTransaction(async () => {
-    const items = await storage.items.getMany(ids, tenantId ?? undefined);
+    const items = await storage.items.getMany(ids, spaceId ?? undefined);
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
     }
@@ -100,9 +100,9 @@ async function runPurgeChunk({
     try {
       await storage.edges.deleteBySourceBatch(ids);
       await storage.edges.deleteByTargetBatch(ids);
-      const purged = await storage.items.bulkPurge(ids, tenantId ?? undefined);
+      const purged = await storage.items.bulkPurge(ids, spaceId ?? undefined);
       // Ids in `items` were in-scope and purged; ids absent from the map
-      // weren't found in the tenant and surface as not-found errors.
+      // weren't found in the space and surface as not-found errors.
       for (const id of items.keys()) succeeded.push(id);
       const seen = new Set(items.keys());
       for (const id of ids) {
@@ -110,7 +110,7 @@ async function runPurgeChunk({
           errors.push({
             id,
             code: "item_not_found",
-            message: "Item not found in tenant scope at purge time",
+            message: "Item not found in space scope at purge time",
           });
         }
       }
@@ -156,7 +156,7 @@ async function runUpdateTagsChunk({
 
 async function runUpdateTierChunk({
   storage,
-  tenantId,
+  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -170,7 +170,7 @@ async function runUpdateTierChunk({
         const result = await storage.items.update(
           id,
           { tier: input.tier },
-          tenantId ?? undefined,
+          spaceId ?? undefined,
         );
         if ("error" in result) {
           errors.push({
@@ -191,7 +191,7 @@ async function runUpdateTierChunk({
 
 async function runUpdatePropertiesChunk({
   storage,
-  tenantId,
+  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -205,7 +205,7 @@ async function runUpdatePropertiesChunk({
         const result = await storage.items.update(
           id,
           { properties: input.patch },
-          tenantId ?? undefined,
+          spaceId ?? undefined,
         );
         if ("error" in result) {
           errors.push({
@@ -226,7 +226,7 @@ async function runUpdatePropertiesChunk({
 
 async function runUpdateTimestampChunk({
   storage,
-  tenantId,
+  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -240,7 +240,7 @@ async function runUpdateTimestampChunk({
         const result = await storage.items.update(
           id,
           { timestamp: input.timestamp },
-          tenantId ?? undefined,
+          spaceId ?? undefined,
         );
         if ("error" in result) {
           errors.push({

@@ -36,10 +36,10 @@ const LAST_USED_DEBOUNCE_MS = 3_600_000;
 function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
   return {
     id: row.id,
-    tenant_id: row.tenant_id ?? undefined,
+    space_id: row.space_id ?? undefined,
     label: row.label,
     source: row.source,
-    role: row.role as "admin" | "tenant_admin" | "member",
+    role: row.role as "admin" | "space_admin" | "member",
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,
@@ -88,16 +88,16 @@ export class PgKeyStore implements KeyStore {
   async create(
     input: CreateKeyInput,
     keyHash: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ApiKey> {
     const collision = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
       .where(
         and(
-          tenantId === undefined
-            ? isNull(apiKeys.tenant_id)
-            : eq(apiKeys.tenant_id, tenantId),
+          spaceId === undefined
+            ? isNull(apiKeys.space_id)
+            : eq(apiKeys.space_id, spaceId),
           eq(apiKeys.source, input.source),
           isNull(apiKeys.revoked_at),
         ),
@@ -105,7 +105,7 @@ export class PgKeyStore implements KeyStore {
     if (collision.length > 0) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Source display name "${input.source}" is already in use for this tenant`,
+        `Source display name "${input.source}" is already in use for this space`,
         { source: input.source },
       );
     }
@@ -113,7 +113,7 @@ export class PgKeyStore implements KeyStore {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      tenant_id: tenantId,
+      space_id: spaceId,
       key_hash: keyHash,
       label: input.label,
       source: input.source,
@@ -129,7 +129,7 @@ export class PgKeyStore implements KeyStore {
     await this.db.insert(apiKeys).values(row);
     return {
       id: row.id,
-      tenant_id: tenantId,
+      space_id: spaceId,
       label: row.label,
       source: row.source,
       role: input.role,
@@ -151,16 +151,16 @@ export class PgKeyStore implements KeyStore {
       item_source: string;
     },
     keyHash: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ApiKey> {
     const [collision] = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
       .where(
         and(
-          tenantId === undefined
-            ? isNull(apiKeys.tenant_id)
-            : eq(apiKeys.tenant_id, tenantId),
+          spaceId === undefined
+            ? isNull(apiKeys.space_id)
+            : eq(apiKeys.space_id, spaceId),
           eq(apiKeys.source, input.source),
           isNull(apiKeys.revoked_at),
         ),
@@ -168,7 +168,7 @@ export class PgKeyStore implements KeyStore {
     if (collision) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Source display name "${input.source}" is already in use for this tenant`,
+        `Source display name "${input.source}" is already in use for this space`,
         { source: input.source },
       );
     }
@@ -176,7 +176,7 @@ export class PgKeyStore implements KeyStore {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      tenant_id: tenantId,
+      space_id: spaceId,
       key_hash: keyHash,
       label: input.label,
       source: input.source,
@@ -196,7 +196,7 @@ export class PgKeyStore implements KeyStore {
     await this.db.insert(apiKeys).values(row);
     return {
       id: row.id,
-      tenant_id: tenantId,
+      space_id: spaceId,
       label: row.label,
       source: row.source,
       role: input.role,
@@ -223,11 +223,11 @@ export class PgKeyStore implements KeyStore {
     return rows.map(mapRow);
   }
 
-  async listForTenant(tenantId: string): Promise<ApiKey[]> {
+  async listForSpace(spaceId: string): Promise<ApiKey[]> {
     const rows = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.tenant_id, tenantId), isNull(apiKeys.revoked_at)));
+      .where(and(eq(apiKeys.space_id, spaceId), isNull(apiKeys.revoked_at)));
     return rows.map(mapRow);
   }
 
@@ -241,7 +241,7 @@ export class PgKeyStore implements KeyStore {
 
   async listByConnectionId(
     connectionId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ApiKey[]> {
     const rows = await this.db
       .select()
@@ -249,9 +249,9 @@ export class PgKeyStore implements KeyStore {
       .where(
         and(
           eq(apiKeys.connection_id, connectionId),
-          tenantId === undefined
-            ? isNull(apiKeys.tenant_id)
-            : eq(apiKeys.tenant_id, tenantId),
+          spaceId === undefined
+            ? isNull(apiKeys.space_id)
+            : eq(apiKeys.space_id, spaceId),
           isNull(apiKeys.revoked_at),
         ),
       );

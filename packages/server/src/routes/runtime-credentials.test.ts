@@ -44,15 +44,13 @@ const OTHER_MANIFEST_NAME = "acme.other-integration";
  * Connection to exist, be `state: active`, and belong to the integration
  * the caller names.
  */
-async function createActiveConnection(tenantId?: string): Promise<string> {
-  return createManifestConnection(tenantId);
+async function createActiveConnection(spaceId?: string): Promise<string> {
+  return createManifestConnection(spaceId);
 }
 
 /** A Connection with no `integration_ref` at all — nothing the mint can
  *  check a caller against. */
-async function createUnresolvableConnection(
-  tenantId?: string,
-): Promise<string> {
+async function createUnresolvableConnection(spaceId?: string): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -62,7 +60,7 @@ async function createUnresolvableConnection(
         granted_at: new Date().toISOString(),
       },
     },
-    tenantId,
+    spaceId,
   );
   return item.id;
 }
@@ -98,7 +96,7 @@ function runtimeManifest(name = MANIFEST_NAME): IntegrationManifest {
 }
 
 async function createManifestConnection(
-  tenantId?: string,
+  spaceId?: string,
   name = MANIFEST_NAME,
 ): Promise<string> {
   const manifest = runtimeManifest(name);
@@ -125,7 +123,7 @@ async function createManifestConnection(
         integration_ref: integration.id,
       },
     },
-    tenantId,
+    spaceId,
   );
   return connection.id;
 }
@@ -218,8 +216,8 @@ describe("POST /system/runtime-credentials", () => {
    * that tears its schedule down for good, while a non-platform caller is
    * a global authorization failure that says nothing about any
    * connection. `MARFA_RUNTIME_BROKER_KEY` rotated to a valid but
-   * tenant-scoped admin key produces the second for every connection in
-   * every tenant, so if the two share a code the whole scheduled fleet
+   * space-scoped admin key produces the second for every connection in
+   * every space, so if the two share a code the whole scheduled fleet
    * deschedules itself within one cron period, recoverable only one
    * connection at a time.
    */
@@ -242,23 +240,23 @@ describe("POST /system/runtime-credentials", () => {
     );
 
     const suffix = Math.random().toString(36).slice(2, 10);
-    const tenantScopedRaw = `marfa_k1_tenant_admin_${suffix}`;
+    const spaceScopedRaw = `marfa_k1_space_admin_${suffix}`;
     await ctx.storage.keys.create(
       {
-        label: `tenant-admin-${suffix}`,
-        source: `tenant-admin-source-${suffix}`,
+        label: `space-admin-${suffix}`,
+        source: `space-admin-source-${suffix}`,
         role: "admin",
         type_permissions: { "*": "write" },
         is_platform: false,
       },
-      hashApiKey(tenantScopedRaw, "test-salt"),
+      hashApiKey(spaceScopedRaw, "test-salt"),
     );
     const nonPlatform = await request(
       ctx.app,
       "POST",
       "/system/runtime-credentials",
       {
-        key: tenantScopedRaw,
+        key: spaceScopedRaw,
         body: {
           connection_id: connectionId,
           integration_name: MANIFEST_NAME,
@@ -353,37 +351,37 @@ describe("POST /system/runtime-credentials", () => {
     expect(stored?.role).toBe("member");
   });
 
-  it("binds the credential to the connection's tenant, not the broker's", async () => {
+  it("binds the credential to the connection's space, not the broker's", async () => {
     // The broker authenticates with a platform credential that carries no
-    // tenant. Stamping the caller's tenant would leave the credential
-    // tenant-less, which reads as "platform tier" to the RLS policies and
-    // to the storage layer's tenant predicate — an integration for one
+    // space. Stamping the caller's space would leave the credential
+    // space-less, which reads as "platform tier" to the RLS policies and
+    // to the storage layer's space predicate — an integration for one
     // space would reach every space.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const tenantId = `tenant-rc-${suffix}`;
-    const connectionId = await createActiveConnection(tenantId);
+    const spaceId = `space-rc-${suffix}`;
+    const connectionId = await createActiveConnection(spaceId);
 
-    // `ctx.adminKey` is a platform credential with no tenant, matching the
+    // `ctx.adminKey` is a platform credential with no space, matching the
     // broker key the hosted control plane presents.
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: ctx.adminKey,
       body: {
         connection_id: connectionId,
         integration_name: MANIFEST_NAME,
-        label: `tenant-bound ${suffix}`,
-        source: `tenant-bound-${suffix}`,
+        label: `space-bound ${suffix}`,
+        source: `space-bound-${suffix}`,
       },
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as RuntimeCredentialResponse;
 
     const stored = await ctx.storage.keys.get(body.id);
-    expect(stored?.tenant_id).toBe(tenantId);
+    expect(stored?.space_id).toBe(spaceId);
   });
 
   it("projects permissions from the persisted manifest and ignores injected maps", async () => {
-    const tenantId = `tenant-rc-${Math.random().toString(36).slice(2, 10)}`;
-    const connectionId = await createManifestConnection(tenantId);
+    const spaceId = `space-rc-${Math.random().toString(36).slice(2, 10)}`;
+    const connectionId = await createManifestConnection(spaceId);
     const suffix = Math.random().toString(36).slice(2, 10);
 
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
@@ -451,8 +449,8 @@ describe("POST /system/runtime-credentials", () => {
    * a credential scoped to another integration's data.
    */
   it("refuses a Connection installed for a different integration", async () => {
-    const tenantId = `tenant-rc-${Math.random().toString(36).slice(2, 10)}`;
-    const connectionId = await createManifestConnection(tenantId);
+    const spaceId = `space-rc-${Math.random().toString(36).slice(2, 10)}`;
+    const connectionId = await createManifestConnection(spaceId);
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: ctx.adminKey,
@@ -689,7 +687,7 @@ describe("connection.runtime extension gate", () => {
   it("runtime credential CANNOT delete a different connection's namespace", async () => {
     const otherItemRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "delete cross-tenant" } },
+      body: { type: "core.note", properties: { body: "delete cross-space" } },
     });
     const otherBody = (await otherItemRes.json()) as { item: { id: string } };
     const otherId = otherBody.item.id;
@@ -714,7 +712,7 @@ describe("connection.runtime extension gate", () => {
 // ---------------------------------------------------------------------------
 // GET /system/connections/:id/verify-context — control-plane lookup for
 // the runtime-control verify route. Platform-credential gated; resolves
-// integration_name + tenant_id from the connection's integration_ref.
+// integration_name + space_id from the connection's integration_ref.
 // ---------------------------------------------------------------------------
 
 describe("GET /system/connections/:id/verify-context", () => {
@@ -757,7 +755,7 @@ describe("GET /system/connections/:id/verify-context", () => {
     return conn.id;
   }
 
-  it("returns the integration_name + tenant_id for an active integration connection", async () => {
+  it("returns the integration_name + space_id for an active integration connection", async () => {
     const integrationName = `acme.verify-ctx-${Math.random().toString(36).slice(2, 10)}`;
     const id = await buildActiveIntegrationConnection(integrationName);
     const res = await request(
@@ -770,7 +768,7 @@ describe("GET /system/connections/:id/verify-context", () => {
     const body = (await res.json()) as {
       connection_id: string;
       integration_name: string;
-      tenant_id: string | null;
+      space_id: string | null;
     };
     expect(body.connection_id).toBe(id);
     expect(body.integration_name).toBe(integrationName);
@@ -951,7 +949,7 @@ describe("GET /system/connections/:id/dlq-context", () => {
       kind: string;
       state: string;
       integration_name: string | null;
-      tenant_id: string | null;
+      space_id: string | null;
     };
     expect(body.connection_id).toBe(conn.id);
     expect(body.kind).toBe("integration");

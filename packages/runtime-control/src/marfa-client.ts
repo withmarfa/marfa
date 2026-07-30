@@ -115,7 +115,7 @@ export class MarfaServerClient {
         ok: true;
         connection_id: string;
         integration_name: string;
-        tenant_id: string | null;
+        space_id: string | null;
       }
     | { ok: false; status: number; message: string }
   > {
@@ -127,7 +127,7 @@ export class MarfaServerClient {
       const body = await res.json<{
         connection_id: string;
         integration_name: string;
-        tenant_id: string | null;
+        space_id: string | null;
       }>();
       return { ok: true, ...body };
     }
@@ -162,7 +162,7 @@ export class MarfaServerClient {
         kind: string;
         state: string;
         integration_name: string | null;
-        tenant_id: string | null;
+        space_id: string | null;
       }
     | { ok: false; status: number; message: string }
   > {
@@ -176,7 +176,7 @@ export class MarfaServerClient {
         kind: string;
         state: string;
         integration_name: string | null;
-        tenant_id: string | null;
+        space_id: string | null;
       }>();
       return { ok: true, ...body };
     }
@@ -194,8 +194,8 @@ export class MarfaServerClient {
 
   /**
    * List system.activity rows tagged with a connection_id since a given
-   * timestamp. Forwards the operator's bearer so the server's tenant
-   * scoping applies — operators see only their tenant's rows unless
+   * timestamp. Forwards the operator's bearer so the server's space
+   * scoping applies — operators see only their space's rows unless
    * they're using a platform credential.
    */
   async listActivitySince(

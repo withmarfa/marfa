@@ -140,10 +140,10 @@ export async function migrateOauthToCredential(
               secret_encrypted,
             },
           },
-          // tenant_id isn't carried on the public Item type. The storage
-          // layer will accept undefined here (single-tenant fallback).
-          // Multi-tenant deployments need to extend this script to enumerate
-          // tenants — flagged in the README until that surface lands.
+          // space_id isn't carried on the public Item type. The storage
+          // layer will accept undefined here (single-space fallback).
+          // Multi-space deployments need to extend this script to enumerate
+          // spaces — flagged in the README until that surface lands.
           undefined,
         );
 

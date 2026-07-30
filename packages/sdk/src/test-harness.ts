@@ -34,10 +34,10 @@ const TEST_API_KEY_SALT = "test-salt";
  *
  * - `createHostedModeFixture()` — the hosted-mode bring-up. Boots the
  *   server in `authMode: 'hosted'`, runs a sign-up through the wrapped
- *   form endpoint (which provisions the `tenants` + `users` bridge
+ *   form endpoint (which provisions the `spaces` + `users` bridge
  *   atomically), flips `auth_user.email_verified = TRUE` directly so
- *   sign-in is unblocked, then mints a `tenant_admin` API key bound to
- *   the new user's tenant. The returned client uses that key as bearer;
+ *   sign-in is unblocked, then mints a `space_admin` API key bound to
+ *   the new user's space. The returned client uses that key as bearer;
  *   the account-lifecycle routes resolve the bridge and recover the
  *   `auth_user.id` for `requestDelete` / `confirmDelete` / `cancel`.
  *
@@ -174,12 +174,12 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
   /** Email of the signed-up + email-verified user. */
   email: string;
   /** `auth_user.id` for the signed-up user — the `authUserId` the
-   *  account-lifecycle routes resolve from the bearer's tenant binding. */
+   *  account-lifecycle routes resolve from the bearer's space binding. */
   authUserId: string;
-  /** `users.tenant_id` for the bridged Marfa profile. The bearer key is
-   *  scoped to this tenant. */
-  tenantId: string;
-  /** A `tenant_admin` API key bound to `tenantId` — the SDK client
+  /** `users.space_id` for the bridged Marfa profile. The bearer key is
+   *  scoped to this space. */
+  spaceId: string;
+  /** A `space_admin` API key bound to `spaceId` — the SDK client
    *  uses this as bearer. Use to mint additional clients in tests
    *  that need to compare auth surfaces. */
   bearerKey: string;
@@ -187,12 +187,12 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
 
 /**
  * Boot the server in hosted mode, sign up a fresh user, mint a
- * tenant-scoped `tenant_admin` bearer that resolves to
+ * space-scoped `space_admin` bearer that resolves to
  * `auth_user.id` via the `users` bridge.
  *
  * Sign-up uses the wrapped `POST /auth/sign-up` form endpoint (not
  * better-auth's bare `/auth/sign-up/email`) — that's the path that
- * atomically provisions `tenants` + `users` rows. Email verification
+ * atomically provisions `spaces` + `users` rows. Email verification
  * is then short-circuited by direct UPDATE on `auth_user`, mirroring
  * the server-side `markEmailVerified` test helper.
  *
@@ -283,20 +283,20 @@ export async function createHostedModeFixture(
       `hosted-mode fixture: users bridge missing for auth_user ${authUserId}`,
     );
   }
-  const tenantId = user.tenant_id;
+  const spaceId = user.space_id;
 
   const rawKey = `marfa_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
     {
       label: `sdk-hosted-${suffix}`,
       source: `sdk-hosted-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       type_permissions: { "*": "write" },
       default_tier: "library",
       is_platform: false,
     },
     hashKey(rawKey, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
 
   const client = new MarfaClient({
@@ -311,7 +311,7 @@ export async function createHostedModeFixture(
     storage,
     email,
     authUserId,
-    tenantId,
+    spaceId,
     bearerKey: rawKey,
     cleanup: () => {
       void storage.close();

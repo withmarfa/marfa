@@ -7,40 +7,40 @@ import type { AppEnv } from "./auth.js";
 /**
  * Postgres RLS request-level enforcement.
  *
- * Wraps each tenant-bounded request in a transaction with `SET LOCAL
- * ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)`,
+ * Wraps each space-bounded request in a transaction with `SET LOCAL
+ * ROLE marfa_app` and `set_config('marfa.space_id', $space, true)`,
  * then runs the downstream handler with that transaction stored on
  * `pgRequestContext` (AsyncLocalStorage). The Drizzle proxy
  * (`request-context.ts:wrapDbWithRequestContext`) consults the ALS
  * on every storage operation, so all queries flow through the
- * reserved connection that carries the role + tenant_id and are
+ * reserved connection that carries the role + space_id and are
  * therefore subject to the per-table RLS policies.
  *
  * **Mount AFTER auth + cycle, BEFORE routes.** The middleware reads
- * `c.var.apiKey?.tenant_id`. Auth must have populated the api key
+ * `c.var.apiKey?.space_id`. Auth must have populated the api key
  * before this gate runs.
  *
  * **Three cases:**
  *
  *   1. **RLS disabled** (`config.rlsEnforce === false`, the default).
  *      Pass-through. No transaction wrapper. All queries flow on the
- *      base owner connection with no SET LOCAL — single-tenant
+ *      base owner connection with no SET LOCAL — single-space
  *      self-hosts and the existing application-layer scoping
  *      continue unchanged.
  *
- *   2. **RLS enabled, no tenant on the api key.** Includes
+ *   2. **RLS enabled, no space on the api key.** Includes
  *      anonymous/public routes (no api key), platform-admin keys
- *      (`tenant_id IS NULL`), and bootstrap. These are platform-tier
- *      contexts that intentionally see all tenants — they bypass the
+ *      (`space_id IS NULL`), and bootstrap. These are platform-tier
+ *      contexts that intentionally see all spaces — they bypass the
  *      role switch and run on the owner connection. Application-
  *      layer audit + the platform-admin-only gate
  *      (`requireAdmin`) are still load-bearing here.
  *
- *   3. **RLS enabled, request has a tenant.** Wrap the handler in
+ *   3. **RLS enabled, request has a space.** Wrap the handler in
  *      `db.transaction(...)` and set `SET LOCAL ROLE marfa_app` +
- *      `marfa.tenant_id`. Storage queries during the request flow
+ *      `marfa.space_id`. Storage queries during the request flow
  *      through the transaction's reserved connection. RLS policies
- *      filter every read/write to the session tenant.
+ *      filter every read/write to the session space.
  *
  * **Streaming-response exemption.** SSE streams (`/events`) and the
  * archive export (`/export`) hold the response open for an arbitrary
@@ -48,7 +48,7 @@ import type { AppEnv } from "./auth.js";
  * connection open for the same duration. They're exempted by URL
  * pattern HERE, but they are NOT bypass paths for RLS overall: the
  * streaming routes apply session-level (`SET`, not `SET LOCAL`)
- * `marfa.tenant_id` + `SET ROLE marfa_app` on a dedicated pool
+ * `marfa.space_id` + `SET ROLE marfa_app` on a dedicated pool
  * connection inside the route itself (see
  * `storage/pg/streaming-rls.ts`). The exemption keeps the long-lived
  * transaction model away from streams; it does not skip the DB-level
@@ -92,7 +92,7 @@ function isStreamingPath(path: string): boolean {
   );
 }
 
-export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
+export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const { rlsEnforce, db } = options;
 
@@ -102,10 +102,10 @@ export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
       return;
     }
 
-    // Case 2: no tenant on the request — platform admin / anonymous /
+    // Case 2: no space on the request — platform admin / anonymous /
     // bootstrap. Bypass the role switch.
-    const tenantId = c.var.apiKey?.tenant_id;
-    if (!tenantId) {
+    const spaceId = c.var.apiKey?.space_id;
+    if (!spaceId) {
       await next();
       return;
     }
@@ -116,11 +116,11 @@ export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
       return;
     }
 
-    // Case 3: tenant-bounded — wrap downstream in a transaction with
-    // SET LOCAL ROLE marfa_app + tenant_id.
+    // Case 3: space-bounded — wrap downstream in a transaction with
+    // SET LOCAL ROLE marfa_app + space_id.
     await db.transaction(async (tx) => {
       await tx.execute(
-        sql`SELECT set_config('marfa.tenant_id', ${tenantId}, true)`,
+        sql`SELECT set_config('marfa.space_id', ${spaceId}, true)`,
       );
       await tx.execute(sql`SET LOCAL ROLE marfa_app`);
 

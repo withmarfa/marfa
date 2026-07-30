@@ -1,7 +1,7 @@
 /**
  * Integration install pipeline.
  *
- * Owns the multi-step install of an Integration manifest into a tenant:
+ * Owns the multi-step install of an Integration manifest into a space:
  *   1. Insert a `system.connection.integration` item bound
  *      to the Integration's id (via `integration_ref`).
  *   2. Mint a runtime credential bound to the new connection id (apiKeys
@@ -32,7 +32,7 @@
  * Only the caller check is bypassed. What a minted credential may reach,
  * and whether it may be minted at all, are properties of the credential
  * rather than of the transport, so step 2 takes the Connection lifecycle
- * lock and applies the tenant fence exactly as the other two mint paths
+ * lock and applies the space fence exactly as the other two mint paths
  * do. A rule enforced on two of three doors is not a rule.
  *
  * Manifest version compatibility — the install binds the connection to
@@ -58,7 +58,7 @@ import {
   runtimeCredentialItemSource,
   withConnectionLifecycleLock,
 } from "./lifecycle-lock.js";
-import { assertMintableTenantScope } from "./runtime-credential-lifecycle.js";
+import { assertMintableSpaceScope } from "./runtime-credential-lifecycle.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -71,10 +71,10 @@ const INSTALL_CREDENTIAL_TTL_SECONDS = 3600;
 export interface InstallInput {
   /** The api_keys row id of the caller (audit trail). */
   apiKeyId: string;
-  /** Tenant scope for every row written. */
-  tenantId?: string;
+  /** Space scope for every row written. */
+  spaceId?: string;
   /**
-   * The deployment's `AUTH_MODE`, for the tenant fence on the credential
+   * The deployment's `AUTH_MODE`, for the space fence on the credential
    * mint below. Required rather than defaulted: the permissive value is
    * the one that reopens the hole, so a caller that has not thought about
    * it should not compile.
@@ -113,7 +113,7 @@ export interface InstallInput {
    *     Token-backed or OAuth-backed integrations must populate it
    *     out-of-band before any proxy or callback call works.
    *   - When set: validated to resolve to a `system.credential` whose
-   *     `kind` is one of the accepted set, in the caller's tenant.
+   *     `kind` is one of the accepted set, in the caller's space.
    *     Stamped onto `connection.properties.credential_ref` at step 1.
    *     A mismatched or missing credential rejects the install with
    *     `INVALID_REQUEST` before any state is written.
@@ -166,18 +166,18 @@ export async function performInstall(
 
   // -------------------------------------------------------------------
   // Pre-step: validate `credentialRef` resolves to a usable
-  // `kind: oauth_token` credential in the caller's tenant. Done BEFORE
+  // `kind: oauth_token` credential in the caller's space. Done BEFORE
   // any writes so a bad ref doesn't leak compensating-write activity.
   // -------------------------------------------------------------------
   if (input.credentialRef !== undefined) {
     const candidate = await storage.items.get(
       input.credentialRef,
-      input.tenantId,
+      input.spaceId,
     );
     if (candidate?.type !== "system.credential") {
       throw new MarfaError(
         ErrorCode.INVALID_REQUEST,
-        `credential_ref ${input.credentialRef} does not resolve to a system.credential item in this tenant`,
+        `credential_ref ${input.credentialRef} does not resolve to a system.credential item in this space`,
         { credential_ref: input.credentialRef },
       );
     }
@@ -243,7 +243,7 @@ export async function performInstall(
       type: "system.connection",
       properties: connectionProperties,
     },
-    input.tenantId,
+    input.spaceId,
   );
   compensations.push(async () => {
     // `revoked`, not `trashed`. `system.*` types carry the bounded
@@ -253,7 +253,7 @@ export async function performInstall(
     // rollback that left the Connection active: every install failure
     // after this point stranded a live Connection nobody had asked for.
     // Terminal either way, and it matches what uninstall writes.
-    await storage.items.transition(connection.id, "revoked", input.tenantId);
+    await storage.items.transition(connection.id, "revoked", input.spaceId);
   });
 
   // -------------------------------------------------------------------
@@ -274,17 +274,17 @@ export async function performInstall(
     // Third mint path, held to the same two rules as the hosted lease
     // broker and the local supervisor. The lock is what makes the state
     // read below mean anything — the Connection row is visible to a
-    // tenant admin the moment step 1 commits, so an uninstall can reach
+    // space admin the moment step 1 commits, so an uninstall can reach
     // it before this pipeline gets to step 2, and a credential minted
     // behind that sweep is live against a revoked Connection. The fence
-    // is the rule that a tenant-less credential is the platform tier
+    // is the rule that a space-less credential is the platform tier
     // rather than a narrow one; an admin installing without naming a
-    // tenant is exactly how one gets minted.
+    // space is exactly how one gets minted.
     credential = await withConnectionLifecycleLock(
       storage,
       connection.id,
       async () => {
-        const current = await storage.items.get(connection.id, input.tenantId);
+        const current = await storage.items.get(connection.id, input.spaceId);
         if (current?.type !== "system.connection") {
           throw new MarfaError(
             ErrorCode.CONNECTION_NOT_FOUND,
@@ -299,7 +299,7 @@ export async function performInstall(
             { connection_id: connection.id },
           );
         }
-        assertMintableTenantScope(current, input.authMode);
+        assertMintableSpaceScope(current, input.authMode);
 
         return storage.keys.createRuntimeCredential(
           {
@@ -314,7 +314,7 @@ export async function performInstall(
             item_source: runtimeCredentialItemSource(connection.id),
           },
           keyHash,
-          input.tenantId,
+          input.spaceId,
         );
       },
     );
@@ -345,7 +345,7 @@ export async function performInstall(
           },
         },
       },
-      input.tenantId,
+      input.spaceId,
     );
   } catch (err) {
     return rollback(err);
@@ -361,7 +361,7 @@ export async function performInstall(
     await storage.audit.log({
       key_id: input.apiKeyId,
       client_ip: input.clientIp ?? null,
-      tenant_id: input.tenantId ?? null,
+      space_id: input.spaceId ?? null,
       action: "integration.install",
       resource_type: "item",
       resource_id: connection.id,
@@ -404,7 +404,7 @@ export async function armScheduleForInstall(
   args: {
     manifest: IntegrationManifest;
     connectionId: string;
-    tenantId?: string;
+    spaceId?: string;
     controlPlaneUrl: string;
     runtimeBrokerKey: string;
   },
@@ -456,7 +456,7 @@ export async function armScheduleForInstall(
           },
         },
       },
-      args.tenantId,
+      args.spaceId,
     );
   } catch {
     // Activity emission failure is non-fatal — the install itself

@@ -4,7 +4,7 @@
  * These exist as a server-side pipeline for the same reason uninstall does:
  * the write is privileged and the caller is not. Pausing a connection means
  * writing a `system.*` item, which the reserved-namespace rule correctly
- * refuses to ordinary tenant credentials, so pause built as a direct item
+ * refuses to ordinary space credentials, so pause built as a direct item
  * transition returned `403 type_not_permitted` naming a namespace the user
  * never asked to touch. Uninstall performed the same class of write through
  * a mediated path and worked.
@@ -35,7 +35,7 @@ export interface PauseInput {
   /** The api_keys row id of the caller (audit trail). */
   apiKeyId: string;
   /** Space scope. Must match the connection's. */
-  tenantId?: string;
+  spaceId?: string;
   connectionId: string;
   clientIp?: string | null;
   /** Which substrate runs integrations; only `hosted` has alarms to cancel. */
@@ -96,10 +96,7 @@ async function applyRuntimeState(
   input: PauseInput,
   target: "paused" | "healthy",
 ): Promise<PauseResult> {
-  const connection = await storage.items.get(
-    input.connectionId,
-    input.tenantId,
-  );
+  const connection = await storage.items.get(input.connectionId, input.spaceId);
   if (connection?.type !== "system.connection") {
     throw new PauseError(
       "connection_not_found",
@@ -138,12 +135,12 @@ async function applyRuntimeState(
     {
       properties: { ...connection.properties, runtime_status: target },
     },
-    input.tenantId,
+    input.spaceId,
   );
 
   const schedule = await setConnectionSchedule(storage, {
     connectionId: input.connectionId,
-    tenantId: input.tenantId,
+    spaceId: input.spaceId,
     integrationRef: connection.properties.integration_ref as string | undefined,
     integrationRuntime: input.integrationRuntime ?? "local",
     ...(input.controlPlaneUrl !== undefined
@@ -174,12 +171,12 @@ async function applyRuntimeState(
         },
       },
     },
-    input.tenantId,
+    input.spaceId,
   );
 
   await storage.audit.log({
     client_ip: input.clientIp ?? null,
-    tenant_id: input.tenantId ?? null,
+    space_id: input.spaceId ?? null,
     key_id: input.apiKeyId,
     action: target === "paused" ? "integration.pause" : "integration.resume",
     resource_type: "item",

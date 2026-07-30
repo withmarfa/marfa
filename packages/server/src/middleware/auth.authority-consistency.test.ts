@@ -3,9 +3,9 @@
  * going through the shared auth helpers.
  *
  * The platform-admin gate was redefined as the `admin` role AND the
- * absence of a tenant binding, because `POST /admin/tenants/{id}/keys`
- * legitimately mints a tenant-bound credential at `role: "admin"` whose
- * reach is deliberately one tenant. Every route that spelled the gate as
+ * absence of a space binding, because `POST /admin/spaces/{id}/keys`
+ * legitimately mints a space-bound credential at `role: "admin"` whose
+ * reach is deliberately one space. Every route that spelled the gate as
  * a bare `role === "admin"` kept the old meaning and now disagrees with
  * `checkAdmin` — readmitting exactly the credential the gate exists to
  * exclude, on surfaces whose lookups are unfenced.
@@ -13,7 +13,7 @@
  * The same shape runs the other way on the permission-map bypass: routes
  * spelling it as `role === "admin"` skip the `scope_enforced` carve-out
  * that holds an OAuth app to its granted scopes, and withhold the bypass
- * from the `tenant_admin` every hosted sign-up is provisioned as.
+ * from the `space_admin` every hosted sign-up is provisioned as.
  *
  * Each site is covered twice: the credential that must be refused, and a
  * control proving the legitimate caller still gets through.
@@ -24,7 +24,7 @@ import type { ApiKey } from "@withmarfa/shared";
 import {
   hashApiKey,
   hasPlatformAuthority,
-  hasTenantAdminAuthority,
+  hasSpaceAdminAuthority,
   roleBypassesPermissionMaps,
   isReservedCredentialSource,
 } from "./auth.js";
@@ -66,36 +66,36 @@ describe("hasPlatformAuthority", () => {
     expect(hasPlatformAuthority(fakeKey("admin"))).toBe(true);
   });
 
-  it("refuses a tenant-bound admin — the shape the escalation fix named", () => {
-    expect(hasPlatformAuthority(fakeKey("admin", { tenant_id: "t-a" }))).toBe(
+  it("refuses a space-bound admin — the shape the escalation fix named", () => {
+    expect(hasPlatformAuthority(fakeKey("admin", { space_id: "t-a" }))).toBe(
       false,
     );
   });
 
-  it("refuses tenant_admin and member", () => {
-    expect(hasPlatformAuthority(fakeKey("tenant_admin"))).toBe(false);
+  it("refuses space_admin and member", () => {
+    expect(hasPlatformAuthority(fakeKey("space_admin"))).toBe(false);
     expect(hasPlatformAuthority(fakeKey("member"))).toBe(false);
   });
 });
 
-describe("hasTenantAdminAuthority", () => {
-  it("admits admin and tenant_admin, bound or not", () => {
-    expect(hasTenantAdminAuthority(fakeKey("admin"))).toBe(true);
-    expect(
-      hasTenantAdminAuthority(fakeKey("admin", { tenant_id: "t-a" })),
-    ).toBe(true);
-    expect(hasTenantAdminAuthority(fakeKey("tenant_admin"))).toBe(true);
+describe("hasSpaceAdminAuthority", () => {
+  it("admits admin and space_admin, bound or not", () => {
+    expect(hasSpaceAdminAuthority(fakeKey("admin"))).toBe(true);
+    expect(hasSpaceAdminAuthority(fakeKey("admin", { space_id: "t-a" }))).toBe(
+      true,
+    );
+    expect(hasSpaceAdminAuthority(fakeKey("space_admin"))).toBe(true);
   });
 
   it("refuses member", () => {
-    expect(hasTenantAdminAuthority(fakeKey("member"))).toBe(false);
+    expect(hasSpaceAdminAuthority(fakeKey("member"))).toBe(false);
   });
 });
 
 describe("roleBypassesPermissionMaps", () => {
-  it("admits admin and tenant_admin", () => {
+  it("admits admin and space_admin", () => {
     expect(roleBypassesPermissionMaps(fakeKey("admin"))).toBe(true);
-    expect(roleBypassesPermissionMaps(fakeKey("tenant_admin"))).toBe(true);
+    expect(roleBypassesPermissionMaps(fakeKey("space_admin"))).toBe(true);
   });
 
   it("refuses a scope_enforced credential whatever its projected role", () => {
@@ -146,17 +146,17 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function tenantStore(): NonNullable<Storage["tenants"]> {
-  const tenants = ctx.storage.tenants;
-  if (!tenants) throw new Error("test context has no tenant store");
-  return tenants;
+function spaceStore(): NonNullable<Storage["spaces"]> {
+  const spaces = ctx.storage.spaces;
+  if (!spaces) throw new Error("test context has no space store");
+  return spaces;
 }
 
 let mintCounter = 0;
 
 async function mintKey(opts: {
   role: ApiKey["role"];
-  tenantId?: string;
+  spaceId?: string;
   is_platform?: boolean;
   label?: string;
   source?: string;
@@ -176,14 +176,14 @@ async function mintKey(opts: {
       is_platform: opts.is_platform ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    opts.tenantId,
+    opts.spaceId,
   );
   return raw;
 }
 
 /** A `system.connection` of kind integration, seeded through storage so
  *  the test doesn't depend on the install pipeline. */
-async function seedConnection(tenantId: string): Promise<string> {
+async function seedConnection(spaceId: string): Promise<string> {
   const conn = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -194,7 +194,7 @@ async function seedConnection(tenantId: string): Promise<string> {
         integration_ref: "acme.demo",
       },
     },
-    tenantId,
+    spaceId,
   );
   return conn.id;
 }
@@ -203,21 +203,21 @@ async function seedConnection(tenantId: string): Promise<string> {
 // POST /connections/:id/oauth/start
 // ---------------------------------------------------------------------------
 
-describe("POST /connections/:id/oauth/start — tenant fence on the connection lookup", () => {
-  it("refuses a tenant-bound admin reaching a connection in another tenant", async () => {
-    const tenantA = await tenantStore().create("authority-oauth-start-A");
-    const tenantB = await tenantStore().create("authority-oauth-start-B");
-    const victimConnection = await seedConnection(tenantB.id);
+describe("POST /connections/:id/oauth/start — space fence on the connection lookup", () => {
+  it("refuses a space-bound admin reaching a connection in another space", async () => {
+    const spaceA = await spaceStore().create("authority-oauth-start-A");
+    const spaceB = await spaceStore().create("authority-oauth-start-B");
+    const victimConnection = await seedConnection(spaceB.id);
 
-    // Exactly what `POST /admin/tenants/{id}/keys` mints: role admin,
-    // bound to one tenant. The old gate tested the role alone and the
-    // lookup passed no tenant, so this reached tenant B's connection.
-    const boundAdmin = await mintKey({ role: "admin", tenantId: tenantA.id });
+    // Exactly what `POST /admin/spaces/{id}/keys` mints: role admin,
+    // bound to one space. The old gate tested the role alone and the
+    // lookup passed no space, so this reached space B's connection.
+    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
 
     // Guard the fixture: a mistyped id would make the 404 below pass for
-    // the wrong reason, hiding a live cross-tenant read.
+    // the wrong reason, hiding a live cross-space read.
     expect(victimConnection).toMatch(/\w/);
-    expect(await ctx.storage.items.get(victimConnection, tenantB.id)).not.toBe(
+    expect(await ctx.storage.items.get(victimConnection, spaceB.id)).not.toBe(
       null,
     );
 
@@ -231,18 +231,18 @@ describe("POST /connections/:id/oauth/start — tenant fence on the connection l
       },
     );
 
-    // 404, not 403 — a cross-tenant probe must not confirm the id exists.
+    // 404, not 403 — a cross-space probe must not confirm the id exists.
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("item_not_found");
   });
 
-  it("admits a tenant_admin on its own tenant's connection", async () => {
-    const tenant = await tenantStore().create("authority-oauth-start-own");
-    const connectionId = await seedConnection(tenant.id);
-    const tenantAdmin = await mintKey({
-      role: "tenant_admin",
-      tenantId: tenant.id,
+  it("admits a space_admin on its own space's connection", async () => {
+    const space = await spaceStore().create("authority-oauth-start-own");
+    const connectionId = await seedConnection(space.id);
+    const spaceAdmin = await mintKey({
+      role: "space_admin",
+      spaceId: space.id,
     });
 
     const res = await request(
@@ -250,15 +250,15 @@ describe("POST /connections/:id/oauth/start — tenant fence on the connection l
       "POST",
       `/connections/${connectionId}/oauth/start`,
       {
-        key: tenantAdmin,
+        key: spaceAdmin,
         body: { redirect_uri: "http://localhost:0/callback" },
       },
     );
 
     // Reaches the credential resolution and fails there (this connection
     // has no credential_ref) rather than being refused at the gate. The
-    // point is that it is no longer a 403: a tenant_admin owns the
-    // connections in its own tenant, and every hosted account is one.
+    // point is that it is no longer a 403: a space_admin owns the
+    // connections in its own space, and every hosted account is one.
     expect(res.status).not.toBe(403);
     expect(res.status).not.toBe(404);
   });
@@ -268,43 +268,41 @@ describe("POST /connections/:id/oauth/start — tenant fence on the connection l
 // /keys — list / revoke / update
 // ---------------------------------------------------------------------------
 
-describe("/keys — the tenant fence keys on the binding, not the role", () => {
-  it("hides other tenants' keys from a tenant-bound admin", async () => {
-    const tenantA = await tenantStore().create("authority-keys-A");
-    const tenantB = await tenantStore().create("authority-keys-B");
+describe("/keys — the space fence keys on the binding, not the role", () => {
+  it("hides other spaces' keys from a space-bound admin", async () => {
+    const spaceA = await spaceStore().create("authority-keys-A");
+    const spaceB = await spaceStore().create("authority-keys-B");
     await mintKey({
       role: "member",
-      tenantId: tenantB.id,
-      label: "tenant-b-secret-key",
+      spaceId: spaceB.id,
+      label: "space-b-secret-key",
     });
-    const boundAdmin = await mintKey({ role: "admin", tenantId: tenantA.id });
+    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
 
     const res = await request(ctx.app, "GET", "/keys", { key: boundAdmin });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      keys: { tenant_id?: string | null; label: string }[];
+      keys: { space_id?: string | null; label: string }[];
     };
-    // The old fence only narrowed `role === "tenant_admin"`, so a bound
+    // The old fence only narrowed `role === "space_admin"`, so a bound
     // admin saw every key on the instance.
-    expect(body.keys.every((k) => k.tenant_id === tenantA.id)).toBe(true);
-    expect(body.keys.some((k) => k.label === "tenant-b-secret-key")).toBe(
-      false,
-    );
+    expect(body.keys.every((k) => k.space_id === spaceA.id)).toBe(true);
+    expect(body.keys.some((k) => k.label === "space-b-secret-key")).toBe(false);
   });
 
-  it("404s a tenant-bound admin revoking another tenant's key", async () => {
-    const tenantA = await tenantStore().create("authority-keys-revoke-A");
-    const tenantB = await tenantStore().create("authority-keys-revoke-B");
+  it("404s a space-bound admin revoking another space's key", async () => {
+    const spaceA = await spaceStore().create("authority-keys-revoke-A");
+    const spaceB = await spaceStore().create("authority-keys-revoke-B");
     await mintKey({
       role: "member",
-      tenantId: tenantB.id,
+      spaceId: spaceB.id,
       label: "victim-revoke",
     });
     const victim = (await ctx.storage.keys.list()).find(
       (k) => k.label === "victim-revoke",
     );
     if (!victim) throw new Error("seed key not found");
-    const boundAdmin = await mintKey({ role: "admin", tenantId: tenantA.id });
+    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
 
     const res = await request(ctx.app, "DELETE", `/keys/${victim.id}`, {
       key: boundAdmin,
@@ -317,19 +315,19 @@ describe("/keys — the tenant fence keys on the binding, not the role", () => {
     expect(after).not.toBeNull();
   });
 
-  it("404s a tenant-bound admin rewriting another tenant's key permissions", async () => {
-    const tenantA = await tenantStore().create("authority-keys-update-A");
-    const tenantB = await tenantStore().create("authority-keys-update-B");
+  it("404s a space-bound admin rewriting another space's key permissions", async () => {
+    const spaceA = await spaceStore().create("authority-keys-update-A");
+    const spaceB = await spaceStore().create("authority-keys-update-B");
     await mintKey({
       role: "member",
-      tenantId: tenantB.id,
+      spaceId: spaceB.id,
       label: "victim-update",
     });
     const victim = (await ctx.storage.keys.list()).find(
       (k) => k.label === "victim-update",
     );
     if (!victim) throw new Error("seed key not found");
-    const boundAdmin = await mintKey({ role: "admin", tenantId: tenantA.id });
+    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
 
     const res = await request(ctx.app, "PATCH", `/keys/${victim.id}`, {
       key: boundAdmin,
@@ -341,11 +339,11 @@ describe("/keys — the tenant fence keys on the binding, not the role", () => {
     expect(after?.type_permissions).toEqual({});
   });
 
-  it("still lets an unbound platform admin see and address every tenant", async () => {
-    const tenant = await tenantStore().create("authority-keys-control");
+  it("still lets an unbound platform admin see and address every space", async () => {
+    const space = await spaceStore().create("authority-keys-control");
     await mintKey({
       role: "member",
-      tenantId: tenant.id,
+      spaceId: space.id,
       label: "control-visible",
     });
 
@@ -362,15 +360,15 @@ describe("/keys — the tenant fence keys on the binding, not the role", () => {
 
 describe("POST /keys — connector source prefixes are not mintable", () => {
   it("refuses a source claiming a connection's connector identity", async () => {
-    const tenant = await tenantStore().create("authority-source-reserve");
-    const connectionId = await seedConnection(tenant.id);
-    const tenantAdmin = await mintKey({
-      role: "tenant_admin",
-      tenantId: tenant.id,
+    const space = await spaceStore().create("authority-source-reserve");
+    const connectionId = await seedConnection(space.id);
+    const spaceAdmin = await mintKey({
+      role: "space_admin",
+      spaceId: space.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
-      key: tenantAdmin,
+      key: spaceAdmin,
       body: {
         label: "forged-connector",
         // Read by three connection routes as proof of connector identity.
@@ -385,14 +383,14 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
   });
 
   it("still accepts an ordinary source", async () => {
-    const tenant = await tenantStore().create("authority-source-ok");
-    const tenantAdmin = await mintKey({
-      role: "tenant_admin",
-      tenantId: tenant.id,
+    const space = await spaceStore().create("authority-source-ok");
+    const spaceAdmin = await mintKey({
+      role: "space_admin",
+      spaceId: space.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
-      key: tenantAdmin,
+      key: spaceAdmin,
       body: { label: "ordinary", source: "my-laptop", role: "member" },
     });
     expect(res.status).toBe(201);
@@ -404,15 +402,15 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
 // ---------------------------------------------------------------------------
 
 describe("extensions — the bypass follows the shared predicate", () => {
-  it("gives a tenant_admin the read surface its rank implies", async () => {
-    const tenant = await tenantStore().create("authority-ext-tenant-admin");
-    const tenantAdmin = await mintKey({
-      role: "tenant_admin",
-      tenantId: tenant.id,
+  it("gives a space_admin the read surface its rank implies", async () => {
+    const space = await spaceStore().create("authority-ext-space-admin");
+    const spaceAdmin = await mintKey({
+      role: "space_admin",
+      spaceId: space.id,
     });
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "ext-host" } },
-      tenant.id,
+      space.id,
     );
     await ctx.storage.metadata.setExtension(item.id, "vendor.sync", {
       cursor: "abc",
@@ -422,7 +420,7 @@ describe("extensions — the bypass follows the shared predicate", () => {
       ctx.app,
       "GET",
       `/items/${item.id}/extensions/vendor.sync`,
-      { key: tenantAdmin },
+      { key: spaceAdmin },
     );
     // Previously fell through to `extension_permissions`, which is `{}`
     // on a fresh key — so the tier every hosted account is provisioned at
@@ -434,12 +432,12 @@ describe("extensions — the bypass follows the shared predicate", () => {
     expect(body.data).toEqual({ cursor: "abc" });
   });
 
-  it("refuses a tenant-bound admin writing a reserved namespace", async () => {
-    const tenant = await tenantStore().create("authority-ext-reserved");
-    const boundAdmin = await mintKey({ role: "admin", tenantId: tenant.id });
+  it("refuses a space-bound admin writing a reserved namespace", async () => {
+    const space = await spaceStore().create("authority-ext-reserved");
+    const boundAdmin = await mintKey({ role: "admin", spaceId: space.id });
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "reserved-host" } },
-      tenant.id,
+      space.id,
     );
 
     const res = await request(

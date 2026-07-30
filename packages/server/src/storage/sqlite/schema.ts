@@ -9,15 +9,15 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
-export const tenants = sqliteTable("tenants", {
+export const spaces = sqliteTable("spaces", {
   id: text("id").primaryKey(),
   name: text("name"),
   config: text("config"),
   created_at: text("created_at").notNull(),
-  // Operator-controlled tenant status. `'active'` (default) allows writes;
+  // Operator-controlled space status. `'active'` (default) allows writes;
   // `'suspended'` blocks them at the auth middleware. Reads pass through
   // regardless. Platform-admin keys bypass the gate so operators can
-  // inspect a suspended tenant.
+  // inspect a suspended space.
   status: text("status").notNull().default("active"),
 });
 
@@ -32,16 +32,16 @@ export const users = sqliteTable(
     avatar_blob_hash: text("avatar_blob_hash"),
     provider: text("provider").notNull(),
     provider_id: text("provider_id").notNull(),
-    tenant_id: text("tenant_id")
+    space_id: text("space_id")
       .notNull()
-      .references(() => tenants.id),
+      .references(() => spaces.id),
     handle: text("handle"),
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
     /** Principal role projected onto OAuth bearer principals. Defaults
      *  to `member`; operator elevates via SQL until a provisioning UI
-     *  lands. Gates `requireTenantAdmin` / `requireAdmin` routes for
+     *  lands. Gates `requireSpaceAdmin` / `requireAdmin` routes for
      *  OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
@@ -58,7 +58,7 @@ export const items = sqliteTable(
   "items",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
@@ -98,7 +98,7 @@ export const edges = sqliteTable(
   "edges",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     // No FKs on source_id / target_id — see pg/schema.ts note. App-level
     // checks run in assertEdgeCanBeCreated + planCascadeDelete.
     source_id: text("source_id").notNull(),
@@ -110,12 +110,12 @@ export const edges = sqliteTable(
   },
   (table) => [
     index("idx_edges_source").on(
-      table.tenant_id,
+      table.space_id,
       table.source_id,
       table.edge_type,
     ),
     index("idx_edges_target").on(
-      table.tenant_id,
+      table.space_id,
       table.target_id,
       table.edge_type,
     ),
@@ -141,7 +141,7 @@ export const apiKeys = sqliteTable(
   "api_keys",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     key_hash: text("key_hash").notNull().unique(),
     label: text("label").notNull(),
     source: text("source").notNull(),
@@ -172,8 +172,8 @@ export const apiKeys = sqliteTable(
     last_used_at: text("last_used_at"),
   },
   (table) => [
-    uniqueIndex("idx_api_keys_source_per_tenant")
-      .on(table.tenant_id, table.source)
+    uniqueIndex("idx_api_keys_source_per_space")
+      .on(table.space_id, table.source)
       .where(sql`revoked_at IS NULL`),
     // Every reaper pass and the metrics counter filter on
     // `is_runtime_credential` first. Partial on true: the runtime-credential
@@ -188,30 +188,30 @@ export const apiKeys = sqliteTable(
 // ---------------------------------------------------------------------------
 // blobs
 //
-// Blob rows are per-tenant. The same `hash` can appear under multiple
-// tenant_ids; the file system / S3 backend dedupes physically (one file
-// per hash), but the blobs table carries one row per (tenant_id, hash) so
-// cross-tenant reads of `/blobs/:hash` resolve to the caller's row only —
-// missing for a given tenant means 404.
+// Blob rows are per-space. The same `hash` can appear under multiple
+// space_ids; the file system / S3 backend dedupes physically (one file
+// per hash), but the blobs table carries one row per (space_id, hash) so
+// cross-space reads of `/blobs/:hash` resolve to the caller's row only —
+// missing for a given space means 404.
 //
-// `tenant_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
+// `space_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
 // composite PK simple. Empty string `''` is the sentinel for
-// "instance-wide / no tenant" — used by single-tenant self-hosts and by
+// "instance-wide / no space" — used by single-space self-hosts and by
 // platform-admin uploads in hosted mode where the credential carries no
-// tenant_id. The empty-string-as-sentinel asymmetry vs other tables (which
-// use nullable `tenant_id`) is intentional: composite PKs with nullable
+// space_id. The empty-string-as-sentinel asymmetry vs other tables (which
+// use nullable `space_id`) is intentional: composite PKs with nullable
 // columns behave inconsistently across SQLite and PG, and this table is
 // the only place we need a composite primary identity.
 export const blobs = sqliteTable(
   "blobs",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     hash: text("hash").notNull(),
     mime_type: text("mime_type").notNull(),
     size: integer("size").notNull(),
     storage_path: text("storage_path").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.hash] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.hash] })],
 );
 
 // ---------------------------------------------------------------------------
@@ -263,43 +263,43 @@ export const oauthDeviceCodes = sqliteTable(
   ],
 );
 
-// Custom types are namespaced per tenant. The composite PK on (tenant_id, id)
-// lets two tenants register the same type id independently — each owns its own
-// type vocabulary. `tenant_id` is NOT NULL DEFAULT '' (empty-string sentinel)
-// for single-tenant self-host / platform registrations, mirroring the `blobs`
+// Custom types are namespaced per space. The composite PK on (space_id, id)
+// lets two spaces register the same type id independently — each owns its own
+// type vocabulary. `space_id` is NOT NULL DEFAULT '' (empty-string sentinel)
+// for single-space self-host / platform registrations, mirroring the `blobs`
 // and `custom_edge_types` tables.
 export const customTypes = sqliteTable(
   "custom_types",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     id: text("id").notNull(),
     schema: text("schema").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
 );
 
-// Custom edge types are namespaced per tenant. The composite PK on
-// (tenant_id, id) lets two tenants register the same edge-type id
-// independently — each owns its own relationship vocabulary. `tenant_id`
-// is NOT NULL DEFAULT '' (empty-string sentinel) for single-tenant
+// Custom edge types are namespaced per space. The composite PK on
+// (space_id, id) lets two spaces register the same edge-type id
+// independently — each owns its own relationship vocabulary. `space_id`
+// is NOT NULL DEFAULT '' (empty-string sentinel) for single-space
 // self-host / platform registrations, mirroring the `blobs` table.
 export const customEdgeTypes = sqliteTable(
   "custom_edge_types",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     id: text("id").notNull(),
     schema: text("schema").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
 );
 
 export const outboundWebhooks = sqliteTable("outbound_webhooks", {
   id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
+  space_id: text("space_id"),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
   events: text("events").notNull().default("[]"),
@@ -336,7 +336,7 @@ export const inboundWebhooks = sqliteTable(
   "inbound_webhooks",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     // App-level reference to a system.connection item (kind:
     // integration). Not a DB-level FK — matches the
     // existing pattern for other connection-referencing tables (see
@@ -344,7 +344,7 @@ export const inboundWebhooks = sqliteTable(
     connection_id: text("connection_id").notNull(),
     // The external service's id for this subscription. We retain it so
     // operators can correlate Marfa rows with upstream dashboards. Not
-    // unique — multiple Marfa tenants may target the same external
+    // unique — multiple Marfa spaces may target the same external
     // service id in dev environments.
     external_service_id: text("external_service_id"),
     // AES-256-GCM(secret) under HKDF(MARFA_AUTH_SECRET,
@@ -431,7 +431,7 @@ export const connectionOauthTokens = sqliteTable(
     // `system.connection` item id. Unique — at most one stored token per
     // connection. Re-authorization overwrites the row in place.
     connection_id: text("connection_id").notNull(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     // AES-256-GCM(plaintext) hex-encoded; see crypto/secret-encryption.ts.
     access_token_encrypted: text("access_token_encrypted").notNull(),
     // Nullable — some OAuth flows (e.g. client_credentials) don't issue a
@@ -477,7 +477,7 @@ export const connectionLeasedTokens = sqliteTable(
   {
     id: text("id").primaryKey(),
     connection_id: text("connection_id").notNull(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     capability_id: text("capability_id").notNull(),
     lease_token_hash: text("lease_token_hash").notNull(),
     scopes: text("scopes").notNull().default("[]"),
@@ -506,13 +506,13 @@ export const auditLog = sqliteTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Tenant scope. Stamped from the calling api key's `tenant_id`
+     * Space scope. Stamped from the calling api key's `space_id`
      * (or `null` for system-initiated audits / bootstrap-admin keys with no
-     * tenant). Reads filter by this column when the caller is tenant-scoped;
-     * keys without a tenant (bootstrap admin) see all rows. Indexed because
+     * space). Reads filter by this column when the caller is space-scoped;
+     * keys without a space (bootstrap admin) see all rows. Indexed because
      * `GET /audit` filters here on every hosted-mode request.
      */
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
     resource_id: text("resource_id"),
@@ -522,7 +522,7 @@ export const auditLog = sqliteTable(
     index("idx_audit_log_timestamp").on(table.timestamp),
     index("idx_audit_log_action").on(table.action),
     index("idx_audit_log_resource_type").on(table.resource_type),
-    index("idx_audit_log_tenant_id").on(table.tenant_id),
+    index("idx_audit_log_space_id").on(table.space_id),
   ],
 );
 
@@ -531,7 +531,7 @@ export const bulkActionJobs = sqliteTable(
   "bulk_action_jobs",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     api_key_id: text("api_key_id"),
     status: text("status").notNull(),
     action: text("action").notNull(),
@@ -552,10 +552,10 @@ export const bulkActionJobs = sqliteTable(
   },
   (table) => [
     index("idx_bulk_action_jobs_status").on(table.status),
-    index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
+    index("idx_bulk_action_jobs_space_id").on(table.space_id),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
     uniqueIndex("idx_bulk_action_jobs_idempotency")
-      .on(table.tenant_id, table.idempotency_key)
+      .on(table.space_id, table.idempotency_key)
       .where(sql`idempotency_key IS NOT NULL`),
   ],
 );
@@ -580,8 +580,8 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
 });
 
-export const tenantQuotas = sqliteTable("tenant_quotas", {
-  tenant_id: text("tenant_id").primaryKey(),
+export const spaceQuotas = sqliteTable("space_quotas", {
+  space_id: text("space_id").primaryKey(),
   items_limit: integer("items_limit"),
   webhooks_limit: integer("webhooks_limit"),
   blobs_limit: integer("blobs_limit"),
@@ -599,13 +599,13 @@ export const eventLog = sqliteTable(
     // events store item_id only.
     item_id: text("item_id"),
     edge_id: text("edge_id"),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     payload: text("payload").notNull(),
     // Cycle-detection metadata: the connection whose action set off this
     // chain of events; null for events originating from a human caller.
     // hop_count starts at 0 on human-initiated events and increments on
     // each reactive publish; pubsub.publish drops events whose hop_count
-    // would exceed the tenant's `max_event_hop_budget`.
+    // would exceed the space's `max_event_hop_budget`.
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
     created_at: text("created_at").notNull(),
@@ -770,7 +770,7 @@ export const auth_oauth_client = sqliteTable(
     public: integer("public", { mode: "boolean" }),
     type: text("type"),
     requirePKCE: integer("require_pkce", { mode: "boolean" }),
-    /** Tenant binding from `clientReference` (Marfa: tenant_id). */
+    /** Space binding from `clientReference` (Marfa: space_id). */
     referenceId: text("reference_id"),
     /** JSON object — additional client metadata */
     metadata: text("metadata"),

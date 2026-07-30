@@ -96,7 +96,7 @@ async function installScheduled(
 
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
-    tenantId: undefined,
+    spaceId: undefined,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest,
@@ -183,7 +183,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
@@ -233,7 +233,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
@@ -272,7 +272,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
@@ -298,7 +298,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,
@@ -343,7 +343,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "local",
     });
@@ -370,7 +370,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
     });
@@ -398,7 +398,7 @@ describe("performUninstall — schedule disarm", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
       integrationRuntime: "hosted",
       controlPlaneUrl: CONTROL_PLANE_URL,

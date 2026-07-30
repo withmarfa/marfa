@@ -614,19 +614,19 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
-  // Defense-in-depth: the install pipeline already enforces same-tenant
+  // Defense-in-depth: the install pipeline already enforces same-space
   // `credential_ref` at install-time, so any legitimately-installed
-  // connection points at a credential in its own tenant. If a future
-  // bypass of that validation ever lands a cross-tenant `credential_ref`,
+  // connection points at a credential in its own space. If a future
+  // bypass of that validation ever lands a cross-space `credential_ref`,
   // the proxy MUST refuse to decrypt — otherwise an attacker who can
-  // write a connection row in their own tenant could exfiltrate another
-  // tenant's OAuth secret.
-  it("refuses to resolve a cross-tenant credential_ref", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenantA = await ctx.storage.tenants.create("t235-proxy-A");
-    const tenantB = await ctx.storage.tenants.create("t235-proxy-B");
+  // write a connection row in their own space could exfiltrate another
+  // space's OAuth secret.
+  it("refuses to resolve a cross-space credential_ref", async () => {
+    if (!ctx.storage.spaces) return;
+    const spaceA = await ctx.storage.spaces.create("t235-proxy-A");
+    const spaceB = await ctx.storage.spaces.create("t235-proxy-B");
 
-    // Admin (not platform) is tenant-bounded; the cross-tenant fence fires inside readOAuthConfig,
+    // Admin (not platform) is space-bounded; the cross-space fence fires inside readOAuthConfig,
     // after requireConnectionProxyAccess passes.
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_t235_admin_a_${suffix}`;
@@ -640,31 +640,31 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
         is_platform: false,
       },
       hash,
-      tenantA.id,
+      spaceA.id,
     );
 
     const crossCred = await ctx.storage.items.create(
       {
         type: "system.credential",
         properties: {
-          label: "tenant-B-secret",
+          label: "space-B-secret",
           kind: "oauth_token",
           oauth_provider_config: {
             upstream_base_url: "https://upstream.test",
             oauth_token_url: "https://upstream.test/oauth/token",
-            oauth_client_id: "tenant-b-client",
+            oauth_client_id: "space-b-client",
           },
           secret_encrypted: encryptSecret(
-            "tenant-b-secret-do-not-leak",
+            "space-b-secret-do-not-leak",
             SECRET_INFO.connectionOauthToken,
           ),
         },
       },
-      tenantB.id,
+      spaceB.id,
     );
 
-    // Connection lives in tenant A but its credential_ref points at
-    // the tenant-B credential. Build through storage so we bypass the
+    // Connection lives in space A but its credential_ref points at
+    // the space-B credential. Build through storage so we bypass the
     // install pipeline (the bypass IS the scenario we're guarding).
     const crossConn = await ctx.storage.items.create(
       {
@@ -677,7 +677,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
           credential_ref: crossCred.id,
         },
       },
-      tenantA.id,
+      spaceA.id,
     );
 
     const proxyRes = await request(
@@ -686,7 +686,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       `/connections/${crossConn.id}/proxy/path`,
       { key: rawKey },
     );
-    // Fence holds: credential lookup misses (wrong tenant) → 422, not 200 with tenant-B secret.
+    // Fence holds: credential lookup misses (wrong space) → 422, not 200 with space-B secret.
     expect(proxyRes.status).toBe(422);
     const err = (await proxyRes.json()) as { error: { code: string } };
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");

@@ -25,26 +25,26 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
  * Principal roles.
  *
  * Applies to both API-key principals and OAuth-bearer principals. The role
- * gates admin-shaped routes via `requireTenantAdmin(c)` and `requireAdmin(c)`;
+ * gates admin-shaped routes via `requireSpaceAdmin(c)` and `requireAdmin(c)`;
  * the bearer middleware projects this onto the synthetic principal regardless
  * of credential type.
  *
  * - `admin` — platform admin (full instance authority). Bypasses every
- *   permission map. Used for system config, cross-tenant ops, minting platform
+ *   permission map. Used for system config, cross-space ops, minting platform
  *   credentials.
- * - `tenant_admin` — tenant-bounded admin. Full admin authority within the
- *   calling principal's `tenant_id`: own keys, webhooks, types, connections,
- *   extensions. Cannot cross-tenant read/write (RLS-enforced), cannot mint
+ * - `space_admin` — space-bounded admin. Full admin authority within the
+ *   calling principal's `space_id`: own keys, webhooks, types, connections,
+ *   extensions. Cannot cross-space read/write (RLS-enforced), cannot mint
  *   platform credentials, cannot touch system config.
  * - `member` — non-admin credential. Bound by `type_permissions` /
  *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
  */
-export type MarfaRole = "admin" | "tenant_admin" | "member";
+export type MarfaRole = "admin" | "space_admin" | "member";
 
 /** Valid role values as a readonly array, in descending authority order. */
 export const MARFA_ROLES: readonly MarfaRole[] = [
   "admin",
-  "tenant_admin",
+  "space_admin",
   "member",
 ] as const;
 
@@ -57,12 +57,12 @@ export const MARFA_ROLES: readonly MarfaRole[] = [
  *
  * Rank is the ONLY axis this encodes. Two capabilities sit orthogonal to
  * it and are gated separately: `is_platform` (writes to the reserved
- * `system.*` / `marfa.*` namespaces) and tenant binding (a credential
- * carrying a `tenant_id` is confined to that tenant whatever its rank).
+ * `system.*` / `marfa.*` namespaces) and space binding (a credential
+ * carrying a `space_id` is confined to that space whatever its rank).
  */
 export const ROLE_RANK: Readonly<Record<MarfaRole, number>> = {
   admin: 3,
-  tenant_admin: 2,
+  space_admin: 2,
   member: 1,
 };
 
@@ -75,7 +75,7 @@ export const ROLE_RANK: Readonly<Record<MarfaRole, number>> = {
  * caller presenting it already holds. Callers combine this with the
  * orthogonal gates — granting `is_platform` additionally requires the
  * caller to be platform itself, and a minted credential inherits the
- * caller's tenant binding.
+ * caller's space binding.
  */
 export function canGrantRole(granter: MarfaRole, granted: MarfaRole): boolean {
   return ROLE_RANK[granted] <= ROLE_RANK[granter];
@@ -98,13 +98,13 @@ export interface Item {
    */
   tier?: Tier;
   /**
-   * Tenant scope. Optional because storage queries are tenant-scoped at
-   * the SQL layer (`tenantWhere` enforces a `WHERE tenant_id = ?` on every
-   * read), so for ordinary callers `tenant_id` always matches the caller's
-   * own tenant and the field is informational. The reactive-run bridge reads
-   * this to gate fanout on tenant match. Mirrors `Edge.tenant_id`.
+   * Space scope. Optional because storage queries are space-scoped at
+   * the SQL layer (`spaceWhere` enforces a `WHERE space_id = ?` on every
+   * read), so for ordinary callers `space_id` always matches the caller's
+   * own space and the field is informational. The reactive-run bridge reads
+   * this to gate fanout on space match. Mirrors `Edge.space_id`.
    */
-  tenant_id?: string | null;
+  space_id?: string | null;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -153,7 +153,7 @@ export interface UpdateItemInput {
   timestamp?: string;
   /**
    * Repoint the item at a new natural-key identifier under the caller's
-   * stamped `source`. The `(source, source_id)` tuple is unique per tenant
+   * stamped `source`. The `(source, source_id)` tuple is unique per space
    * — the same constraint enforced at create time — so the server rejects
    * the update with HTTP 409 `source_id_conflict` if the target value is
    * already taken by a different item. PATCHing the same value the item
@@ -195,7 +195,7 @@ export interface Version {
  */
 export interface Edge {
   id: string;
-  tenant_id?: string | null;
+  space_id?: string | null;
   source_id: string;
   target_id: string;
   edge_type: string;
@@ -236,7 +236,7 @@ export type EdgePermission = "read" | "write";
 /**
  * Per-metadata-sub-resource permission levels. Today the only sub-resource
  * is `types` (gating type registration via `POST /types`); future entries
- * (e.g. tenant config) follow the same shape. Default `{}` — no access —
+ * (e.g. space config) follow the same shape. Default `{}` — no access —
  * means non-admin/non-platform credentials cannot mutate the metadata
  * surface.
  */
@@ -245,7 +245,7 @@ export type MetadataPermission = "read" | "write";
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
-  tenant_id?: string;
+  space_id?: string;
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
@@ -264,19 +264,19 @@ export interface ApiKey {
    * write `core.*`, `system.*`, and `marfa.*` types. The first credential
    * created at server install is the seed platform credential; only an
    * existing platform credential may mint another. Defaults to `false` for
-   * ordinary tenant admin and member keys.
+   * ordinary space admin and member keys.
    */
   is_platform: boolean;
   /**
    * Scope-enforcement gate. When `true`, this credential is limited to
    * exactly the scopes it was granted on the data plane — the
-   * `admin` / `tenant_admin` role bypass in `checkTypeAccess`,
+   * `admin` / `space_admin` role bypass in `checkTypeAccess`,
    * `computeTypeFilter`, `requireEdgePermission`, and
    * `requireMetadataPermission` does NOT apply. Set on OAuth-derived
    * synthetic keys: a user's role is the ceiling on what an app can be
    * granted, not an automatic full-access pass for every app the user
    * signs into. Ordinary API keys leave this unset and keep the role
-   * bypass. Role gates (`requireTenantAdmin` / `requireAdmin`) still read
+   * bypass. Role gates (`requireSpaceAdmin` / `requireAdmin`) still read
    * the projected role regardless of this flag.
    */
   scope_enforced?: boolean;
@@ -295,14 +295,14 @@ export interface ApiKey {
   /**
    * Set when `is_runtime_credential` is `true`. Stamps the Connection
    * the credential was minted for. The extension gate compares this
-   * against the path `:id` for cross-tenant denial.
+   * against the path `:id` for cross-space denial.
    */
   connection_id?: string;
   /**
    * Per-credential schema-enforcement override. Same shape as
-   * `TenantConfig.enforcement`; entries here merge over the tenant default
+   * `SpaceConfig.enforcement`; entries here merge over the space default
    * for this credential's writes/reads. Optional — most credentials inherit
-   * tenant config without override.
+   * space config without override.
    */
   enforcement_override?: EnforcementSettings;
   /** Tier stamped onto items when the client doesn't supply one. */
@@ -356,15 +356,15 @@ export interface CreateKeyInput {
 }
 
 /**
- * Input for `POST /admin/tenants/{id}/keys`, the platform-admin route that
- * mints a key into a named tenant rather than into the caller's own.
+ * Input for `POST /admin/spaces/{id}/keys`, the platform-admin route that
+ * mints a key into a named space rather than into the caller's own.
  *
- * Two deliberate differences from {@link CreateKeyInput}: the tenant comes
+ * Two deliberate differences from {@link CreateKeyInput}: the space comes
  * from the path, not the body; and there is no `is_platform`, because the
  * whole point of the route is a credential whose authority is confined to
- * one tenant. `role` defaults to `member` server-side.
+ * one space. `role` defaults to `member` server-side.
  */
-export interface CreateTenantKeyInput {
+export interface CreateSpaceKeyInput {
   label: string;
   source: string;
   role?: MarfaRole;
@@ -557,7 +557,7 @@ export type OAuthDeviceCodeStatus =
 /** A registered outbound webhook. */
 export interface Webhook {
   id: string;
-  tenant_id?: string;
+  space_id?: string;
   url: string;
   secret: string;
   events: string[];
@@ -605,7 +605,7 @@ export interface WebhookDelivery {
  */
 export interface InboundWebhook {
   id: string;
-  tenant_id?: string;
+  space_id?: string;
   connection_id: string;
   external_service_id?: string;
   /**
@@ -682,7 +682,7 @@ export interface InboundWebhookEvent {
 export interface ConnectionLeasedToken {
   id: string;
   connection_id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   capability_id: string;
   scopes: string[];
   expires_at: string;
@@ -809,7 +809,7 @@ export type PreviewEventItemEventType =
  * request. Maps to the cycle-detection fields stamped server-side at
  * `pubsub.publish` time (`originatingConnectionId`, `hopCount`). Default
  * values — `originating_connection_id: null`, `hop_count: 0` — describe
- * a human-originated event that always passes the per-tenant hop budget.
+ * a human-originated event that always passes the per-space hop budget.
  *
  * Set both fields to model a reactive event mid-chain ("what would happen
  * if connection X re-published this at hop 4?").
@@ -825,7 +825,7 @@ export interface PreviewEventCycleOverride {
  * `QueueMessageBody` envelopes the reactive-run bridge would emit, and for
  * each subscribing connection that wouldn't be dispatched, the reason why.
  * Pure server-side transform — no handler invocation, no queue producer call.
- * Tenant-admin scoped.
+ * Space-admin scoped.
  */
 export interface PreviewEventRequest {
   /** id of an existing item the operator wants to simulate fanout for. */
@@ -834,7 +834,7 @@ export interface PreviewEventRequest {
   event_type: PreviewEventItemEventType;
   /**
    * Optional filter to a single subscribing connection id. Default behavior
-   * (omitted) renders all subscribers in the caller's tenant.
+   * (omitted) renders all subscribers in the caller's space.
    */
   connection_id?: string;
   /**
@@ -853,8 +853,8 @@ export interface PreviewEventRequest {
  * `dispatch_reason` values:
  *   - `ok`: would dispatch; `envelope` is populated.
  *   - `self_event`: subscriber is the connection that originated the event.
- *   - `cross_tenant`: subscriber's tenant doesn't match the event's tenant.
- *   - `hop_budget_exceeded`: per-tenant `max_event_hop_budget` would
+ *   - `cross_space`: subscriber's space doesn't match the event's space.
+ *   - `hop_budget_exceeded`: per-space `max_event_hop_budget` would
  *     refuse to publish the event upstream of the bridge — applies to
  *     every subscriber when the gate trips.
  *   - `subscription_inactive`: the operator filtered to a connection id
@@ -870,7 +870,7 @@ export interface PreviewEventEnvelope {
   dispatch_reason:
     | "ok"
     | "self_event"
-    | "cross_tenant"
+    | "cross_space"
     | "hop_budget_exceeded"
     | "subscription_inactive";
   /**
@@ -890,7 +890,7 @@ export interface PreviewEventQueueBody {
   kind: "item-event";
   integration_name: string;
   connection_id: string;
-  tenant_id?: string;
+  space_id?: string;
   /** Wire form, e.g. `item.created`, `item.metadata_changed`. */
   event_type: string;
   item_id: string;
@@ -904,14 +904,14 @@ export interface PreviewEventQueueBody {
 /**
  * Wire shape returned by `POST /connections/preview-event`. The
  * `envelopes` array is one entry per subscribing connection (or one per
- * filtered-to connection); `hop_budget` reports the tenant-resolved
+ * filtered-to connection); `hop_budget` reports the space-resolved
  * budget alongside what was used by the previewed event so the operator
  * can see how close to the cap they are.
  */
 export interface PreviewEventResult {
   envelopes: PreviewEventEnvelope[];
   hop_budget: {
-    /** Tenant-resolved `max_event_hop_budget` (default 5). */
+    /** Space-resolved `max_event_hop_budget` (default 5). */
     max: number;
     /**
      * Hop-count the synthetic event would carry under the `cycle`
@@ -948,7 +948,7 @@ export interface LeaseTokenIntrospection {
 export interface ConnectionOAuthToken {
   id: string;
   connection_id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   expires_at: string;
   scopes: string[];
   /** True when a refresh token is present — the proxy can self-heal on 401. */
@@ -961,8 +961,8 @@ export interface ConnectionOAuthToken {
 // User model (hosted mode only)
 // ---------------------------------------------------------------------------
 
-/** A tenant represents an isolated data namespace. */
-export interface Tenant {
+/** A space represents an isolated data namespace. */
+export interface Space {
   id: string;
   name: string | null;
   created_at: string;
@@ -970,20 +970,20 @@ export interface Tenant {
    * Operator-controlled lifecycle. `'active'` (default) allows writes;
    * `'suspended'` blocks them at the auth middleware. Reads pass through
    * regardless. Platform-admin keys bypass the gate so operators can inspect
-   * a suspended tenant.
+   * a suspended space.
    */
-  status: TenantStatus;
+  status: SpaceStatus;
 }
 
-export type TenantStatus = "active" | "suspended";
+export type SpaceStatus = "active" | "suspended";
 
 /**
- * Per-tenant metrics snapshot. Returned by `GET /admin/tenants/:id/metrics`
- * for the named tenant. Same shape as the instance-wide `/metrics` endpoint,
- * scoped to one tenant.
+ * Per-space metrics snapshot. Returned by `GET /admin/spaces/:id/metrics`
+ * for the named space. Same shape as the instance-wide `/metrics` endpoint,
+ * scoped to one space.
  */
-export interface TenantMetrics {
-  tenant_id: string;
+export interface SpaceMetrics {
+  space_id: string;
   items: {
     total: number;
     active: number;
@@ -996,14 +996,14 @@ export interface TenantMetrics {
   };
   /**
    * Best-effort recent activity. Last `system.activity` rows for the
-   * tenant, newest-first, capped at the route's `limit` (default 10).
-   * Empty array when the tenant has no activity rows.
+   * space, newest-first, capped at the route's `limit` (default 10).
+   * Empty array when the space has no activity rows.
    */
-  recent_activity: TenantActivityEntry[];
+  recent_activity: SpaceActivityEntry[];
   generated_at: string;
 }
 
-export interface TenantActivityEntry {
+export interface SpaceActivityEntry {
   id: string;
   severity: string;
   summary: string;
@@ -1012,7 +1012,7 @@ export interface TenantActivityEntry {
 
 /**
  * Schema-enforcement levers. All three default off; flip on per-type to
- * tighten validation. Applied tenant-wide by default; per-credential override
+ * tighten validation. Applied space-wide by default; per-credential override
  * available via `ApiKey.enforcement_override`.
  *
  * - `strict_mode.types` — type IDs where unknown properties are rejected on
@@ -1029,21 +1029,21 @@ export interface EnforcementSettings {
 }
 
 /**
- * Per-tenant resource quotas. Empty / missing limits fall back to the
+ * Per-space resource quotas. Empty / missing limits fall back to the
  * instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are
- * platform-admin-managed via `GET/PUT /admin/tenants/:id/quotas`; tenant-own
- * reads land via `GET /tenants/me/quotas` (tenant_admin or admin). Counts are
+ * platform-admin-managed via `GET/PUT /admin/spaces/:id/quotas`; space-own
+ * reads land via `GET /spaces/me/quotas` (space_admin or admin). Counts are
  * computed on-demand from existing tables at quota-check time.
  */
-export interface TenantQuota {
-  tenant_id: string;
+export interface SpaceQuota {
+  space_id: string;
   items_limit?: number | null;
   webhooks_limit?: number | null;
   blobs_limit?: number | null;
   /** Storage bytes ceiling. Optional — counter + reconcile job to be
    *  added in a follow-on. */
   storage_bytes_limit?: number | null;
-  /** Per-tenant request-rate ceiling (additional to the per-credential
+  /** Per-space request-rate ceiling (additional to the per-credential
    *  global rate limit). Not currently enforced. */
   rate_per_minute_limit?: number | null;
   updated_at: string;
@@ -1057,8 +1057,8 @@ export type QuotaResource =
   | "storage_bytes"
   | "rate_per_minute";
 
-/** Tenant-level configuration. Admin-writable via `/tenants/me/config`. */
-export interface TenantConfig {
+/** Space-level configuration. Admin-writable via `/spaces/me/config`. */
+export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Maximum number of hops a single event may traverse before the bus
@@ -1069,9 +1069,9 @@ export interface TenantConfig {
    */
   max_event_hop_budget?: number;
   /**
-   * Tenant-scoped retention overrides for the cleanup jobs. Each falls back
+   * Space-scoped retention overrides for the cleanup jobs. Each falls back
    * to the instance env default when unset. Values must be non-negative; `0`
-   * disables the job for that tenant. Negative values are rejected at write.
+   * disables the job for that space. Negative values are rejected at write.
    */
   audit_retention_days?: number;
   event_log_retention_hours?: number;
@@ -1079,7 +1079,7 @@ export interface TenantConfig {
 }
 
 /**
- * A user account (hosted mode). Owns exactly one tenant.
+ * A user account (hosted mode). Owns exactly one space.
  *
  * The canonical email + display image lives on `auth_user`. The `email`
  * and `avatar_url` columns are not on `users` — every read of email goes
@@ -1103,7 +1103,7 @@ export interface User {
   avatar_blob_hash: string | null;
   provider: string;
   provider_id: string;
-  tenant_id: string;
+  space_id: string;
   /**
    * Lowercase alphanumeric + hyphens, 3–32 chars. Required at signup
    * (nullable here because not every stored row carries one). The user id
@@ -1118,7 +1118,7 @@ export interface User {
   auth_user_id: string | null;
   /** Principal role projected onto the bearer principal for OAuth-
    *  authenticated requests. Defaults to `member`; operator elevates
-   *  via SQL. Gates admin-shaped routes (`requireTenantAdmin`,
+   *  via SQL. Gates admin-shaped routes (`requireSpaceAdmin`,
    *  `requireAdmin`) whether the request arrives via API key or OAuth
    *  bearer. */
   role: MarfaRole;

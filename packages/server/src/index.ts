@@ -18,9 +18,9 @@ import {
   RateLimitWindowCleaner,
   DcrClientCleaner,
   RuntimeCredentialReaper,
-  runTenantCleanup,
+  runSpaceCleanup,
 } from "./storage/retention.js";
-import type { TenantFanout } from "./storage/retention.js";
+import type { SpaceFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import {
@@ -133,32 +133,32 @@ async function main() {
     );
   }
 
-  const auditFanout: TenantFanout | undefined = storage.tenants
-    ? { tenants: storage.tenants, configField: "audit_retention_days" }
+  const auditFanout: SpaceFanout | undefined = storage.spaces
+    ? { spaces: storage.spaces, configField: "audit_retention_days" }
     : undefined;
-  const eventLogFanout: TenantFanout | undefined = storage.tenants
-    ? { tenants: storage.tenants, configField: "event_log_retention_hours" }
+  const eventLogFanout: SpaceFanout | undefined = storage.spaces
+    ? { spaces: storage.spaces, configField: "event_log_retention_hours" }
     : undefined;
-  const trashFanout: TenantFanout | undefined = storage.tenants
-    ? { tenants: storage.tenants, configField: "trash_retention_days" }
+  const trashFanout: SpaceFanout | undefined = storage.spaces
+    ? { spaces: storage.spaces, configField: "trash_retention_days" }
     : undefined;
 
-  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-tenant config.
+  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   const runEventLogCleanup = () => {
-    void runTenantCleanup({
+    void runSpaceCleanup({
       jobName: "event-log-cleanup",
       coordination: storage.coordination,
       fanout: eventLogFanout,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
-      sweep: (retention, tenantId) =>
-        storage.eventLog.cleanup(retention, tenantId),
+      sweep: (retention, spaceId) =>
+        storage.eventLog.cleanup(retention, spaceId),
     }).then((deleted) => {
       if (deleted > 0)
         log(
           "info",
-          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-tenant overrides honored)`,
+          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
         );
     });
   };
@@ -169,19 +169,18 @@ async function main() {
   );
 
   const runAuditCleanup = () => {
-    void runTenantCleanup({
+    void runSpaceCleanup({
       jobName: "audit-cleanup",
       coordination: storage.coordination,
       fanout: auditFanout,
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
-      sweep: (retention, tenantId) =>
-        storage.audit.cleanup(retention, tenantId),
+      sweep: (retention, spaceId) => storage.audit.cleanup(retention, spaceId),
     }).then((deleted) => {
       if (deleted > 0)
         log(
           "info",
-          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-tenant overrides honored)`,
+          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-space overrides honored)`,
         );
     });
   };

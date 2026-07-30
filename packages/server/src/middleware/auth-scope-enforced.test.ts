@@ -1,6 +1,6 @@
 /**
  * The `scope_enforced` guarantee: OAuth-derived synthetic keys are held to
- * their granted scopes on the data plane — the `admin` / `tenant_admin` role
+ * their granted scopes on the data plane — the `admin` / `space_admin` role
  * bypass does NOT apply to them. Ordinary API keys keep the bypass. These are
  * pure unit tests of `checkTypeAccess` / `computeTypeFilter` against the flag.
  */
@@ -11,10 +11,10 @@ import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 function fakeKey(over: Partial<ApiKey>): ApiKey {
   return {
     id: "k1",
-    tenant_id: "tenant-1",
+    space_id: "space-1",
     label: "test",
     source: "test",
-    role: "tenant_admin",
+    role: "space_admin",
     default_tier: "library",
     is_platform: false,
     type_permissions: {},
@@ -28,8 +28,8 @@ function fakeKey(over: Partial<ApiKey>): ApiKey {
 }
 
 describe("role bypass vs scope_enforced", () => {
-  it("a tenant_admin API key bypasses type_permissions (read + write)", () => {
-    const key = fakeKey({ role: "tenant_admin", type_permissions: {} });
+  it("a space_admin API key bypasses type_permissions (read + write)", () => {
+    const key = fakeKey({ role: "space_admin", type_permissions: {} });
     expect(() => {
       checkTypeAccess(key, "user.ticket", "write");
     }).not.toThrow();
@@ -48,9 +48,9 @@ describe("role bypass vs scope_enforced", () => {
     expect(computeTypeFilter(key)).toBeUndefined();
   });
 
-  it("a tenant_admin OAuth token (scope_enforced) does NOT bypass", () => {
+  it("a space_admin OAuth token (scope_enforced) does NOT bypass", () => {
     const key = fakeKey({
-      role: "tenant_admin",
+      role: "space_admin",
       scope_enforced: true,
       type_permissions: {},
     });

@@ -5,7 +5,7 @@ import type {
   PreviewEventResult,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   performPause,
@@ -55,10 +55,10 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 //     `connections/envelope.ts` so the bridge and the preview surface
 //     compute the same shape.
 //
-// Auth model: `requireTenantAdmin` on every route. Tenant admins
-// operate on their own tenant's connections (storage lookups + writes
-// are scoped via `apiKey.tenant_id`); platform admins on single-tenant
-// self-hosts operate without a tenant scope and reach every connection.
+// Auth model: `requireSpaceAdmin` on every route. Space admins
+// operate on their own space's connections (storage lookups + writes
+// are scoped via `apiKey.space_id`); platform admins on single-space
+// self-hosts operate without a space scope and reach every connection.
 // Non-admin credentials are rejected with 403.
 // ---------------------------------------------------------------------------
 
@@ -305,7 +305,7 @@ const uninstallRoute = createRoute({
           schema: makeErrorResponseSchema(["connection_not_found"]),
         },
       },
-      description: "Connection not found in this tenant scope.",
+      description: "Connection not found in this space scope.",
     },
   },
 });
@@ -335,7 +335,7 @@ const PreviewEventQueueBodySchema = z.object({
   kind: z.literal("item-event"),
   integration_name: z.string(),
   connection_id: z.string(),
-  tenant_id: z.string().optional(),
+  space_id: z.string().optional(),
   event_type: z.string(),
   item_id: z.string(),
   cycle: z.object({
@@ -352,7 +352,7 @@ const PreviewEventEnvelopeSchema = z.object({
   dispatch_reason: z.enum([
     "ok",
     "self_event",
-    "cross_tenant",
+    "cross_space",
     "hop_budget_exceeded",
     "subscription_inactive",
   ]),
@@ -386,7 +386,7 @@ const previewEventRoute = createRoute({
   tags: ["Connections"],
   summary: "Preview event dispatch envelopes",
   description:
-    "Renders the dispatch envelopes the reactive-run bridge would emit for a synthetic item-event, without dispatching anything. Returns one entry per subscribing connection in the caller's tenant, each flagged with whether it would dispatch and why not when skipped.",
+    "Renders the dispatch envelopes the reactive-run bridge would emit for a synthetic item-event, without dispatching anything. Returns one entry per subscribing connection in the caller's space, each flagged with whether it would dispatch and why not when skipped.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -399,7 +399,7 @@ const previewEventRoute = createRoute({
     200: {
       content: { "application/json": { schema: PreviewEventResultSchema } },
       description:
-        "One entry per subscriber the operator asked about, plus the tenant's hop budget.",
+        "One entry per subscriber the operator asked about, plus the space's hop budget.",
     },
     400: {
       content: {
@@ -426,7 +426,7 @@ const previewEventRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a tenant admin or platform admin.",
+      description: "Caller is not a space admin or platform admin.",
     },
     404: {
       content: {
@@ -438,7 +438,7 @@ const previewEventRoute = createRoute({
         },
       },
       description:
-        "`item_id` does not resolve in the caller's tenant scope, or the filtered `connection_id` does not exist.",
+        "`item_id` does not resolve in the caller's space scope, or the filtered `connection_id` does not exist.",
     },
   },
 });
@@ -463,20 +463,20 @@ export function connectionRoutes(
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    const apiKey = requireTenantAdmin(c);
+    const apiKey = requireSpaceAdmin(c);
     const {
       integration_id,
       label,
       credential_ref: credentialRef,
       configuration,
     } = c.req.valid("json");
-    const tenantId = apiKey.tenant_id ?? undefined;
+    const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
 
-    // Manifests are platform-scoped (tenant_id IS NULL) — the widening
-    // lets a tenant_admin caller look them up; the resulting connection
-    // is stamped with the caller's tenant_id.
-    const integration = await storage.items.get(integration_id, tenantId, {
+    // Manifests are platform-scoped (space_id IS NULL) — the widening
+    // lets a space_admin caller look them up; the resulting connection
+    // is stamped with the caller's space_id.
+    const integration = await storage.items.get(integration_id, spaceId, {
       includePlatformScoped: true,
     });
     if (!integration) {
@@ -502,7 +502,7 @@ export function connectionRoutes(
 
     const result = await performInstall(storage, salt, {
       apiKeyId: apiKey.id,
-      tenantId,
+      spaceId,
       authMode: c.get("config").authMode,
       integrationItemId: integration.id,
       manifest: props.manifest,
@@ -519,7 +519,7 @@ export function connectionRoutes(
       await armScheduleForInstall(storage, {
         manifest: props.manifest as IntegrationManifest,
         connectionId: result.connection_id,
-        tenantId,
+        spaceId,
         controlPlaneUrl,
         runtimeBrokerKey,
       });
@@ -527,14 +527,14 @@ export function connectionRoutes(
 
     // Publish a `created` event for the new connection so the reactive-run bridge's
     // cache-invalidation subscriber refreshes its in-memory subscription map.
-    const connection = await storage.items.get(result.connection_id, tenantId);
+    const connection = await storage.items.get(result.connection_id, spaceId);
     if (connection) {
       const metadata = await storage.metadata.get(connection.id);
       await publish({
         type: "created",
         item: connection,
         metadata,
-        tenantId,
+        spaceId,
       });
     }
 
@@ -542,31 +542,31 @@ export function connectionRoutes(
   });
 
   r.openapi(previewEventRoute, async (c) => {
-    const apiKey = requireTenantAdmin(c);
-    const tenantId = apiKey.tenant_id ?? undefined;
+    const apiKey = requireSpaceAdmin(c);
+    const spaceId = apiKey.space_id ?? undefined;
     const body = c.req.valid("json");
 
-    const item = await storage.items.get(body.item_id, tenantId);
+    const item = await storage.items.get(body.item_id, spaceId);
     if (!item) {
       throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
-        "Item not found in this tenant scope",
+        "Item not found in this space scope",
         { item_id: body.item_id },
       );
     }
 
-    // tenantId is omitted for single-tenant self-hosts; the dispatch evaluator
-    // normalizes both sides to null so the cross-tenant gate doesn't trip spuriously.
+    // spaceId is omitted for single-space self-hosts; the dispatch evaluator
+    // normalizes both sides to null so the cross-space gate doesn't trip spuriously.
     const cycle = body.cycle ?? {};
     const event: ItemEventWithId = {
       type: body.event_type,
       item,
-      ...(tenantId !== undefined && { tenantId }),
+      ...(spaceId !== undefined && { spaceId }),
       originatingConnectionId: cycle.originating_connection_id ?? null,
       hopCount: cycle.hop_count ?? 0,
     };
 
-    const hopBudgetMax = await resolveHopBudget(tenantId);
+    const hopBudgetMax = await resolveHopBudget(spaceId);
     const isConnectorOriginated = event.originatingConnectionId != null;
     // Shares pubsub.computeEffectiveHopCount so the connector-at-hop-0-counts-as-1
     // floor can't drift from the live budget gate.
@@ -626,11 +626,11 @@ export function connectionRoutes(
     };
 
     if (body.connection_id !== undefined) {
-      const conn = await storage.items.get(body.connection_id, tenantId);
+      const conn = await storage.items.get(body.connection_id, spaceId);
       if (!conn) {
         throw new MarfaError(
           ErrorCode.CONNECTION_NOT_FOUND,
-          "Connection not found in this tenant scope",
+          "Connection not found in this space scope",
           { connection_id: body.connection_id },
         );
       }
@@ -638,7 +638,7 @@ export function connectionRoutes(
         id: conn.id,
         state: conn.state,
         properties: conn.properties,
-        tenant_id: conn.tenant_id ?? null,
+        space_id: conn.space_id ?? null,
       });
       considerSubscriber(conn.id, entry);
     } else {
@@ -646,7 +646,7 @@ export function connectionRoutes(
       const PAGE = 200;
       for (;;) {
         const page = await storage.items.list({
-          ...(tenantId !== undefined && { tenantId }),
+          ...(spaceId !== undefined && { spaceId }),
           type: "system.connection",
           limit: PAGE,
           ...(cursor !== undefined && { cursor }),
@@ -656,7 +656,7 @@ export function connectionRoutes(
             id: conn.id,
             state: conn.state,
             properties: conn.properties,
-            tenant_id: conn.tenant_id ?? null,
+            space_id: conn.space_id ?? null,
           });
           if (!entry) continue; // skip non-subscribers in the unfiltered walk — noise; filtered case includes them
           considerSubscriber(conn.id, entry);
@@ -682,7 +682,7 @@ export function connectionRoutes(
   const applyRuntimeState = async (
     verb: "pause" | "resume",
     connectionId: string,
-    apiKey: { id: string; tenant_id?: string },
+    apiKey: { id: string; space_id?: string },
     clientIp: string | null,
   ) => {
     const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
@@ -691,7 +691,7 @@ export function connectionRoutes(
     try {
       return await run(storage, {
         apiKeyId: apiKey.id,
-        tenantId: apiKey.tenant_id ?? undefined,
+        spaceId: apiKey.space_id ?? undefined,
         connectionId,
         clientIp,
         integrationRuntime: options.integrationRuntime,
@@ -712,14 +712,14 @@ export function connectionRoutes(
   };
 
   r.openapi(pauseRoute, async (c) => {
-    const apiKey = requireTenantAdmin(c);
+    const apiKey = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState("pause", id, apiKey, c.var.clientIp);
     return c.json(result, 200);
   });
 
   r.openapi(resumeRoute, async (c) => {
-    const apiKey = requireTenantAdmin(c);
+    const apiKey = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState(
       "resume",
@@ -731,9 +731,9 @@ export function connectionRoutes(
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    const apiKey = requireTenantAdmin(c);
+    const apiKey = requireSpaceAdmin(c);
     const { id: connectionId } = c.req.valid("param");
-    const tenantId = apiKey.tenant_id ?? undefined;
+    const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
 
     try {
@@ -744,7 +744,7 @@ export function connectionRoutes(
       const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
-        tenantId,
+        spaceId,
         connectionId,
         clientIp,
         integrationRuntime: options.integrationRuntime,

@@ -6,7 +6,7 @@ import type { PgDb } from "./connection.js";
  *
  * The RLS pattern requires every storage operation issued during a request
  * to flow through ONE connection — the same connection that carries
- * `SET LOCAL ROLE marfa_app` and `SET LOCAL marfa.tenant_id = '<id>'`.
+ * `SET LOCAL ROLE marfa_app` and `SET LOCAL marfa.space_id = '<id>'`.
  * Drizzle's `db.transaction()` returns a transaction object (`tx`) that
  * meets that contract: every query issued through `tx` uses the
  * transaction's reserved connection. The challenge is threading `tx` to
@@ -16,7 +16,7 @@ import type { PgDb } from "./connection.js";
  *
  * 1. `pgRequestContext` — an AsyncLocalStorage holding the active
  *    transaction object for the current request. Set by the RLS
- *    middleware (`rls-tenant-context.ts`); read by the proxy below.
+ *    middleware (`rls-space-context.ts`); read by the proxy below.
  * 2. `wrapDbWithRequestContext(baseDb)` — a Proxy around the base
  *    Drizzle instance that consults the ALS first. Every method call
  *    (`select`, `insert`, `update`, `delete`, `execute`,
@@ -47,7 +47,7 @@ import type { PgDb } from "./connection.js";
  * server boot all run without a request context. Their queries fall
  * through the proxy to the base db (no ALS context → no transaction
  * substitution) and execute as the connection owner. Correct: these
- * paths intentionally see all tenants.
+ * paths intentionally see all spaces.
  */
 
 /**
@@ -64,7 +64,7 @@ interface PgRequestContext {
    * Active Drizzle transaction object for this request. Stores
    * issuing queries through the wrapped db will hit this transaction
    * — and therefore the reserved connection carrying `SET LOCAL
-   * ROLE marfa_app` and `SET LOCAL marfa.tenant_id = '<id>'`.
+   * ROLE marfa_app` and `SET LOCAL marfa.space_id = '<id>'`.
    */
   tx: PgTxContext;
 }

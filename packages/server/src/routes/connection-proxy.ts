@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
+import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   encryptSecret,
@@ -13,7 +13,7 @@ import {
 // ---------------------------------------------------------------------------
 // Connection OAuth proxy
 //
-// `POST /connections/:id/proxy/*` — let a connector (or a tenant admin)
+// `POST /connections/:id/proxy/*` — let a connector (or a space admin)
 // make an outbound HTTP call to an external service through a single
 // server-side path that:
 //   1. Decrypts the connection's stored access_token and stamps it as
@@ -100,15 +100,15 @@ async function readCredentialConfig(
       `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or move its inline OAuth config to a system.credential item.`,
     );
   }
-  // Thread the connection's tenant into the credential lookup.
+  // Thread the connection's space into the credential lookup.
   // The install pipeline already validates `credentialRef` is in the
-  // caller's tenant before stamping it onto the connection, so any
-  // legitimately-installed reference IS in the same tenant. This fence
+  // caller's space before stamping it onto the connection, so any
+  // legitimately-installed reference IS in the same space. This fence
   // is defense-in-depth — a malformed reference can't reach into
-  // another tenant's credentials.
+  // another space's credentials.
   const credential = await storage.items.get(
     credentialRef,
-    connection.tenant_id ?? undefined,
+    connection.space_id ?? undefined,
   );
   if (credential?.type !== "system.credential") {
     throw new MarfaError(
@@ -463,7 +463,7 @@ async function refreshAccessToken(
 
   await storage.connectionOauthTokens.upsert({
     connection_id: connectionId,
-    tenant_id: row.tenant_id ?? undefined,
+    space_id: row.space_id ?? undefined,
     access_token_encrypted: encryptSecret(
       newAccess,
       SECRET_INFO.connectionOauthToken,
@@ -525,7 +525,7 @@ async function withRefreshLock<T>(
 async function markReauthRequired(
   storage: Storage,
   connection: Item,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   reason: string,
   /** Resolved client IP for the audit trail. Threaded from the route
    *  handler that owns the Hono context. */
@@ -547,13 +547,13 @@ async function markReauthRequired(
           last_error_at: new Date().toISOString(),
         },
       },
-      tenantId,
+      spaceId,
     );
     // items.update returns a ConflictResponse instead of throwing on version mismatch.
     if ("conflict" in updated) {
       void storage.audit.log({
         client_ip: clientIp,
-        tenant_id: tenantId ?? null,
+        space_id: spaceId ?? null,
         action: "connection_proxy.runtime_status_flip_conflict",
         resource_type: "connection",
         resource_id: connection.id,
@@ -565,7 +565,7 @@ async function markReauthRequired(
     // audit log so operators can investigate.
     void storage.audit.log({
       client_ip: clientIp,
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "connection_proxy.runtime_status_flip_failed",
       resource_type: "connection",
       resource_id: connection.id,
@@ -594,12 +594,12 @@ async function markReauthRequired(
           ? { tier: "feed" as const }
           : {}),
       },
-      tenantId,
+      spaceId,
     );
   } catch (err) {
     void storage.audit.log({
       client_ip: clientIp,
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "connection_proxy.activity_emit_failed",
       resource_type: "connection",
       resource_id: connection.id,
@@ -614,22 +614,22 @@ async function requireConnectionProxyAccess(
   c: import("hono").Context<AppEnv>,
   storage: Storage,
   connectionId: string,
-): Promise<{ tenantId: string | undefined; connection: Item }> {
+): Promise<{ spaceId: string | undefined; connection: Item }> {
   const key = requireAuth(c);
-  const tenantId = key.tenant_id ?? undefined;
-  const connection = await storage.items.get(connectionId, tenantId);
+  const spaceId = key.space_id ?? undefined;
+  const connection = await storage.items.get(connectionId, spaceId);
   if (connection?.type !== "system.connection") {
     throw new MarfaError(
       ErrorCode.CONNECTION_NOT_FOUND,
       "Connection not found",
     );
   }
-  // A connection is a tenant resource, so the gate is tenant-bounded
+  // A connection is a space resource, so the gate is space-bounded
   // admin authority, not platform authority — every hosted account is
-  // provisioned `tenant_admin` and owns the connections it installed.
-  // The lookup above is already fenced on `key.tenant_id`, so a
-  // tenant-bound caller of any rank sees only its own connections.
-  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
+  // provisioned `space_admin` and owns the connections it installed.
+  // The lookup above is already fenced on `key.space_id`, so a
+  // space-bound caller of any rank sees only its own connections.
+  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
   // Two connector-credential shapes accept here:
   //   1. OAuth-token grants the user issued for a kind:app connection —
   //      synthetic credentials minted in middleware/auth.ts with
@@ -651,7 +651,7 @@ async function requireConnectionProxyAccess(
       "Caller cannot proxy through this connection",
     );
   }
-  return { tenantId, connection };
+  return { spaceId, connection };
 }
 
 interface ProxyAttemptOutcome {
@@ -700,7 +700,7 @@ export function connectionProxyRoutes(storage: Storage) {
 
   r.all("/:id/proxy/*", async (c) => {
     const connectionId = c.req.param("id");
-    const { tenantId, connection } = await requireConnectionProxyAccess(
+    const { spaceId, connection } = await requireConnectionProxyAccess(
       c,
       storage,
       connectionId,
@@ -745,14 +745,14 @@ export function connectionProxyRoutes(storage: Storage) {
         await markReauthRequired(
           storage,
           connection,
-          tenantId,
+          spaceId,
           reason,
           c.get("clientIp") ?? null,
           "Reinstall the connection with a fresh token via POST /credentials/api-token + POST /connections/install.",
         );
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          tenant_id: c.get("apiKey")?.tenant_id ?? null,
+          space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "connection_proxy.api_token_rejected",
           resource_type: "connection",
@@ -774,11 +774,11 @@ export function connectionProxyRoutes(storage: Storage) {
       // on 401 + retry once.
       // -----------------------------------------------------------------
 
-      let row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+      let row = await storage.connectionOauthTokens.get(connectionId, spaceId);
       if (!row) {
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          tenant_id: c.get("apiKey")?.tenant_id ?? null,
+          space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "connection_proxy.token_missing",
           resource_type: "connection",
@@ -804,14 +804,14 @@ export function connectionProxyRoutes(storage: Storage) {
             await markReauthRequired(
               storage,
               connection,
-              tenantId,
+              spaceId,
               result.reason,
               c.get("clientIp") ?? null,
             );
           }
           void storage.audit.log({
             client_ip: c.get("clientIp") ?? null,
-            tenant_id: c.get("apiKey")?.tenant_id ?? null,
+            space_id: c.get("apiKey")?.space_id ?? null,
             key_id: c.get("apiKey")?.id,
             action: "connection_proxy.refresh_failed",
             resource_type: "connection",
@@ -826,7 +826,7 @@ export function connectionProxyRoutes(storage: Storage) {
             `Refresh failed: ${result.reason}`,
           );
         }
-        row = await storage.connectionOauthTokens.get(connectionId, tenantId); // re-read to pick up rotated token
+        row = await storage.connectionOauthTokens.get(connectionId, spaceId); // re-read to pick up rotated token
         if (!row) {
           // Should be impossible — refresh just wrote.
           throw new MarfaError(
@@ -867,14 +867,14 @@ export function connectionProxyRoutes(storage: Storage) {
             await markReauthRequired(
               storage,
               connection,
-              tenantId,
+              spaceId,
               result.reason,
               c.get("clientIp") ?? null,
             );
           }
           void storage.audit.log({
             client_ip: c.get("clientIp") ?? null,
-            tenant_id: c.get("apiKey")?.tenant_id ?? null,
+            space_id: c.get("apiKey")?.space_id ?? null,
             key_id: c.get("apiKey")?.id,
             action: "connection_proxy.refresh_failed",
             resource_type: "connection",
@@ -901,7 +901,7 @@ export function connectionProxyRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "connection_proxy.call",
       resource_type: "connection",

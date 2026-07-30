@@ -87,7 +87,7 @@ dead_letter_queue = "marfa-webhook-receipt-withmarfa-inbox-staging-dlq"
 #         Set it with infra/cloudflare/scripts/init-integration-worker-secrets.sh,
 #         which derives it from the config's INTEGRATION_NAME.
 #         NOT the platform broker key this replaced: that key mints
-#         against any Connection in any tenant and never reaches a Worker.
+#         against any Connection in any space and never reaches a Worker.
 
 # ---- Production -----------------------------------------------------------
 [env.prod]

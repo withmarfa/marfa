@@ -354,25 +354,25 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
 
   /**
    * Resolve the projected `system.connection { kind: "app" }` item id for
-   * (tenantId, clientId, authUserId). Single-row lookup via json_extract
+   * (spaceId, clientId, authUserId). Single-row lookup via json_extract
    * predicates on properties. Returns null if no projection row exists.
    */
   async findGrantItemId(opts: {
-    tenantId: string | null;
+    spaceId: string | null;
     clientId: string;
     authUserId: string;
   }): Promise<string | null> {
-    const tenantPredicate =
-      opts.tenantId === null
-        ? sql`${items.tenant_id} IS NULL`
-        : sql`${items.tenant_id} = ${opts.tenantId}`;
+    const spacePredicate =
+      opts.spaceId === null
+        ? sql`${items.space_id} IS NULL`
+        : sql`${items.space_id} = ${opts.spaceId}`;
     const rows = await this.db
       .select({ id: items.id })
       .from(items)
       .where(
         and(
           eq(items.type, "system.connection"),
-          tenantPredicate,
+          spacePredicate,
           sql`json_extract(${items.properties}, '$.kind') = 'app'`,
           sql`json_extract(${items.properties}, '$.client_id') = ${opts.clientId}`,
           sql`json_extract(${items.properties}, '$.user_id') = ${opts.authUserId}`,

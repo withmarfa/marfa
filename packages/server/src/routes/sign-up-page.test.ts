@@ -482,7 +482,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
 // ---------------------------------------------------------------------------
 // Hosted-mode-only sign-up coverage.
 //
-// The username-collision check + the tenant + users-row provisioning step
+// The username-collision check + the space + users-row provisioning step
 // only fire when storage.users is wired (hosted mode). The default
 // createTestContext is keys mode, so these tests stand up a hosted fixture
 // inline.
@@ -665,7 +665,7 @@ describe("POST /auth/sign-up — hosted-mode invariants", () => {
     expect(cleared).toMatch(/Max-Age=0|Expires=/i);
   });
 
-  it("provisions a `users` row + tenant + auth_user_id binding atomically", async () => {
+  it("provisions a `users` row + space + auth_user_id binding atomically", async () => {
     hosted = await createHostedSignUpContext();
     const res = await postHostedSignUp(hosted, {
       email: "newhuman@example.com",
@@ -683,7 +683,7 @@ describe("POST /auth/sign-up — hosted-mode invariants", () => {
     const row = await userStore!.getByHandle("new-human");
     expect(row).not.toBeNull();
     expect(row?.auth_user_id).toBeTruthy();
-    expect(row?.tenant_id).toBeTruthy();
+    expect(row?.space_id).toBeTruthy();
   });
 
   it("reserved-handle attempts never create an auth_user row", async () => {

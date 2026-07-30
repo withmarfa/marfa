@@ -192,7 +192,7 @@ describe("GET /events — catchup_too_old", () => {
     expect(text.startsWith(": connected\n\n")).toBe(true);
   });
 
-  it("does not emit catchup_too_old when the event log is empty for the tenant", async () => {
+  it("does not emit catchup_too_old when the event log is empty for the space", async () => {
     // Spin up a second context with its own fresh storage so min(id) is
     // genuinely null. Sharing `ctx` would mean any prior test that
     // appended events makes min(id) non-null.

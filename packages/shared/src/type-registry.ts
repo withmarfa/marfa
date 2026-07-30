@@ -19,7 +19,7 @@ import type {
   TypeSchemaValidationResult,
   VersionPolicy,
 } from "@withmarfa/types";
-import type { EnforcementSettings, TenantConfig } from "./types.js";
+import type { EnforcementSettings, SpaceConfig } from "./types.js";
 import { isValidTypeIdentifier } from "./validation.js";
 
 // Re-export schema-shape types and the shipped registries so consumers of
@@ -49,12 +49,12 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 };
 
 // The platform-shipped types are global — bundled with @withmarfa/types and
-// resolvable by every tenant. This map is read-only after construction. Three
+// resolvable by every space. This map is read-only after construction. Three
 // families feed it and each stays identifiable afterwards: `ALL_TYPES` is the
 // core set, `ALL_CONNECTOR_TYPES` is the vendor-shaped set a connector writes
 // into, and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
 // identically — the split describes provenance so a catalog can say what a
-// tenant is actually looking at, not a difference in how lookups behave.
+// space is actually looking at, not a difference in how lookups behave.
 const _coreRegistry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [
     schema.id,
@@ -63,41 +63,41 @@ const _coreRegistry = new Map<string, TypeSchema>(
 );
 
 /**
- * Custom types are tenant-scoped. The outer key is the owning tenant's id;
- * each tenant gets its own inner id→schema map. A custom type registered by
- * tenant A is therefore invisible to tenant B's lookups — the isolation that
- * keeps one tenant's type vocabulary out of another's, so one tenant can't
+ * Custom types are space-scoped. The outer key is the owning space's id;
+ * each space gets its own inner id→schema map. A custom type registered by
+ * space A is therefore invisible to space B's lookups — the isolation that
+ * keeps one space's type vocabulary out of another's, so one space can't
  * instantiate (or validate against) a type it never defined. The sentinel
- * `NULL_TENANT` key holds custom types with no tenant (single-tenant
+ * `NULL_SPACE` key holds custom types with no space (single-space
  * self-hosts, platform-registered types) so the keys-mode flow is unaffected.
  */
-const _customByTenant = new Map<string, Map<string, TypeSchema>>();
+const _customBySpace = new Map<string, Map<string, TypeSchema>>();
 
-// Sentinel for custom types with no owning tenant — single-tenant self-hosts
+// Sentinel for custom types with no owning space — single-space self-hosts
 // and platform-registered types. An empty string can't collide with a real
-// tenant id (ids are non-empty), so it's a safe bucket key.
-const NULL_TENANT = "";
+// space id (ids are non-empty), so it's a safe bucket key.
+const NULL_SPACE = "";
 
-function tenantKey(tenantId: string | null | undefined): string {
-  return tenantId ?? NULL_TENANT;
+function spaceKey(spaceId: string | null | undefined): string {
+  return spaceId ?? NULL_SPACE;
 }
 
 /**
- * Resolves a type schema for a given tenant: core/system types resolve
- * globally; custom types resolve only within their owning tenant. A lookup
- * with no `tenantId` sees core/system plus the null-tenant bucket
- * (single-tenant self-hosts), never another tenant's custom types. This is the
- * single resolution primitive every tenant-aware helper below threads through,
+ * Resolves a type schema for a given space: core/system types resolve
+ * globally; custom types resolve only within their owning space. A lookup
+ * with no `spaceId` sees core/system plus the null-space bucket
+ * (single-space self-hosts), never another space's custom types. This is the
+ * single resolution primitive every space-aware helper below threads through,
  * including the inheritance-chain walks (a custom type's parent may itself be a
- * custom type in the same tenant).
+ * custom type in the same space).
  */
 function resolveSchema(
   typeId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): TypeSchema | undefined {
   const core = _coreRegistry.get(typeId);
   if (core) return core;
-  return _customByTenant.get(tenantKey(tenantId))?.get(typeId);
+  return _customBySpace.get(spaceKey(spaceId))?.get(typeId);
 }
 
 /** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
@@ -109,7 +109,7 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
  * The set of type IDs shipped as connector types: one vendor's payload shape,
  * present so a connector has somewhere faithful to write. They carry no
  * behavioral restrictions — the split from the core set is a provenance
- * distinction, so a catalog can tell a tenant which types are the shared
+ * distinction, so a catalog can tell a space which types are the shared
  * vocabulary and which exist because a specific upstream service does.
  */
 export const CONNECTOR_TYPE_IDS: ReadonlySet<string> = new Set(
@@ -132,23 +132,23 @@ export { RESERVED_ITEM_FIELDS };
 // ---------------------------------------------------------------------------
 
 /**
- * Computes the effective enforcement settings for a given (tenant config,
+ * Computes the effective enforcement settings for a given (space config,
  * credential) pair. Per-credential override wins where set, falling back to
- * the tenant default. All three levers are independently overridable —
- * setting `strict_mode` on the credential does not clear the tenant
+ * the space default. All three levers are independently overridable —
+ * setting `strict_mode` on the credential does not clear the space
  * `source_allowlist`.
  */
 export function resolveEnforcement(
-  tenant: TenantConfig | null | undefined,
+  space: SpaceConfig | null | undefined,
   credential: { enforcement_override?: EnforcementSettings } | null | undefined,
 ): EnforcementSettings {
-  const tenantSettings = tenant?.enforcement ?? {};
+  const spaceSettings = space?.enforcement ?? {};
   const override = credential?.enforcement_override ?? {};
   return {
-    strict_mode: override.strict_mode ?? tenantSettings.strict_mode,
+    strict_mode: override.strict_mode ?? spaceSettings.strict_mode,
     source_allowlist:
-      override.source_allowlist ?? tenantSettings.source_allowlist,
-    source_filter: override.source_filter ?? tenantSettings.source_filter,
+      override.source_allowlist ?? spaceSettings.source_allowlist,
+    source_filter: override.source_filter ?? spaceSettings.source_filter,
   };
 }
 
@@ -197,33 +197,33 @@ export function getSourceFilter(
 
 /**
  * The core type registry — the global core + system type schemas by
- * identifier. Custom (tenant-scoped) types are NOT exposed here; consumers
- * that need a tenant's full set call `listTypes(tenantId)`, and lookups go
- * through `getTypeSchema(id, tenantId)`. The OAuth scope allow-list and consent
+ * identifier. Custom (space-scoped) types are NOT exposed here; consumers
+ * that need a space's full set call `listTypes(spaceId)`, and lookups go
+ * through `getTypeSchema(id, spaceId)`. The OAuth scope allow-list and consent
  * descriptions read this for the static core-scope enumeration.
  */
 export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _coreRegistry;
 
 /**
- * Resolves a type schema for a given tenant. Core/system types resolve
- * globally; custom types resolve only within their owning tenant. A lookup
- * with no `tenantId` sees core/system plus the null-tenant bucket
- * (single-tenant self-hosts), never another tenant's custom types.
+ * Resolves a type schema for a given space. Core/system types resolve
+ * globally; custom types resolve only within their owning space. A lookup
+ * with no `spaceId` sees core/system plus the null-space bucket
+ * (single-space self-hosts), never another space's custom types.
  */
 export function getTypeSchema(
   typeId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): TypeSchema | undefined {
-  return resolveSchema(typeId, tenantId);
+  return resolveSchema(typeId, spaceId);
 }
 
 /**
- * Lists every type visible to a tenant: the global core + system set plus that
- * tenant's own custom types. With no `tenantId`, returns core/system plus the
- * null-tenant bucket — never another tenant's custom types.
+ * Lists every type visible to a space: the global core + system set plus that
+ * space's own custom types. With no `spaceId`, returns core/system plus the
+ * null-space bucket — never another space's custom types.
  */
-export function listTypes(tenantId?: string | null): TypeSchema[] {
-  const custom = _customByTenant.get(tenantKey(tenantId));
+export function listTypes(spaceId?: string | null): TypeSchema[] {
+  const custom = _customBySpace.get(spaceKey(spaceId));
   if (!custom) return [..._coreRegistry.values()];
   return [..._coreRegistry.values(), ...custom.values()];
 }
@@ -298,41 +298,41 @@ export function isPublisherType(id: string): boolean {
 }
 
 /**
- * Registers a custom type schema into the tenant's overlay and clears that
- * tenant's cached Zod schema for the id. Core/system types are never
+ * Registers a custom type schema into the space's overlay and clears that
+ * space's cached Zod schema for the id. Core/system types are never
  * registered here (they live in the global map); callers filter them out
- * before calling. `tenantId` is the owning tenant — omit it only for the
- * null-tenant bucket (single-tenant self-host / platform).
+ * before calling. `spaceId` is the owning space — omit it only for the
+ * null-space bucket (single-space self-host / platform).
  */
 export function registerTypeSchema(
   schema: TypeSchema,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): void {
-  const key = tenantKey(tenantId);
-  let bucket = _customByTenant.get(key);
+  const key = spaceKey(spaceId);
+  let bucket = _customBySpace.get(key);
   if (!bucket) {
     bucket = new Map<string, TypeSchema>();
-    _customByTenant.set(key, bucket);
+    _customBySpace.set(key, bucket);
   }
   bucket.set(schema.id, schema);
-  // The Zod cache is keyed per tenant, so clearing only this tenant's entry is
-  // both sufficient and necessary — two tenants may hold different schemas
+  // The Zod cache is keyed per space, so clearing only this space's entry is
+  // both sufficient and necessary — two spaces may hold different schemas
   // under the same id.
-  zodSchemaCache.delete(zodCacheKey(schema.id, tenantId));
-  zodSchemaStrictCache.delete(zodCacheKey(schema.id, tenantId));
+  zodSchemaCache.delete(zodCacheKey(schema.id, spaceId));
+  zodSchemaStrictCache.delete(zodCacheKey(schema.id, spaceId));
 }
 
 /**
- * Removes a custom type schema from the tenant's overlay and clears its cached
- * Zod schema for that tenant.
+ * Removes a custom type schema from the space's overlay and clears its cached
+ * Zod schema for that space.
  */
 export function unregisterTypeSchema(
   id: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): void {
-  _customByTenant.get(tenantKey(tenantId))?.delete(id);
-  zodSchemaCache.delete(zodCacheKey(id, tenantId));
-  zodSchemaStrictCache.delete(zodCacheKey(id, tenantId));
+  _customBySpace.get(spaceKey(spaceId))?.delete(id);
+  zodSchemaCache.delete(zodCacheKey(id, spaceId));
+  zodSchemaStrictCache.delete(zodCacheKey(id, spaceId));
 }
 
 // Hard bound on inheritance-chain depth for the hot-path walks below
@@ -353,16 +353,16 @@ const MAX_INHERITANCE_DEPTH = 100;
  */
 export function getResolvedFields(
   typeId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): Record<string, FieldDefinition> | undefined {
-  const schema = resolveSchema(typeId, tenantId);
+  const schema = resolveSchema(typeId, spaceId);
   if (!schema) return undefined;
 
   const fields: Record<string, FieldDefinition> = { ...UNIVERSAL_FIELDS };
 
   // Collect the inheritance chain (parent first, then child). A custom type's
   // parent may itself be a custom type, so resolve each ancestor through the
-  // same tenant scope. The `seen` set guards against a cycle that somehow
+  // same space scope. The `seen` set guards against a cycle that somehow
   // reached the registry — without it a cyclic `parent` chain loops forever.
   const chain: TypeSchema[] = [];
   const seen = new Set<string>();
@@ -376,7 +376,7 @@ export function getResolvedFields(
     seen.add(current.id);
     chain.unshift(current);
     current = current.parent
-      ? resolveSchema(current.parent, tenantId)
+      ? resolveSchema(current.parent, spaceId)
       : undefined;
   }
 
@@ -400,9 +400,9 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
  */
 export function getSearchableStringFields(
   typeId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): string[] {
-  const fields = getResolvedFields(typeId, tenantId);
+  const fields = getResolvedFields(typeId, spaceId);
   if (!fields) return [];
   return Object.entries(fields)
     .filter(
@@ -424,9 +424,9 @@ export function getSearchableStringFields(
 export function isFieldSearchableExcluded(
   typeId: string,
   fieldName: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): boolean {
-  const fields = getResolvedFields(typeId, tenantId);
+  const fields = getResolvedFields(typeId, spaceId);
   if (!fields) return false;
   const def = fields[fieldName];
   if (def?.type !== "string") return false;
@@ -435,21 +435,21 @@ export function isFieldSearchableExcluded(
 
 /**
  * Returns true if typeId is a subtype of (or equal to) parentId. Resolves the
- * inheritance chain within the given tenant so custom types (whose ancestors
- * may also be custom) classify correctly; with no `tenantId` only core/system
+ * inheritance chain within the given space so custom types (whose ancestors
+ * may also be custom) classify correctly; with no `spaceId` only core/system
  * types resolve.
  */
 export function isSubtypeOf(
   typeId: string,
   parentId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): boolean {
   if (typeId === parentId) return true;
   // The `seen` set guards against a cycle that somehow reached the registry —
   // without it a cyclic `parent` chain loops forever on this per-edge-check
   // hot path. See MAX_INHERITANCE_DEPTH.
   const seen = new Set<string>();
-  let current = resolveSchema(typeId, tenantId);
+  let current = resolveSchema(typeId, spaceId);
   while (current?.parent) {
     if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
       throw new Error(
@@ -458,13 +458,13 @@ export function isSubtypeOf(
     }
     seen.add(current.id);
     if (current.parent === parentId) return true;
-    current = resolveSchema(current.parent, tenantId);
+    current = resolveSchema(current.parent, spaceId);
   }
   return false;
 }
 
 /**
- * Every type in the tenant's vocabulary whose declared `parent` chain reaches
+ * Every type in the space's vocabulary whose declared `parent` chain reaches
  * `rootId`, excluding `rootId` itself and excluding anything already covered by
  * a name-prefix match on `<rootId>.`.
  *
@@ -479,22 +479,22 @@ export function isSubtypeOf(
  * its own right, and narrowing it would trade a silent omission for a different
  * silent omission.
  *
- * Cost is one pass over the tenant's types per call, which is small (the
+ * Cost is one pass over the space's types per call, which is small (the
  * platform ships ~42) and only paid when a subtree is actually being resolved.
  */
 export function declaredDescendantsOutsideNamespace(
   rootId: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): string[] {
   const prefix = `${rootId}.`;
   const out: string[] = [];
-  for (const schema of listTypes(tenantId)) {
+  for (const schema of listTypes(spaceId)) {
     if (schema.id === rootId) continue;
     if (schema.id.startsWith(prefix)) continue;
     // Only types that declare a parent can reach the root by any route other
     // than their name, so the walk is skipped for the overwhelming majority.
     if (!schema.parent) continue;
-    if (isSubtypeOf(schema.id, rootId, tenantId)) out.push(schema.id);
+    if (isSubtypeOf(schema.id, rootId, spaceId)) out.push(schema.id);
   }
   return out;
 }
@@ -591,17 +591,17 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
 // Cache generated Zod schemas to avoid re-creation on every validation call.
 // Two caches: one for the default permissive shape, one for strict — strict
 // mode flips z.looseObject (passes unknown properties) to z.strictObject
-// (rejects them). The key folds in the tenant: two tenants may register
-// different schemas under the same type id, so a tenant-blind cache would
-// serve one tenant's shape to another. Core/system types collapse to a single
-// shared entry under the null-tenant key (they're identical for everyone).
+// (rejects them). The key folds in the space: two spaces may register
+// different schemas under the same type id, so a space-blind cache would
+// serve one space's shape to another. Core/system types collapse to a single
+// shared entry under the null-space key (they're identical for everyone).
 const zodSchemaCache = new Map<string, z.ZodType>();
 const zodSchemaStrictCache = new Map<string, z.ZodType>();
 
-function zodCacheKey(typeId: string, tenantId?: string | null): string {
-  // Core/system types are global — cache them once under the null-tenant key
-  // regardless of who looked them up, so every tenant shares the same entry.
-  const scope = _coreRegistry.has(typeId) ? NULL_TENANT : tenantKey(tenantId);
+function zodCacheKey(typeId: string, spaceId?: string | null): string {
+  // Core/system types are global — cache them once under the null-space key
+  // regardless of who looked them up, so every space shares the same entry.
+  const scope = _coreRegistry.has(typeId) ? NULL_SPACE : spaceKey(spaceId);
   // The separator is written as an escape, not as a literal NUL byte. A NUL
   // in the source makes grep treat the whole file as binary and report no
   // matches at all, so every search of this file silently comes back empty.
@@ -610,15 +610,15 @@ function zodCacheKey(typeId: string, tenantId?: string | null): string {
 
 function getZodSchema(
   typeId: string,
-  options?: { strict?: boolean; tenantId?: string | null },
+  options?: { strict?: boolean; spaceId?: string | null },
 ): z.ZodType | undefined {
   const strict = options?.strict === true;
   const cache = strict ? zodSchemaStrictCache : zodSchemaCache;
-  const key = zodCacheKey(typeId, options?.tenantId);
+  const key = zodCacheKey(typeId, options?.spaceId);
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const fields = getResolvedFields(typeId, options?.tenantId);
+  const fields = getResolvedFields(typeId, options?.spaceId);
   if (!fields) return undefined;
 
   const shape: Record<string, z.ZodType> = {};
@@ -644,7 +644,7 @@ export type ValidationResult =
 export function validateProperties(
   typeId: string,
   properties: Record<string, unknown>,
-  options?: { strict?: boolean; tenantId?: string | null },
+  options?: { strict?: boolean; spaceId?: string | null },
 ): ValidationResult {
   const schema = getZodSchema(typeId, options);
   if (!schema) {
@@ -682,9 +682,9 @@ export function validateProperties(
 export function coerceNullProperties(
   typeId: string,
   properties: Record<string, unknown>,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): Record<string, unknown> {
-  const fields = getResolvedFields(typeId, tenantId);
+  const fields = getResolvedFields(typeId, spaceId);
   if (!fields) return properties;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(properties)) {
@@ -795,7 +795,7 @@ export function validateTransition(
  * The rules live in `@withmarfa/types`, which the in-tree codegen also calls,
  * so a schema is judged by one implementation whichever path it arrived on.
  * This wrapper only supplies the two things the validator can't reach on its
- * own: tenant-scoped registry resolution for the inheritance and
+ * own: space-scoped registry resolution for the inheritance and
  * `compatible_with` checks, and the namespace grammar.
  *
  * Errors carry `field`, `expected`, `actual` and `hint`; the subset that maps
@@ -804,10 +804,10 @@ export function validateTransition(
  */
 export function validateTypeSchema(
   input: unknown,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): TypeSchemaValidationResult {
   return validateTypeSchemaShape(input, {
-    resolveSchema: (typeId) => resolveSchema(typeId, tenantId),
+    resolveSchema: (typeId) => resolveSchema(typeId, spaceId),
     isValidTypeIdentifier,
   });
 }

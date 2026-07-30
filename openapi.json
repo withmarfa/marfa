@@ -102,7 +102,7 @@
         },
         "responses": {
           "200": {
-            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve a non-trashed item in the caller's tenant — the request is treated as an idempotent re-sync of the upstream entry.",
+            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve a non-trashed item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry.",
             "content": {
               "application/json": {
                 "schema": {
@@ -139,7 +139,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -186,7 +186,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -331,7 +331,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -378,7 +378,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -619,7 +619,7 @@
           "Items"
         ],
         "summary": "List items",
-        "description": "Returns a paginated list of items in the tenant, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
+        "description": "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
         "security": [
           {
             "bearerAuth": []
@@ -813,7 +813,7 @@
                                   "feed"
                                 ]
                               },
-                              "tenant_id": {
+                              "space_id": {
                                 "type": "string",
                                 "nullable": true
                               },
@@ -860,7 +860,7 @@
                                           "id": {
                                             "type": "string"
                                           },
-                                          "tenant_id": {
+                                          "space_id": {
                                             "type": "string",
                                             "nullable": true
                                           },
@@ -987,7 +987,7 @@
                                       "feed"
                                     ]
                                   },
-                                  "tenant_id": {
+                                  "space_id": {
                                     "type": "string",
                                     "nullable": true
                                   },
@@ -1034,7 +1034,7 @@
                                               "id": {
                                                 "type": "string"
                                               },
-                                              "tenant_id": {
+                                              "space_id": {
                                                 "type": "string",
                                                 "nullable": true
                                               },
@@ -1247,7 +1247,7 @@
           "Items"
         ],
         "summary": "Get item counts by state",
-        "description": "Returns a count of items per lifecycle state for the tenant. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+        "description": "Returns a count of items per lifecycle state for the space. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
         "security": [
           {
             "bearerAuth": []
@@ -1383,7 +1383,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -1430,7 +1430,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -1541,7 +1541,7 @@
                                 "id": {
                                   "type": "string"
                                 },
-                                "tenant_id": {
+                                "space_id": {
                                   "type": "string",
                                   "nullable": true
                                 },
@@ -1627,7 +1627,7 @@
                                   "feed"
                                 ]
                               },
-                              "tenant_id": {
+                              "space_id": {
                                 "type": "string",
                                 "nullable": true
                               },
@@ -1674,7 +1674,7 @@
                                           "id": {
                                             "type": "string"
                                           },
-                                          "tenant_id": {
+                                          "space_id": {
                                             "type": "string",
                                             "nullable": true
                                           },
@@ -2016,7 +2016,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -2063,7 +2063,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -2587,7 +2587,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -2634,7 +2634,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -2908,7 +2908,7 @@
                             "feed"
                           ]
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -2955,7 +2955,7 @@
                                     "id": {
                                       "type": "string"
                                     },
-                                    "tenant_id": {
+                                    "space_id": {
                                       "type": "string",
                                       "nullable": true
                                     },
@@ -4398,7 +4398,7 @@
           "Items"
         ],
         "summary": "Bulk upsert items",
-        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / tenant_admin bypass; members need the per-type permission), and operates only within the caller's tenant.",
+        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.",
         "security": [
           {
             "bearerAuth": []
@@ -6003,7 +6003,7 @@
           "Items"
         ],
         "summary": "Bulk get items by id",
-        "description": "Reads up to 100 items by id in one round-trip. Tenant-scoped and permission-filtered exactly like the single-item GET: ids the caller cannot read (other tenant, type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` hydrates edges, metadata, extensions, or system items inline.",
+        "description": "Reads up to 100 items by id in one round-trip. Space-scoped and permission-filtered exactly like the single-item GET: ids the caller cannot read (other space, type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` hydrates edges, metadata, extensions, or system items inline.",
         "security": [
           {
             "bearerAuth": []
@@ -6084,7 +6084,7 @@
                               "feed"
                             ]
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -6131,7 +6131,7 @@
                                       "id": {
                                         "type": "string"
                                       },
-                                      "tenant_id": {
+                                      "space_id": {
                                         "type": "string",
                                         "nullable": true
                                       },
@@ -7235,7 +7235,7 @@
                           "id": {
                             "type": "string"
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -7443,7 +7443,7 @@
                           "id": {
                             "type": "string"
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -7585,7 +7585,7 @@
           "Edges"
         ],
         "summary": "List edges",
-        "description": "Returns a paginated list of edges across the tenant, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
+        "description": "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
         "security": [
           {
             "bearerAuth": []
@@ -7641,7 +7641,7 @@
                           "id": {
                             "type": "string"
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -7781,7 +7781,7 @@
           "Edges"
         ],
         "summary": "Create an edge",
-        "description": "Creates a single typed edge between two existing items in the tenant. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time.",
+        "description": "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time.",
         "security": [
           {
             "bearerAuth": []
@@ -7832,7 +7832,7 @@
                         "id": {
                           "type": "string"
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -8060,7 +8060,7 @@
                         "id": {
                           "type": "string"
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string",
                           "nullable": true
                         },
@@ -8280,7 +8280,7 @@
           "Edges"
         ],
         "summary": "Bulk upsert edges",
-        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / tenant_admin bypass; members need both per-type permissions), and operates only within the caller's tenant.",
+        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / space_admin bypass; members need both per-type permissions), and operates only within the caller's space.",
         "security": [
           {
             "bearerAuth": []
@@ -8560,7 +8560,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Space-admin or platform-admin; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -8763,7 +8763,7 @@
             }
           },
           "403": {
-            "description": "Tenant-admin required",
+            "description": "Space-admin required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8848,7 +8848,7 @@
           "Edge Types"
         ],
         "summary": "List edge types",
-        "description": "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+        "description": "Returns every edge type registered in the space — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
         "security": [
           {
             "bearerAuth": []
@@ -8940,7 +8940,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a custom edge type registration scoped to the caller's tenant. Tenant-admin or platform-admin; core edge types are rejected, another tenant's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+        "description": "Removes a custom edge type registration scoped to the caller's space. Space-admin or platform-admin; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
         "security": [
           {
             "bearerAuth": []
@@ -9068,7 +9068,7 @@
           "Types"
         ],
         "summary": "List types",
-        "description": "Returns every type registered in the tenant — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+        "description": "Returns every type registered in the space — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
         "security": [
           {
             "bearerAuth": []
@@ -9455,7 +9455,7 @@
           "Types"
         ],
         "summary": "Get a type",
-        "description": "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and tenant-registered custom types.",
+        "description": "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and space-registered custom types.",
         "security": [
           {
             "bearerAuth": []
@@ -10042,7 +10042,7 @@
           "Search"
         ],
         "summary": "Search items",
-        "description": "Full-text search across the tenant's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
+        "description": "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
         "security": [
           {
             "bearerAuth": []
@@ -10203,7 +10203,7 @@
                                   "feed"
                                 ]
                               },
-                              "tenant_id": {
+                              "space_id": {
                                 "type": "string",
                                 "nullable": true
                               },
@@ -10250,7 +10250,7 @@
                                           "id": {
                                             "type": "string"
                                           },
-                                          "tenant_id": {
+                                          "space_id": {
                                             "type": "string",
                                             "nullable": true
                                           },
@@ -10425,7 +10425,7 @@
           "Metadata"
         ],
         "summary": "List distinct tags in use",
-        "description": "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's tenant and type permissions; trashed items are excluded.",
+        "description": "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's space and type permissions; trashed items are excluded.",
         "security": [
           {
             "bearerAuth": []
@@ -10433,7 +10433,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Distinct tags with usage counts, sorted by count descending then tag ascending. Tenant-scoped; type-permission scoped; trashed items excluded.",
+            "description": "Distinct tags with usage counts, sorted by count descending then tag ascending. Space-scoped; type-permission scoped; trashed items excluded.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10650,7 +10650,7 @@
           "Blobs"
         ],
         "summary": "Download blob binary",
-        "description": "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Tenant-scoped — a hash uploaded in one tenant is invisible to another, so cross-tenant probes return 404.",
+        "description": "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Space-scoped — a hash uploaded in one space is invisible to another, so cross-space probes return 404.",
         "security": [
           {
             "bearerAuth": []
@@ -10986,7 +10986,7 @@
           "Profile"
         ],
         "summary": "Get the calling user's profile",
-        "description": "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
+        "description": "Returns the profile for the user who owns the caller's space. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
         "security": [
           {
             "bearerAuth": []
@@ -11397,7 +11397,7 @@
           "Profile"
         ],
         "summary": "Upload an avatar",
-        "description": "Uploads an image as the user's avatar, stored as a content-addressed blob. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — an over-size payload returns `413`.",
+        "description": "Uploads an image as the user's avatar, stored as a content-addressed blob. Subject to the standard blob size cap and the space's `blobs` and `storage_bytes` quotas — an over-size payload returns `413`.",
         "security": [
           {
             "bearerAuth": []
@@ -11748,7 +11748,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. `role` may not exceed the caller's own role (admin > tenant_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
         "security": [
           {
             "bearerAuth": []
@@ -11773,7 +11773,7 @@
                     "type": "string",
                     "enum": [
                       "admin",
-                      "tenant_admin",
+                      "space_admin",
                       "member"
                     ]
                   },
@@ -11787,9 +11787,9 @@
                   "is_platform": {
                     "type": "boolean"
                   },
-                  "tenant_id": {
+                  "space_id": {
                     "nullable": true,
-                    "description": "Rejected with 400. The key is always minted into the caller's tenant; use POST /admin/tenants/{id}/keys to target another tenant."
+                    "description": "Rejected with 400. The key is always minted into the caller's space; use POST /admin/spaces/{id}/keys to target another space."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -11865,7 +11865,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
-                        "tenant_admin",
+                        "space_admin",
                         "member"
                       ]
                     },
@@ -11950,7 +11950,7 @@
             }
           },
           "400": {
-            "description": "Body carried a `tenant_id`, or the mint would produce a `tenant_admin` key with no tenant",
+            "description": "Body carried a `space_id`, or the mint would produce a `space_admin` key with no space",
             "content": {
               "application/json": {
                 "schema": {
@@ -12028,7 +12028,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or tenant_admin, is an OAuth access token, or requested a role above its own.",
+            "description": "Caller is not an admin or space_admin, is an OAuth access token, or requested a role above its own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12074,7 +12074,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key in the caller's tenant without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or tenant_admin only.",
+        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or space_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -12239,7 +12239,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or tenant_admin only.",
+        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or space_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -12326,7 +12326,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or tenant_admin only.",
+        "description": "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or space_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -12434,7 +12434,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
-                        "tenant_admin",
+                        "space_admin",
                         "member"
                       ]
                     },
@@ -12684,7 +12684,7 @@
           "Credentials"
         ],
         "summary": "Create an OAuth provider credential",
-        "description": "Creates a `system.credential` of `kind: oauth_token` holding an upstream service's OAuth client config, with the client secret encrypted at rest. The returned credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls; the credential is tenant-scoped and cannot be reused across tenants.",
+        "description": "Creates a `system.credential` of `kind: oauth_token` holding an upstream service's OAuth client config, with the client secret encrypted at rest. The returned credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls; the credential is space-scoped and cannot be reused across spaces.",
         "security": [
           {
             "bearerAuth": []
@@ -12849,7 +12849,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or tenant_admin.",
+            "description": "Caller is not an admin or space_admin.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12897,7 +12897,7 @@
           "Credentials"
         ],
         "summary": "Create a static API-token credential",
-        "description": "Creates a tenant-scoped `system.credential` of `kind: api_token` holding an upstream's base URL plus a static bearer token (encrypted at rest), for integrations that use a static token rather than OAuth. There is no refresh primitive — when the upstream rejects the token, the proxy surfaces the 401 and emits an `action_required` activity prompting reinstall with a fresh token.",
+        "description": "Creates a space-scoped `system.credential` of `kind: api_token` holding an upstream's base URL plus a static bearer token (encrypted at rest), for integrations that use a static token rather than OAuth. There is no refresh primitive — when the upstream rejects the token, the proxy surfaces the 401 and emits an `action_required` activity prompting reinstall with a fresh token.",
         "security": [
           {
             "bearerAuth": []
@@ -13041,7 +13041,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or tenant_admin.",
+            "description": "Caller is not an admin or space_admin.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13653,14 +13653,14 @@
         }
       }
     },
-    "/tenants/me/config": {
+    "/spaces/me/config": {
       "get": {
-        "operationId": "getTenantConfig",
+        "operationId": "getSpaceConfig",
         "tags": [
-          "Tenants"
+          "Spaces"
         ],
-        "summary": "Get the current tenant's configuration",
-        "description": "Returns the calling tenant's configuration — the optional `enforcement` levers plus the per-tenant cleanup-job retention overrides. Returns an empty object when nothing is configured. Admin or tenant_admin.",
+        "summary": "Get the current space's configuration",
+        "description": "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Admin or space_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -13668,7 +13668,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Tenant config",
+            "description": "Space config",
             "content": {
               "application/json": {
                 "schema": {
@@ -13833,12 +13833,12 @@
         }
       },
       "put": {
-        "operationId": "replaceTenantConfig",
+        "operationId": "replaceSpaceConfig",
         "tags": [
-          "Tenants"
+          "Spaces"
         ],
-        "summary": "Replace the current tenant's configuration",
-        "description": "Overwrites the tenant's config with the supplied object — full replacement, not a merge. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this tenant. Admin or tenant_admin.",
+        "summary": "Replace the current space's configuration",
+        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -13930,7 +13930,7 @@
         },
         "responses": {
           "200": {
-            "description": "Tenant config updated",
+            "description": "Space config updated",
             "content": {
               "application/json": {
                 "schema": {
@@ -14135,14 +14135,14 @@
         }
       }
     },
-    "/tenants/me/quotas": {
+    "/spaces/me/quotas": {
       "get": {
         "operationId": "getOwnQuotas",
         "tags": [
-          "Tenants"
+          "Spaces"
         ],
-        "summary": "Get current tenant quotas",
-        "description": "Returns the calling tenant's quota ceilings, resolved from the credential so the caller doesn't need to know its own tenant id. A platform-admin key with no tenant id receives `400` — use `GET /tenants/{id}/quotas` with an explicit id instead. Admin or tenant_admin.",
+        "summary": "Get current space quotas",
+        "description": "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A platform-admin key with no space id receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Admin or space_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -14150,13 +14150,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Quota row for the calling tenant.",
+            "description": "Quota row for the calling space.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "tenant_id": {
+                    "space_id": {
                       "type": "string"
                     },
                     "items_limit": {
@@ -14185,7 +14185,7 @@
                     }
                   },
                   "required": [
-                    "tenant_id",
+                    "space_id",
                     "items_limit",
                     "webhooks_limit",
                     "blobs_limit",
@@ -14198,7 +14198,7 @@
             }
           },
           "400": {
-            "description": "Caller has no tenant_id (platform admin).",
+            "description": "Caller has no space_id (platform admin).",
             "content": {
               "application/json": {
                 "schema": {
@@ -14319,12 +14319,12 @@
     },
     "/export": {
       "get": {
-        "operationId": "exportTenantData",
+        "operationId": "exportSpaceData",
         "tags": [
           "Export"
         ],
-        "summary": "Export tenant data",
-        "description": "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Tenant-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
+        "summary": "Export space data",
+        "description": "Streams the space's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
         "security": [
           {
             "bearerAuth": []
@@ -14394,11 +14394,11 @@
           {
             "schema": {
               "type": "string",
-              "description": "Platform admins scope the export to a specific tenant"
+              "description": "Platform admins scope the export to a specific space"
             },
             "required": false,
-            "description": "Platform admins scope the export to a specific tenant",
-            "name": "target_tenant_id",
+            "description": "Platform admins scope the export to a specific space",
+            "name": "target_space_id",
             "in": "query"
           }
         ],
@@ -14554,7 +14554,7 @@
                     "id": {
                       "type": "string"
                     },
-                    "tenant_id": {
+                    "space_id": {
                       "type": "string"
                     },
                     "connection_id": {
@@ -14811,7 +14811,7 @@
                           "id": {
                             "type": "string"
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string"
                           },
                           "connection_id": {
@@ -15486,7 +15486,7 @@
                     "connection_id": {
                       "type": "string"
                     },
-                    "tenant_id": {
+                    "space_id": {
                       "type": "string",
                       "nullable": true
                     },
@@ -15516,7 +15516,7 @@
                   "required": [
                     "id",
                     "connection_id",
-                    "tenant_id",
+                    "space_id",
                     "capability_id",
                     "scopes",
                     "expires_at",
@@ -15770,7 +15770,7 @@
                           "connection_id": {
                             "type": "string"
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -15797,7 +15797,7 @@
                         "required": [
                           "id",
                           "connection_id",
-                          "tenant_id",
+                          "space_id",
                           "capability_id",
                           "scopes",
                           "expires_at",
@@ -16348,7 +16348,7 @@
           "Connections"
         ],
         "summary": "Preview event dispatch envelopes",
-        "description": "Renders the dispatch envelopes the reactive-run bridge would emit for a synthetic item-event, without dispatching anything. Returns one entry per subscribing connection in the caller's tenant, each flagged with whether it would dispatch and why not when skipped.",
+        "description": "Renders the dispatch envelopes the reactive-run bridge would emit for a synthetic item-event, without dispatching anything. Returns one entry per subscribing connection in the caller's space, each flagged with whether it would dispatch and why not when skipped.",
         "security": [
           {
             "bearerAuth": []
@@ -16402,7 +16402,7 @@
         },
         "responses": {
           "200": {
-            "description": "One entry per subscriber the operator asked about, plus the tenant's hop budget.",
+            "description": "One entry per subscriber the operator asked about, plus the space's hop budget.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16427,7 +16427,7 @@
                             "enum": [
                               "ok",
                               "self_event",
-                              "cross_tenant",
+                              "cross_space",
                               "hop_budget_exceeded",
                               "subscription_inactive"
                             ]
@@ -16447,7 +16447,7 @@
                               "connection_id": {
                                 "type": "string"
                               },
-                              "tenant_id": {
+                              "space_id": {
                                 "type": "string"
                               },
                               "event_type": {
@@ -16601,7 +16601,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a tenant admin or platform admin.",
+            "description": "Caller is not a space admin or platform admin.",
             "content": {
               "application/json": {
                 "schema": {
@@ -16640,7 +16640,7 @@
             }
           },
           "404": {
-            "description": "`item_id` does not resolve in the caller's tenant scope, or the filtered `connection_id` does not exist.",
+            "description": "`item_id` does not resolve in the caller's space scope, or the filtered `connection_id` does not exist.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17326,7 +17326,7 @@
             }
           },
           "404": {
-            "description": "Connection not found in this tenant scope.",
+            "description": "Connection not found in this space scope.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17815,7 +17815,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns every outbound webhook subscription in the caller's tenant. Secrets are redacted here — the plaintext is only returned at create time.",
+        "description": "Returns every outbound webhook subscription in the caller's space. Secrets are redacted here — the plaintext is only returned at create time.",
         "security": [
           {
             "bearerAuth": []
@@ -18614,7 +18614,7 @@
           "Audit"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or tenant_admin: a tenant-scoped caller sees only its own tenant's entries, a platform admin sees every entry.",
+        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or space_admin: a space-scoped caller sees only its own space's entries, a platform admin sees every entry.",
         "security": [
           {
             "bearerAuth": []
@@ -18718,7 +18718,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "tenant_id": {
+                          "space_id": {
                             "type": "string",
                             "nullable": true
                           },
@@ -18747,7 +18747,7 @@
                           "id",
                           "timestamp",
                           "key_id",
-                          "tenant_id",
+                          "space_id",
                           "action",
                           "resource_type",
                           "resource_id",
@@ -18813,7 +18813,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or tenant_admin",
+            "description": "Caller is not an admin or space_admin",
             "content": {
               "application/json": {
                 "schema": {
@@ -18854,14 +18854,14 @@
         }
       }
     },
-    "/admin/tenants": {
+    "/admin/spaces": {
       "post": {
-        "operationId": "adminCreateTenant",
+        "operationId": "adminCreateSpace",
         "tags": [
           "Admin"
         ],
-        "summary": "Create a tenant",
-        "description": "Creates an empty tenant and returns it. Platform-admin only. Pair with `POST /admin/tenants/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a tenant already existed, so before this a tenant could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a tenant-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
+        "summary": "Create a space",
+        "description": "Creates an empty space and returns it. Platform-admin only. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
         "security": [
           {
             "bearerAuth": []
@@ -18877,7 +18877,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200,
-                    "description": "Human-readable label. Optional; the tenant is identified by its id."
+                    "description": "Human-readable label. Optional; the space is identified by its id."
                   }
                 }
               }
@@ -18886,7 +18886,7 @@
         },
         "responses": {
           "201": {
-            "description": "Tenant created",
+            "description": "Space created",
             "content": {
               "application/json": {
                 "schema": {
@@ -19038,7 +19038,7 @@
             }
           },
           "404": {
-            "description": "Instance is not multi-tenant",
+            "description": "Instance is not multi-space",
             "content": {
               "application/json": {
                 "schema": {
@@ -19079,14 +19079,14 @@
         }
       }
     },
-    "/admin/tenants/{id}/keys": {
+    "/admin/spaces/{id}/keys": {
       "post": {
-        "operationId": "adminCreateTenantKey",
+        "operationId": "adminCreateSpaceKey",
         "tags": [
           "Admin"
         ],
-        "summary": "Create a tenant-bound API key",
-        "description": "Creates an API key bound to the specified tenant. Platform-admin only. The plaintext key is returned only in this response.",
+        "summary": "Create a space-bound API key",
+        "description": "Creates an API key bound to the specified space. Platform-admin only. The plaintext key is returned only in this response.",
         "security": [
           {
             "bearerAuth": []
@@ -19096,10 +19096,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Tenant id."
+              "description": "Space id."
             },
             "required": true,
-            "description": "Tenant id.",
+            "description": "Space id.",
             "name": "id",
             "in": "path"
           }
@@ -19123,7 +19123,7 @@
                     "type": "string",
                     "enum": [
                       "admin",
-                      "tenant_admin",
+                      "space_admin",
                       "member"
                     ]
                   },
@@ -19186,7 +19186,7 @@
         },
         "responses": {
           "201": {
-            "description": "Tenant-bound API key created",
+            "description": "Space-bound API key created",
             "content": {
               "application/json": {
                 "schema": {
@@ -19208,7 +19208,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
-                        "tenant_admin",
+                        "space_admin",
                         "member"
                       ]
                     },
@@ -19366,7 +19366,7 @@
             }
           },
           "404": {
-            "description": "Tenant not found",
+            "description": "Space not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -19414,7 +19414,7 @@
           "Events"
         ],
         "summary": "Stream change events",
-        "description": "Opens a Server-Sent Events stream of item and edge changes for the caller's tenant. Send `Last-Event-ID` to replay events missed across a reconnect.",
+        "description": "Opens a Server-Sent Events stream of item and edge changes for the caller's space. Send `Last-Event-ID` to replay events missed across a reconnect.",
         "security": [
           {
             "bearerAuth": []
@@ -19560,7 +19560,7 @@
           "Auth"
         ],
         "summary": "Get the current user",
-        "description": "Returns the user record and the tenant the calling API key belongs to. Use to render account state (handle, name, tenant id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/guides/identity/profile).\n\n**Auth mode:** served only by deployments running `AUTH_MODE=hosted`. Instances in any other auth mode do not expose this endpoint.",
+        "description": "Returns the user record and the space the calling API key belongs to. Use to render account state (handle, name, space id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/guides/identity/profile).\n\n**Auth mode:** served only by deployments running `AUTH_MODE=hosted`. Instances in any other auth mode do not expose this endpoint.",
         "security": [
           {
             "bearerAuth": []
@@ -19568,7 +19568,7 @@
         ],
         "responses": {
           "200": {
-            "description": "User profile and tenant info",
+            "description": "User profile and space info",
             "content": {
               "application/json": {
                 "schema": {
@@ -19607,7 +19607,7 @@
                         "provider_id": {
                           "type": "string"
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string"
                         },
                         "handle": {
@@ -19634,14 +19634,14 @@
                         "avatar_blob_hash",
                         "provider",
                         "provider_id",
-                        "tenant_id",
+                        "space_id",
                         "handle",
                         "auth_user_id",
                         "created_at",
                         "updated_at"
                       ]
                     },
-                    "tenant": {
+                    "space": {
                       "type": "object",
                       "properties": {
                         "id": {
@@ -19664,7 +19664,7 @@
                   },
                   "required": [
                     "user",
-                    "tenant"
+                    "space"
                   ]
                 }
               }
@@ -19710,7 +19710,7 @@
             }
           },
           "404": {
-            "description": "Tenant not found",
+            "description": "Space not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -19824,7 +19824,7 @@
                         "provider_id": {
                           "type": "string"
                         },
-                        "tenant_id": {
+                        "space_id": {
                           "type": "string"
                         },
                         "handle": {
@@ -19851,7 +19851,7 @@
                         "avatar_blob_hash",
                         "provider",
                         "provider_id",
-                        "tenant_id",
+                        "space_id",
                         "handle",
                         "auth_user_id",
                         "created_at",
@@ -19999,7 +19999,7 @@
     },
     {
       "name": "Metadata",
-      "description": "An item's metadata document and the tenant's tag vocabulary."
+      "description": "An item's metadata document and the space's tag vocabulary."
     },
     {
       "name": "Edges",
@@ -20034,8 +20034,8 @@
       "description": "The calling user's profile."
     },
     {
-      "name": "Tenants",
-      "description": "Configuration and quotas for the calling tenant."
+      "name": "Spaces",
+      "description": "Configuration and quotas for the calling space."
     },
     {
       "name": "Connections",
@@ -20063,11 +20063,11 @@
     },
     {
       "name": "Export",
-      "description": "Bulk export of a tenant's data."
+      "description": "Bulk export of a space's data."
     },
     {
       "name": "Audit",
-      "description": "The tenant's audit log."
+      "description": "The space's audit log."
     },
     {
       "name": "Events",

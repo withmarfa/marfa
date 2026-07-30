@@ -1,11 +1,11 @@
 /**
- * Custom edge-type tenant scoping.
+ * Custom edge-type space scoping.
  *
- * A tenant_admin can register custom edge types scoped to their own tenant.
- * The registry resolves a tenant's own custom edge types plus the global core
- * types — never another tenant's. This proves the isolation end to end: tenant
- * A registers an edge type; tenant B cannot see it, cannot create edges of it,
- * and gets `edge_type_not_found`; tenant A can. Reserved-name collision,
+ * A space_admin can register custom edge types scoped to their own space.
+ * The registry resolves a space's own custom edge types plus the global core
+ * types — never another space's. This proves the isolation end to end: space
+ * A registers an edge type; space B cannot see it, cannot create edges of it,
+ * and gets `edge_type_not_found`; space A can. Reserved-name collision,
  * constraint validation, and core-type availability for everyone round out the
  * coverage.
  */
@@ -21,15 +21,15 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
+const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
 let adminA: string;
 let adminB: string;
 
 // Unique namespace per run — the edge-type registry is module-level in
 // @withmarfa/shared and would otherwise leak across test files sharing a
-// worker. Both tenants register under the SAME id to prove per-tenant
-// namespacing: the composite (tenant_id, id) PK lets both coexist.
+// worker. Both spaces register under the SAME id to prove per-space
+// namespacing: the composite (space_id, id) PK lets both coexist.
 const EDGE_ID = `user.benchmarks-${Math.random().toString(36).slice(2, 8)}`;
 
 interface EdgeType {
@@ -45,24 +45,21 @@ interface ErrorBody {
   error: { code: string };
 }
 
-async function mintTenantAdmin(
-  label: string,
-  tenantId: string,
-): Promise<string> {
+async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_et_scope_${suffix}`;
   await ctx.storage.keys.create(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -82,16 +79,16 @@ async function createNote(key: string): Promise<string> {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintTenantAdmin("et-admin-a", tenantA);
-  adminB = await mintTenantAdmin("et-admin-b", tenantB);
+  adminA = await mintSpaceAdmin("et-admin-a", spaceA);
+  adminB = await mintSpaceAdmin("et-admin-b", spaceB);
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("custom edge types — tenant admin can register", () => {
-  it("tenant_admin registers a custom edge type scoped to their tenant (201)", async () => {
+describe("custom edge types — space admin can register", () => {
+  it("space_admin registers a custom edge type scoped to their space (201)", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
       body: {
@@ -106,9 +103,9 @@ describe("custom edge types — tenant admin can register", () => {
     expect(data.edge_type.id).toBe(EDGE_ID);
   });
 
-  it("a second tenant registers the SAME id independently (per-tenant namespace)", async () => {
-    // The composite PK means tenant B's registration of an id tenant A
-    // already used is NOT a conflict — each tenant owns its own vocabulary.
+  it("a second space registers the SAME id independently (per-space namespace)", async () => {
+    // The composite PK means space B's registration of an id space A
+    // already used is NOT a conflict — each space owns its own vocabulary.
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: adminB,
       body: { id: EDGE_ID, cardinality: "one-to-many" },
@@ -116,11 +113,11 @@ describe("custom edge types — tenant admin can register", () => {
     expect(res.status).toBe(201);
     const data = (await res.json()) as { edge_type: EdgeType };
     expect(data.edge_type.id).toBe(EDGE_ID);
-    // Tenant B's own cardinality, not tenant A's.
+    // Space B's own cardinality, not space A's.
     expect(data.edge_type.cardinality).toBe("one-to-many");
   });
 
-  it("re-registering the same id within the same tenant is a 409", async () => {
+  it("re-registering the same id within the same space is a 409", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
       body: { id: EDGE_ID, cardinality: "many-to-many" },
@@ -131,8 +128,8 @@ describe("custom edge types — tenant admin can register", () => {
   });
 });
 
-describe("custom edge types — cross-tenant isolation", () => {
-  it("tenant B's list does not see tenant A's distinct custom edge type", async () => {
+describe("custom edge types — cross-space isolation", () => {
+  it("space B's list does not see space A's distinct custom edge type", async () => {
     // A registers a second, B-invisible edge type.
     const onlyA = `user.only-a-${Math.random().toString(36).slice(2, 8)}`;
     const create = await request(ctx.app, "POST", "/edge-types", {
@@ -156,7 +153,7 @@ describe("custom edge types — cross-tenant isolation", () => {
     expect(dataA.edge_types.map((t) => t.id)).toContain(onlyA);
   });
 
-  it("tenant B cannot create an edge of a type only tenant A registered", async () => {
+  it("space B cannot create an edge of a type only space A registered", async () => {
     const onlyA = `user.aedge-${Math.random().toString(36).slice(2, 8)}`;
     const reg = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
@@ -164,7 +161,7 @@ describe("custom edge types — cross-tenant isolation", () => {
     });
     expect(reg.status).toBe(201);
 
-    // B owns two items but the edge type is unknown in B's tenant.
+    // B owns two items but the edge type is unknown in B's space.
     const bSource = await createNote(adminB);
     const bTarget = await createNote(adminB);
     const res = await request(ctx.app, "POST", "/edges", {
@@ -176,7 +173,7 @@ describe("custom edge types — cross-tenant isolation", () => {
     expect(body.error.code).toBe("edge_type_not_found");
   });
 
-  it("tenant A CAN create an edge of its own custom edge type", async () => {
+  it("space A CAN create an edge of its own custom edge type", async () => {
     const aEdge = `user.aown-${Math.random().toString(36).slice(2, 8)}`;
     const reg = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
@@ -195,7 +192,7 @@ describe("custom edge types — cross-tenant isolation", () => {
     expect(data.edge.edge_type).toBe(aEdge);
   });
 
-  it("tenant B cannot delete a custom edge type that only tenant A owns (404)", async () => {
+  it("space B cannot delete a custom edge type that only space A owns (404)", async () => {
     const onlyA = `user.adelete-${Math.random().toString(36).slice(2, 8)}`;
     const reg = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
@@ -216,7 +213,7 @@ describe("custom edge types — cross-tenant isolation", () => {
   });
 });
 
-describe("custom edge types — correctness rails preserved under tenant_admin", () => {
+describe("custom edge types — correctness rails preserved under space_admin", () => {
   it("409 on redefining a core edge type", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: adminA,
@@ -254,7 +251,7 @@ describe("custom edge types — correctness rails preserved under tenant_admin",
     expect(body.error.code).toBe("edge_constraint_violation");
   });
 
-  it("core edge types still work for every tenant", async () => {
+  it("core edge types still work for every space", async () => {
     const source = await createNote(adminB);
     const target = await createNote(adminB);
     const res = await request(ctx.app, "POST", "/edges", {

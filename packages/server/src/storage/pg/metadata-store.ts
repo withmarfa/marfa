@@ -10,21 +10,21 @@ export class PgMetadataStore implements MetadataStore {
 
   /**
    * Aggregate distinct tags across items the caller can read.
-   * Joins metadata to items to apply tenant + type-permission filtering;
+   * Joins metadata to items to apply space + type-permission filtering;
    * excludes trashed items so the picker doesn't surface dead tags.
    */
   async listTags(filters: {
-    tenantId?: string;
+    spaceId?: string;
     allowedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
-    const tenantClause = filters.tenantId
-      ? sql`AND i.tenant_id = ${filters.tenantId}`
+    const spaceClause = filters.spaceId
+      ? sql`AND i.space_id = ${filters.spaceId}`
       : sql``;
 
     let typesClause = sql``;
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty
-    // list dropped the clause and returned the whole tenant's tag vocabulary
+    // list dropped the clause and returned the whole space's tag vocabulary
     // with counts, which names what exists even when no item behind it is
     // readable.
     if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
@@ -58,7 +58,7 @@ export class PgMetadataStore implements MetadataStore {
         FROM metadata m
         JOIN items i ON i.id = m.item_id
         WHERE i.state != 'trashed'
-          ${tenantClause}
+          ${spaceClause}
           ${typesClause}
       ) sub
       GROUP BY tag

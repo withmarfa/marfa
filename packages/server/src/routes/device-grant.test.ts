@@ -699,7 +699,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   // Defense-in-depth. The token-issuance handler resolves
   // `connection_item_id` (set at consent-approve time) and treats the
   // resulting item as a `system.connection` grant — pulling scopes,
-  // client_id, user_id, tenant_id out of its properties. A corrupted
+  // client_id, user_id, space_id out of its properties. A corrupted
   // `connection_item_id` pointing at any non-grant item must not silently
   // mint a token with whatever scopes that item happened to carry.
   it("rejects token issuance when connection_item_id resolves to a non-system.connection item", async () => {

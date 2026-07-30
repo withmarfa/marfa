@@ -1,15 +1,15 @@
 /**
- * Cross-tenant safety belt for the OAuth bootstrap start route.
+ * Cross-space safety belt for the OAuth bootstrap start route.
  *
  * The credential lookup inside `readAuthorizeConfig` is fenced by the
- * connection's `tenant_id`. Without this fence, if a connection in tenant
- * A held a `credential_ref` pointing at a credential in tenant B, the start
- * route would decrypt tenant B's `oauth_client_id` and embed it in the
- * authorize URL. The fence ensures cross-tenant references resolve to null
+ * connection's `space_id`. Without this fence, if a connection in space
+ * A held a `credential_ref` pointing at a credential in space B, the start
+ * route would decrypt space B's `oauth_client_id` and embed it in the
+ * authorize URL. The fence ensures cross-space references resolve to null
  * and the route returns OAUTH_PROXY_UPSTREAM_INVALID instead.
  *
  * The route's own connection lookup is unfenced by design (only admin /
- * platform callers reach it), so this test seeds the cross-tenant shape
+ * platform callers reach it), so this test seeds the cross-space shape
  * through the storage layer and calls the route as the platform admin.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -29,37 +29,37 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("POST /connections/:id/oauth/start — cross-tenant credential guard", () => {
-  it("refuses to resolve a cross-tenant credential_ref even for a platform admin caller", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenantA = await ctx.storage.tenants.create("t235-oauth-start-A");
-    const tenantB = await ctx.storage.tenants.create("t235-oauth-start-B");
+describe("POST /connections/:id/oauth/start — cross-space credential guard", () => {
+  it("refuses to resolve a cross-space credential_ref even for a platform admin caller", async () => {
+    if (!ctx.storage.spaces) return;
+    const spaceA = await ctx.storage.spaces.create("t235-oauth-start-A");
+    const spaceB = await ctx.storage.spaces.create("t235-oauth-start-B");
 
-    // Credential lives in tenant B. Carries a distinctive client_id
-    // so a regression (leak) would surface as the wrong-tenant
+    // Credential lives in space B. Carries a distinctive client_id
+    // so a regression (leak) would surface as the wrong-space
     // identifier appearing in the returned authorize URL.
     const crossCred = await ctx.storage.items.create(
       {
         type: "system.credential",
         properties: {
-          label: "tenant-B-google",
+          label: "space-B-google",
           kind: "oauth_token",
           oauth_provider_config: {
             oauth_authorize_url: "https://accounts.test/oauth/authorize",
             oauth_token_url: "https://accounts.test/oauth/token",
-            oauth_client_id: "TENANT-B-CLIENT-DO-NOT-LEAK",
+            oauth_client_id: "SPACE-B-CLIENT-DO-NOT-LEAK",
             oauth_default_scope: "openid",
           },
           secret_encrypted: encryptSecret(
-            "tenant-b-secret",
+            "space-b-secret",
             SECRET_INFO.connectionOauthToken,
           ),
         },
       },
-      tenantB.id,
+      spaceB.id,
     );
 
-    // Connection lives in tenant A, pointing at tenant-B's credential.
+    // Connection lives in space A, pointing at space-B's credential.
     // Built through storage to bypass the install pipeline (which
     // would normally reject this shape) — this IS the scenario the
     // belt guards against.
@@ -74,7 +74,7 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard", 
           credential_ref: crossCred.id,
         },
       },
-      tenantA.id,
+      spaceA.id,
     );
 
     const res = await request(
@@ -87,36 +87,36 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard", 
       },
     );
 
-    // Fence holds: credential lookup misses (tenant A scope, cred in
+    // Fence holds: credential lookup misses (space A scope, cred in
     // B), readAuthorizeConfig throws OAUTH_PROXY_UPSTREAM_INVALID.
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
-  it("same-tenant credential_ref resolves cleanly (control case)", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t235-oauth-start-control");
+  it("same-space credential_ref resolves cleanly (control case)", async () => {
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t235-oauth-start-control");
 
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
         properties: {
-          label: "same-tenant-google",
+          label: "same-space-google",
           kind: "oauth_token",
           oauth_provider_config: {
             oauth_authorize_url: "https://accounts.test/oauth/authorize",
             oauth_token_url: "https://accounts.test/oauth/token",
-            oauth_client_id: "SAME-TENANT-CLIENT",
+            oauth_client_id: "SAME-SPACE-CLIENT",
             oauth_default_scope: "openid",
           },
           secret_encrypted: encryptSecret(
-            "same-tenant-secret",
+            "same-space-secret",
             SECRET_INFO.connectionOauthToken,
           ),
         },
       },
-      tenant.id,
+      space.id,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -129,7 +129,7 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard", 
           credential_ref: cred.id,
         },
       },
-      tenant.id,
+      space.id,
     );
 
     const res = await request(
@@ -144,17 +144,17 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard", 
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { authorize_url: string };
-    expect(body.authorize_url).toContain("client_id=SAME-TENANT-CLIENT");
+    expect(body.authorize_url).toContain("client_id=SAME-SPACE-CLIENT");
   });
 });
 
 describe("POST /connections/:id/oauth/start — credential authorize_extra_params", () => {
   async function seedConnection(opts: {
-    tenant_label: string;
+    space_label: string;
     authorize_extra_params?: Record<string, string>;
   }): Promise<string> {
-    if (!ctx.storage.tenants) throw new Error("tenants store required");
-    const tenant = await ctx.storage.tenants.create(opts.tenant_label);
+    if (!ctx.storage.spaces) throw new Error("spaces store required");
+    const space = await ctx.storage.spaces.create(opts.space_label);
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -176,7 +176,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           ),
         },
       },
-      tenant.id,
+      space.id,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -189,14 +189,14 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           credential_ref: cred.id,
         },
       },
-      tenant.id,
+      space.id,
     );
     return conn.id;
   }
 
   it("merges credential.authorize_extra_params into the authorize URL when caller passes no extra_params", async () => {
     const connId = await seedConnection({
-      tenant_label: "t259-merge-defaults",
+      space_label: "t259-merge-defaults",
       authorize_extra_params: {
         access_type: "offline",
         prompt: "consent",
@@ -219,7 +219,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
 
   it("caller's extra_params overrides credential defaults per-key", async () => {
     const connId = await seedConnection({
-      tenant_label: "t259-caller-overrides",
+      space_label: "t259-caller-overrides",
       authorize_extra_params: {
         access_type: "offline",
         prompt: "consent",
@@ -247,7 +247,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
 
   it("absent authorize_extra_params on the credential leaves the URL clean", async () => {
     const connId = await seedConnection({
-      tenant_label: "t259-no-defaults",
+      space_label: "t259-no-defaults",
     });
     const res = await request(
       ctx.app,
@@ -265,8 +265,8 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
   });
 
   it("malformed authorize_extra_params on the credential is ignored (not echoed verbatim)", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t259-malformed");
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t259-malformed");
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -291,7 +291,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           ),
         },
       },
-      tenant.id,
+      space.id,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -304,7 +304,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           credential_ref: cred.id,
         },
       },
-      tenant.id,
+      space.id,
     );
     const res = await request(
       ctx.app,
@@ -329,8 +329,8 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
   // oauthRedirectAllowlist, since these are app-construction-time config and
   // can't be varied per-request. Seeds one valid connection per context.
   async function seedConnection(c: TestContext): Promise<string> {
-    if (!c.storage.tenants) throw new Error("tenants store required");
-    const tenant = await c.storage.tenants.create(
+    if (!c.storage.spaces) throw new Error("spaces store required");
+    const space = await c.storage.spaces.create(
       `redirect-allowlist-${Math.random().toString(36).slice(2, 10)}`,
     );
     const cred = await c.storage.items.create(
@@ -351,7 +351,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
           ),
         },
       },
-      tenant.id,
+      space.id,
     );
     const conn = await c.storage.items.create(
       {
@@ -364,7 +364,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
           credential_ref: cred.id,
         },
       },
-      tenant.id,
+      space.id,
     );
     return conn.id;
   }
@@ -375,7 +375,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
       oauthRedirectAllowlist: [],
     });
     try {
-      if (!hostedCtx.storage.tenants) return; // hosted requires the tenant store
+      if (!hostedCtx.storage.spaces) return; // hosted requires the space store
       const connId = await seedConnection(hostedCtx);
       const res = await request(
         hostedCtx.app,
@@ -400,7 +400,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
       oauthRedirectAllowlist: [],
     });
     try {
-      if (!keysCtx.storage.tenants) return;
+      if (!keysCtx.storage.spaces) return;
       const connId = await seedConnection(keysCtx);
       const res = await request(
         keysCtx.app,
@@ -427,7 +427,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
       oauthRedirectAllowlist: ["https://app.example/callback"],
     });
     try {
-      if (!hostedCtx.storage.tenants) return;
+      if (!hostedCtx.storage.spaces) return;
       const connId = await seedConnection(hostedCtx);
 
       // Listed URI passes.

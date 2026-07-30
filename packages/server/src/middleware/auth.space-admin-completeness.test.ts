@@ -1,23 +1,23 @@
 /**
- * tenant_admin completeness coverage.
+ * space_admin completeness coverage.
  *
  * Covers:
  *
- *   - `checkTypeAccess` and `computeTypeFilter` admit `tenant_admin`
- *     with the same bypass admin gets — `tenant_admin` is the
- *     "admin within tenant" tier and shouldn't be additionally gated
+ *   - `checkTypeAccess` and `computeTypeFilter` admit `space_admin`
+ *     with the same bypass admin gets — `space_admin` is the
+ *     "admin within space" tier and shouldn't be additionally gated
  *     by `type_permissions`.
  *
- *   - `GET /tenants/me/quotas` returns the calling tenant's row for
- *     tenant_admin; rejects platform-admin (no tenant_id) with 400.
+ *   - `GET /spaces/me/quotas` returns the calling space's row for
+ *     space_admin; rejects platform-admin (no space_id) with 400.
  *
- *   - `GET /keys` (widened): tenant_admin sees only own-tenant keys.
+ *   - `GET /keys` (widened): space_admin sees only own-space keys.
  *
- *   - `DELETE /keys/:id` (widened): tenant_admin can revoke own-
- *     tenant key; cross-tenant attempts surface as 404 (cloak).
+ *   - `DELETE /keys/:id` (widened): space_admin can revoke own-
+ *     space key; cross-space attempts surface as 404 (cloak).
  *
- *   - `DELETE /items/:id/purge` (widened): tenant_admin can purge
- *     own-tenant items.
+ *   - `DELETE /items/:id/purge` (widened): space_admin can purge
+ *     own-space items.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -42,9 +42,9 @@ import {
  * per-test shape is what pushes this file over its budget.
  *
  * Sharing is safe because none of these tests rely on database isolation:
- * every one mints its own randomized tenant id, and the assertions are all
- * scoped to that tenant. Rows left behind by a sibling test belong to a
- * different tenant and are invisible to the route under test — which is
+ * every one mints its own randomized space id, and the assertions are all
+ * scoped to that space. Rows left behind by a sibling test belong to a
+ * different space and are invisible to the route under test — which is
  * itself the property being verified.
  */
 let ctx: TestContext;
@@ -63,7 +63,7 @@ function fakeKey(
 ): ApiKey {
   return {
     id: "key-test",
-    tenant_id: "tenant-test",
+    space_id: "space-test",
     label: "test",
     source: "test",
     role,
@@ -84,7 +84,7 @@ async function mintKey(
   opts: {
     label: string;
     role: ApiKey["role"];
-    tenantId?: string;
+    spaceId?: string;
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -99,7 +99,7 @@ async function mintKey(
       type_permissions: {},
     },
     keyHash,
-    opts.tenantId,
+    opts.spaceId,
   );
   return raw;
 }
@@ -108,9 +108,9 @@ async function mintKey(
 // Unit — type_permissions bypass + computeTypeFilter
 // ---------------------------------------------------------------------------
 
-describe("tenant_admin bypasses type_permissions", () => {
-  it("checkTypeAccess returns silently for tenant_admin on any type", () => {
-    const key = fakeKey("tenant_admin", { type_permissions: {} });
+describe("space_admin bypasses type_permissions", () => {
+  it("checkTypeAccess returns silently for space_admin on any type", () => {
+    const key = fakeKey("space_admin", { type_permissions: {} });
     expect(() => {
       checkTypeAccess(key, "core.note", "write");
     }).not.toThrow();
@@ -123,7 +123,7 @@ describe("tenant_admin bypasses type_permissions", () => {
   });
 
   it("checkTypeAccess still gates system.* writes on is_platform", () => {
-    const key = fakeKey("tenant_admin", {
+    const key = fakeKey("space_admin", {
       type_permissions: {},
       is_platform: false,
     });
@@ -136,8 +136,8 @@ describe("tenant_admin bypasses type_permissions", () => {
     }).toThrow();
   });
 
-  it("computeTypeFilter returns undefined (no filter) for tenant_admin", () => {
-    const key = fakeKey("tenant_admin", {
+  it("computeTypeFilter returns undefined (no filter) for space_admin", () => {
+    const key = fakeKey("space_admin", {
       type_permissions: { "core.note": "read" },
     });
     expect(computeTypeFilter(key)).toBeUndefined();
@@ -153,47 +153,47 @@ describe("tenant_admin bypasses type_permissions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration — widened routes + new GET /tenants/me/quotas
+// Integration — widened routes + new GET /spaces/me/quotas
 // ---------------------------------------------------------------------------
 
-describe("GET /tenants/me/quotas", () => {
-  it("returns the calling tenant's quota row for tenant_admin", async () => {
-    const tenantA = `tenant-quota-${Math.random().toString(36).slice(2, 10)}`;
+describe("GET /spaces/me/quotas", () => {
+  it("returns the calling space's quota row for space_admin", async () => {
+    const spaceA = `space-quota-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-quota",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
 
     // Pre-populate a quota row via the storage layer.
-    await ctx.storage.tenantQuotas.set(tenantA, { items_limit: 42 });
+    await ctx.storage.spaceQuotas.set(spaceA, { items_limit: 42 });
 
-    const res = await request(ctx.app, "GET", "/tenants/me/quotas", {
+    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
       key: wsAdmin,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.tenant_id).toBe(tenantA);
+    expect(body.space_id).toBe(spaceA);
     expect(body.items_limit).toBe(42);
     expect(body.webhooks_limit).toBe(null);
   });
 
-  it("rejects platform-admin (no tenant_id) with 400", async () => {
-    // ctx.adminKey is the bootstrap platform admin — no tenant_id.
-    const res = await request(ctx.app, "GET", "/tenants/me/quotas", {
+  it("rejects platform-admin (no space_id) with 400", async () => {
+    // ctx.adminKey is the bootstrap platform admin — no space_id.
+    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("rejects member with FORBIDDEN", async () => {
-    const tenantA = `tenant-quota-mem-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `space-quota-mem-${Math.random().toString(36).slice(2, 10)}`;
     const member = await mintKey(ctx, {
       label: "member-quota",
       role: "member",
-      tenantId: tenantA,
+      spaceId: spaceA,
     });
-    const res = await request(ctx.app, "GET", "/tenants/me/quotas", {
+    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
       key: member,
     });
     expect(res.status).toBe(403);
@@ -201,81 +201,81 @@ describe("GET /tenants/me/quotas", () => {
 });
 
 describe("widened routes — keys + items.purge", () => {
-  it("tenant_admin GET /keys lists only own-tenant keys", async () => {
-    const tenantA = `tenant-keys-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `tenant-keys-b-${Math.random().toString(36).slice(2, 10)}`;
+  it("space_admin GET /keys lists only own-space keys", async () => {
+    const spaceA = `space-keys-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `space-keys-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
       label: "ws-keys-a",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
-    // Mint a tenant B key — tenant_admin in tenant A should not see it.
+    // Mint a space B key — space_admin in space A should not see it.
     await mintKey(ctx, {
       label: "ws-keys-b",
-      role: "tenant_admin",
-      tenantId: tenantB,
+      role: "space_admin",
+      spaceId: spaceB,
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: wsAdminA });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { keys: { tenant_id: string | null }[] };
-    // Every visible key has tenant_id === tenantA. None from tenant B.
+    const body = (await res.json()) as { keys: { space_id: string | null }[] };
+    // Every visible key has space_id === spaceA. None from space B.
     for (const k of body.keys) {
-      expect(k.tenant_id).toBe(tenantA);
+      expect(k.space_id).toBe(spaceA);
     }
     expect(body.keys.length).toBeGreaterThan(0);
   });
 
-  it("tenant_admin DELETE /keys/:id of cross-tenant key returns 404", async () => {
-    const tenantA = `tenant-rev-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `tenant-rev-b-${Math.random().toString(36).slice(2, 10)}`;
+  it("space_admin DELETE /keys/:id of cross-space key returns 404", async () => {
+    const spaceA = `space-rev-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `space-rev-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
       label: "ws-rev-a",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
-    // Mint a key in tenant B; capture its id directly from the store
+    // Mint a key in space B; capture its id directly from the store
     // (tests don't need the raw key, just the row id).
     await mintKey(ctx, {
       label: "ws-rev-b",
-      role: "tenant_admin",
-      tenantId: tenantB,
+      role: "space_admin",
+      spaceId: spaceB,
     });
     const allKeys = await ctx.storage.keys.list();
-    const tenantBKey = allKeys.find((k) => k.tenant_id === tenantB);
-    expect(tenantBKey).toBeDefined();
+    const spaceBKey = allKeys.find((k) => k.space_id === spaceB);
+    expect(spaceBKey).toBeDefined();
 
     const res = await request(
       ctx.app,
       "DELETE",
-      `/keys/${tenantBKey?.id ?? ""}`,
+      `/keys/${spaceBKey?.id ?? ""}`,
       { key: wsAdminA },
     );
     expect(res.status).toBe(404);
   });
 
-  it("tenant_admin can purge an item in own tenant", async () => {
-    const tenantA = `tenant-purge-${Math.random().toString(36).slice(2, 10)}`;
+  it("space_admin can purge an item in own space", async () => {
+    const spaceA = `space-purge-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-purge",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
 
     // Create + trash an item via storage so the test doesn't have to
     // model the full lifecycle through HTTP.
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "doomed" } },
-      tenantA,
+      spaceA,
     );
-    await ctx.storage.items.transition(item.id, "trashed", tenantA);
+    await ctx.storage.items.transition(item.id, "trashed", spaceA);
 
     const res = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
       key: wsAdmin,
     });
     expect(res.status).toBe(200);
 
-    const after = await ctx.storage.items.get(item.id, tenantA);
+    const after = await ctx.storage.items.get(item.id, spaceA);
     expect(after).toBeNull();
   });
 });

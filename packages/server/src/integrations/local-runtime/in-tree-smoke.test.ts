@@ -156,8 +156,8 @@ function makeDirectDispatch(
     const connectionContext: ConnectionContext = {
       connection_id: request.message.connection_id,
       integration_name: request.message.integration_name,
-      ...(request.message.tenant_id !== undefined && {
-        tenant_id: request.message.tenant_id,
+      ...(request.message.space_id !== undefined && {
+        space_id: request.message.space_id,
       }),
       marfa: client,
       cursor: createCursorStore(cursorAdapter),

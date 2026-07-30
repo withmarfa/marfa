@@ -37,7 +37,7 @@ const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
 async function signUp(
   c: TestContext,
   email: string,
-): Promise<{ authUserId: string; tenantId: string }> {
+): Promise<{ authUserId: string; spaceId: string }> {
   const res = await request(c.app, "POST", "/auth/sign-up/email", {
     body: { email, password: "correct horse battery", name: "Test User" },
     headers: { origin: ORIGIN },
@@ -47,18 +47,18 @@ async function signUp(
     ?.id;
   expect(authUserId).toBeTruthy();
   const row = await c.storage.users?.getByAuthUserId(authUserId ?? "");
-  expect(row?.tenant_id).toBeTruthy();
-  return { authUserId: authUserId ?? "", tenantId: row?.tenant_id ?? "" };
+  expect(row?.space_id).toBeTruthy();
+  return { authUserId: authUserId ?? "", spaceId: row?.space_id ?? "" };
 }
 
 /**
- * Mint a bearer inside a tenant. `role` is the axis under test in the write
+ * Mint a bearer inside a space. `role` is the axis under test in the write
  * gate: `admin` bypasses the permission maps but never the platform gate,
  * `member` is bound by `type_permissions`.
  */
 async function mintKey(
   storage: Storage,
-  tenantId: string,
+  spaceId: string,
   role: "admin" | "member",
 ): Promise<string> {
   const raw = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
@@ -71,29 +71,42 @@ async function mintKey(
       edge_permissions: { "*": "write" },
     },
     hashApiKey(raw, SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
 
 async function countHandles(
   storage: Storage,
-  tenantId: string,
+  spaceId: string,
 ): Promise<number> {
   const page = await storage.items.list({
-    tenantId,
+    spaceId,
     type: ACCOUNT_HOLDER_TYPE,
     limit: 50,
   });
   return page.data.length;
 }
 
-/** Apply the backfill migration for the running dialect, verbatim. */
+/**
+ * Apply the backfill migration for the running dialect against the current
+ * schema.
+ *
+ * The file is read rather than reproduced, so a change to the backfill's logic
+ * still has to pass here. Its column name is rewritten in memory because the
+ * migration predates the tenant-to-space rename: applied migrations are
+ * history and are never edited, and in the real ordering this one runs long
+ * before the rename, so it only ever meets a database that still has the old
+ * column. Replaying its literal text against a renamed schema tests a
+ * situation that cannot occur.
+ */
 async function runBackfillMigration(storage: Storage): Promise<void> {
   const file = isPg()
     ? "../../drizzle/pg/0072_backfill_account_holder_items.sql"
     : "../../drizzle/sqlite/0059_backfill_account_holder_items.sql";
-  const sql = readFileSync(new URL(file, import.meta.url), "utf8");
+  const sql = readFileSync(new URL(file, import.meta.url), "utf8")
+    .replace(/\btenant_id\b/g, "space_id")
+    .replace(/\btenants\b/g, "spaces");
   if (isPg()) {
     const s = storage as unknown as {
       __pgClient: (q: string, p?: unknown[]) => Promise<unknown[]>;
@@ -113,12 +126,12 @@ describe("account-holder provisioning", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-one@example.com");
+    const { spaceId } = await signUp(ctx, "holder-one@example.com");
 
-    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    expect(await countHandles(ctx.storage, spaceId)).toBe(1);
 
     const page = await ctx.storage.items.list({
-      tenantId,
+      spaceId,
       type: ACCOUNT_HOLDER_TYPE,
       limit: 50,
     });
@@ -126,7 +139,7 @@ describe("account-holder provisioning", () => {
     // The natural key is what makes "one per space" a database constraint
     // rather than a convention, so assert the row actually carries it.
     expect(handle?.source).toBe("system");
-    expect(handle?.source_id).toBe(accountHolderSourceId(tenantId));
+    expect(handle?.source_id).toBe(accountHolderSourceId(spaceId));
     expect(handle?.state).toBe("active");
     expect(handle?.properties).toEqual({});
     // Route-layer path params are validated against the UUIDv7 grammar; an
@@ -140,7 +153,7 @@ describe("account-holder provisioning", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-dupe@example.com");
+    const { spaceId } = await signUp(ctx, "holder-dupe@example.com");
     // Better Auth's no-enumeration sign-up returns the existing user id, so
     // the hook runs a second time against an account that already has one.
     await request(ctx.app, "POST", "/auth/sign-up/email", {
@@ -152,16 +165,16 @@ describe("account-holder provisioning", () => {
       headers: { origin: ORIGIN },
     });
 
-    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    expect(await countHandles(ctx.storage, spaceId)).toBe(1);
 
     // The hook short-circuits on an existing `users` row, so the assertion
     // above would hold even for a helper that blindly inserted. Drive the
     // helper directly to pin its own idempotency: it must resolve the
     // existing row, not race the unique index for a second one.
-    const first = await ensureAccountHolderItem(ctx.storage, tenantId);
-    const second = await ensureAccountHolderItem(ctx.storage, tenantId);
+    const first = await ensureAccountHolderItem(ctx.storage, spaceId);
+    const second = await ensureAccountHolderItem(ctx.storage, spaceId);
     expect(second.id).toBe(first.id);
-    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    expect(await countHandles(ctx.storage, spaceId)).toBe(1);
   });
 
   it("exposes the handle id on the profile wire shape", async () => {
@@ -169,14 +182,14 @@ describe("account-holder provisioning", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-profile@example.com");
-    const key = await mintKey(ctx.storage, tenantId, "admin");
+    const { spaceId } = await signUp(ctx, "holder-profile@example.com");
+    const key = await mintKey(ctx.storage, spaceId, "admin");
 
     const res = await request(ctx.app, "GET", "/profile/me", { key });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { account_holder_item_id?: string };
     const page = await ctx.storage.items.list({
-      tenantId,
+      spaceId,
       type: ACCOUNT_HOLDER_TYPE,
       limit: 50,
     });
@@ -190,8 +203,8 @@ describe("account-holder edges", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-edge@example.com");
-    const key = await mintKey(ctx.storage, tenantId, "admin");
+    const { spaceId } = await signUp(ctx, "holder-edge@example.com");
+    const key = await mintKey(ctx.storage, spaceId, "admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -234,8 +247,8 @@ describe("account-holder edges", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-unfixed@example.com");
-    const key = await mintKey(ctx.storage, tenantId, "admin");
+    const { spaceId } = await signUp(ctx, "holder-unfixed@example.com");
+    const key = await mintKey(ctx.storage, spaceId, "admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -247,7 +260,7 @@ describe("account-holder edges", () => {
     // `bulkPurge` rather than `purge` because the single-item path requires
     // a trashed row, and `trashed` is not reachable on the bounded
     // `system.*` lifecycle.
-    await ctx.storage.items.bulkPurge([holderId], tenantId);
+    await ctx.storage.items.bulkPurge([holderId], spaceId);
 
     const noteRes = await request(ctx.app, "POST", "/items", {
       key,
@@ -280,14 +293,14 @@ describe("account-holder edges", () => {
 describe("account-holder backfill migration", () => {
   it("creates exactly one handle per existing space and is re-runnable", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
-    const tenants = ctx.storage.tenants;
-    expect(tenants).toBeTruthy();
+    const spaces = ctx.storage.spaces;
+    expect(spaces).toBeTruthy();
 
     // Two spaces that predate the provisioning hook, plus one that already
     // has its handle: the guard has to skip the third without duplicating it.
-    const older = await tenants!.create("Older Space");
-    const oldest = await tenants!.create("Oldest Space");
-    const current = await tenants!.create("Current Space");
+    const older = await spaces!.create("Older Space");
+    const oldest = await spaces!.create("Oldest Space");
+    const current = await spaces!.create("Current Space");
     const alreadyProvisioned = await ensureAccountHolderItem(
       ctx.storage,
       current.id,
@@ -295,11 +308,11 @@ describe("account-holder backfill migration", () => {
 
     await runBackfillMigration(ctx.storage);
 
-    for (const tenantId of [older.id, oldest.id, current.id]) {
-      expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    for (const spaceId of [older.id, oldest.id, current.id]) {
+      expect(await countHandles(ctx.storage, spaceId)).toBe(1);
     }
     const backfilled = await ctx.storage.items.list({
-      tenantId: older.id,
+      spaceId: older.id,
       type: ACCOUNT_HOLDER_TYPE,
       limit: 50,
     });
@@ -310,7 +323,7 @@ describe("account-holder backfill migration", () => {
 
     // The pre-existing row is left alone, not rewritten under a new id.
     const currentAfter = await ctx.storage.items.list({
-      tenantId: current.id,
+      spaceId: current.id,
       type: ACCOUNT_HOLDER_TYPE,
       limit: 50,
     });
@@ -318,8 +331,8 @@ describe("account-holder backfill migration", () => {
 
     // Re-runnable: a second application adds nothing.
     await runBackfillMigration(ctx.storage);
-    for (const tenantId of [older.id, oldest.id, current.id]) {
-      expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    for (const spaceId of [older.id, oldest.id, current.id]) {
+      expect(await countHandles(ctx.storage, spaceId)).toBe(1);
     }
   });
 });
@@ -330,11 +343,11 @@ describe("account-holder lifecycle", () => {
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { authUserId, tenantId } = await signUp(
+    const { authUserId, spaceId } = await signUp(
       ctx,
       "holder-delete@example.com",
     );
-    const key = await mintKey(ctx.storage, tenantId, "admin");
+    const key = await mintKey(ctx.storage, spaceId, "admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -377,16 +390,16 @@ describe("account-holder lifecycle", () => {
 });
 
 describe("account-holder write gate", () => {
-  it("refuses create, update and delete from an ordinary tenant credential", async () => {
+  it("refuses create, update and delete from an ordinary space credential", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
     });
-    const { tenantId } = await signUp(ctx, "holder-gate@example.com");
-    const memberKey = await mintKey(ctx.storage, tenantId, "member");
+    const { spaceId } = await signUp(ctx, "holder-gate@example.com");
+    const memberKey = await mintKey(ctx.storage, spaceId, "member");
 
     const page = await ctx.storage.items.list({
-      tenantId,
+      spaceId,
       type: ACCOUNT_HOLDER_TYPE,
       limit: 50,
     });
@@ -415,6 +428,6 @@ describe("account-holder write gate", () => {
     expect(del.status).toBe(403);
 
     // The row is untouched by all three attempts.
-    expect(await countHandles(ctx.storage, tenantId)).toBe(1);
+    expect(await countHandles(ctx.storage, spaceId)).toBe(1);
   });
 });

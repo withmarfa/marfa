@@ -6,27 +6,27 @@
  *
  * Routes:
  *
- *   - POST   /admin/tenants                       — create a tenant
- *   - GET    /admin/tenants                       — list all tenants
- *   - GET    /admin/tenants/:id                   — full row + quotas + recent activity
- *   - POST   /admin/tenants/:id/suspend           — flip status to 'suspended'
- *   - POST   /admin/tenants/:id/unsuspend         — flip status to 'active'
- *   - GET    /admin/tenants/:id/metrics           — usage snapshot
- *   - GET    /admin/tenants/:id/keys              — a tenant's API keys
- *   - POST   /admin/tenants/:id/keys              — mint a key bound to that tenant
+ *   - POST   /admin/spaces                       — create a space
+ *   - GET    /admin/spaces                       — list all spaces
+ *   - GET    /admin/spaces/:id                   — full row + quotas + recent activity
+ *   - POST   /admin/spaces/:id/suspend           — flip status to 'suspended'
+ *   - POST   /admin/spaces/:id/unsuspend         — flip status to 'active'
+ *   - GET    /admin/spaces/:id/metrics           — usage snapshot
+ *   - GET    /admin/spaces/:id/keys              — a space's API keys
+ *   - POST   /admin/spaces/:id/keys              — mint a key bound to that space
  *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep
  *
- * Quotas READ/WRITE for a specific tenant reuses the existing
- * `/tenants/:id/quotas` GET + PUT (already platform-admin-gated). No
- * `/admin/tenants/:id/quotas` shim is added — the CLI hits the existing
+ * Quotas READ/WRITE for a specific space reuses the existing
+ * `/spaces/:id/quotas` GET + PUT (already platform-admin-gated). No
+ * `/admin/spaces/:id/quotas` shim is added — the CLI hits the existing
  * route directly.
  *
- * Suspend / unsuspend each emit a `tenant.suspend` / `tenant.unsuspend`
- * audit row with the actor key id, target tenant id, and timestamp.
+ * Suspend / unsuspend each emit a `space.suspend` / `space.unsuspend`
+ * audit row with the actor key id, target space id, and timestamp.
  * `account-deletion/purge-now` emits an `admin.account_deletion.purge_now`
- * audit row with `tenant_id: null` (instance-wide sweep). Suspended
- * tenants reject writes at the auth middleware layer
- * (`middleware/tenant-suspension.ts`); platform admins bypass.
+ * audit row with `space_id: null` (instance-wide sweep). Suspended
+ * spaces reject writes at the auth middleware layer
+ * (`middleware/space-suspension.ts`); platform admins bypass.
  */
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -37,27 +37,27 @@ import { hashApiKey, requireAdmin } from "../middleware/auth.js";
 import { assertUnreservedSource } from "./keys.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { evictTenantStatus } from "../middleware/tenant-suspension.js";
+import { evictSpaceStatus } from "../middleware/space-suspension.js";
 import { PendingDeletePurger } from "../storage/retention.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
-const TenantSchema = z.object({
+const SpaceSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
   created_at: z.string(),
   status: z.enum(["active", "suspended"]),
 });
 
-const AdminTenantSchema = TenantSchema.extend({
+const AdminSpaceSchema = SpaceSchema.extend({
   owner_email: z.string().nullable(),
   owner_email_verified: z.boolean().nullable(),
 });
 
 const QuotaSchema = z.object({
-  tenant_id: z.string(),
+  space_id: z.string(),
   items_limit: z.number().int().nullable(),
   webhooks_limit: z.number().int().nullable(),
   blobs_limit: z.number().int().nullable(),
@@ -73,14 +73,14 @@ const ActivityEntrySchema = z.object({
   created_at: z.string(),
 });
 
-const TenantShowSchema = z.object({
-  tenant: AdminTenantSchema,
+const SpaceShowSchema = z.object({
+  space: AdminSpaceSchema,
   quotas: QuotaSchema.nullable(),
   recent_activity: z.array(ActivityEntrySchema),
 });
 
-const TenantMetricsSchema = z.object({
-  tenant_id: z.string(),
+const SpaceMetricsSchema = z.object({
+  space_id: z.string(),
   items: z.object({
     total: z.number(),
     active: z.number(),
@@ -110,7 +110,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "tenant_admin", "member"]),
+  role: z.enum(["admin", "space_admin", "member"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -125,10 +125,10 @@ const KeyResponseSchema = z.object({
   last_used_at: z.string().nullable(),
 });
 
-const CreateTenantKeyBodySchema = z.object({
+const CreateSpaceKeyBodySchema = z.object({
   label: z.string().min(1, "label is required"),
   source: z.string().min(1, "source display name is required").max(200),
-  role: z.enum(["admin", "tenant_admin", "member"]).optional(),
+  role: z.enum(["admin", "space_admin", "member"]).optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
     .record(z.string(), z.enum(["read", "write", "none"]))
@@ -146,14 +146,14 @@ const CreateTenantKeyBodySchema = z.object({
 // Route definitions
 // ---------------------------------------------------------------------------
 
-const createTenantRoute = createRoute({
-  operationId: "adminCreateTenant",
+const createSpaceRoute = createRoute({
+  operationId: "adminCreateSpace",
   method: "post",
-  path: "/tenants",
+  path: "/spaces",
   tags: ["Admin"],
-  summary: "Create a tenant",
+  summary: "Create a space",
   description:
-    "Creates an empty tenant and returns it. Platform-admin only. Pair with `POST /admin/tenants/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a tenant already existed, so before this a tenant could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a tenant-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
+    "Creates an empty space and returns it. Platform-admin only. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -166,7 +166,7 @@ const createTenantRoute = createRoute({
               .max(200)
               .optional()
               .describe(
-                "Human-readable label. Optional; the tenant is identified by its id.",
+                "Human-readable label. Optional; the space is identified by its id.",
               ),
           }),
         },
@@ -175,8 +175,8 @@ const createTenantRoute = createRoute({
   },
   responses: {
     201: {
-      content: { "application/json": { schema: TenantSchema } },
-      description: "Tenant created",
+      content: { "application/json": { schema: SpaceSchema } },
+      description: "Space created",
     },
     400: {
       content: {
@@ -208,28 +208,28 @@ const createTenantRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Instance is not multi-tenant",
+      description: "Instance is not multi-space",
     },
   },
 });
 
-const listTenantsRoute = createRoute({
-  operationId: "adminListTenants",
+const listSpacesRoute = createRoute({
+  operationId: "adminListSpaces",
   method: "get",
-  path: "/tenants",
+  path: "/spaces",
   tags: ["Admin"],
-  summary: "List tenants",
+  summary: "List spaces",
   description:
-    "Lists every tenant in the instance with current operator status. Platform-admin only.",
+    "Lists every space in the instance with current operator status. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: z.object({ data: z.array(AdminTenantSchema) }),
+          schema: z.object({ data: z.array(AdminSpaceSchema) }),
         },
       },
-      description: "Tenant list",
+      description: "Space list",
     },
     401: {
       content: {
@@ -250,22 +250,22 @@ const listTenantsRoute = createRoute({
   },
 });
 
-const showTenantRoute = createRoute({
-  operationId: "adminGetTenant",
+const showSpaceRoute = createRoute({
+  operationId: "adminGetSpace",
   method: "get",
-  path: "/tenants/{id}",
+  path: "/spaces/{id}",
   tags: ["Admin"],
-  summary: "Show a tenant",
+  summary: "Show a space",
   description:
-    "Returns the tenant row, its current quota overrides, and a slice of recent activity. Quota overrides are null when none are configured. Platform-admin only.",
+    "Returns the space row, its current quota overrides, and a slice of recent activity. Quota overrides are null when none are configured. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id.") }),
+    params: z.object({ id: z.string().describe("Space id.") }),
   },
   responses: {
     200: {
-      content: { "application/json": { schema: TenantShowSchema } },
-      description: "Tenant detail",
+      content: { "application/json": { schema: SpaceShowSchema } },
+      description: "Space detail",
     },
     401: {
       content: {
@@ -289,27 +289,27 @@ const showTenantRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
 
-const suspendTenantRoute = createRoute({
-  operationId: "adminSuspendTenant",
+const suspendSpaceRoute = createRoute({
+  operationId: "adminSuspendSpace",
   method: "post",
-  path: "/tenants/{id}/suspend",
+  path: "/spaces/{id}/suspend",
   tags: ["Admin"],
-  summary: "Suspend a tenant",
+  summary: "Suspend a space",
   description:
-    "Suspends the tenant, after which its credentials are rejected on writes while reads still pass through. Idempotent; re-suspending is a no-op.",
+    "Suspends the space, after which its credentials are rejected on writes while reads still pass through. Idempotent; re-suspending is a no-op.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id to suspend.") }),
+    params: z.object({ id: z.string().describe("Space id to suspend.") }),
   },
   responses: {
     200: {
-      content: { "application/json": { schema: TenantSchema } },
-      description: "Updated tenant row",
+      content: { "application/json": { schema: SpaceSchema } },
+      description: "Updated space row",
     },
     401: {
       content: {
@@ -333,27 +333,27 @@ const suspendTenantRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
 
-const unsuspendTenantRoute = createRoute({
-  operationId: "adminUnsuspendTenant",
+const unsuspendSpaceRoute = createRoute({
+  operationId: "adminUnsuspendSpace",
   method: "post",
-  path: "/tenants/{id}/unsuspend",
+  path: "/spaces/{id}/unsuspend",
   tags: ["Admin"],
-  summary: "Unsuspend a tenant",
+  summary: "Unsuspend a space",
   description:
-    "Reactivates a suspended tenant, restoring write access. Idempotent.",
+    "Reactivates a suspended space, restoring write access. Idempotent.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id to unsuspend.") }),
+    params: z.object({ id: z.string().describe("Space id to unsuspend.") }),
   },
   responses: {
     200: {
-      content: { "application/json": { schema: TenantSchema } },
-      description: "Updated tenant row",
+      content: { "application/json": { schema: SpaceSchema } },
+      description: "Updated space row",
     },
     401: {
       content: {
@@ -377,26 +377,26 @@ const unsuspendTenantRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
 
-const tenantMetricsRoute = createRoute({
-  operationId: "adminGetTenantMetrics",
+const spaceMetricsRoute = createRoute({
+  operationId: "adminGetSpaceMetrics",
   method: "get",
-  path: "/tenants/{id}/metrics",
+  path: "/spaces/{id}/metrics",
   tags: ["Admin"],
-  summary: "Get tenant metrics",
+  summary: "Get space metrics",
   description:
-    "Returns a per-tenant usage snapshot covering item, blob, and storage counts plus recent activity. Platform-admin only.",
+    "Returns a per-space usage snapshot covering item, blob, and storage counts plus recent activity. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id.") }),
+    params: z.object({ id: z.string().describe("Space id.") }),
   },
   responses: {
     200: {
-      content: { "application/json": { schema: TenantMetricsSchema } },
+      content: { "application/json": { schema: SpaceMetricsSchema } },
       description: "Metrics snapshot",
     },
     401: {
@@ -421,22 +421,22 @@ const tenantMetricsRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
 
-const listTenantKeysRoute = createRoute({
-  operationId: "adminListTenantKeys",
+const listSpaceKeysRoute = createRoute({
+  operationId: "adminListSpaceKeys",
   method: "get",
-  path: "/tenants/{id}/keys",
+  path: "/spaces/{id}/keys",
   tags: ["Admin"],
-  summary: "List a tenant's API keys",
+  summary: "List a space's API keys",
   description:
-    "Lists active (non-revoked) API keys for a tenant, for emergency revocation paired with key deletion. Platform-admin only.",
+    "Lists active (non-revoked) API keys for a space, for emergency revocation paired with key deletion. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id.") }),
+    params: z.object({ id: z.string().describe("Space id.") }),
   },
   responses: {
     200: {
@@ -466,25 +466,25 @@ const listTenantKeysRoute = createRoute({
   },
 });
 
-const createTenantKeyRoute = createRoute({
-  operationId: "adminCreateTenantKey",
+const createSpaceKeyRoute = createRoute({
+  operationId: "adminCreateSpaceKey",
   method: "post",
-  path: "/tenants/{id}/keys",
+  path: "/spaces/{id}/keys",
   tags: ["Admin"],
-  summary: "Create a tenant-bound API key",
+  summary: "Create a space-bound API key",
   description:
-    "Creates an API key bound to the specified tenant. Platform-admin only. The plaintext key is returned only in this response.",
+    "Creates an API key bound to the specified space. Platform-admin only. The plaintext key is returned only in this response.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().describe("Tenant id.") }),
+    params: z.object({ id: z.string().describe("Space id.") }),
     body: {
-      content: { "application/json": { schema: CreateTenantKeyBodySchema } },
+      content: { "application/json": { schema: CreateSpaceKeyBodySchema } },
     },
   },
   responses: {
     201: {
       content: { "application/json": { schema: KeyResponseSchema } },
-      description: "Tenant-bound API key created",
+      description: "Space-bound API key created",
     },
     401: {
       content: {
@@ -504,7 +504,7 @@ const createTenantKeyRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["not_found"]) },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
@@ -562,11 +562,11 @@ interface ActivitySummary {
 
 async function loadRecentActivity(
   storage: Storage,
-  tenantId: string,
+  spaceId: string,
   limit: number = RECENT_ACTIVITY_LIMIT,
 ): Promise<ActivitySummary[]> {
   const page = await storage.items.list({
-    tenantId,
+    spaceId,
     type: "system.activity",
     sort: "created_at",
     direction: "desc",
@@ -607,84 +607,84 @@ export interface AdminRoutesOptions {
 export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  async function withOwner(tenant: z.infer<typeof TenantSchema>) {
+  async function withOwner(space: z.infer<typeof SpaceSchema>) {
     if (!storage.users) {
       return {
-        ...tenant,
+        ...space,
         owner_email: null,
         owner_email_verified: null,
       };
     }
-    const user = await storage.users.getByTenantId(tenant.id);
+    const user = await storage.users.getBySpaceId(space.id);
     const owner = user?.auth_user_id
       ? await storage.users.getAuthUserEmail(user.auth_user_id)
       : null;
     return {
-      ...tenant,
+      ...space,
       owner_email: owner?.email ?? null,
       owner_email_verified: owner?.email_verified ?? null,
     };
   }
 
-  router.openapi(createTenantRoute, async (c) => {
+  router.openapi(createSpaceRoute, async (c) => {
     requireAdmin(c);
-    // A single-tenant deployment has no tenant store at all. `NOT_FOUND`
+    // A single-space deployment has no space store at all. `NOT_FOUND`
     // rather than a dedicated code, matching every sibling route here: the
     // resource does not exist on this instance.
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
     const body = c.req.valid("json");
-    const tenant = await storage.tenants.create(body.name);
+    const space = await storage.spaces.create(body.name);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: tenant.id,
+      space_id: space.id,
       key_id: c.get("apiKey")?.id,
-      action: "admin.tenant.create",
-      resource_type: "tenant",
-      resource_id: tenant.id,
-      details: { name: tenant.name },
+      action: "admin.space.create",
+      resource_type: "space",
+      resource_id: space.id,
+      details: { name: space.name },
     });
     return c.json(
       {
-        id: tenant.id,
-        name: tenant.name,
-        created_at: tenant.created_at,
-        status: tenant.status,
+        id: space.id,
+        name: space.name,
+        created_at: space.created_at,
+        status: space.status,
       },
       201,
     );
   });
 
-  router.openapi(listTenantsRoute, async (c) => {
+  router.openapi(listSpacesRoute, async (c) => {
     requireAdmin(c);
-    if (!storage.tenants) {
+    if (!storage.spaces) {
       return c.json({ data: [] }, 200);
     }
     const data = await Promise.all(
-      (await storage.tenants.list()).map(withOwner),
+      (await storage.spaces.list()).map(withOwner),
     );
     return c.json({ data }, 200);
   });
 
-  router.openapi(showTenantRoute, async (c) => {
+  router.openapi(showSpaceRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const tenant = await storage.tenants.get(id);
-    if (!tenant) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    const space = await storage.spaces.get(id);
+    if (!space) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
 
-    const [tenantWithOwner, quota] = await Promise.all([
-      withOwner(tenant),
-      storage.tenantQuotas.get(id),
+    const [spaceWithOwner, quota] = await Promise.all([
+      withOwner(space),
+      storage.spaceQuotas.get(id),
     ]);
     const quotas = quota
       ? {
-          tenant_id: id,
+          space_id: id,
           items_limit: quota.items_limit ?? null,
           webhooks_limit: quota.webhooks_limit ?? null,
           blobs_limit: quota.blobs_limit ?? null,
@@ -695,81 +695,81 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       : null;
 
     const recent_activity = await loadRecentActivity(storage, id);
-    return c.json({ tenant: tenantWithOwner, quotas, recent_activity }, 200);
+    return c.json({ space: spaceWithOwner, quotas, recent_activity }, 200);
   });
 
-  router.openapi(suspendTenantRoute, async (c) => {
+  router.openapi(suspendSpaceRoute, async (c) => {
     const actor = requireAdmin(c);
     const { id } = c.req.valid("param");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const updated = await storage.tenants.suspend(id);
+    const updated = await storage.spaces.suspend(id);
     if (!updated) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
     // Drop the per-instance status cache so the next gated write reads
     // the fresh `suspended` value instead of waiting out the 5s TTL.
-    evictTenantStatus(id);
+    evictSpaceStatus(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      // Stamp the target tenant so the suspended tenant's own audit
+      // Stamp the target space so the suspended space's own audit
       // feed surfaces the event. (The actor is a platform admin and
-      // tenant-less; using their tenant_id here would hide the row from
-      // the target tenant's `GET /audit` scope.)
-      tenant_id: id,
+      // space-less; using their space_id here would hide the row from
+      // the target space's `GET /audit` scope.)
+      space_id: id,
       key_id: actor.id,
-      action: "tenant.suspend",
-      resource_type: "tenant",
+      action: "space.suspend",
+      resource_type: "space",
       resource_id: id,
     });
     return c.json(updated, 200);
   });
 
-  router.openapi(unsuspendTenantRoute, async (c) => {
+  router.openapi(unsuspendSpaceRoute, async (c) => {
     const actor = requireAdmin(c);
     const { id } = c.req.valid("param");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const updated = await storage.tenants.unsuspend(id);
+    const updated = await storage.spaces.unsuspend(id);
     if (!updated) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
-    evictTenantStatus(id);
+    evictSpaceStatus(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      // Stamp the target tenant so the suspended tenant's own audit
+      // Stamp the target space so the suspended space's own audit
       // feed surfaces the event. (The actor is a platform admin and
-      // tenant-less; using their tenant_id here would hide the row from
-      // the target tenant's `GET /audit` scope.)
-      tenant_id: id,
+      // space-less; using their space_id here would hide the row from
+      // the target space's `GET /audit` scope.)
+      space_id: id,
       key_id: actor.id,
-      action: "tenant.unsuspend",
-      resource_type: "tenant",
+      action: "space.unsuspend",
+      resource_type: "space",
       resource_id: id,
     });
     return c.json(updated, 200);
   });
 
-  router.openapi(tenantMetricsRoute, async (c) => {
+  router.openapi(spaceMetricsRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const tenant = await storage.tenants.get(id);
-    if (!tenant) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    const space = await storage.spaces.get(id);
+    if (!space) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
 
     // Custom type count is omitted — `TypeStore.countCustom` is
-    // instance-wide with no tenant-scoped equivalent; surfacing it here
-    // would imply a per-tenant breakdown that doesn't exist.
+    // instance-wide with no space-scoped equivalent; surfacing it here
+    // would imply a per-space breakdown that doesn't exist.
     const [itemStats, blobsCount, storageBytes, recent] = await Promise.all([
       storage.items.stats(id),
-      storage.tenantQuotas.count(id, "blobs"),
-      storage.tenantQuotas.count(id, "storage_bytes"),
+      storage.spaceQuotas.count(id, "blobs"),
+      storage.spaceQuotas.count(id, "storage_bytes"),
       loadRecentActivity(storage, id),
     ]);
     const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
@@ -779,7 +779,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
 
     return c.json(
       {
-        tenant_id: id,
+        space_id: id,
         items: { total, active, archived, trashed },
         blobs: { count: blobsCount, total_size: storageBytes },
         recent_activity: recent,
@@ -789,30 +789,30 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     );
   });
 
-  router.openapi(listTenantKeysRoute, async (c) => {
+  router.openapi(listSpaceKeysRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const tenant = await storage.tenants.get(id);
-    if (!tenant) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    const space = await storage.spaces.get(id);
+    if (!space) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
-    const keys = await storage.keys.listForTenant(id);
+    const keys = await storage.keys.listForSpace(id);
     return c.json({ data: keys.map(apiKeySummary) }, 200);
   });
 
-  router.openapi(createTenantKeyRoute, async (c) => {
+  router.openapi(createSpaceKeyRoute, async (c) => {
     const actor = requireAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    if (!storage.tenants) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
+    if (!storage.spaces) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
     }
-    const tenant = await storage.tenants.get(id);
-    if (!tenant) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+    const space = await storage.spaces.get(id);
+    if (!space) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
 
     assertUnreservedSource(body.source);
@@ -838,7 +838,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: id,
+      space_id: id,
       key_id: actor.id,
       action: "key.create",
       resource_type: "key",
@@ -885,10 +885,10 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     const purgedCount = await purger.runOnce();
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      // Instance-wide sweep — no target tenant. NULL tenant_id keeps
-      // the row out of any specific tenant's `GET /audit` scope; only
+      // Instance-wide sweep — no target space. NULL space_id keeps
+      // the row out of any specific space's `GET /audit` scope; only
       // a platform-admin reading the raw audit_log surfaces it.
-      tenant_id: null,
+      space_id: null,
       key_id: actor.id,
       action: "admin.account_deletion.purge_now",
       resource_type: "system",

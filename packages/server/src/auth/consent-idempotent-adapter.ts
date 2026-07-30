@@ -102,7 +102,7 @@ export function withIdempotentConsent<
 
       // Refresh the grant in place. Mirror the fields the plugin's own
       // re-consent update writes (scopes + updatedAt) and additionally
-      // re-stamp referenceId so a tenant binding resolved on this consent
+      // re-stamp referenceId so a space binding resolved on this consent
       // supersedes whatever the prior row held — the row is the single
       // record for this `(clientId, userId)` pair.
       const update: Record<string, unknown> = {

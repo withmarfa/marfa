@@ -8,7 +8,7 @@
  *
  * Errors:
  *   - `NOT_FOUND` — connection doesn't exist or isn't visible in the
- *     caller's tenant scope.
+ *     caller's space scope.
  *   - `VALIDATION_ERROR` — the persisted manifest fails validation
  *     (typically a manifest_schema major bump retired the item's
  *     contract version; re-register the integration at a supported
@@ -39,9 +39,9 @@ interface IntegrationProperties {
 export async function resolveConnectionManifest(
   storage: Storage,
   connectionId: string,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): Promise<ResolvedManifest> {
-  const connection = await storage.items.get(connectionId, tenantId);
+  const connection = await storage.items.get(connectionId, spaceId);
   if (connection?.type !== "system.connection") {
     throw new MarfaError(
       ErrorCode.NOT_FOUND,
@@ -59,7 +59,7 @@ export async function resolveConnectionManifest(
     );
   }
 
-  const integration = await storage.items.get(integrationRef, tenantId);
+  const integration = await storage.items.get(integrationRef, spaceId);
   if (integration?.type !== "system.integration") {
     throw new MarfaError(
       ErrorCode.MISSING_REQUIRED_FIELD,

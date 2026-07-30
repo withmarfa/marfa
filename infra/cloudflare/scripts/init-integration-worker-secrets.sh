@@ -15,7 +15,7 @@
 #
 # The Worker deliberately does NOT receive MARFA_RUNTIME_BROKER_KEY. That
 # key carries `is_platform: true` and can mint a runtime credential for
-# any Connection in any tenant; a copy on each of the deployed Workers
+# any Connection in any space; a copy on each of the deployed Workers
 # made every one of them a platform principal. It stays between the Marfa
 # server and the control plane.
 #

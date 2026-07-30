@@ -26,12 +26,12 @@ import { PgAuditStore } from "./audit-store.js";
 import { PgAuthSessionStore } from "./auth-session-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgUserStore } from "./user-store.js";
-import { PgTenantStore } from "./tenant-store.js";
+import { PgSpaceStore } from "./space-store.js";
 import { PgEdgeStore } from "./edge-store.js";
 import { PgEdgeTypeStore } from "./edge-type-store.js";
 import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
-import { PgTenantQuotaStore } from "./tenant-quota-store.js";
+import { PgSpaceQuotaStore } from "./space-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
 import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
@@ -82,12 +82,12 @@ export async function createPgStorage(
   const typeStore = new PgTypeStore(db);
 
   const loadedCustomTypes = await typeStore.loadCustomTypes();
-  for (const { tenant_id, schema } of loadedCustomTypes) {
+  for (const { space_id, schema } of loadedCustomTypes) {
     if (!isCoreType(schema.id)) {
-      // Register into the owning tenant's overlay so one tenant's custom types
-      // never resolve for another tenant's lookups. The empty-string sentinel
-      // maps to the null-tenant bucket.
-      registerTypeSchema(schema, tenant_id);
+      // Register into the owning space's overlay so one space's custom types
+      // never resolve for another space's lookups. The empty-string sentinel
+      // maps to the null-space bucket.
+      registerTypeSchema(schema, space_id);
     }
   }
   const keyStore = new PgKeyStore(db);
@@ -106,12 +106,12 @@ export async function createPgStorage(
   const edgeTypeStore = new PgEdgeTypeStore(db);
 
   const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
-  for (const { tenant_id, schema } of loadedCustomEdgeTypes) {
+  for (const { space_id, schema } of loadedCustomEdgeTypes) {
     if (!isCoreEdgeType(schema.id)) {
-      // Register into the owning tenant's overlay so one tenant's custom
-      // edge types never resolve for another tenant's lookups. The
-      // empty-string sentinel maps to the null-tenant bucket.
-      registerEdgeTypeSchema(schema, tenant_id);
+      // Register into the owning space's overlay so one space's custom
+      // edge types never resolve for another space's lookups. The
+      // empty-string sentinel maps to the null-space bucket.
+      registerEdgeTypeSchema(schema, space_id);
     }
   }
 
@@ -145,21 +145,21 @@ export async function createPgStorage(
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client, db),
     // Async substrate for bulk_action. Wired on the wrapped instance so
-    // RLS scopes its tenant_id reads/writes per request; the worker runs
+    // RLS scopes its space_id reads/writes per request; the worker runs
     // outside a request and bypasses RLS via the unwrapped path on
     // `client.reserve()` — not needed in the store class itself, only at
     // the worker boundary.
     bulkActionJobs: new PgBulkActionJobStore(db),
-    tenantQuotas: new PgTenantQuotaStore(db),
+    spaceQuotas: new PgSpaceQuotaStore(db),
     // Cluster-shared rate-limit + per-email throttle counters. Wired on
     // the wrapped instance so the request-context RLS proxy doesn't bypass
-    // it; the rate-limit table is platform-internal (no tenant_id column,
+    // it; the rate-limit table is platform-internal (no space_id column,
     // no RLS policy) and the queries target global counters by design.
     rateLimits: new PgRateLimitStore(db),
-    // Tenant store wired unconditionally — see sqlite index.ts for the
-    // rationale. The fan-out on tenant cleanup needs `tenants.list`
+    // Space store wired unconditionally — see sqlite index.ts for the
+    // rationale. The fan-out on space cleanup needs `spaces.list`
     // available regardless of authMode.
-    tenants: new PgTenantStore(db),
+    spaces: new PgSpaceStore(db),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
     }),
@@ -177,10 +177,10 @@ export async function createPgStorage(
      * `runInTransaction` callback blocks acquiring an inner connection.
      *
      * Goes through the wrapped `db`: when the caller is already inside the
-     * RLS middleware's transaction (a tenant-scoped request), the proxy
+     * RLS middleware's transaction (a space-scoped request), the proxy
      * resolves `transaction` against the existing `tx` and Drizzle issues a
      * SAVEPOINT — staying on the middleware's connection and preserving RLS
-     * isolation. Outside a request (retention jobs, single-tenant self-host),
+     * isolation. Outside a request (retention jobs, single-space self-host),
      * the proxy falls through to `baseDb` and opens a fresh transaction on
      * the owner connection. Either way the inner work shares one pool slot,
      * not two.
@@ -195,7 +195,7 @@ export async function createPgStorage(
       cutoffIso: string,
     ): Promise<boolean> => {
       // The cascade runs on the unwrapped base instance — auth_* tables
-      // are RLS-bypassed and this operation crosses tenant/auth boundaries
+      // are RLS-bypassed and this operation crosses space/auth boundaries
       // by design.
       return pgDeleteAccountCascade(baseDb, storage, authUserId, cutoffIso);
     },

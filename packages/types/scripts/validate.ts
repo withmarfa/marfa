@@ -4,7 +4,7 @@
  * This script owns no rules of its own. It loads `core/`, `connectors/` and
  * `core/system/`, resolves each family in dependency order, and runs
  * `validateTypeSchema` — the same function `POST /types` calls. A schema that
- * passes here is one a tenant could submit over the wire unchanged.
+ * passes here is one a space could submit over the wire unchanged.
  *
  * Usage: pnpm --filter @withmarfa/types validate
  */

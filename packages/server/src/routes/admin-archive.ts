@@ -29,11 +29,11 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * tenant_id stamped at export time. Used here to verify the importing
-   * admin's authority over the source tenant. An archive without this
-   * field restores as null, so single-tenant self-host archives keep working.
+   * space_id stamped at export time. Used here to verify the importing
+   * admin's authority over the source space. An archive without this
+   * field restores as null, so single-space self-host archives keep working.
    */
-  tenant_id?: string | null;
+  space_id?: string | null;
   item_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
@@ -48,15 +48,15 @@ const restoreArchiveRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      // Platform admins targeting a specific tenant pass an explicit
-      // `?target_tenant_id=<id>`. Tenant-bound admins (tenant_admin /
-      // admin with tenant_id) may not override — the manifest
-      // tenant_id must match their own tenant.
-      target_tenant_id: z
+      // Platform admins targeting a specific space pass an explicit
+      // `?target_space_id=<id>`. Space-bound admins (space_admin /
+      // admin with space_id) may not override — the manifest
+      // space_id must match their own space.
+      target_space_id: z
         .string()
         .optional()
         .describe(
-          "Platform admins set the tenant to restore into; tenant-bound admins must match their own tenant.",
+          "Platform admins set the space to restore into; space-bound admins must match their own space.",
         ),
     }),
     body: {
@@ -112,7 +112,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
   router.openapi(restoreArchiveRoute, async (c) => {
     const callerKey = requireAdmin(c);
-    const { target_tenant_id: targetTenantParam } = c.req.valid("query");
+    const { target_space_id: targetSpaceParam } = c.req.valid("query");
 
     const rawBody = await c.req.arrayBuffer();
     if (rawBody.byteLength === 0) {
@@ -123,29 +123,26 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const itemLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
-    // Resolve the tenant under which the archive will be restored.
-    // Tenant-bound admins use their own tenant; platform admins (no
-    // tenant_id on the key) MUST pass `target_tenant_id` explicitly.
-    // The empty-string sentinel still applies for single-tenant
+    // Resolve the space under which the archive will be restored.
+    // Space-bound admins use their own space; platform admins (no
+    // space_id on the key) MUST pass `target_space_id` explicitly.
+    // The empty-string sentinel still applies for single-space
     // self-hosts (platform admin without a target param on a
-    // deployment whose archive has tenant_id = null).
-    const callerTenant = callerKey.tenant_id;
-    let restoreTenantId: string;
-    if (callerTenant) {
-      if (
-        targetTenantParam !== undefined &&
-        targetTenantParam !== callerTenant
-      ) {
+    // deployment whose archive has space_id = null).
+    const callerSpace = callerKey.space_id;
+    let restoreSpaceId: string;
+    if (callerSpace) {
+      if (targetSpaceParam !== undefined && targetSpaceParam !== callerSpace) {
         throw new MarfaError(
           ErrorCode.FORBIDDEN,
-          "Cannot restore into another tenant — target_tenant_id must match caller's tenant_id (or be omitted).",
+          "Cannot restore into another space — target_space_id must match caller's space_id (or be omitted).",
         );
       }
-      restoreTenantId = callerTenant;
+      restoreSpaceId = callerSpace;
     } else {
-      // Platform admin. target_tenant_id present → scope to it.
-      // Absent → empty-string sentinel (single-tenant self-host).
-      restoreTenantId = targetTenantParam ?? "";
+      // Platform admin. target_space_id present → scope to it.
+      // Absent → empty-string sentinel (single-space self-host).
+      restoreSpaceId = targetSpaceParam ?? "";
     }
 
     const extract = tar.extract();
@@ -207,7 +204,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
                         mimeType,
                         buf.length,
                         hash,
-                        restoreTenantId,
+                        restoreSpaceId,
                       ),
                     ),
                 );
@@ -229,34 +226,34 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     inputStream.pipe(gunzip).pipe(extract);
     await entries;
 
-    // Verify manifest.tenant_id against the resolved restore tenant.
+    // Verify manifest.space_id against the resolved restore space.
     // Three legitimate shapes:
-    //   - manifest.tenant_id is null/undefined → an untenanted archive
-    //     or single-tenant self-host export. Allowed regardless of
-    //     restore tenant (import semantics fall back to NULL tenant_id
+    //   - manifest.space_id is null/undefined → an unspaceed archive
+    //     or single-space self-host export. Allowed regardless of
+    //     restore space (import semantics fall back to NULL space_id
     //     on items, matching the source shape).
-    //   - manifest.tenant_id matches restoreTenantId → expected
-    //     same-tenant round-trip.
+    //   - manifest.space_id matches restoreSpaceId → expected
+    //     same-space round-trip.
     //   - mismatch → reject. Platform admins bypass via the explicit
-    //     `target_tenant_id` query param: their resolved
-    //     restoreTenantId then equals the manifest, landing in the
+    //     `target_space_id` query param: their resolved
+    //     restoreSpaceId then equals the manifest, landing in the
     //     matching branch above.
     // Closure-modified `manifest` — TS doesn't narrow through the
     // entry-handler closure, so cast back to the declared type for
     // the access. Null when no manifest.json was present (defensive;
     // an invalid archive structure is rejected on parse).
     const m = manifest as ArchiveManifest | null;
-    const manifestTenantId = m?.tenant_id ?? null;
-    if (manifestTenantId !== null && manifestTenantId !== restoreTenantId) {
+    const manifestSpaceId = m?.space_id ?? null;
+    if (manifestSpaceId !== null && manifestSpaceId !== restoreSpaceId) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `Archive manifest.tenant_id "${manifestTenantId}" does not match restore tenant "${restoreTenantId}". Platform admins must pass target_tenant_id matching the source.`,
+        `Archive manifest.space_id "${manifestSpaceId}" does not match restore space "${restoreSpaceId}". Platform admins must pass target_space_id matching the source.`,
       );
     }
 
     await Promise.all(blobUploads);
 
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const items: Record<string, unknown>[] = [];
     for (const line of itemLines) {
       try {
@@ -292,7 +289,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
               source_id: item.source_id as string | undefined,
               tags: item.tags as string[] | undefined,
             },
-            tenantId,
+            spaceId,
           );
           imported++;
         } catch (err) {
@@ -312,7 +309,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "admin.restore_archive",
       resource_type: "admin.restore_archive",

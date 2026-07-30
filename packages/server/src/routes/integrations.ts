@@ -25,7 +25,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { resolveTenantIdForAuthUser } from "../auth/oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
@@ -254,7 +254,7 @@ export function integrationRoutes(
     const manifest = result.manifest;
 
     const existing = await storage.items.list({
-      tenantId: apiKey.tenant_id,
+      spaceId: apiKey.space_id,
       type: "system.integration",
       filter: `properties.manifest_name eq "${manifest.name}" AND properties.manifest_version eq "${manifest.version}"`,
       limit: 1,
@@ -286,12 +286,12 @@ export function integrationRoutes(
         type: "system.integration",
         properties: properties as unknown as Record<string, unknown>,
       },
-      apiKey.tenant_id,
+      apiKey.space_id,
     );
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: apiKey.id,
       action: "integration.register",
       resource_type: "item",
@@ -311,9 +311,9 @@ export function integrationRoutes(
     const filter = query.manifest_name
       ? `properties.manifest_name eq "${query.manifest_name}"`
       : undefined;
-    // Platform-scoped manifests (tenant_id IS NULL) are invisible to in-tenant callers without this flag.
+    // Platform-scoped manifests (space_id IS NULL) are invisible to in-space callers without this flag.
     const items = await storage.items.list({
-      tenantId: apiKey.tenant_id,
+      spaceId: apiKey.space_id,
       includePlatformScoped: true,
       type: "system.integration",
       filter,
@@ -325,8 +325,8 @@ export function integrationRoutes(
   apiRouter.openapi(getRoute, async (c) => {
     const apiKey = requireAuth(c);
     const id = c.req.valid("param").id;
-    // Platform-scoped manifests (tenant_id IS NULL) — widen so tenant members can resolve them.
-    const item = await storage.items.get(id, apiKey.tenant_id, {
+    // Platform-scoped manifests (space_id IS NULL) — widen so space members can resolve them.
+    const item = await storage.items.get(id, apiKey.space_id, {
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
@@ -351,7 +351,7 @@ export function integrationRoutes(
   // screen is designed for human navigation, so a BetterAuth session
   // cookie is sufficient. Operator / test / CLI callers still go via a
   // Bearer-resolved api_key. `resolveInstallCaller` returns the caller's
-  // tenant scope + an apiKeyId for the audit trail, or a Response on
+  // space scope + an apiKeyId for the audit trail, or a Response on
   // unauthenticated browser navigations (302 to sign-in), or throws
   // 401 when an `Authorization` header was presented but didn't
   // resolve (the API-client failure shape).
@@ -362,10 +362,10 @@ export function integrationRoutes(
      *  row id. For session callers: `auth_user:<userId>` so operator
      *  queries can recognize session-backed installs. */
     apiKeyId: string;
-    /** Tenant scope — `undefined` for platform-admin Bearer callers,
-     *  the user's tenant for session callers, the key's tenant for
+    /** Space scope — `undefined` for platform-admin Bearer callers,
+     *  the user's space for session callers, the key's space for
      *  ordinary Bearer callers. */
-    tenantId: string | undefined;
+    spaceId: string | undefined;
   }
 
   async function resolveInstallCaller(
@@ -373,18 +373,18 @@ export function integrationRoutes(
   ): Promise<InstallCaller | Response> {
     const apiKey = c.get("apiKey");
     if (apiKey) {
-      return { apiKeyId: apiKey.id, tenantId: apiKey.tenant_id };
+      return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
     }
     if (auth) {
       const session = await auth.getSession(c.req.raw.headers);
       if (session) {
-        const tenantId = await resolveTenantIdForAuthUser(
+        const spaceId = await resolveSpaceIdForAuthUser(
           storage,
           session.user.id,
         );
         return {
           apiKeyId: `auth_user:${session.user.id}`,
-          tenantId,
+          spaceId,
         };
       }
     }
@@ -404,7 +404,7 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, caller.tenantId, {
+    const item = await storage.items.get(id, caller.spaceId, {
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
@@ -421,11 +421,11 @@ export function integrationRoutes(
     let credentialRefHint: string | undefined;
     let credentialRefLabel: string | undefined;
     if (credentialRefParam !== undefined && credentialRefParam.length > 0) {
-      const cred = await storage.items.get(credentialRefParam, caller.tenantId);
+      const cred = await storage.items.get(credentialRefParam, caller.spaceId);
       if (cred?.type !== "system.credential") {
         throw new MarfaError(
           ErrorCode.INVALID_REQUEST,
-          `credential_ref ${credentialRefParam} does not resolve to a system.credential item in this tenant`,
+          `credential_ref ${credentialRefParam} does not resolve to a system.credential item in this space`,
           { credential_ref: credentialRefParam },
         );
       }
@@ -459,7 +459,7 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, caller.tenantId, {
+    const item = await storage.items.get(id, caller.spaceId, {
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
@@ -486,7 +486,7 @@ export function integrationRoutes(
 
     const installed = await performInstall(storage, salt, {
       apiKeyId: caller.apiKeyId,
-      tenantId: caller.tenantId,
+      spaceId: caller.spaceId,
       authMode: c.get("config").authMode,
       clientIp: c.get("clientIp") ?? null,
       integrationItemId: id,
@@ -502,7 +502,7 @@ export function integrationRoutes(
     // Same pubsub publish as the JSON install route — the bridge needs it to discover new connections.
     const connection = await storage.items.get(
       installed.connection_id,
-      caller.tenantId ?? undefined,
+      caller.spaceId ?? undefined,
     );
     if (connection) {
       const metadata = await storage.metadata.get(connection.id);
@@ -510,7 +510,7 @@ export function integrationRoutes(
         type: "created",
         item: connection,
         metadata,
-        tenantId: caller.tenantId ?? undefined,
+        spaceId: caller.spaceId ?? undefined,
       });
     }
 

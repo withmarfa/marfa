@@ -171,7 +171,7 @@ function prepareLogPayload(data: Record<string, unknown> | undefined): {
    * The objects on the path from the payload root down to the value being
    * visited, and only those. A value is circular when it contains *itself*, not
    * when it appears twice — a traversal-wide set would render the second and
-   * every later appearance of a repeated-but-acyclic value (the same tenant
+   * every later appearance of a repeated-but-acyclic value (the same space
    * record on ten rows, one shared config object) as `"[circular]"`, deleting
    * the evidence the line exists to carry. Entries are removed on the way back
    * up so siblings each get a full rendering.

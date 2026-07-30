@@ -12,11 +12,11 @@
  * The minted credential carries:
  *   - `is_runtime_credential: true`
  *   - `connection_id: <stamped>` — the extension gate compares this
- *     against the path `:id` for cross-tenant denial when writing the
+ *     against the path `:id` for cross-space denial when writing the
  *     `connection.runtime` namespace.
- *   - `tenant_id` copied from the Connection, not from the caller. The
- *     broker is tenant-less by construction, so inheriting the caller
- *     would strand the credential outside every tenant fence.
+ *   - `space_id` copied from the Connection, not from the caller. The
+ *     broker is space-less by construction, so inheriting the caller
+ *     would strand the credential outside every space fence.
  *
  * Permission maps are projected server-side from the Connection's persisted
  * Integration manifest. The control plane cannot request broader reach.
@@ -50,7 +50,7 @@ import {
 } from "../connections/manifest-permissions.js";
 import {
   assertConnectionBelongsToIntegration,
-  assertMintableTenantScope,
+  assertMintableSpaceScope,
   resolveRuntimeCredentialManifest,
   revokeSupersededRuntimeCredentials,
 } from "../connections/runtime-credential-lifecycle.js";
@@ -63,7 +63,7 @@ function generateRawKey(): string {
 
 const RuntimeCredentialRequestSchema = z.object({
   /** Connection this credential is bound to. The extension gate keys
-   *  off this value; cross-tenant misuse is rejected at the gate. */
+   *  off this value; cross-space misuse is rejected at the gate. */
   connection_id: z.string().min(1),
   /** Integration the control plane authenticated its caller as. Checked
    *  against the manifest persisted on the Connection; a mismatch is a
@@ -160,7 +160,7 @@ const createRuntimeCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["conflict"]),
         },
       },
-      description: "source collision for tenant",
+      description: "source collision for space",
     },
   },
 });
@@ -193,14 +193,14 @@ const InboundSubscriptionSchema = z.object({
 // Resolves the bits of state the runtime-control verify route needs to
 // build a queue message envelope and dispatch it: the connection itself
 // (validated as kind `integration` and active), the integration manifest
-// name, and the tenant_id. Gated on `is_platform: true` — operator-debug
+// name, and the space_id. Gated on `is_platform: true` — operator-debug
 // surface, not consumer-facing.
 // ---------------------------------------------------------------------------
 
 const VerifyContextSchema = z.object({
   connection_id: z.string(),
   integration_name: z.string(),
-  tenant_id: z.string().nullable(),
+  space_id: z.string().nullable(),
 });
 
 const verifyContextRoute = createRoute({
@@ -210,7 +210,7 @@ const verifyContextRoute = createRoute({
   tags: ["System"],
   summary: "Get verify context for a connection",
   description:
-    "Returns the integration name and tenant the runtime-control verify route needs to build a queue envelope. Requires the connection to exist, be kind integration, and be active.",
+    "Returns the integration name and space the runtime-control verify route needs to build a queue envelope. Requires the connection to exist, be kind integration, and be active.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -277,7 +277,7 @@ const DlqContextSchema = z.object({
   kind: z.string(),
   state: z.string(),
   integration_name: z.string().nullable(),
-  tenant_id: z.string().nullable(),
+  space_id: z.string().nullable(),
 });
 
 const dlqContextRoute = createRoute({
@@ -441,7 +441,7 @@ export function runtimeCredentialRoutes(
           );
         }
 
-        assertMintableTenantScope(connection, authMode);
+        assertMintableSpaceScope(connection, authMode);
         await assertConnectionBelongsToIntegration(
           storage,
           connection,
@@ -478,25 +478,25 @@ export function runtimeCredentialRoutes(
             item_source: runtimeCredentialItemSource(body.connection_id),
           },
           keyHash,
-          // The connection's tenant, never the caller's. The broker
-          // authenticates with a platform credential that carries no tenant,
-          // so stamping the caller would leave the credential tenant-less —
+          // The connection's space, never the caller's. The broker
+          // authenticates with a platform credential that carries no space,
+          // so stamping the caller would leave the credential space-less —
           // which reads as "platform tier" to the RLS policies and to the
-          // storage layer's tenant predicate, handing an integration built
-          // for one tenant reach into all of them.
-          connection.tenant_id ?? undefined,
+          // storage layer's space predicate, handing an integration built
+          // for one space reach into all of them.
+          connection.space_id ?? undefined,
         );
 
         await revokeSupersededRuntimeCredentials(
           storage,
           body.connection_id,
-          connection.tenant_id ?? undefined,
+          connection.space_id ?? undefined,
           stored.id,
         );
 
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          tenant_id: connection.tenant_id ?? null,
+          space_id: connection.space_id ?? null,
           key_id: apiKey.id,
           action: "runtime_credential.create",
           resource_type: "api_key",
@@ -593,7 +593,7 @@ export function runtimeCredentialRoutes(
       {
         connection_id: connection.id,
         integration_name: integrationName,
-        tenant_id: connection.tenant_id ?? null,
+        space_id: connection.space_id ?? null,
       },
       200,
     );
@@ -643,7 +643,7 @@ export function runtimeCredentialRoutes(
         kind: props.kind ?? "unknown",
         state: connection.state,
         integration_name: integrationName,
-        tenant_id: connection.tenant_id ?? null,
+        space_id: connection.space_id ?? null,
       },
       200,
     );

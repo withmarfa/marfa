@@ -6,7 +6,7 @@ import { z } from "@hono/zod-openapi";
 
 export const EdgeSchema = z.object({
   id: z.string(),
-  tenant_id: z.string().nullable().optional(),
+  space_id: z.string().nullable().optional(),
   source_id: z.string(),
   target_id: z.string(),
   edge_type: z.string(),
@@ -34,13 +34,13 @@ export const ItemSchema = z.object({
   /** Optional — `system.*` items have no tier. */
   tier: z.enum(["library", "feed"]).optional(),
   /**
-   * Tenant scope. Storage queries are tenant-scoped at the SQL layer, so
-   * for ordinary callers this always matches the caller's own tenant. The
-   * field is informational; cross-tenant infrastructure (the reactive-run
+   * Space scope. Storage queries are space-scoped at the SQL layer, so
+   * for ordinary callers this always matches the caller's own space. The
+   * field is informational; cross-space infrastructure (the reactive-run
    * bridge) reads this off the row to gate fanout. Mirrors the
-   * `Edge.tenant_id` shape.
+   * `Edge.space_id` shape.
    */
-  tenant_id: z.string().nullable().optional(),
+  space_id: z.string().nullable().optional(),
   version: z.number(),
   schema_version: z.number().int(),
   source: z.string(),

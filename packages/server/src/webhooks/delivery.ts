@@ -315,7 +315,7 @@ export class WebhookConsumer {
     const eventName = toWebhookEvent(event.type);
     const matching = webhooks.filter((w) => {
       if (!w.events.includes(eventName)) return false;
-      if (w.tenant_id && event.tenantId && w.tenant_id !== event.tenantId)
+      if (w.space_id && event.spaceId && w.space_id !== event.spaceId)
         return false;
       // Edge events don't carry an item type; any type_filter skips them.
       if (w.type_filter) return false;
@@ -360,8 +360,8 @@ export class WebhookConsumer {
     const matching = webhooks.filter((w) => {
       // Must subscribe to this event type
       if (!w.events.includes(eventName)) return false;
-      // Tenant isolation — only deliver to webhooks matching the event's tenant
-      if (w.tenant_id && event.tenantId && w.tenant_id !== event.tenantId)
+      // Space isolation — only deliver to webhooks matching the event's space
+      if (w.space_id && event.spaceId && w.space_id !== event.spaceId)
         return false;
       // Type filter — if the webhook has a type_filter, the item type must match
       if (

@@ -8,7 +8,7 @@
  *
  * The bridge reuses the `evaluateDispatch` + `buildQueueMessageBody`
  * helpers from `envelope.ts` so the per-subscriber gate (self-event,
- * cross-tenant) is identical to the hosted side. The substrate-specific
+ * cross-space) is identical to the hosted side. The substrate-specific
  * piece is the send step.
  */
 import { subscribe, type ItemEventWithId } from "../../pubsub.js";
@@ -60,7 +60,7 @@ export function createLocalReactiveBridge(
       id: item.id,
       state: item.state,
       properties: item.properties,
-      tenant_id: item.tenant_id ?? null,
+      space_id: item.space_id ?? null,
     });
     if (entry) subscriptions.set(connectionId, entry);
     else subscriptions.delete(connectionId);
@@ -79,7 +79,7 @@ export function createLocalReactiveBridge(
           id: connection.id,
           state: connection.state,
           properties: connection.properties,
-          tenant_id: connection.tenant_id ?? null,
+          space_id: connection.space_id ?? null,
         });
         if (entry) subscriptions.set(connection.id, entry);
       }
@@ -102,7 +102,7 @@ export function createLocalReactiveBridge(
         kind: "item-event",
         integration_name: body.integration_name,
         connection_id: body.connection_id,
-        ...(body.tenant_id !== undefined && { tenant_id: body.tenant_id }),
+        ...(body.space_id !== undefined && { space_id: body.space_id }),
         event_type: body.event_type,
         item_id: body.item_id,
         cycle: body.cycle,

@@ -21,7 +21,7 @@
  * runtime-credential api key for the loop to be exercised. Headers are
  * the contract the SDK threads on every reactive call, and they are the
  * authoritative path through `cycleMiddleware`. Using the bootstrap
- * admin + headers keeps the test self-contained and tenant-less; the
+ * admin + headers keeps the test self-contained and space-less; the
  * separate `cycle-attribution.test.ts` already covers the api-key
  * fallback resolution path explicitly.
  */

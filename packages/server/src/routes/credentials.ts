@@ -27,14 +27,14 @@
  *   - `routes/connection-proxy.ts:readCredentialConfig` — both kinds;
  *     reads the upstream URL + decrypts the bearer / refreshes tokens.
  *
- * Auth: `requireTenantAdmin` — tenant admins set up their own provider
+ * Auth: `requireSpaceAdmin` — space admins set up their own provider
  * credentials. The route calls `storage.items.create` directly, which
  * bypasses the `POST /items` `is_platform` gate on `system.*` writes;
  * the admin-gated route surface is the access-control boundary.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -121,7 +121,7 @@ const createOAuthProviderCredentialRoute = createRoute({
   tags: ["Credentials"],
   summary: "Create an OAuth provider credential",
   description:
-    "Creates a `system.credential` of `kind: oauth_token` holding an upstream service's OAuth client config, with the client secret encrypted at rest. The returned credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls; the credential is tenant-scoped and cannot be reused across tenants.",
+    "Creates a `system.credential` of `kind: oauth_token` holding an upstream service's OAuth client config, with the client secret encrypted at rest. The returned credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls; the credential is space-scoped and cannot be reused across spaces.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -165,7 +165,7 @@ const createOAuthProviderCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or tenant_admin.",
+      description: "Caller is not an admin or space_admin.",
     },
   },
 });
@@ -177,7 +177,7 @@ const createApiTokenCredentialRoute = createRoute({
   tags: ["Credentials"],
   summary: "Create a static API-token credential",
   description:
-    "Creates a tenant-scoped `system.credential` of `kind: api_token` holding an upstream's base URL plus a static bearer token (encrypted at rest), for integrations that use a static token rather than OAuth. There is no refresh primitive — when the upstream rejects the token, the proxy surfaces the 401 and emits an `action_required` activity prompting reinstall with a fresh token.",
+    "Creates a space-scoped `system.credential` of `kind: api_token` holding an upstream's base URL plus a static bearer token (encrypted at rest), for integrations that use a static token rather than OAuth. There is no refresh primitive — when the upstream rejects the token, the proxy surfaces the 401 and emits an `action_required` activity prompting reinstall with a fresh token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -221,7 +221,7 @@ const createApiTokenCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or tenant_admin.",
+      description: "Caller is not an admin or space_admin.",
     },
   },
 });
@@ -234,7 +234,7 @@ export function credentialRoutes(storage: Storage) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(createOAuthProviderCredentialRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const body = c.req.valid("json");
 
     // Encryption failures propagate as 500 — a missing MARFA_SECRET_KEY is a server-config bug, not a caller bug.
@@ -264,13 +264,13 @@ export function credentialRoutes(storage: Storage) {
           secret_encrypted,
         },
       },
-      key.tenant_id ?? undefined,
+      key.space_id ?? undefined,
     );
 
     void storage.audit.log({
       key_id: key.id,
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: key.tenant_id ?? null,
+      space_id: key.space_id ?? null,
       action: "credential.oauth_provider.create",
       resource_type: "item",
       resource_id: credential.id,
@@ -285,7 +285,7 @@ export function credentialRoutes(storage: Storage) {
   });
 
   r.openapi(createApiTokenCredentialRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const body = c.req.valid("json");
 
     const secret_encrypted = encryptSecret(
@@ -310,13 +310,13 @@ export function credentialRoutes(storage: Storage) {
           secret_encrypted,
         },
       },
-      key.tenant_id ?? undefined,
+      key.space_id ?? undefined,
     );
 
     void storage.audit.log({
       key_id: key.id,
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: key.tenant_id ?? null,
+      space_id: key.space_id ?? null,
       action: "credential.api_token.create",
       resource_type: "item",
       resource_id: credential.id,

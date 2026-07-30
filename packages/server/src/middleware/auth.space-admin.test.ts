@@ -1,24 +1,24 @@
 /**
- * Tests for the tenant_admin role and helper.
+ * Tests for the space_admin role and helper.
  *
  * Two layers of coverage:
  *
- * 1. Unit-level — `checkTenantAdmin(apiKey)` admits both `admin` and
- *    `tenant_admin`, rejects `member`, throws on missing key.
+ * 1. Unit-level — `checkSpaceAdmin(apiKey)` admits both `admin` and
+ *    `space_admin`, rejects `member`, throws on missing key.
  *
  * 2. Integration — through-the-app behavior of the routes widened in this
  *    PR (POST /keys, /webhooks, /connections install/uninstall):
- *      - tenant_admin can mint own-tenant keys but cannot escalate to
+ *      - space_admin can mint own-space keys but cannot escalate to
  *        platform (is_platform silently coerced to false).
- *      - tenant_admin can CRUD own-tenant webhooks; cross-tenant
+ *      - space_admin can CRUD own-space webhooks; cross-space
  *        attempts surface as 404.
- *      - member is still rejected on tenant-admin-gated routes.
+ *      - member is still rejected on space-admin-gated routes.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
 import type { ApiKey } from "@withmarfa/shared";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import { checkTenantAdmin, hashApiKey } from "./auth.js";
+import { checkSpaceAdmin, hashApiKey } from "./auth.js";
 import {
   createTestContext,
   request,
@@ -36,7 +36,7 @@ function fakeKey(
 ): ApiKey {
   return {
     id: "key-test",
-    tenant_id: "tenant-test",
+    space_id: "space-test",
     label: "test",
     source: "test",
     role,
@@ -52,31 +52,31 @@ function fakeKey(
   };
 }
 
-describe("checkTenantAdmin (unit)", () => {
+describe("checkSpaceAdmin (unit)", () => {
   it("admits admin", () => {
     const key = fakeKey("admin");
-    expect(checkTenantAdmin(key)).toBe(key);
+    expect(checkSpaceAdmin(key)).toBe(key);
   });
 
-  it("admits tenant_admin", () => {
-    const key = fakeKey("tenant_admin");
-    expect(checkTenantAdmin(key)).toBe(key);
+  it("admits space_admin", () => {
+    const key = fakeKey("space_admin");
+    expect(checkSpaceAdmin(key)).toBe(key);
   });
 
   it("rejects member with FORBIDDEN", () => {
     const key = fakeKey("member");
-    expect(() => checkTenantAdmin(key)).toThrow(MarfaError);
+    expect(() => checkSpaceAdmin(key)).toThrow(MarfaError);
     try {
-      checkTenantAdmin(key);
+      checkSpaceAdmin(key);
     } catch (e) {
       expect((e as MarfaError).code).toBe(ErrorCode.FORBIDDEN);
     }
   });
 
   it("rejects undefined with UNAUTHORIZED", () => {
-    expect(() => checkTenantAdmin(undefined)).toThrow(MarfaError);
+    expect(() => checkSpaceAdmin(undefined)).toThrow(MarfaError);
     try {
-      checkTenantAdmin(undefined);
+      checkSpaceAdmin(undefined);
     } catch (e) {
       expect((e as MarfaError).code).toBe(ErrorCode.UNAUTHORIZED);
     }
@@ -92,12 +92,12 @@ async function mintKey(
   opts: {
     label: string;
     role: ApiKey["role"];
-    tenantId?: string;
+    spaceId?: string;
     is_platform?: boolean;
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_tenant_admin_test_${suffix}`;
+  const raw = `marfa_k1_space_admin_test_${suffix}`;
   const keyHash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {
@@ -109,27 +109,27 @@ async function mintKey(
       is_platform: opts.is_platform ?? false,
     },
     keyHash,
-    opts.tenantId,
+    opts.spaceId,
   );
   return raw;
 }
 
-describe("tenant_admin integration — widened routes", () => {
+describe("space_admin integration — widened routes", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("tenant_admin can mint an own-tenant key", async () => {
+  it("space_admin can mint an own-space key", async () => {
     ctx = await createTestContext();
-    const tenantA = {
-      id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceA = {
+      id: `space-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-a",
-      role: "tenant_admin",
-      tenantId: tenantA.id,
+      role: "space_admin",
+      spaceId: spaceA.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -149,24 +149,24 @@ describe("tenant_admin integration — widened routes", () => {
       is_platform: boolean;
     };
     expect(minted.role).toBe("member");
-    // tenant_admin is not platform; their minted key MUST not be platform
+    // space_admin is not platform; their minted key MUST not be platform
     expect(minted.is_platform).toBe(false);
 
-    // Stored row carries the tenant_admin's tenant_id, stamped
+    // Stored row carries the space_admin's space_id, stamped
     // automatically from the caller.
     const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.tenant_id).toBe(tenantA.id);
+    expect(stored?.space_id).toBe(spaceA.id);
   });
 
-  it("tenant_admin cannot escalate to is_platform: true", async () => {
+  it("space_admin cannot escalate to is_platform: true", async () => {
     ctx = await createTestContext();
-    const tenantA = {
-      id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceA = {
+      id: `space-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-a-2",
-      role: "tenant_admin",
-      tenantId: tenantA.id,
+      role: "space_admin",
+      spaceId: spaceA.id,
     });
 
     // Role stays at the caller's own tier so this exercises the
@@ -177,7 +177,7 @@ describe("tenant_admin integration — widened routes", () => {
       body: {
         label: "would-be-platform",
         source: "would-be-platform",
-        role: "tenant_admin",
+        role: "space_admin",
         default_tier: "library",
         is_platform: true, // silently coerced to false
       },
@@ -188,15 +188,15 @@ describe("tenant_admin integration — widened routes", () => {
     expect(minted.is_platform).toBe(false);
   });
 
-  it("member is rejected by tenant-admin-gated POST /keys (FORBIDDEN)", async () => {
+  it("member is rejected by space-admin-gated POST /keys (FORBIDDEN)", async () => {
     ctx = await createTestContext();
-    const tenantA = {
-      id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceA = {
+      id: `space-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const member = await mintKey(ctx, {
       label: "member-a",
       role: "member",
-      tenantId: tenantA.id,
+      spaceId: spaceA.id,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -212,23 +212,23 @@ describe("tenant_admin integration — widened routes", () => {
     expect(res.status).toBe(403);
   });
 
-  it("tenant_admin can create + list + get own-tenant webhook; cross-tenant get is 404", async () => {
+  it("space_admin can create + list + get own-space webhook; cross-space get is 404", async () => {
     ctx = await createTestContext();
-    const tenantA = {
-      id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceA = {
+      id: `space-a-${Math.random().toString(36).slice(2, 10)}`,
     };
-    const tenantB = {
-      id: `tenant-b-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceB = {
+      id: `space-b-${Math.random().toString(36).slice(2, 10)}`,
     };
     const wsAdminA = await mintKey(ctx, {
       label: "ws-admin-a-wh",
-      role: "tenant_admin",
-      tenantId: tenantA.id,
+      role: "space_admin",
+      spaceId: spaceA.id,
     });
     const wsAdminB = await mintKey(ctx, {
       label: "ws-admin-b-wh",
-      role: "tenant_admin",
-      tenantId: tenantB.id,
+      role: "space_admin",
+      spaceId: spaceB.id,
     });
 
     // A creates a webhook
@@ -266,22 +266,22 @@ describe("tenant_admin integration — widened routes", () => {
     };
     expect(listedB.webhooks.map((w) => w.id)).not.toContain(created.id);
 
-    // B cannot fetch A's webhook by id (cross-tenant probe → 404)
+    // B cannot fetch A's webhook by id (cross-space probe → 404)
     const getB = await request(ctx.app, "GET", `/webhooks/${created.id}`, {
       key: wsAdminB,
     });
     expect(getB.status).toBe(404);
   });
 
-  it("member is rejected by tenant-admin-gated webhook routes (FORBIDDEN)", async () => {
+  it("member is rejected by space-admin-gated webhook routes (FORBIDDEN)", async () => {
     ctx = await createTestContext();
-    const tenantA = {
-      id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
+    const spaceA = {
+      id: `space-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const member = await mintKey(ctx, {
       label: "member-a-wh",
       role: "member",
-      tenantId: tenantA.id,
+      spaceId: spaceA.id,
     });
 
     const res = await request(ctx.app, "POST", "/webhooks", {

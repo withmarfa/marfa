@@ -10,14 +10,14 @@ export class SqliteEventLogStore implements EventLogStore {
     event_type: string;
     item_id?: string | null;
     edge_id?: string | null;
-    tenant_id?: string;
+    space_id?: string;
     payload: string;
     originating_connection_id?: string | null;
     hop_count?: number;
   }): Promise<bigint> {
     const result = await this.db.run(sql`
-      INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, originating_connection_id, hop_count, created_at)
-      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.tenant_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${new Date().toISOString()})
+      INSERT INTO event_log (event_type, item_id, edge_id, space_id, payload, originating_connection_id, hop_count, created_at)
+      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.space_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${new Date().toISOString()})
     `);
     // libsql returns lastInsertRowid as `bigint`. Match better-sqlite3's prior
     // behavior of normalizing to bigint either way so the public wire shape
@@ -32,13 +32,13 @@ export class SqliteEventLogStore implements EventLogStore {
   async getAfter(
     afterId: bigint,
     limit: number,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<PersistedEvent[]> {
     // SQLite Drizzle binds JS numbers; the row's id is stored as INTEGER (i64).
     // Convert the bigint cursor to number for the bind, then re-bigint each
     // returned id so the public PersistedEvent shape matches PG's bigint.
     const conditions = [gt(eventLog.id, Number(afterId))];
-    if (tenantId) conditions.push(eq(eventLog.tenant_id, tenantId));
+    if (spaceId) conditions.push(eq(eventLog.space_id, spaceId));
 
     const rows = await this.db
       .select()
@@ -53,7 +53,7 @@ export class SqliteEventLogStore implements EventLogStore {
       event_type: row.event_type,
       item_id: row.item_id,
       edge_id: row.edge_id,
-      tenant_id: row.tenant_id,
+      space_id: row.space_id,
       payload: row.payload,
       originating_connection_id: row.originating_connection_id,
       hop_count: row.hop_count,
@@ -63,30 +63,30 @@ export class SqliteEventLogStore implements EventLogStore {
 
   async cleanup(
     retentionHours: number,
-    tenantId?: string | null,
+    spaceId?: string | null,
   ): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
     // Three filter shapes (see audit-store.cleanup).
-    const tenantClause =
-      tenantId === undefined
+    const spaceClause =
+      spaceId === undefined
         ? undefined
-        : tenantId === null
-          ? isNull(eventLog.tenant_id)
-          : eq(eventLog.tenant_id, tenantId);
+        : spaceId === null
+          ? isNull(eventLog.space_id)
+          : eq(eventLog.space_id, spaceId);
     const where =
-      tenantClause === undefined
+      spaceClause === undefined
         ? lt(eventLog.created_at, cutoff)
-        : and(lt(eventLog.created_at, cutoff), tenantClause);
+        : and(lt(eventLog.created_at, cutoff), spaceClause);
     const result = await this.db.delete(eventLog).where(where).run();
     return result.rowsAffected;
   }
 
-  async getMinRetainedId(tenantId?: string): Promise<bigint | null> {
-    const result = tenantId
+  async getMinRetainedId(spaceId?: string): Promise<bigint | null> {
+    const result = spaceId
       ? await this.db.get<{ min: number | bigint | null }>(
-          sql`SELECT MIN(id) AS min FROM event_log WHERE tenant_id = ${tenantId}`,
+          sql`SELECT MIN(id) AS min FROM event_log WHERE space_id = ${spaceId}`,
         )
       : await this.db.get<{ min: number | bigint | null }>(
           sql`SELECT MIN(id) AS min FROM event_log`,

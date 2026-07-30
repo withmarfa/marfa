@@ -10,7 +10,7 @@ export class PgEventLogStore implements EventLogStore {
     event_type: string;
     item_id?: string | null;
     edge_id?: string | null;
-    tenant_id?: string;
+    space_id?: string;
     payload: string;
     originating_connection_id?: string | null;
     hop_count?: number;
@@ -21,7 +21,7 @@ export class PgEventLogStore implements EventLogStore {
         event_type: entry.event_type,
         item_id: entry.item_id ?? null,
         edge_id: entry.edge_id ?? null,
-        tenant_id: entry.tenant_id ?? null,
+        space_id: entry.space_id ?? null,
         payload: entry.payload,
         originating_connection_id: entry.originating_connection_id ?? null,
         hop_count: entry.hop_count ?? 0,
@@ -37,10 +37,10 @@ export class PgEventLogStore implements EventLogStore {
   async getAfter(
     afterId: bigint,
     limit: number,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<PersistedEvent[]> {
     const conditions = [gt(eventLog.id, afterId)];
-    if (tenantId) conditions.push(eq(eventLog.tenant_id, tenantId));
+    if (spaceId) conditions.push(eq(eventLog.space_id, spaceId));
 
     const rows = await this.db
       .select()
@@ -54,7 +54,7 @@ export class PgEventLogStore implements EventLogStore {
       event_type: row.event_type,
       item_id: row.item_id,
       edge_id: row.edge_id,
-      tenant_id: row.tenant_id,
+      space_id: row.space_id,
       payload: row.payload,
       originating_connection_id: row.originating_connection_id,
       hop_count: row.hop_count,
@@ -64,22 +64,22 @@ export class PgEventLogStore implements EventLogStore {
 
   async cleanup(
     retentionHours: number,
-    tenantId?: string | null,
+    spaceId?: string | null,
   ): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
     // Three filter shapes (see audit-store.cleanup).
-    const tenantClause =
-      tenantId === undefined
+    const spaceClause =
+      spaceId === undefined
         ? undefined
-        : tenantId === null
-          ? isNull(eventLog.tenant_id)
-          : eq(eventLog.tenant_id, tenantId);
+        : spaceId === null
+          ? isNull(eventLog.space_id)
+          : eq(eventLog.space_id, spaceId);
     const where =
-      tenantClause === undefined
+      spaceClause === undefined
         ? lt(eventLog.created_at, cutoff)
-        : and(lt(eventLog.created_at, cutoff), tenantClause);
+        : and(lt(eventLog.created_at, cutoff), spaceClause);
     const rows = await this.db
       .delete(eventLog)
       .where(where)
@@ -87,12 +87,12 @@ export class PgEventLogStore implements EventLogStore {
     return rows.length;
   }
 
-  async getMinRetainedId(tenantId?: string): Promise<bigint | null> {
+  async getMinRetainedId(spaceId?: string): Promise<bigint | null> {
     const query = this.db
       .select({ min: sql<bigint | null>`MIN(${eventLog.id})` })
       .from(eventLog);
-    const rows = tenantId
-      ? await query.where(eq(eventLog.tenant_id, tenantId))
+    const rows = spaceId
+      ? await query.where(eq(eventLog.space_id, spaceId))
       : await query;
     const min = rows[0]?.min ?? null;
     if (min === null) return null;

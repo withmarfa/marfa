@@ -5,7 +5,7 @@ import { MarfaClient } from "./client.js";
 // `client.admin.keys` SDK namespace coverage. Mock fetch rather than an
 // in-process server: the route's behavior is covered end-to-end in
 // `packages/server/src/routes/admin.test.ts`, so what needs pinning here is
-// the wiring — method, path, tenant-id encoding, and body pass-through.
+// the wiring — method, path, space-id encoding, and body pass-through.
 // ---------------------------------------------------------------------------
 
 function makeClient(fetchImpl: typeof globalThis.fetch): MarfaClient {
@@ -32,11 +32,11 @@ function urlOf(url: string | URL | Request): string {
 }
 
 describe("client.admin.keys.create", () => {
-  it("POSTs to the tenant-scoped mint route and returns the raw key", async () => {
+  it("POSTs to the space-scoped mint route and returns the raw key", async () => {
     const mockFetch = vi.fn(
       (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
         expect(urlOf(url)).toBe(
-          "http://example.test/admin/tenants/ten_abc/keys",
+          "http://example.test/admin/spaces/ten_abc/keys",
         );
         expect(init?.method).toBe("POST");
         expect(JSON.parse(init?.body as string)).toEqual({
@@ -73,11 +73,11 @@ describe("client.admin.keys.create", () => {
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
-  it("percent-encodes the tenant id into the path", async () => {
+  it("percent-encodes the space id into the path", async () => {
     const mockFetch = vi.fn(
       (url: string | URL | Request): Promise<Response> => {
         expect(urlOf(url)).toBe(
-          "http://example.test/admin/tenants/ten%2Fslash/keys",
+          "http://example.test/admin/spaces/ten%2Fslash/keys",
         );
         return Promise.resolve(
           makeJsonResponse(201, {
@@ -101,11 +101,11 @@ describe("client.admin.keys.create", () => {
   });
 });
 
-describe("client.admin.tenants.create", () => {
-  it("POSTs the name and returns the created tenant", async () => {
+describe("client.admin.spaces.create", () => {
+  it("POSTs the name and returns the created space", async () => {
     const mockFetch = vi.fn(
       (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        expect(urlOf(url)).toBe("http://example.test/admin/tenants");
+        expect(urlOf(url)).toBe("http://example.test/admin/spaces");
         expect(init?.method).toBe("POST");
         expect(JSON.parse(init?.body as string)).toEqual({ name: "acme" });
         return Promise.resolve(
@@ -118,16 +118,16 @@ describe("client.admin.tenants.create", () => {
         );
       },
     );
-    const tenant = await makeClient(mockFetch).admin.tenants.create({
+    const space = await makeClient(mockFetch).admin.spaces.create({
       name: "acme",
     });
-    expect(tenant.id).toBe("ten_new");
+    expect(space.id).toBe("ten_new");
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("sends an empty body when no name is given", async () => {
     // Not `undefined`: the route validates a JSON body, so omitting one
-    // entirely would be a 400 rather than an unnamed tenant.
+    // entirely would be a 400 rather than an unnamed space.
     const mockFetch = vi.fn(
       (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
         expect(JSON.parse(init?.body as string)).toEqual({});
@@ -141,7 +141,7 @@ describe("client.admin.tenants.create", () => {
         );
       },
     );
-    const tenant = await makeClient(mockFetch).admin.tenants.create();
-    expect(tenant.name).toBeNull();
+    const space = await makeClient(mockFetch).admin.spaces.create();
+    expect(space.name).toBeNull();
   });
 });

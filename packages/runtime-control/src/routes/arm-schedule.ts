@@ -139,7 +139,7 @@ async function handleScheduleDispatch(
   // Worker receives only the key it already holds. The platform broker
   // key used to travel on this hop; sending it meant every Worker in the
   // fleet held a credential that mints against any Connection in any
-  // tenant. `MARFA_WORKER_IDENTITY_SECRET` is proven non-empty by the 503
+  // space. `MARFA_WORKER_IDENTITY_SECRET` is proven non-empty by the 503
   // guard at the top of this handler.
   const dispatchAuthorization = await workerDispatchAuthorization(
     workerIdentitySecret,

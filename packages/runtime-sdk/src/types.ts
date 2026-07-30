@@ -15,7 +15,7 @@ export interface CycleMetadata {
 }
 
 /**
- * Default per-tenant hop budget (mirrors `DEFAULT_HOP_BUDGET` on the
+ * Default per-space hop budget (mirrors `DEFAULT_HOP_BUDGET` on the
  * server). Used by the SDK as a defensive ceiling — the server already
  * drops events past its own budget before enqueuing, but a non-pubsub
  * queue producer (or future control-plane path) could enqueue without
@@ -77,9 +77,9 @@ export interface FailureReason {
 export interface QueueEnvelopeBase {
   integration_name: string;
   connection_id: string;
-  /** Server-stamped tenant id, when known. Used for permission gates
+  /** Server-stamped space id, when known. Used for permission gates
    *  and for activity emission attribution. */
-  tenant_id?: string;
+  space_id?: string;
   /** Set only on messages routed to a DLQ by the runtime-sdk consumer
    *  wrapper on permanent failure. Read by `cf-queues-pull` peek to
    *  populate `failure_reason`. */

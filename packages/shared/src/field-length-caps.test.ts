@@ -12,13 +12,13 @@ import type { TypeSchema } from "@withmarfa/types";
 // 10_000 elements for arrays; per-field `maxLength` / `maxItems` overrides
 // raise or lower them.
 
-const TENANT = "tenant-field-caps-test";
+const SPACE = "space-field-caps-test";
 
 const DEFAULT_STRING_CAP = 100_000;
 const DEFAULT_ARRAY_CAP = 10_000;
 
 function register(id: string, fields: TypeSchema["fields"]): void {
-  registerTypeSchema({ id, version: 1, fields }, TENANT);
+  registerTypeSchema({ id, version: 1, fields }, SPACE);
 }
 
 afterEach(() => {
@@ -27,7 +27,7 @@ afterEach(() => {
     "test.caps.string_override",
     "test.caps.array_override",
   ]) {
-    unregisterTypeSchema(id, TENANT);
+    unregisterTypeSchema(id, SPACE);
   }
 });
 
@@ -41,14 +41,14 @@ describe("per-field length caps (default)", () => {
     const atCap = validateProperties(
       "test.caps.default",
       { text: "a".repeat(DEFAULT_STRING_CAP) },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(atCap.success).toBe(true);
 
     const overCap = validateProperties(
       "test.caps.default",
       { text: "a".repeat(DEFAULT_STRING_CAP + 1) },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overCap.success).toBe(false);
   });
@@ -62,14 +62,14 @@ describe("per-field length caps (default)", () => {
     const atCap = validateProperties(
       "test.caps.default",
       { tags: new Array(DEFAULT_ARRAY_CAP).fill("x") },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(atCap.success).toBe(true);
 
     const overCap = validateProperties(
       "test.caps.default",
       { tags: new Array(DEFAULT_ARRAY_CAP + 1).fill("x") },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overCap.success).toBe(false);
   });
@@ -85,14 +85,14 @@ describe("per-field length caps (overrides)", () => {
     const overDefaultUnderOverride = validateProperties(
       "test.caps.string_override",
       { text: "a".repeat(DEFAULT_STRING_CAP + 50_000) },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overDefaultUnderOverride.success).toBe(true);
 
     const overOverride = validateProperties(
       "test.caps.string_override",
       { text: "a".repeat(250_001) },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overOverride.success).toBe(false);
   });
@@ -105,14 +105,14 @@ describe("per-field length caps (overrides)", () => {
     const overDefaultUnderOverride = validateProperties(
       "test.caps.array_override",
       { tags: new Array(DEFAULT_ARRAY_CAP + 5_000).fill("x") },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overDefaultUnderOverride.success).toBe(true);
 
     const overOverride = validateProperties(
       "test.caps.array_override",
       { tags: new Array(25_001).fill("x") },
-      { tenantId: TENANT },
+      { spaceId: SPACE },
     );
     expect(overOverride.success).toBe(false);
   });

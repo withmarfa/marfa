@@ -46,7 +46,7 @@ export async function applyInlineEdges(
   storage: Storage,
   itemId: string,
   edges: Record<string, string[]>,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   assertEdgeWritable: (edgeType: string) => void,
 ): Promise<void> {
   // Permission first, before any shape validation or write. A caller with
@@ -86,14 +86,14 @@ export async function applyInlineEdges(
   // graph: replacing this item's edges of a type must not collide with
   // the very edges being replaced.
   for (const edgeType of Object.keys(edges)) {
-    await storage.edges.deleteBySource(itemId, edgeType, tenantId);
+    await storage.edges.deleteBySource(itemId, edgeType, spaceId);
   }
 
   // Validate the full proposed set against the post-delete state. Throws
   // on the first violation (cardinality, type constraint, duplicate,
   // cycle), aborting the caller's transaction before any edge is recreated.
   await assertEdgesCanBeCreated(storage.edges, storage.items, proposals, {
-    tenant_id: tenantId,
+    space_id: spaceId,
   });
 
   for (const p of proposals) {
@@ -103,7 +103,7 @@ export async function applyInlineEdges(
         target_id: p.target_id,
         edge_type: p.edge_type,
       },
-      tenantId,
+      spaceId,
     );
   }
 }

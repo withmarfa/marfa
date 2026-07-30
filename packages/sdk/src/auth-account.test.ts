@@ -9,9 +9,9 @@ import {
 } from "./test-harness.js";
 
 /**
- * Mint a fresh `tenant_admin` bearer bound to the user's tenant
+ * Mint a fresh `space_admin` bearer bound to the user's space
  * after `markPendingDeletion` revoked the original. The deletion
- * cascade revokes every API key in the tenant; a real user recovering
+ * cascade revokes every API key in the space; a real user recovering
  * via SDK would have to be re-issued a key out of band. For the
  * round-trip test we synthesize that recovery here.
  */
@@ -23,13 +23,13 @@ async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
     {
       label: `sdk-recovery-${suffix}`,
       source: `sdk-recovery-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       type_permissions: { "*": "write" },
       default_tier: "library",
       is_platform: false,
     },
     hash,
-    fixture.tenantId,
+    fixture.spaceId,
   );
   return raw;
 }

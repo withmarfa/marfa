@@ -12,25 +12,22 @@ function parseRow(row: typeof customEdgeTypes.$inferSelect): EdgeTypeSchema {
 export class PgEdgeTypeStore implements EdgeTypeStore {
   constructor(private db: PgDb) {}
 
-  async list(tenantId?: string): Promise<EdgeTypeSchema[]> {
+  async list(spaceId?: string): Promise<EdgeTypeSchema[]> {
     const rows = await this.db
       .select()
       .from(customEdgeTypes)
-      .where(eq(customEdgeTypes.tenant_id, tenantId ?? ""));
+      .where(eq(customEdgeTypes.space_id, spaceId ?? ""));
     return rows.map(parseRow);
   }
 
-  async get(
-    id: string,
-    tenantId?: string,
-  ): Promise<EdgeTypeSchema | undefined> {
+  async get(id: string, spaceId?: string): Promise<EdgeTypeSchema | undefined> {
     const [row] = await this.db
       .select()
       .from(customEdgeTypes)
       .where(
         and(
           eq(customEdgeTypes.id, id),
-          eq(customEdgeTypes.tenant_id, tenantId ?? ""),
+          eq(customEdgeTypes.space_id, spaceId ?? ""),
         ),
       );
     return row ? parseRow(row) : undefined;
@@ -38,9 +35,9 @@ export class PgEdgeTypeStore implements EdgeTypeStore {
 
   async create(
     schema: EdgeTypeSchema,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<EdgeTypeSchema> {
-    const existing = await this.get(schema.id, tenantId);
+    const existing = await this.get(schema.id, spaceId);
     if (existing) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
@@ -51,7 +48,7 @@ export class PgEdgeTypeStore implements EdgeTypeStore {
     const now = new Date().toISOString();
     await this.db.insert(customEdgeTypes).values({
       id: schema.id,
-      tenant_id: tenantId ?? "",
+      space_id: spaceId ?? "",
       schema: JSON.stringify(schema),
       created_at: now,
       updated_at: now,
@@ -59,13 +56,13 @@ export class PgEdgeTypeStore implements EdgeTypeStore {
     return schema;
   }
 
-  async delete(id: string, tenantId?: string): Promise<void> {
+  async delete(id: string, spaceId?: string): Promise<void> {
     await this.db
       .delete(customEdgeTypes)
       .where(
         and(
           eq(customEdgeTypes.id, id),
-          eq(customEdgeTypes.tenant_id, tenantId ?? ""),
+          eq(customEdgeTypes.space_id, spaceId ?? ""),
         ),
       );
   }
@@ -73,7 +70,7 @@ export class PgEdgeTypeStore implements EdgeTypeStore {
   async loadCustomEdgeTypes(): Promise<LoadedEdgeType[]> {
     const rows = await this.db.select().from(customEdgeTypes);
     return rows.map((row) => ({
-      tenant_id: row.tenant_id,
+      space_id: row.space_id,
       schema: parseRow(row),
     }));
   }

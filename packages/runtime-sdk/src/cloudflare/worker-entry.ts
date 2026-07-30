@@ -53,7 +53,7 @@ export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
    * fetch surface.
    *
    * Deliberately not the platform broker key this replaced. That key
-   * mints against any Connection in any tenant, so a copy on every
+   * mints against any Connection in any space, so a copy on every
    * Worker made every Worker a platform principal; a derived key
    * authenticates one integration and nothing else, and cannot be used
    * to compute a sibling's.

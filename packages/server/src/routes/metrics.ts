@@ -9,7 +9,7 @@ const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
 // A single module-level cache is sufficient: the platform gate refuses
-// tenant-bound credentials, so every caller that reaches the handler sees
+// space-bound credentials, so every caller that reaches the handler sees
 // the same instance-wide counts.
 interface CacheEntry {
   response: Record<string, unknown>;
@@ -52,7 +52,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys of every kind; `keys.runtime_credentials` breaks out the machine-minted per-dispatch credentials, whose `total` includes revoked rows still awaiting hard delete and whose `active` excludes anything revoked or past its expiry. Platform-admin only: most counters are instance-wide rather than tenant-scoped, so a credential bound to a tenant is refused.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys of every kind; `keys.runtime_credentials` breaks out the machine-minted per-dispatch credentials, whose `total` includes revoked rows still awaiting hard delete and whose `active` excludes anything revoked or past its expiry. Platform-admin only: most counters are instance-wide rather than space-scoped, so a credential bound to a space is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

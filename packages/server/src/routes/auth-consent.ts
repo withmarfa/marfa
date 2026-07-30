@@ -1257,21 +1257,21 @@ async function auditGrantReused(
   },
 ): Promise<void> {
   try {
-    let tenantId: string | undefined;
+    let spaceId: string | undefined;
     if (storage.users) {
       const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-      tenantId = userRow?.tenant_id ?? undefined;
+      spaceId = userRow?.space_id ?? undefined;
     }
     let grantItemId: string | null = null;
     if (typeof storage.oauthProvider?.findGrantItemId === "function") {
       grantItemId = await storage.oauthProvider.findGrantItemId({
-        tenantId: tenantId ?? null,
+        spaceId: spaceId ?? null,
         clientId: opts.clientId,
         authUserId: opts.authUserId,
       });
     }
     await storage.audit.log({
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "auth.grant.reused",
       resource_type: "oauth_grant",
       resource_id: opts.clientId,
@@ -1297,12 +1297,12 @@ async function auditGrantReused(
  * `routes/auth-pages.ts` does for the device-flow path. Emits
  * `auth.grant.created` audit row in both branches (creation + re-consent).
  *
- * Re-consent behavior: if a projection already exists for (tenant,
+ * Re-consent behavior: if a projection already exists for (space,
  * client, user), we update its `scopes` + `granted_at` in place rather
  * than creating a second row. The `audit.grant.created` row still emits
  * (a re-consent IS a grant event), with the existing `grant_item_id`
  * in details — operators auditing grant history see one row per consent
- * action, projection stays single-row per (tenant, client, user).
+ * action, projection stays single-row per (space, client, user).
  */
 async function projectGrantOnConsent(
   storage: Storage,
@@ -1315,10 +1315,10 @@ async function projectGrantOnConsent(
 ): Promise<void> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
-  let tenantId: string | undefined;
+  let spaceId: string | undefined;
   if (storage.users) {
     const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-    tenantId = userRow?.tenant_id ?? undefined;
+    spaceId = userRow?.space_id ?? undefined;
   }
 
   // Detect re-consent: update scopes in place if a projection exists,
@@ -1326,7 +1326,7 @@ async function projectGrantOnConsent(
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
-      tenantId: tenantId ?? null,
+      spaceId: spaceId ?? null,
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     });
@@ -1342,7 +1342,7 @@ async function projectGrantOnConsent(
     // patch) so it writes a versions snapshot, bumps updated_at + version,
     // and lets the row sort correctly under /items?sort=updated_at.
     // Pre-fetch to compute prior scopes for the narrowing check below.
-    const existing = await storage.items.get(grantItemId, tenantId);
+    const existing = await storage.items.get(grantItemId, spaceId);
     if (existing) {
       priorScopes = Array.isArray(existing.properties.scopes)
         ? (existing.properties.scopes as string[])
@@ -1393,7 +1393,7 @@ async function projectGrantOnConsent(
           revoked_at: undefined,
         },
       },
-      tenantId,
+      spaceId,
     );
     if ("error" in updated) {
       // Unreachable: we don't pass `version`, so the merge path bypasses
@@ -1421,7 +1421,7 @@ async function projectGrantOnConsent(
         },
         source: "marfa/oauth2/consent",
       },
-      tenantId,
+      spaceId,
     );
     grantItemId = item.id;
     projectedItem = item;
@@ -1432,11 +1432,11 @@ async function projectGrantOnConsent(
   void publish({
     type: eventType,
     item: projectedItem,
-    tenantId,
+    spaceId,
   });
 
   void storage.audit.log({
-    tenant_id: tenantId ?? null,
+    space_id: spaceId ?? null,
     action: "auth.grant.created",
     resource_type: "oauth_grant",
     resource_id: opts.clientId,

@@ -18,7 +18,7 @@ import type {
   ConflictResponse,
   ItemState,
   User,
-  Tenant,
+  Space,
   Edge,
   CreateEdgeInput,
 } from "@withmarfa/shared";
@@ -92,22 +92,22 @@ export function parseSortField(
 }
 
 export interface ItemFilters {
-  tenantId?: string;
-  /** Opt-in widening of the tenant filter for catalog surfaces. When
-   *  `tenantId` is set AND this flag is true, the WHERE clause becomes
-   *  `(tenant_id = $tenantId OR tenant_id IS NULL)` — so platform-scoped
-   *  rows (written by `is_platform: true` credentials with `tenant_id` NULL)
-   *  surface to in-tenant callers alongside their own rows. Used by the
+  spaceId?: string;
+  /** Opt-in widening of the space filter for catalog surfaces. When
+   *  `spaceId` is set AND this flag is true, the WHERE clause becomes
+   *  `(space_id = $spaceId OR space_id IS NULL)` — so platform-scoped
+   *  rows (written by `is_platform: true` credentials with `space_id` NULL)
+   *  surface to in-space callers alongside their own rows. Used by the
    *  Integrations catalog list (`GET /integrations`) so registered
-   *  manifests, which carry `tenant_id IS NULL` by design, are visible to
-   *  any authenticated tenant member. Default off — generic list reads
-   *  must NOT pick this up, or null-tenant rows from any source would
-   *  leak across tenant boundaries. No effect when `tenantId` is unset. */
+   *  manifests, which carry `space_id IS NULL` by design, are visible to
+   *  any authenticated space member. Default off — generic list reads
+   *  must NOT pick this up, or null-space rows from any source would
+   *  leak across space boundaries. No effect when `spaceId` is unset. */
   includePlatformScoped?: boolean;
   type?: string;
   state?: ItemState;
   source?: string;
-  /** The tenant's `source_filter` enforcement lever, applied per row: a row
+  /** The space's `source_filter` enforcement lever, applied per row: a row
    *  whose type the lever lists must carry an approved source, every other
    *  row passes untouched. Per-row on purpose — the lever is per-type, so
    *  narrowing the whole result set instead would both over-restrict the
@@ -132,7 +132,7 @@ export interface ItemFilters {
 }
 
 export interface SearchFilters {
-  tenantId?: string;
+  spaceId?: string;
   type?: string;
   state?: ItemState;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
@@ -218,34 +218,34 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * Optional knobs for single-item `get` lookups.
  *
  * `includePlatformScoped` mirrors `ItemFilters.includePlatformScoped` for the
- * single-id path: when set alongside a real `tenantId`, the WHERE clause
- * widens to `(tenant_id = $tenantId OR tenant_id IS NULL)` so platform-
+ * single-id path: when set alongside a real `spaceId`, the WHERE clause
+ * widens to `(space_id = $spaceId OR space_id IS NULL)` so platform-
  * scoped rows (written by `is_platform: true` credentials with
- * `tenant_id` NULL) resolve for in-tenant callers. Used by the
+ * `space_id` NULL) resolve for in-space callers. Used by the
  * Integrations install + get-by-id endpoints, which legitimately need
  * to fetch a platform-scoped `system.integration` manifest from a
- * tenant-scoped caller. Default off — generic gets MUST NOT pick this
- * up, or null-tenant rows from any source could leak across tenants.
- * No effect when `tenantId` is undefined.
+ * space-scoped caller. Default off — generic gets MUST NOT pick this
+ * up, or null-space rows from any source could leak across spaces.
+ * No effect when `spaceId` is undefined.
  */
 export interface ItemGetOptions {
   includePlatformScoped?: boolean;
 }
 
 export interface ItemStore {
-  create(input: CreateItemInput, tenantId?: string): Promise<Item>;
+  create(input: CreateItemInput, spaceId?: string): Promise<Item>;
   get(
     id: string,
-    tenantId?: string,
+    spaceId?: string,
     options?: ItemGetOptions,
   ): Promise<Item | null>;
   /**
    * Batched `get` — returns a map keyed by item id for every id in `ids` that
-   * resolves to a non-trashed item in the caller's tenant scope. Missing ids
+   * resolves to a non-trashed item in the caller's space scope. Missing ids
    * are simply absent from the map; no errors. Used by the edge-validation
    * batcher to collapse per-pair item fetches into a single IN query.
    */
-  getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>>;
+  getMany(ids: string[], spaceId?: string): Promise<Map<string, Item>>;
   /**
    * Like `get`, but returns trashed items too. Intended for callers that
    * need to read an item's metadata (e.g. its `type` for a permission
@@ -255,17 +255,17 @@ export interface ItemStore {
    * method via `restore` either; use the normal `restore()` to
    * un-trash.
    */
-  getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null>;
+  getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
   /**
    * Look up a single non-trashed item by `(source, source_id)` within a
-   * tenant. Returns null if no row matches. Used by `/items/bulk` upsert
+   * space. Returns null if no row matches. Used by `/items/bulk` upsert
    * to decide create-vs-update without round-tripping a full `list`.
    */
   findBySourceId(
     source: string,
     sourceId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | null>;
   /**
    * Internal natural-key lookup that also returns a soft-deleted row. Use
@@ -276,29 +276,29 @@ export interface ItemStore {
   findBySourceIdIncludingTrashed(
     source: string,
     sourceId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | null>;
   update(
     id: string,
     input: UpdateItemInput,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | ConflictResponse>;
-  delete(id: string, tenantId?: string): Promise<void>;
-  purge(id: string, tenantId?: string): Promise<void>;
+  delete(id: string, spaceId?: string): Promise<void>;
+  purge(id: string, spaceId?: string): Promise<void>;
   /**
-   * Hard-delete every id in `ids` within the tenant scope. Bypasses the
+   * Hard-delete every id in `ids` within the space scope. Bypasses the
    * "must be trashed" gate that single-item `purge` enforces — bulk is an
    * admin cleanup primitive with explicit confirm. Cascades metadata and
    * versions via ON DELETE CASCADE; caller must have already wiped edges
    * (source + target directions). Cleans the search index for each id.
-   * Returns the number of rows actually deleted (rows not in tenant are
+   * Returns the number of rows actually deleted (rows not in space are
    * silently skipped).
    */
-  bulkPurge(ids: string[], tenantId?: string): Promise<number>;
-  restore(id: string, tenantId?: string): Promise<Item>;
-  transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
+  bulkPurge(ids: string[], spaceId?: string): Promise<number>;
+  restore(id: string, spaceId?: string): Promise<Item>;
+  transition(id: string, state: ItemState, spaceId?: string): Promise<Item>;
   stats(
-    tenantId?: string,
+    spaceId?: string,
     allowedTypes?: string[],
     sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>>;
@@ -312,15 +312,15 @@ export interface ItemStore {
    * the automatic trash lifecycle with no route layer above it to do the
    * cleanup, and edges have no FK to items to fall back on.
    *
-   * `tenantId` semantics:
+   * `spaceId` semantics:
    * - `undefined` — every row older than the cutoff.
-   * - `string` — only rows where `tenant_id` matches.
-   * - `null` — only rows where `tenant_id IS NULL` (single-tenant
-   *   self-host items + any rows with no tenant scope).
+   * - `string` — only rows where `space_id` matches.
+   * - `null` — only rows where `space_id IS NULL` (single-space
+   *   self-host items + any rows with no space scope).
    */
   purgeTrashedOlderThan(
     beforeDate: string,
-    tenantId?: string | null,
+    spaceId?: string | null,
   ): Promise<number>;
 }
 
@@ -333,12 +333,12 @@ export interface MetadataStore {
   removeTag(itemId: string, tag: string): Promise<Metadata>;
   /**
    * Enumerate the distinct set of tags in use across items visible to the
-   * caller. Tenant-scoped; type-permission scoped when `allowedTypes` is
+   * caller. Space-scoped; type-permission scoped when `allowedTypes` is
    * provided (same pattern as `ItemStore.list`). Trashed items are excluded.
    * Returns tags with their usage counts, sorted by count descending.
    */
   listTags(filters: {
-    tenantId?: string;
+    spaceId?: string;
     allowedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]>;
   getExtensions(
@@ -401,60 +401,56 @@ export interface VersionStore {
     {
       itemId: string;
       type: string;
-      tenantId: string | null;
+      spaceId: string | null;
       versionCount: number;
     }[]
   >;
 }
 
 export interface TypeStore {
-  /** Lists the types visible to a tenant: the global core/system set plus the
-   *  tenant's own custom types. Omit `tenantId` for the null-tenant bucket
-   *  (single-tenant self-host / platform). */
-  list(tenantId?: string): Promise<TypeSchema[]>;
-  /** Resolves a type by id within the tenant: core/system types resolve
-   *  globally, custom types only for their owning tenant. */
-  get(id: string, tenantId?: string): Promise<TypeSchema | undefined>;
-  create(schema: TypeSchema, tenantId?: string): Promise<TypeSchema>;
-  update(
-    id: string,
-    schema: TypeSchema,
-    tenantId?: string,
-  ): Promise<TypeSchema>;
-  delete(id: string, tenantId?: string): Promise<void>;
-  /** Load every custom type across all tenants for server-startup registry
-   *  warmup. Each row carries its owning tenant so the warmup can register it
-   *  into the right tenant overlay. */
+  /** Lists the types visible to a space: the global core/system set plus the
+   *  space's own custom types. Omit `spaceId` for the null-space bucket
+   *  (single-space self-host / platform). */
+  list(spaceId?: string): Promise<TypeSchema[]>;
+  /** Resolves a type by id within the space: core/system types resolve
+   *  globally, custom types only for their owning space. */
+  get(id: string, spaceId?: string): Promise<TypeSchema | undefined>;
+  create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
+  update(id: string, schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
+  delete(id: string, spaceId?: string): Promise<void>;
+  /** Load every custom type across all spaces for server-startup registry
+   *  warmup. Each row carries its owning space so the warmup can register it
+   *  into the right space overlay. */
   loadCustomTypes(): Promise<LoadedType[]>;
   countCustom(): Promise<number>;
 }
 
-/** A type schema paired with the tenant that owns it — the shape the startup
- *  warmup needs to register each custom type into the correct tenant overlay.
- *  The empty-string `tenant_id` is the null-tenant sentinel. */
+/** A type schema paired with the space that owns it — the shape the startup
+ *  warmup needs to register each custom type into the correct space overlay.
+ *  The empty-string `space_id` is the null-space sentinel. */
 export interface LoadedType {
-  tenant_id: string;
+  space_id: string;
   schema: TypeSchema;
 }
 
 export interface EdgeTypeStore {
-  /** Lists a single tenant's custom edge types. Omit `tenantId` for the
-   *  null-tenant bucket (single-tenant self-host / platform). */
-  list(tenantId?: string): Promise<EdgeTypeSchema[]>;
-  get(id: string, tenantId?: string): Promise<EdgeTypeSchema | undefined>;
-  create(schema: EdgeTypeSchema, tenantId?: string): Promise<EdgeTypeSchema>;
-  delete(id: string, tenantId?: string): Promise<void>;
-  /** Load every custom edge type across all tenants for server-startup
-   *  registry warmup. Each row carries its owning tenant so the warmup can
-   *  register it into the right tenant overlay. */
+  /** Lists a single space's custom edge types. Omit `spaceId` for the
+   *  null-space bucket (single-space self-host / platform). */
+  list(spaceId?: string): Promise<EdgeTypeSchema[]>;
+  get(id: string, spaceId?: string): Promise<EdgeTypeSchema | undefined>;
+  create(schema: EdgeTypeSchema, spaceId?: string): Promise<EdgeTypeSchema>;
+  delete(id: string, spaceId?: string): Promise<void>;
+  /** Load every custom edge type across all spaces for server-startup
+   *  registry warmup. Each row carries its owning space so the warmup can
+   *  register it into the right space overlay. */
   loadCustomEdgeTypes(): Promise<LoadedEdgeType[]>;
 }
 
-/** An edge-type schema paired with the tenant that owns it — the shape the
- *  startup warmup needs to register each custom type into the correct tenant
- *  overlay. The empty-string `tenant_id` is the null-tenant sentinel. */
+/** An edge-type schema paired with the space that owns it — the shape the
+ *  startup warmup needs to register each custom type into the correct space
+ *  overlay. The empty-string `space_id` is the null-space sentinel. */
 export interface LoadedEdgeType {
-  tenant_id: string;
+  space_id: string;
   schema: EdgeTypeSchema;
 }
 
@@ -464,7 +460,7 @@ export interface SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<void>;
   remove(itemId: string): Promise<void>;
 }
@@ -473,7 +469,7 @@ export interface KeyStore {
   create(
     input: CreateKeyInput,
     keyHash: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ApiKey>;
   /**
    * Mint a runtime credential. Distinct from `create` because runtime
@@ -493,27 +489,24 @@ export interface KeyStore {
       item_source: string;
     },
     keyHash: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
   /**
-   * List a single tenant's active (non-revoked) API keys. Used by the
+   * List a single space's active (non-revoked) API keys. Used by the
    * platform-admin operator surface to discover keys for emergency
-   * revocation. Returns an empty array when the tenant has no keys.
+   * revocation. Returns an empty array when the space has no keys.
    */
-  listForTenant(tenantId: string): Promise<ApiKey[]>;
+  listForSpace(spaceId: string): Promise<ApiKey[]>;
   /**
    * Active (non-revoked) keys whose `connection_id` matches. The
    * uninstall pipeline uses this to locate the runtime credential bound
-   * to a connection before revoking it. Tenant-scoped when supplied —
-   * single-tenant self-hosted deployments pass `undefined` to read keys
-   * with no tenant binding. Indexed on the `connection_id` column.
+   * to a connection before revoking it. Space-scoped when supplied —
+   * single-space self-hosted deployments pass `undefined` to read keys
+   * with no space binding. Indexed on the `connection_id` column.
    */
-  listByConnectionId(
-    connectionId: string,
-    tenantId?: string,
-  ): Promise<ApiKey[]>;
+  listByConnectionId(connectionId: string, spaceId?: string): Promise<ApiKey[]>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
@@ -561,18 +554,18 @@ export interface KeyStore {
 }
 
 /**
- * Per-tenant blob metadata store.
+ * Per-space blob metadata store.
  *
- * **Tenant scoping.** The `blobs` table has a composite PK on
- * `(tenant_id, hash)`; the same hash can appear under multiple tenant_ids
+ * **Space scoping.** The `blobs` table has a composite PK on
+ * `(space_id, hash)`; the same hash can appear under multiple space_ids
  * (the storage backend dedupes physically — one file per hash — but each
- * tenant gets their own metadata row). The empty string `""` is the
- * sentinel for "instance-wide / single-tenant / platform-admin"; routes
- * pass `key.tenant_id ?? ""` so single-tenant deployments and
+ * space gets their own metadata row). The empty string `""` is the
+ * sentinel for "instance-wide / single-space / platform-admin"; routes
+ * pass `key.space_id ?? ""` so single-space deployments and
  * platform-admin uploads continue to interoperate.
  *
- * `register`, `get`, `remove` all take a tenant scope — passing the wrong
- * tenant returns null / no-op rather than the row from another tenant.
+ * `register`, `get`, `remove` all take a space scope — passing the wrong
+ * space returns null / no-op rather than the row from another space.
  *
  * `listAll` and `count` are unscoped — they're admin reconciliation
  * helpers (reconcile route + metrics), gated to platform admins at the
@@ -584,33 +577,33 @@ export interface BlobStore {
     mimeType: string,
     size: number,
     storagePath: string,
-    tenantId: string,
+    spaceId: string,
   ): Promise<void>;
   get(
     hash: string,
-    tenantId: string,
+    spaceId: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
   /**
-   * Returns hashes seen across the entire instance (every tenant), de-duplicated.
-   * Used only by the admin reconcile route + metrics. Tenant-scoped reads
-   * MUST go through `get(hash, tenantId)`.
+   * Returns hashes seen across the entire instance (every space), de-duplicated.
+   * Used only by the admin reconcile route + metrics. Space-scoped reads
+   * MUST go through `get(hash, spaceId)`.
    */
   listAll(): Promise<string[]>;
-  remove(hash: string, tenantId: string): Promise<void>;
+  remove(hash: string, spaceId: string): Promise<void>;
   /**
-   * Removes every row for a given hash across all tenants. Used only by
+   * Removes every row for a given hash across all spaces. Used only by
    * the admin orphan-cleanup + reconcile routes — the platform admin
-   * decided this hash is unreferenced everywhere, so all per-tenant
-   * metadata rows go. Tenant-scoped deletes use `remove(hash, tenantId)`.
+   * decided this hash is unreferenced everywhere, so all per-space
+   * metadata rows go. Space-scoped deletes use `remove(hash, spaceId)`.
    */
   removeAllForHash(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size: number }>;
 }
 
 export interface WebhookStore {
-  create(input: CreateWebhookInput, tenantId?: string): Promise<Webhook>;
-  list(tenantId?: string): Promise<Webhook[]>;
-  get(id: string, tenantId?: string): Promise<Webhook | null>;
+  create(input: CreateWebhookInput, spaceId?: string): Promise<Webhook>;
+  list(spaceId?: string): Promise<Webhook[]>;
+  get(id: string, spaceId?: string): Promise<Webhook | null>;
   update(id: string, input: UpdateWebhookInput): Promise<Webhook>;
   delete(id: string): Promise<void>;
   listActive(): Promise<Webhook[]>;
@@ -687,7 +680,7 @@ export interface WebhookDeliveryStore {
  */
 export interface InboundWebhookRow {
   id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   connection_id: string;
   external_service_id: string | null;
   secret_encrypted: string;
@@ -707,7 +700,7 @@ export interface InboundWebhookRow {
 export interface InboundWebhookStore {
   create(input: {
     id: string;
-    tenant_id?: string;
+    space_id?: string;
     connection_id: string;
     external_service_id?: string;
     secret_encrypted: string;
@@ -715,17 +708,17 @@ export interface InboundWebhookStore {
     verification_adapter_id?: string;
     events: string[];
   }): Promise<InboundWebhookRow>;
-  get(id: string, tenantId?: string): Promise<InboundWebhookRow | null>;
+  get(id: string, spaceId?: string): Promise<InboundWebhookRow | null>;
   /**
-   * `getAny` — looks up a row regardless of tenant scope. Used by the
+   * `getAny` — looks up a row regardless of space scope. Used by the
    * public unauth POST /webhooks/inbound/:id receipt path, which has no
-   * caller credential to scope by; tenant isolation is enforced at the
+   * caller credential to scope by; space isolation is enforced at the
    * subscription / read paths instead.
    */
   getAny(id: string): Promise<InboundWebhookRow | null>;
   listByConnection(
     connectionId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<InboundWebhookRow[]>;
   setDisabled(id: string, disabled: boolean): Promise<void>;
 }
@@ -775,7 +768,7 @@ export interface InboundWebhookEventStore {
 export interface ConnectionOAuthTokenRow {
   id: string;
   connection_id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   access_token_encrypted: string;
   refresh_token_encrypted: string | null;
   expires_at: string;
@@ -793,7 +786,7 @@ export interface ConnectionOAuthTokenStore {
    */
   upsert(input: {
     connection_id: string;
-    tenant_id?: string;
+    space_id?: string;
     access_token_encrypted: string;
     refresh_token_encrypted: string | null;
     expires_at: string;
@@ -802,10 +795,10 @@ export interface ConnectionOAuthTokenStore {
     previous_refresh_hash?: string | null;
   }): Promise<ConnectionOAuthTokenRow>;
 
-  /** Lookup by connection_id. Tenant-scoped when supplied. */
+  /** Lookup by connection_id. Space-scoped when supplied. */
   get(
     connectionId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ConnectionOAuthTokenRow | null>;
 
   /** Hard-delete the row for a connection (used on revocation). */
@@ -826,7 +819,7 @@ export interface ConnectionOAuthTokenStore {
 export interface ConnectionLeasedTokenRow {
   id: string;
   connection_id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   capability_id: string;
   lease_token_hash: string;
   scopes: string[];
@@ -840,7 +833,7 @@ export interface ConnectionLeasedTokenStore {
   create(input: {
     id: string;
     connection_id: string;
-    tenant_id?: string;
+    space_id?: string;
     capability_id: string;
     lease_token_hash: string;
     scopes: string[];
@@ -852,13 +845,13 @@ export interface ConnectionLeasedTokenStore {
   findByHash(hash: string): Promise<ConnectionLeasedTokenRow | null>;
 
   /** Id-keyed lookup — used by the revoke endpoint. */
-  get(id: string, tenantId?: string): Promise<ConnectionLeasedTokenRow | null>;
+  get(id: string, spaceId?: string): Promise<ConnectionLeasedTokenRow | null>;
 
   /** List active (non-revoked, non-expired) leases for a connection. */
   listActiveByConnection(
     connectionId: string,
     nowIso: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ConnectionLeasedTokenRow[]>;
 
   /** Stamp `revoked_at`. Returns false when the lease was already revoked. */
@@ -866,7 +859,7 @@ export interface ConnectionLeasedTokenStore {
 }
 
 // ---------------------------------------------------------------------------
-// User + Tenant stores (hosted mode only)
+// User + Space stores (hosted mode only)
 // ---------------------------------------------------------------------------
 
 /** Patch shape for `UserStore.updateProfile` — covers PATCH /profile/me
@@ -883,7 +876,7 @@ export interface UserStore {
     name?: string;
     provider: string;
     provider_id: string;
-    tenant_id: string;
+    space_id: string;
     /** Optional: claim a handle at creation time. The Better Auth
      *  sign-up flow (`POST /auth/sign-up/email`) always stamps it; test
      *  fixtures and admin tooling may leave it null. */
@@ -903,7 +896,7 @@ export interface UserStore {
    *  email is `auth_user.email`; this is the canonical cross-table join. */
   getByAuthUserId(authUserId: string): Promise<User | null>;
   getByProvider(provider: string, providerId: string): Promise<User | null>;
-  getByTenantId(tenantId: string): Promise<User | null>;
+  getBySpaceId(spaceId: string): Promise<User | null>;
   /** Lookup by claimed handle. Used for collision detection at claim time. */
   getByHandle(handle: string): Promise<User | null>;
   /** Claim or change a user's handle. Throws on collision. */
@@ -925,67 +918,65 @@ export interface UserStore {
   } | null>;
 }
 
-export interface TenantStore {
-  create(name?: string): Promise<Tenant>;
-  get(id: string): Promise<Tenant | null>;
+export interface SpaceStore {
+  create(name?: string): Promise<Space>;
+  get(id: string): Promise<Space | null>;
   /**
-   * Enumerate all tenants. Used by background cleanup jobs that fan out
-   * per-tenant. Returns tenants in arbitrary order; callers shouldn't
-   * depend on ordering. Cost is O(tenants) — cleanup runs are off the
+   * Enumerate all spaces. Used by background cleanup jobs that fan out
+   * per-space. Returns spaces in arbitrary order; callers shouldn't
+   * depend on ordering. Cost is O(spaces) — cleanup runs are off the
    * request hot path so the unbounded scan is acceptable.
    */
-  list(): Promise<Tenant[]>;
+  list(): Promise<Space[]>;
   getConfig(
     id: string,
-  ): Promise<import("@withmarfa/shared").TenantConfig | null>;
+  ): Promise<import("@withmarfa/shared").SpaceConfig | null>;
   updateConfig(
     id: string,
-    config: import("@withmarfa/shared").TenantConfig,
+    config: import("@withmarfa/shared").SpaceConfig,
   ): Promise<void>;
   /**
-   * Flip tenant status. `suspend` blocks future writes at the auth
+   * Flip space status. `suspend` blocks future writes at the auth
    * middleware (reads pass through); `unsuspend` restores. Both are no-ops
-   * when the tenant is already at the target status. Returns the updated
-   * row (null if the tenant id doesn't exist).
+   * when the space is already at the target status. Returns the updated
+   * row (null if the space id doesn't exist).
    */
-  suspend(id: string): Promise<Tenant | null>;
-  unsuspend(id: string): Promise<Tenant | null>;
+  suspend(id: string): Promise<Space | null>;
+  unsuspend(id: string): Promise<Space | null>;
   /**
    * Cheap status read for the auth-middleware write-guard. Returns `null`
-   * when the tenant doesn't exist (the gate treats unknown tenants as
-   * `active` — the credential's own tenant_id mismatch is handled
+   * when the space doesn't exist (the gate treats unknown spaces as
+   * `active` — the credential's own space_id mismatch is handled
    * separately by the standard auth flow).
    */
   getStatus(
     id: string,
-  ): Promise<import("@withmarfa/shared").TenantStatus | null>;
+  ): Promise<import("@withmarfa/shared").SpaceStatus | null>;
 }
 
 /**
- * Per-tenant quota store. Stores ceilings; counts are computed on-demand
+ * Per-space quota store. Stores ceilings; counts are computed on-demand
  * from existing tables at quota-check time.
  */
-export interface TenantQuotaStore {
-  /** Returns the per-tenant ceilings; null when no row exists (use env defaults). */
-  get(
-    tenantId: string,
-  ): Promise<import("@withmarfa/shared").TenantQuota | null>;
+export interface SpaceQuotaStore {
+  /** Returns the per-space ceilings; null when no row exists (use env defaults). */
+  get(spaceId: string): Promise<import("@withmarfa/shared").SpaceQuota | null>;
   /**
-   * Reads tenant existence and its optional quota row in one transaction,
-   * serialized against tenant deletion. `exists: true, quota: null` means the
-   * tenant uses environment defaults; `exists: false` means the tenant is
+   * Reads space existence and its optional quota row in one transaction,
+   * serialized against space deletion. `exists: true, quota: null` means the
+   * space uses environment defaults; `exists: false` means the space is
    * unknown at the read's linearization point.
    */
-  getForExistingTenant(tenantId: string): Promise<
+  getForExistingSpace(spaceId: string): Promise<
     | {
         exists: true;
-        quota: import("@withmarfa/shared").TenantQuota | null;
+        quota: import("@withmarfa/shared").SpaceQuota | null;
       }
     | { exists: false; quota: null }
   >;
   /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
   set(
-    tenantId: string,
+    spaceId: string,
     input: {
       items_limit?: number | null;
       webhooks_limit?: number | null;
@@ -993,15 +984,15 @@ export interface TenantQuotaStore {
       storage_bytes_limit?: number | null;
       rate_per_minute_limit?: number | null;
     },
-  ): Promise<import("@withmarfa/shared").TenantQuota>;
+  ): Promise<import("@withmarfa/shared").SpaceQuota>;
   /**
-   * Upsert ceilings only while the tenant row exists. The existence read and
-   * write are serialized against account deletion, so an unknown tenant or a
-   * deletion that wins the tenant lock returns null without leaving an orphan
+   * Upsert ceilings only while the space row exists. The existence read and
+   * write are serialized against account deletion, so an unknown space or a
+   * deletion that wins the space lock returns null without leaving an orphan
    * quota row.
    */
-  setForExistingTenant(
-    tenantId: string,
+  setForExistingSpace(
+    spaceId: string,
     input: {
       items_limit?: number | null;
       webhooks_limit?: number | null;
@@ -1009,10 +1000,10 @@ export interface TenantQuotaStore {
       storage_bytes_limit?: number | null;
       rate_per_minute_limit?: number | null;
     },
-  ): Promise<import("@withmarfa/shared").TenantQuota | null>;
-  /** Returns the current count for a resource within a tenant. */
+  ): Promise<import("@withmarfa/shared").SpaceQuota | null>;
+  /** Returns the current count for a resource within a space. */
   count(
-    tenantId: string,
+    spaceId: string,
     resource: import("@withmarfa/shared").QuotaResource,
   ): Promise<number>;
 }
@@ -1078,9 +1069,9 @@ export interface OAuthStore {
    * the authoritative throttle. Cluster-wide debounce comes from the
    * conditional UPDATE here.
    *
-   * Tenant-scoped: the WHERE matches `(id, tenant_id)` so a hosted-mode
-   * caller cannot trip this against another tenant's grant row. Pass
-   * `null` for the unscoped (single-tenant self-host) case.
+   * Space-scoped: the WHERE matches `(id, space_id)` so a hosted-mode
+   * caller cannot trip this against another space's grant row. Pass
+   * `null` for the unscoped (single-space self-host) case.
    *
    * Best-effort: callers swallow errors. The middleware-side cache mark
    * already prevents a stampede; storage failures must never break the
@@ -1088,7 +1079,7 @@ export interface OAuthStore {
    */
   updateLastUsedAt(
     connectionItemId: string,
-    tenantId: string | null,
+    spaceId: string | null,
     thresholdMs: number,
   ): Promise<void>;
 }
@@ -1115,9 +1106,9 @@ export interface OauthAccessTokenRow {
   id: string;
   userId: string | null;
   clientId: string;
-  /** Tenant id resolved via the plugin's `clientReference` callback at
+  /** Space id resolved via the plugin's `clientReference` callback at
    *  token-issuance time (mirrors `auth_oauth_access_token.reference_id`).
-   *  Null in keys-mode self-hosts where no per-user tenant exists. */
+   *  Null in keys-mode self-hosts where no per-user space exists. */
   referenceId: string | null;
   scopes: string[];
   expiresAtMs: number | null;
@@ -1133,7 +1124,7 @@ export interface OauthClientRow {
   redirectUris: string[];
   /** Exact post-logout redirect URIs accepted for this client. */
   postLogoutRedirectUris: string[];
-  /** Tenant binding from `clientReference` (Marfa: tenant_id). */
+  /** Space binding from `clientReference` (Marfa: space_id). */
   referenceId: string | null;
   /**
    * `true` when the client is a public client (PKCE, no secret) —
@@ -1196,7 +1187,7 @@ export interface CreateClientInput {
   redirectUris: readonly string[];
   /** Exact post-logout redirect URIs accepted for browser logout. */
   postLogoutRedirectUris?: readonly string[];
-  /** Tenant binding from the resolver — null for unauthenticated /
+  /** Space binding from the resolver — null for unauthenticated /
    *  keys-mode DCR. Mirrors `clientReference` in the plugin's wiring. */
   referenceId: string | null;
   /** Optional client metadata fields (passed through to the row). */
@@ -1386,7 +1377,7 @@ export interface OauthProviderStore {
   clientExists(clientId: string): Promise<boolean>;
   /**
    * Resolve the projected `system.connection { kind: "app" }` item id for a
-   * (tenantId, clientId, authUserId) tuple. Returns the `items.id` value or
+   * (spaceId, clientId, authUserId) tuple. Returns the `items.id` value or
    * `null` if no projection exists (consent never ran, or the row was
    * hard-deleted).
    *
@@ -1394,16 +1385,16 @@ export interface OauthProviderStore {
    * needs to stamp `last_used_at` on, and by the re-consent path to update
    * the row's `scopes` property when the user grants a different scope set.
    *
-   * Single-row indexed query: matches on `(type, tenant_id)` and predicates
+   * Single-row indexed query: matches on `(type, space_id)` and predicates
    * on `properties.kind / .client_id / .user_id` via the dialect's JSON
    * extractor. Sub-ms in PG, sub-ms in SQLite.
    *
-   * Tenant-scoped: pass `null` for the unscoped (single-tenant self-host)
-   * case so the row's `tenant_id IS NULL` predicate is used. A hosted-mode
-   * caller passing a real tenant cannot cross-tenant-match.
+   * Space-scoped: pass `null` for the unscoped (single-space self-host)
+   * case so the row's `space_id IS NULL` predicate is used. A hosted-mode
+   * caller passing a real space cannot cross-space-match.
    */
   findGrantItemId(opts: {
-    tenantId: string | null;
+    spaceId: string | null;
     clientId: string;
     authUserId: string;
   }): Promise<string | null>;
@@ -1423,10 +1414,10 @@ export interface OauthProviderStore {
    * absent) guarantees a client a user actually authorized — or one with
    * any live token — is never reaped. Returns the number of rows deleted.
    *
-   * Instance-wide: clients carry a `reference_id` (tenant binding) but the
-   * grantless predicate is tenant-agnostic — a row with zero grants is dead
-   * regardless of which tenant registered it. The single-statement delete
-   * keeps this off the per-tenant fan-out path.
+   * Instance-wide: clients carry a `reference_id` (space binding) but the
+   * grantless predicate is space-agnostic — a row with zero grants is dead
+   * regardless of which space registered it. The single-statement delete
+   * keeps this off the per-space fan-out path.
    */
   deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
 }
@@ -1446,13 +1437,13 @@ export interface AuditEntry {
   timestamp: string;
   key_id: string | null;
   /**
-   * Tenant scope. Stamped at write time from the calling api key's
-   * `tenant_id`. Null for system-initiated audits (install pipeline,
-   * cycle-budget overflow) and for bootstrap-admin keys that have no tenant.
-   * `GET /audit` filters on this column when the caller is tenant-scoped;
-   * tenantless callers (bootstrap admin) read every row.
+   * Space scope. Stamped at write time from the calling api key's
+   * `space_id`. Null for system-initiated audits (install pipeline,
+   * cycle-budget overflow) and for bootstrap-admin keys that have no space.
+   * `GET /audit` filters on this column when the caller is space-scoped;
+   * space-less callers (bootstrap admin) read every row.
    */
-  tenant_id: string | null;
+  space_id: string | null;
   action: string;
   resource_type: string;
   resource_id: string | null;
@@ -1469,10 +1460,10 @@ export interface AuditEntry {
 export interface AuditStore {
   log(entry: {
     key_id?: string;
-    /** Tenant scope. Pass `c.get("apiKey")?.tenant_id ?? null` from route
+    /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
      *  handlers; null for system-initiated audits and for the bootstrap-admin
-     *  shape on self-hosted single-tenant deployments. */
-    tenant_id?: string | null;
+     *  shape on self-hosted single-space deployments. */
+    space_id?: string | null;
     action: string;
     resource_type: string;
     resource_id?: string;
@@ -1489,24 +1480,24 @@ export interface AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
-    /** Tenant-scope filter. When set, returns only rows whose `tenant_id`
+    /** Space-scope filter. When set, returns only rows whose `space_id`
      *  matches. When omitted, every row is returned — bootstrap-admin reads
      *  on a self-hosted deployment, plus the cleanup job which is global. */
-    tenant_id?: string | null;
+    space_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>>;
   /**
    * Hard-delete rows whose `timestamp` is older than the retention window.
-   * The optional `tenantId` filter lets the cleanup job fan out per-tenant,
-   * honoring per-tenant retention overrides:
+   * The optional `spaceId` filter lets the cleanup job fan out per-space,
+   * honoring per-space retention overrides:
    *
    * - `undefined` — every row older than the cutoff (unscoped sweep).
-   * - `string` — only rows where `tenant_id` matches.
-   * - `null` — only rows where `tenant_id IS NULL` (system-initiated
-   *   audits + the no-tenant rows that single-tenant self-hosts use).
+   * - `string` — only rows where `space_id` matches.
+   * - `null` — only rows where `space_id IS NULL` (system-initiated
+   *   audits + the no-space rows that single-space self-hosts use).
    *
    * Returns the number of rows actually deleted.
    */
-  cleanup(retentionDays: number, tenantId?: string | null): Promise<number>;
+  cleanup(retentionDays: number, spaceId?: string | null): Promise<number>;
   /**
    * Redact rows that identify a specific `auth_user.id` ahead of a
    * hard-delete of the account. Rewrites `audit_log.details` to
@@ -1538,7 +1529,7 @@ export interface PersistedEvent {
    *  nullable so edge events don't have to borrow source_id. */
   item_id: string | null;
   edge_id: string | null;
-  tenant_id: string | null;
+  space_id: string | null;
   payload: string;
   /**
    * The connection whose action set off this chain of events. Null for
@@ -1559,34 +1550,34 @@ export interface EventLogStore {
     /** Non-null for edge events; lets subscribers filter Last-Event-ID
      *  replay by a specific edge in addition to by item. */
     edge_id?: string | null;
-    tenant_id?: string;
+    space_id?: string;
     payload: string;
     /** Cycle-detection metadata. */
     originating_connection_id?: string | null;
     hop_count?: number;
   }): Promise<bigint>;
 
-  /** Retrieve events after a given ID, optionally filtered by tenant. */
+  /** Retrieve events after a given ID, optionally filtered by space. */
   getAfter(
     afterId: bigint,
     limit: number,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<PersistedEvent[]>;
 
   /**
-   * Delete events older than the given retention window. Same `tenantId`
+   * Delete events older than the given retention window. Same `spaceId`
    * semantics as `AuditStore.cleanup`: undefined sweeps everything, a
-   * string scopes to that tenant, `null` scopes to rows whose
-   * `tenant_id IS NULL`. Returns count deleted.
+   * string scopes to that space, `null` scopes to rows whose
+   * `space_id IS NULL`. Returns count deleted.
    */
-  cleanup(retentionHours: number, tenantId?: string | null): Promise<number>;
+  cleanup(retentionHours: number, spaceId?: string | null): Promise<number>;
 
-  /** Smallest surviving event id, scoped to a tenant when provided.
+  /** Smallest surviving event id, scoped to a space when provided.
    *  Returns null when no events match. Used by the SSE route to
    *  detect clients whose `Last-Event-ID` predates the retention
    *  window so it can emit a terminal `catchup_too_old` event
    *  instead of silently resuming mid-stream. */
-  getMinRetainedId(tenantId?: string): Promise<bigint | null>;
+  getMinRetainedId(spaceId?: string): Promise<bigint | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1621,7 +1612,7 @@ export interface EdgeListFilters {
 
 export interface EdgeStore {
   /** Create an edge. Constraint enforcement (cardinality / cycles / type) sits outside. */
-  createRaw(input: CreateEdgeInput, tenantId?: string): Promise<Edge>;
+  createRaw(input: CreateEdgeInput, spaceId?: string): Promise<Edge>;
   get(id: string): Promise<Edge | null>;
   /** Outbound edges — this item is the source. */
   listFromSource(
@@ -1634,46 +1625,46 @@ export interface EdgeStore {
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>>;
   /**
-   * Global list of edges across the whole tenant. Used by clients that need
+   * Global list of edges across the whole space. Used by clients that need
    * "every edge of type X" (thread-root counting, taxonomy traversal, etc.)
-   * — replaces the N+1 walk-every-item pattern. Tenant-scoped; trashed-item
+   * — replaces the N+1 walk-every-item pattern. Space-scoped; trashed-item
    *  filtering is the caller's responsibility (edges to trashed items are
    *  still real edges from a graph perspective).
    */
   list(
-    filters?: EdgeListFilters & { tenantId?: string },
+    filters?: EdgeListFilters & { spaceId?: string },
   ): Promise<PaginatedResult<Edge>>;
   /**
    * Replace an edge's properties in place. `source_id` / `target_id` /
-   * `edge_type` are immutable. When `tenantId` is supplied the UPDATE is
-   * additionally fenced to that tenant so a tenant-scoped caller cannot
-   * mutate another tenant's edge by id — a cross-tenant id matches zero
-   * rows and throws `edge ... not found`. Omitting `tenantId` leaves the
-   * update unscoped (platform-admin / single-tenant self-host).
+   * `edge_type` are immutable. When `spaceId` is supplied the UPDATE is
+   * additionally fenced to that space so a space-scoped caller cannot
+   * mutate another space's edge by id — a cross-space id matches zero
+   * rows and throws `edge ... not found`. Omitting `spaceId` leaves the
+   * update unscoped (platform-admin / single-space self-host).
    */
   updateProperties(
     id: string,
     properties: Record<string, unknown>,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Edge>;
   /**
-   * Delete an edge by id. When `tenantId` is supplied the DELETE is fenced
-   * to that tenant so a tenant-scoped caller cannot delete another tenant's
-   * edge by id — a cross-tenant id matches zero rows and is a silent no-op
+   * Delete an edge by id. When `spaceId` is supplied the DELETE is fenced
+   * to that space so a space-scoped caller cannot delete another space's
+   * edge by id — a cross-space id matches zero rows and is a silent no-op
    * (the route layer's prior 404-cloak is the user-visible signal). Omitting
-   * `tenantId` leaves the delete unscoped (platform-admin / single-tenant
+   * `spaceId` leaves the delete unscoped (platform-admin / single-space
    * self-host).
    */
-  delete(id: string, tenantId?: string): Promise<void>;
+  delete(id: string, spaceId?: string): Promise<void>;
   deleteBySource(
     sourceId: string,
     edgeType?: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<void>;
   deleteByTarget(
     targetId: string,
     edgeType?: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<void>;
   /**
    * Batched `deleteBySource` — drop every edge whose `source_id` is in
@@ -1688,32 +1679,32 @@ export interface EdgeStore {
   deleteByTargetBatch(targetIds: string[], edgeType?: string): Promise<number>;
   /**
    * Count edges where the given item is source. Used for cardinality checks.
-   * When `tenantId` is supplied the count is fenced to that tenant so a
-   * tenant-scoped cardinality check never folds in another tenant's edges.
+   * When `spaceId` is supplied the count is fenced to that space so a
+   * space-scoped cardinality check never folds in another space's edges.
    */
   countBySource(
     sourceId: string,
     edgeType: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<number>;
   /**
    * Count edges where the given item is target. Used for cardinality checks.
-   * Same `tenantId` fence semantics as `countBySource`.
+   * Same `spaceId` fence semantics as `countBySource`.
    */
   countByTarget(
     targetId: string,
     edgeType: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<number>;
   /**
    * Batched `countBySource` — for each distinct `(source_id, edge_type)` pair
    * returns the row count. Key format: `${source_id}|${edge_type}`. Pairs
    * absent from the result map have count zero. One SQL query per distinct
-   * `edge_type` in `pairs`. `tenantId` fences each query to that tenant.
+   * `edge_type` in `pairs`. `spaceId` fences each query to that space.
    */
   countsBySourceBatch(
     pairs: { source_id: string; edge_type: string }[],
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Map<string, number>>;
   /**
    * Batched `countByTarget` — mirror of `countsBySourceBatch`, keyed as
@@ -1721,23 +1712,23 @@ export interface EdgeStore {
    */
   countsByTargetBatch(
     pairs: { target_id: string; edge_type: string }[],
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Map<string, number>>;
   /**
-   * Exact-duplicate check (source_id, target_id, edge_type). `tenantId`
-   * fences the lookup so a cross-tenant edge with the same triple is invisible.
+   * Exact-duplicate check (source_id, target_id, edge_type). `spaceId`
+   * fences the lookup so a cross-space edge with the same triple is invisible.
    */
   existsExact(
     sourceId: string,
     targetId: string,
     edgeType: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<boolean>;
   /**
    * Batched `existsExact` — returns the subset of triples that already exist.
    * Key format: `${source_id}|${target_id}|${edge_type}`. Callers check
    * membership to decide whether to reject a proposed edge as a duplicate.
-   * One SQL query per distinct `edge_type`. `tenantId` fences each query.
+   * One SQL query per distinct `edge_type`. `spaceId` fences each query.
    */
   existsExactBatch(
     pairs: {
@@ -1745,7 +1736,7 @@ export interface EdgeStore {
       target_id: string;
       edge_type: string;
     }[],
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Set<string>>;
   /**
    * Batched triple-to-Edge lookup. For each `(source_id, target_id, edge_type)`
@@ -1755,10 +1746,10 @@ export interface EdgeStore {
    * their ids for in-place property updates. One SQL query per distinct
    * `edge_type`.
    *
-   * When `tenantId` is supplied the lookup is fenced to that tenant so a
-   * tenant-scoped bulk upsert never resolves (and then mutates) another
-   * tenant's edge that happens to share the same `(source, target, type)`
-   * triple. Omitting `tenantId` leaves the lookup unscoped.
+   * When `spaceId` is supplied the lookup is fenced to that space so a
+   * space-scoped bulk upsert never resolves (and then mutates) another
+   * space's edge that happens to share the same `(source, target, type)`
+   * triple. Omitting `spaceId` leaves the lookup unscoped.
    */
   findByTriplesBatch(
     pairs: {
@@ -1766,28 +1757,28 @@ export interface EdgeStore {
       target_id: string;
       edge_type: string;
     }[],
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Map<string, Edge>>;
   /**
    * All outbound edges of a given type from sourceId. Used for cycle checks,
    * cascade-on-delete, and edge hydration when the caller wants every entry.
-   * `tenantId` fences the walk so cycle detection never traverses another
-   * tenant's edges.
+   * `spaceId` fences the walk so cycle detection never traverses another
+   * space's edges.
    */
   listOutboundOfType(
     sourceId: string,
     edgeType: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Edge[]>;
   /**
    * All edges touching the given item — outbound (item is source) and inbound
    * (item is target). Used by cascade-on-delete to gather the full edge set
-   * around an item being deleted. `tenantId` fences the gather so cascade
-   * planning never reads across tenants.
+   * around an item being deleted. `spaceId` fences the gather so cascade
+   * planning never reads across spaces.
    */
   listAllByItem(
     itemId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
   /** Batched outbound-by-types fetch for hydration on item reads. */
   listFromSourcesBatched(
@@ -1817,11 +1808,11 @@ export interface EdgeStore {
  * Cleanup hooks for the better-auth `auth_session` table. Better Auth itself
  * owns the session TTL via `expiresAt`; this store exists only to drop rows
  * past that timestamp on a periodic sweep so the table doesn't grow unbounded
- * across hosted multi-tenant scale.
+ * across hosted multi-space scale.
  *
- * Instance-wide by design — `auth_session` carries no `tenant_id` column, the
- * deletion criterion is purely time-based, and there's no per-tenant retention
- * knob. Mirrors the `VersionThinner` shape rather than the per-tenant fan-out
+ * Instance-wide by design — `auth_session` carries no `space_id` column, the
+ * deletion criterion is purely time-based, and there's no per-space retention
+ * knob. Mirrors the `VersionThinner` shape rather than the per-space fan-out
  * used for retention-window jobs.
  */
 export interface AuthSessionStore {
@@ -1838,7 +1829,7 @@ export interface AuthSessionStore {
  * is greppable as a unit.
  *
  * The hard-delete cascade itself is a top-level `Storage` method
- * (`deleteAccountCascade`) because it spans every per-tenant table plus
+ * (`deleteAccountCascade`) because it spans every per-space table plus
  * the auth island — it doesn't sit cleanly inside one sub-store. The
  * cascade re-checks `deletion_state === 'pending_deletion'` and
  * `pending_deletion_at < cutoffIso` inside its transaction (with `FOR
@@ -1849,7 +1840,7 @@ export interface AuthSessionStore {
 export interface AccountLifecycleStore {
   /** Flip `auth_user.deletion_state` → `'pending_deletion'`, stamp
    *  `pending_deletion_at = nowIso`, AND inside the same transaction:
-   *  revoke every `api_keys` row for the user's tenant + delete every
+   *  revoke every `api_keys` row for the user's space + delete every
    *  `auth_session` for the user. Idempotent — re-running on a
    *  pending row just re-stamps `pending_deletion_at`. */
   markPendingDeletion(authUserId: string, nowIso: string): Promise<void>;
@@ -1927,8 +1918,8 @@ export interface CoordinationStore {
  * production consumers ride the same store:
  *
  *   - `rate-limit middleware` (family = "rate") — per-credential and
- *     per-tenant request windows. Window keys take the shape
- *     "<credential-id-or-ip>:<path-prefix>" and "tenant:<tenant-id>";
+ *     per-space request windows. Window keys take the shape
+ *     "<credential-id-or-ip>:<path-prefix>" and "space:<space-id>";
  *     window size from `AppConfig.rateLimitWindowMs` (default 60s).
  *   - `forgot-password per-email throttle` (family = "throttle") —
  *     window key "forgot-password:<lowercased-email>"; window size 1h.
@@ -2010,7 +2001,7 @@ export type BulkActionJobStatus =
  *  `api_key_id`, and the original `input` are server-internal. */
 export interface BulkActionJobRow {
   id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   api_key_id: string | null;
   status: BulkActionJobStatus;
   action: string;
@@ -2037,7 +2028,7 @@ export interface BulkActionJobRow {
 
 export interface CreateBulkActionJobInput {
   id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   api_key_id: string | null;
   action: string;
   input: string;
@@ -2056,13 +2047,13 @@ export interface BulkActionJobProgress {
 export interface BulkActionJobStore {
   /**
    * INSERT a fresh row in `queued` state. When `idempotency_key` is set
-   * and a row with the same `(tenant_id, idempotency_key)` already
+   * and a row with the same `(space_id, idempotency_key)` already
    * exists, returns that existing row instead of creating a new one
    * — the `ON CONFLICT` happens at the unique-index level so this is a
    * race-safe replay path.
    */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
-  /** Fetch by id. Tenant scoping is the caller's responsibility — the
+  /** Fetch by id. Space scoping is the caller's responsibility — the
    *  store returns the row regardless. The route handler enforces auth
    *  (`api_key_id` match or admin). */
   getById(id: string): Promise<BulkActionJobRow | null>;
@@ -2154,10 +2145,10 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   bulkActionJobs: BulkActionJobStore;
 
   users?: UserStore;
-  tenants?: TenantStore;
-  /** Per-tenant quotas. Always present (counts even when no per-tenant
+  spaces?: SpaceStore;
+  /** Per-space quotas. Always present (counts even when no per-space
    *  ceilings are set). */
-  tenantQuotas: TenantQuotaStore;
+  spaceQuotas: SpaceQuotaStore;
   /**
    * Cluster-shared rate-limit + per-email throttle counters. Always wired
    * by both dialect factories; the middleware + the forgot-password route
@@ -2169,7 +2160,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   /**
    * Optional reference to the wrapped Postgres Drizzle instance, exposed
    * so the RLS middleware can drive `db.transaction(...)` to wrap each
-   * tenant-bounded request. Set only on the PG storage; `undefined` on
+   * space-bounded request. Set only on the PG storage; `undefined` on
    * SQLite (RLS is PG-only). The middleware skips the role-switch wrapping
    * when this is undefined. Typed `unknown` for portability; the middleware
    * casts via the PgDb type at consumer-site.

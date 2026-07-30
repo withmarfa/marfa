@@ -16,7 +16,7 @@ import type { Storage } from "../storage/interface.js";
 
 export interface ScheduleControlInput {
   connectionId: string;
-  tenantId?: string;
+  spaceId?: string;
   integrationRef?: string;
   integrationRuntime: "hosted" | "local";
   controlPlaneUrl?: string;
@@ -62,7 +62,7 @@ export async function setConnectionSchedule(
   if (input.integrationRef) {
     const integration = await storage.items.get(
       input.integrationRef,
-      input.tenantId,
+      input.spaceId,
       { includePlatformScoped: true },
     );
     if (integration?.type === "system.integration") {

@@ -14,9 +14,9 @@ import type {
 } from "@withmarfa/shared";
 
 /**
- * A tenant-scoped type lookup: resolves a type id to its schema, or undefined.
+ * A space-scoped type lookup: resolves a type id to its schema, or undefined.
  * Inheritance chains walk through this so a custom type's ancestors resolve in
- * the same tenant scope. Callers pass `(id) => getTypeSchema(id, tenantId)`.
+ * the same space scope. Callers pass `(id) => getTypeSchema(id, spaceId)`.
  */
 export type TypeResolver = (id: string) => TypeSchema | undefined;
 

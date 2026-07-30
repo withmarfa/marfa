@@ -5,21 +5,21 @@
  * Two independent defects, one escalation chain:
  *
  * 1. `POST /keys` took `role` straight from the request body. A
- *    `tenant_admin` could mint itself an `admin` credential — and every
- *    hosted sign-up is provisioned `tenant_admin`, so any account could
+ *    `space_admin` could mint itself an `admin` credential — and every
+ *    hosted sign-up is provisioned `space_admin`, so any account could
  *    reach platform authority. The fix is a role lattice: a caller may
  *    never grant a role that outranks its own.
  *
  * 2. `checkAdmin` tested the role alone. A credential carrying
- *    `role: "admin"` but bound to a tenant passed every `requireAdmin`
- *    gate, including the cross-tenant `/admin/tenants` surface. Platform
- *    authority is authority that is NOT confined to a tenant, so the gate
+ *    `role: "admin"` but bound to a space passed every `requireAdmin`
+ *    gate, including the cross-space `/admin/spaces` surface. Platform
+ *    authority is authority that is NOT confined to a space, so the gate
  *    now requires an unbound credential.
  *
  * Each layer is tested on its own: the lattice holds even if a
- * tenant-bound admin key is minted by a platform operator through
- * `POST /admin/tenants/{id}/keys`, and the platform gate holds even if a
- * tenant-bound admin credential exists for any other reason.
+ * space-bound admin key is minted by a platform operator through
+ * `POST /admin/spaces/{id}/keys`, and the platform gate holds even if a
+ * space-bound admin credential exists for any other reason.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -35,7 +35,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
-// Unit — checkAdmin considers tenant binding, not role alone
+// Unit — checkAdmin considers space binding, not role alone
 // ---------------------------------------------------------------------------
 
 function fakeKey(
@@ -65,8 +65,8 @@ describe("checkAdmin (unit)", () => {
     expect(checkAdmin(key)).toBe(key);
   });
 
-  it("rejects a tenant-bound admin with FORBIDDEN", () => {
-    const key = fakeKey("admin", { tenant_id: "tenant-a" });
+  it("rejects a space-bound admin with FORBIDDEN", () => {
+    const key = fakeKey("admin", { space_id: "space-a" });
     expect(() => checkAdmin(key)).toThrow(MarfaError);
     try {
       checkAdmin(key);
@@ -75,8 +75,8 @@ describe("checkAdmin (unit)", () => {
     }
   });
 
-  it("rejects tenant_admin", () => {
-    expect(() => checkAdmin(fakeKey("tenant_admin"))).toThrow(MarfaError);
+  it("rejects space_admin", () => {
+    expect(() => checkAdmin(fakeKey("space_admin"))).toThrow(MarfaError);
   });
 
   it("rejects member", () => {
@@ -97,12 +97,12 @@ describe("checkAdmin (unit)", () => {
 // Integration
 // ---------------------------------------------------------------------------
 
-/** The tenant store is optional on the interface but always present in a
+/** The space store is optional on the interface but always present in a
  *  test context built with the default (hosted-capable) storage. */
-function tenantStore(ctx: TestContext): NonNullable<Storage["tenants"]> {
-  const tenants = ctx.storage.tenants;
-  if (!tenants) throw new Error("test context has no tenant store");
-  return tenants;
+function spaceStore(ctx: TestContext): NonNullable<Storage["spaces"]> {
+  const spaces = ctx.storage.spaces;
+  if (!spaces) throw new Error("test context has no space store");
+  return spaces;
 }
 
 async function mintKey(
@@ -110,7 +110,7 @@ async function mintKey(
   opts: {
     label: string;
     role: ApiKey["role"];
-    tenantId?: string;
+    spaceId?: string;
     is_platform?: boolean;
   },
 ): Promise<string> {
@@ -126,7 +126,7 @@ async function mintKey(
       is_platform: opts.is_platform ?? false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    opts.tenantId,
+    opts.spaceId,
   );
   return raw;
 }
@@ -138,13 +138,13 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     await ctx.cleanup();
   });
 
-  it("tenant_admin cannot mint an admin credential", async () => {
+  it("space_admin cannot mint an admin credential", async () => {
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-lattice",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -162,16 +162,16 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     expect(body.error.code).toBe("forbidden");
   });
 
-  it("tenant_admin may still mint its own tier and below", async () => {
+  it("space_admin may still mint its own tier and below", async () => {
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-peer",
-      role: "tenant_admin",
-      tenantId: tenantA,
+      role: "space_admin",
+      spaceId: spaceA,
     });
 
-    for (const role of ["tenant_admin", "member"] as const) {
+    for (const role of ["space_admin", "member"] as const) {
       const res = await request(ctx.app, "POST", "/keys", {
         key: wsAdmin,
         body: {
@@ -208,33 +208,33 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
       expect(((await res.json()) as { role: string }).role).toBe(role);
     }
 
-    // `tenant_admin` is the one role a tenant-less caller cannot mint here,
-    // and the refusal comes from the tenant axis, not this one: the new key
-    // would inherit no tenant, so its authority would not stop where its
+    // `space_admin` is the one role a space-less caller cannot mint here,
+    // and the refusal comes from the space axis, not this one: the new key
+    // would inherit no space, so its authority would not stop where its
     // name says. A 400 rather than the lattice's 403 is what distinguishes
     // the two guards.
     const res = await request(ctx.app, "POST", "/keys", {
       key: platform,
       body: {
-        label: "minted-tenant-admin",
-        source: "minted-tenant-admin",
-        role: "tenant_admin",
+        label: "minted-space-admin",
+        source: "minted-space-admin",
+        role: "space_admin",
         default_tier: "library",
       },
     });
     expect(res.status).toBe(400);
   });
 
-  it("a tenant-bound admin cannot mint above tenant scope either", async () => {
-    // A platform operator can legitimately issue a tenant-bound `admin`
-    // through POST /admin/tenants/{id}/keys. Its authority is confined to
-    // that tenant, so its mint ceiling must be too.
+  it("a space-bound admin cannot mint above space scope either", async () => {
+    // A platform operator can legitimately issue a space-bound `admin`
+    // through POST /admin/spaces/{id}/keys. Its authority is confined to
+    // that space, so its mint ceiling must be too.
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const boundAdmin = await mintKey(ctx, {
       label: "bound-admin",
       role: "admin",
-      tenantId: tenantA,
+      spaceId: spaceA,
     });
 
     const res = await request(ctx.app, "POST", "/keys", {
@@ -248,15 +248,15 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     });
 
     // Same tier, so the lattice permits it; the minted key inherits the
-    // caller's tenant binding and is therefore no more powerful.
+    // caller's space binding and is therefore no more powerful.
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.tenant_id).toBe(tenantA);
+    expect(stored?.space_id).toBe(spaceA);
   });
 });
 
-describe("platform gate — a tenant-bound admin has no cross-tenant authority", () => {
+describe("platform gate — a space-bound admin has no cross-space authority", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
@@ -267,73 +267,68 @@ describe("platform gate — a tenant-bound admin has no cross-tenant authority",
     boundAdmin: string;
     victim: string;
   }> {
-    const victim = (await tenantStore(ctx).create("Victim Space")).id;
-    const attacker = (await tenantStore(ctx).create("Attacker Space")).id;
+    const victim = (await spaceStore(ctx).create("Victim Space")).id;
+    const attacker = (await spaceStore(ctx).create("Attacker Space")).id;
     const boundAdmin = await mintKey(ctx, {
       label: "bound-admin",
       role: "admin",
-      tenantId: attacker,
+      spaceId: attacker,
     });
     return { boundAdmin, victim };
   }
 
-  it("cannot enumerate tenants", async () => {
+  it("cannot enumerate spaces", async () => {
     ctx = await createTestContext();
     const { boundAdmin } = await seedBoundAdmin();
 
-    const res = await request(ctx.app, "GET", "/admin/tenants", {
+    const res = await request(ctx.app, "GET", "/admin/spaces", {
       key: boundAdmin,
     });
     expect(res.status).toBe(403);
   });
 
-  it("cannot read another tenant's row", async () => {
+  it("cannot read another space's row", async () => {
     ctx = await createTestContext();
     const { boundAdmin, victim } = await seedBoundAdmin();
 
-    const res = await request(ctx.app, "GET", `/admin/tenants/${victim}`, {
+    const res = await request(ctx.app, "GET", `/admin/spaces/${victim}`, {
       key: boundAdmin,
     });
     expect(res.status).toBe(403);
   });
 
-  it("cannot suspend another tenant", async () => {
+  it("cannot suspend another space", async () => {
     ctx = await createTestContext();
     const { boundAdmin, victim } = await seedBoundAdmin();
 
     const res = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${victim}/suspend`,
+      `/admin/spaces/${victim}/suspend`,
       { key: boundAdmin, body: {} },
     );
     expect(res.status).toBe(403);
 
-    const after = await tenantStore(ctx).get(victim);
+    const after = await spaceStore(ctx).get(victim);
     expect(after?.status).toBe("active");
   });
 
-  it("cannot mint a credential inside another tenant", async () => {
+  it("cannot mint a credential inside another space", async () => {
     ctx = await createTestContext();
     const { boundAdmin, victim } = await seedBoundAdmin();
 
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/tenants/${victim}/keys`,
-      {
-        key: boundAdmin,
-        body: { label: "foothold", source: "foothold", role: "tenant_admin" },
-      },
-    );
+    const res = await request(ctx.app, "POST", `/admin/spaces/${victim}/keys`, {
+      key: boundAdmin,
+      body: { label: "foothold", source: "foothold", role: "space_admin" },
+    });
     expect(res.status).toBe(403);
   });
 
-  it("cannot rewrite another tenant's quotas", async () => {
+  it("cannot rewrite another space's quotas", async () => {
     ctx = await createTestContext();
     const { boundAdmin, victim } = await seedBoundAdmin();
 
-    const res = await request(ctx.app, "PUT", `/tenants/${victim}/quotas`, {
+    const res = await request(ctx.app, "PUT", `/spaces/${victim}/quotas`, {
       key: boundAdmin,
       body: { items_limit: 1 },
     });
@@ -342,7 +337,7 @@ describe("platform gate — a tenant-bound admin has no cross-tenant authority",
 
   it("an unbound platform admin still reaches all of it", async () => {
     ctx = await createTestContext();
-    const victim = (await tenantStore(ctx).create("Victim Space")).id;
+    const victim = (await spaceStore(ctx).create("Victim Space")).id;
     const platform = await mintKey(ctx, {
       label: "platform-admin",
       role: "admin",
@@ -350,12 +345,12 @@ describe("platform gate — a tenant-bound admin has no cross-tenant authority",
     });
 
     expect(
-      (await request(ctx.app, "GET", "/admin/tenants", { key: platform }))
+      (await request(ctx.app, "GET", "/admin/spaces", { key: platform }))
         .status,
     ).toBe(200);
     expect(
       (
-        await request(ctx.app, "POST", `/admin/tenants/${victim}/suspend`, {
+        await request(ctx.app, "POST", `/admin/spaces/${victim}/suspend`, {
           key: platform,
           body: {},
         })
@@ -364,29 +359,29 @@ describe("platform gate — a tenant-bound admin has no cross-tenant authority",
   });
 });
 
-describe("tenant config is tenant-scoped self-service", () => {
+describe("space config is space-scoped self-service", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("tenant_admin reads and writes its own tenant config", async () => {
+  it("space_admin reads and writes its own space config", async () => {
     ctx = await createTestContext();
-    const tenant = (await tenantStore(ctx).create("Own Space")).id;
+    const space = (await spaceStore(ctx).create("Own Space")).id;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-config",
-      role: "tenant_admin",
-      tenantId: tenant,
+      role: "space_admin",
+      spaceId: space,
     });
 
-    const put = await request(ctx.app, "PUT", "/tenants/me/config", {
+    const put = await request(ctx.app, "PUT", "/spaces/me/config", {
       key: wsAdmin,
       body: { trash_retention_days: 7 },
     });
     expect(put.status).toBe(200);
 
-    const get = await request(ctx.app, "GET", "/tenants/me/config", {
+    const get = await request(ctx.app, "GET", "/spaces/me/config", {
       key: wsAdmin,
     });
     expect(get.status).toBe(200);
@@ -394,21 +389,21 @@ describe("tenant config is tenant-scoped self-service", () => {
       trash_retention_days: 7,
     });
 
-    // The write landed on the caller's own tenant, not somewhere else.
-    const stored = await tenantStore(ctx).getConfig(tenant);
+    // The write landed on the caller's own space, not somewhere else.
+    const stored = await spaceStore(ctx).getConfig(space);
     expect(stored?.trash_retention_days).toBe(7);
   });
 
   it("member is still rejected", async () => {
     ctx = await createTestContext();
-    const tenant = (await tenantStore(ctx).create("Own Space")).id;
+    const space = (await spaceStore(ctx).create("Own Space")).id;
     const member = await mintKey(ctx, {
       label: "member-config",
       role: "member",
-      tenantId: tenant,
+      spaceId: space,
     });
 
-    const res = await request(ctx.app, "GET", "/tenants/me/config", {
+    const res = await request(ctx.app, "GET", "/spaces/me/config", {
       key: member,
     });
     expect(res.status).toBe(403);

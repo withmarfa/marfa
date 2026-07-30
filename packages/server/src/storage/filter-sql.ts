@@ -92,7 +92,7 @@ function conditionToSql(
   condition: FilterCondition,
   dialect: SqlDialect,
   table: ItemsTableRef,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): SQL {
   const { field, op, value } = condition;
 
@@ -112,7 +112,7 @@ function conditionToSql(
       field.direction,
       op,
       value,
-      tenantId,
+      spaceId,
     );
   }
 
@@ -125,9 +125,9 @@ function conditionToSql(
  * edge of the given type pointing to `value` (or any edge with exists op).
  * Direction = "backref" → item is the target of such an edge.
  *
- * `tenantId` (when provided) constrains the subquery to the caller's tenant —
- * defense-in-depth alongside the outer query's `i.tenant_id = ?`. When
- * undefined (admin / cross-tenant queries), no extra constraint is added.
+ * `spaceId` (when provided) constrains the subquery to the caller's space —
+ * defense-in-depth alongside the outer query's `i.space_id = ?`. When
+ * undefined (admin / cross-space queries), no extra constraint is added.
  */
 function edgeFieldSql(
   idCol: unknown,
@@ -135,13 +135,11 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): SQL {
-  // Tenant scoping — only emit when a tenant is in scope. `sql.empty()` keeps
-  // the template stable when no tenant is set (prevents stray param binding).
-  const tenantClause = tenantId
-    ? sql` AND e.tenant_id = ${tenantId}`
-    : sql.empty();
+  // Space scoping — only emit when a space is in scope. `sql.empty()` keeps
+  // the template stable when no space is set (prevents stray param binding).
+  const spaceClause = spaceId ? sql` AND e.space_id = ${spaceId}` : sql.empty();
 
   if (direction === "outbound") {
     switch (op) {
@@ -150,24 +148,24 @@ function edgeFieldSql(
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}${tenantClause}
+            AND e.target_id = ${value}${spaceClause}
         )`;
       case "neq":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}${tenantClause}
+            AND e.target_id = ${value}${spaceClause}
         )`;
       case "exists":
         return sql`EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
         )`;
       case "not_exists":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
         )`;
       default:
         throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -180,24 +178,24 @@ function edgeFieldSql(
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}${tenantClause}
+          AND e.source_id = ${value}${spaceClause}
       )`;
     case "neq":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}${tenantClause}
+          AND e.source_id = ${value}${spaceClause}
       )`;
     case "exists":
       return sql`EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
       )`;
     case "not_exists":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${spaceClause}
       )`;
     default:
       throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -357,19 +355,17 @@ function tagsFieldSql(
  * Returns an array of SQL conditions that should be composed with and()/or()
  * based on the expression's logical operator.
  *
- * `tenantId` (when provided) scopes edge subqueries to the caller's tenant —
- * defense-in-depth alongside the outer query's tenant filter. Pass undefined
- * for admin / cross-tenant queries.
+ * `spaceId` (when provided) scopes edge subqueries to the caller's space —
+ * defense-in-depth alongside the outer query's space filter. Pass undefined
+ * for admin / cross-space queries.
  */
 export function filterToSqlConditions(
   expr: FilterExpression,
   dialect: SqlDialect,
   table: ItemsTableRef,
-  tenantId?: string,
+  spaceId?: string,
 ): SQL[] {
-  return expr.conditions.map((c) =>
-    conditionToSql(c, dialect, table, tenantId),
-  );
+  return expr.conditions.map((c) => conditionToSql(c, dialect, table, spaceId));
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +378,7 @@ function conditionToRawSql(
   tableAlias: string,
   params: unknown[],
   paramIdx: number,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): { fragment: string; paramIdx: number } {
   const { field, op, value } = condition;
 
@@ -420,7 +416,7 @@ function conditionToRawSql(
       dialect,
       params,
       paramIdx,
-      tenantId,
+      spaceId,
     );
   }
 
@@ -437,7 +433,7 @@ function edgeFieldRawSql(
   dialect: SqlDialect,
   params: unknown[],
   idx: number,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): { fragment: string; paramIdx: number } {
   const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
   const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
@@ -446,16 +442,16 @@ function edgeFieldRawSql(
     const typePh = placeholder(dialect, idx);
     params.push(edgeType);
     let nextIdx = idx + 1;
-    let tenantFragment = "";
-    if (tenantId !== undefined) {
-      const tenantPh = placeholder(dialect, nextIdx);
-      params.push(tenantId);
-      tenantFragment = ` AND e.tenant_id = ${tenantPh}`;
+    let spaceFragment = "";
+    if (spaceId !== undefined) {
+      const spacePh = placeholder(dialect, nextIdx);
+      params.push(spaceId);
+      spaceFragment = ` AND e.space_id = ${spacePh}`;
       nextIdx += 1;
     }
     const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
     return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh}${tenantFragment})`,
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh}${spaceFragment})`,
       paramIdx: nextIdx,
     };
   }
@@ -466,16 +462,16 @@ function edgeFieldRawSql(
     const valPh = placeholder(dialect, idx + 1);
     params.push(value);
     let nextIdx = idx + 2;
-    let tenantFragment = "";
-    if (tenantId !== undefined) {
-      const tenantPh = placeholder(dialect, nextIdx);
-      params.push(tenantId);
-      tenantFragment = ` AND e.tenant_id = ${tenantPh}`;
+    let spaceFragment = "";
+    if (spaceId !== undefined) {
+      const spacePh = placeholder(dialect, nextIdx);
+      params.push(spaceId);
+      spaceFragment = ` AND e.space_id = ${spacePh}`;
       nextIdx += 1;
     }
     const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
     return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh}${tenantFragment})`,
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh}${spaceFragment})`,
       paramIdx: nextIdx,
     };
   }
@@ -714,7 +710,7 @@ function tagsFieldRawSql(
  * @param dialect - "sqlite" or "pg"
  * @param tableAlias - Table alias used in the query (e.g., "i")
  * @param startParamIdx - Starting parameter index (Postgres only, default 1)
- * @param tenantId - Optional tenant scope for edge subqueries (defense-in-depth)
+ * @param spaceId - Optional space scope for edge subqueries (defense-in-depth)
  * @returns The SQL clause, parameter values, and next parameter index
  */
 export function filterToRawSql(
@@ -722,7 +718,7 @@ export function filterToRawSql(
   dialect: SqlDialect,
   tableAlias: string,
   startParamIdx = 1,
-  tenantId?: string,
+  spaceId?: string,
 ): RawSqlResult {
   const params: unknown[] = [];
   let paramIdx = startParamIdx;
@@ -735,7 +731,7 @@ export function filterToRawSql(
       tableAlias,
       params,
       paramIdx,
-      tenantId,
+      spaceId,
     );
     fragments.push(result.fragment);
     paramIdx = result.paramIdx;
@@ -774,7 +770,7 @@ export interface SourceFilterSettings {
  */
 function decomposeCoveredTypes(
   types: string[],
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): {
   global: boolean;
   pairs: { exact: string; descendantPattern: string }[];
@@ -783,7 +779,7 @@ function decomposeCoveredTypes(
   for (const configured of types) {
     const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
       configured,
-      tenantId,
+      spaceId,
     );
     if (global) return { global: true, pairs: [] };
     if (exact !== null && descendantPattern !== null) {
@@ -816,10 +812,10 @@ export function sourceFilterToSql(
   filter: SourceFilterSettings | undefined,
   typeCol: unknown,
   sourceCol: unknown,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): SQL | undefined {
   if (!filter) return undefined;
-  const { global, pairs } = decomposeCoveredTypes(filter.types, tenantId);
+  const { global, pairs } = decomposeCoveredTypes(filter.types, spaceId);
   if (!global && pairs.length === 0) return undefined;
 
   const covered = global
@@ -859,10 +855,10 @@ export function sourceFilterToRawSql(
   dialect: SqlDialect,
   tableAlias: string,
   startParamIdx = 1,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): RawSqlResult | null {
   if (!filter) return null;
-  const { global, pairs } = decomposeCoveredTypes(filter.types, tenantId);
+  const { global, pairs } = decomposeCoveredTypes(filter.types, spaceId);
   if (!global && pairs.length === 0) return null;
 
   const params: unknown[] = [];

@@ -1,7 +1,7 @@
 # withmarfa-inbox
 
 Email-to-Marfa capture. Receives emails sent to a Marfa-managed address
-(`capture@inbox.marfa.so` in single-tenant v1) via Cloudflare Email
+(`capture@inbox.marfa.so` in single-space v1) via Cloudflare Email
 Routing → Email Worker → signed JSON webhook → Marfa handler. Each
 delivery lands as a `withmarfa.captured_email` item.
 
@@ -72,16 +72,16 @@ The two are independent deployables — bring them up in either order;
 the system tolerates one being absent (the Email Worker would have
 no recipient; the integration Worker would have no senders).
 
-## Tenant routing (v1)
+## Space routing (v1)
 
 v1 uses a **single capture address**: `capture@inbox.marfa.so`. Since
-the staging instance is single-tenant, that suffices.
+the staging instance is single-space, that suffices.
 
-Future multi-tenant: address-suffix encoding (e.g.
-`capture-<tenant_slug>@inbox.marfa.so`). The Email Worker would parse
+Future multi-space: address-suffix encoding (e.g.
+`capture-<space_slug>@inbox.marfa.so`). The Email Worker would parse
 `message.to` and look up the connection by suffix → match against
 the install-time-stored slug. Filed for a follow-on once a second
-tenant ships.
+space ships.
 
 ## Verification — `cloudflare-email` adapter
 

@@ -93,7 +93,7 @@ export class PgVersionStore implements VersionStore {
     {
       itemId: string;
       type: string;
-      tenantId: string | null;
+      spaceId: string | null;
       versionCount: number;
     }[]
   > {
@@ -101,12 +101,12 @@ export class PgVersionStore implements VersionStore {
       .select({
         itemId: versions.item_id,
         type: items.type,
-        tenantId: items.tenant_id,
+        spaceId: items.space_id,
         versionCount: sql<number>`count(*)::int`,
       })
       .from(versions)
       .innerJoin(items, eq(versions.item_id, items.id))
-      .groupBy(versions.item_id, items.type, items.tenant_id)
+      .groupBy(versions.item_id, items.type, items.space_id)
       .having(sql`count(*) > ${threshold}`)
       .limit(limit);
     return rows;

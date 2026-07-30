@@ -16,17 +16,17 @@ export interface RateLimitConfig {
   trustedProxyCidrs: CidrRange[];
   /**
    * Required storage handle. The rate-limit counter lives in the shared
-   * store (`storage.rateLimits`) and the per-tenant rate-cap lookup
-   * reads `storage.tenantQuotas`.
+   * store (`storage.rateLimits`) and the per-space rate-cap lookup
+   * reads `storage.spaceQuotas`.
    */
   storage: Storage;
   /**
-   * Per-tenant default ceiling, read from
+   * Per-space default ceiling, read from
    * `MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE`. Falls back to "no
-   * tenant-level cap" when undefined. Per-tenant overrides via the
-   * tenant_quotas row take precedence.
+   * space-level cap" when undefined. Per-space overrides via the
+   * space_quotas row take precedence.
    */
-  tenantDefaultRatePerMinute?: number | null;
+  spaceDefaultRatePerMinute?: number | null;
   /**
    * Multiplier for the aggregate per-identifier window (see below).
    * The aggregate cap is `defaultLimit * aggregateMultiplier`. Default
@@ -43,13 +43,13 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
 /**
  * Sliding-window rate limiter backed by `storage.rateLimits`.
  *
- * The counter table sits in the same database every other tenant-scoped
+ * The counter table sits in the same database every other space-scoped
  * table lives in. Two server instances pointed at the same DB share
  * counters cluster-wide; SQLite is single-process by file lock so the
- * same code path stays correct on single-tenant self-hosts.
+ * same code path stays correct on single-space self-hosts.
  *
- * Hot path: one upsert round-trip per gated request. The per-tenant
- * ceiling lookup (tenant_quotas.rate_per_minute_limit) stays cached
+ * Hot path: one upsert round-trip per gated request. The per-space
+ * ceiling lookup (space_quotas.rate_per_minute_limit) stays cached
  * in-process for 60s — that's a cap read, not a counter, and the cache
  * is purely a perf optimization (cache miss → DB read; staleness is
  * bounded by the TTL).
@@ -57,26 +57,26 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * Configuration is required — there is no fallback that reads
  * `process.env`. `app.ts` constructs the config from `AppConfig`.
  */
-interface TenantLimitCacheEntry {
-  /** `null` means "no per-tenant cap" (env default also unset). */
+interface SpaceLimitCacheEntry {
+  /** `null` means "no per-space cap" (env default also unset). */
   limit: number | null;
   expiresAt: number;
 }
 
-const TENANT_LIMIT_CACHE_TTL_MS = 60_000;
+const SPACE_LIMIT_CACHE_TTL_MS = 60_000;
 
 const RATE_FAMILY = "rate";
 
 export function rateLimitMiddleware(
   config: RateLimitConfig,
 ): MiddlewareHandler<AppEnv> {
-  const tenantLimits = new Map<string, TenantLimitCacheEntry>();
+  const spaceLimits = new Map<string, SpaceLimitCacheEntry>();
 
   // Aggregate per-identifier cap = defaultLimit * multiplier. The
   // per-path window below is keyed on `(identifier, pathPrefix)`, so an
   // identifier's effective budget multiplies across every path group it
-  // touches — and tenant-less keys (IP/anon callers, platform-admin
-  // keys) have no per-tenant aggregate cap to fall back on. The
+  // touches — and space-less keys (IP/anon callers, platform-admin
+  // keys) have no per-space aggregate cap to fall back on. The
   // aggregate window keys on the identifier ALONE (no path split) to
   // bound that total. The multiplier keeps the per-path window the
   // primary cap most callers hit, with the aggregate as a backstop. `0`
@@ -86,45 +86,45 @@ export function rateLimitMiddleware(
   const aggregateLimit =
     aggregateMultiplier > 0 ? config.defaultLimit * aggregateMultiplier : 0;
 
-  // Periodic cleanup of the in-process tenant-limit cache. The shared
+  // Periodic cleanup of the in-process space-limit cache. The shared
   // `rate_limit_windows` rows have their own retention sweep
   // (`RateLimitWindowCleaner` in storage/retention.ts).
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
-    for (const [key, entry] of tenantLimits) {
+    for (const [key, entry] of spaceLimits) {
       if (entry.expiresAt <= now) {
-        tenantLimits.delete(key);
+        spaceLimits.delete(key);
       }
     }
   }, config.windowMs * 2);
   cleanupInterval.unref();
 
   /**
-   * Fetch the per-tenant rate cap (with cache). Returns `null` for
-   * tenants with no override and no env default.
+   * Fetch the per-space rate cap (with cache). Returns `null` for
+   * spaces with no override and no env default.
    */
-  async function tenantRateLimit(
-    tenantId: string,
+  async function spaceRateLimit(
+    spaceId: string,
     now: number,
   ): Promise<number | null> {
-    const cached = tenantLimits.get(tenantId);
+    const cached = spaceLimits.get(spaceId);
     if (cached && cached.expiresAt > now) {
       return cached.limit;
     }
 
     let limit: number | null = null;
-    const quota = await config.storage.tenantQuotas.get(tenantId);
+    const quota = await config.storage.spaceQuotas.get(spaceId);
     if (quota?.rate_per_minute_limit != null) {
       limit = quota.rate_per_minute_limit;
     }
-    // Fall back to env default if no per-tenant override.
-    if (limit === null && config.tenantDefaultRatePerMinute != null) {
-      limit = config.tenantDefaultRatePerMinute;
+    // Fall back to env default if no per-space override.
+    if (limit === null && config.spaceDefaultRatePerMinute != null) {
+      limit = config.spaceDefaultRatePerMinute;
     }
 
-    tenantLimits.set(tenantId, {
+    spaceLimits.set(spaceId, {
       limit,
-      expiresAt: now + TENANT_LIMIT_CACHE_TTL_MS,
+      expiresAt: now + SPACE_LIMIT_CACHE_TTL_MS,
     });
     return limit;
   }
@@ -194,7 +194,7 @@ export function rateLimitMiddleware(
 
     // Aggregate per-identifier window — keyed on the identifier with NO
     // path split — so a caller can't multiply its budget by spreading
-    // traffic across path groups, and tenant-less identifiers (IP/anon,
+    // traffic across path groups, and space-less identifiers (IP/anon,
     // platform admin) still hit a ceiling. Reuses the same store method
     // and window; only the key (and cap) differ.
     if (aggregateLimit > 0) {
@@ -217,29 +217,29 @@ export function rateLimitMiddleware(
       }
     }
 
-    // Per-tenant ceiling on top of the per-credential window. A noisy
-    // single credential is bounded by the cap above; a tenant's
-    // collective fleet is bounded here. Skipped for tenant-less keys
-    // (single-tenant self-hosts, platform admin).
-    const tenantId = apiKey?.tenant_id;
-    if (tenantId) {
-      const tenantLimitValue = await tenantRateLimit(tenantId, now);
-      if (tenantLimitValue !== null) {
-        const tenantWindowKey = `tenant:${tenantId}`;
-        const tenantResult = await config.storage.rateLimits.incrementWindow(
+    // Per-space ceiling on top of the per-credential window. A noisy
+    // single credential is bounded by the cap above; a space's
+    // collective fleet is bounded here. Skipped for space-less keys
+    // (single-space self-hosts, platform admin).
+    const spaceId = apiKey?.space_id;
+    if (spaceId) {
+      const spaceLimitValue = await spaceRateLimit(spaceId, now);
+      if (spaceLimitValue !== null) {
+        const spaceWindowKey = `space:${spaceId}`;
+        const spaceResult = await config.storage.rateLimits.incrementWindow(
           RATE_FAMILY,
-          tenantWindowKey,
+          spaceWindowKey,
           config.windowMs,
           nowIso,
         );
-        if (tenantResult.count > tenantLimitValue) {
+        if (spaceResult.count > spaceLimitValue) {
           const retryAfter = Math.ceil(
-            (new Date(tenantResult.expires_at).getTime() - now) / 1000,
+            (new Date(spaceResult.expires_at).getTime() - now) / 1000,
           );
           c.header("Retry-After", String(retryAfter));
           throw new MarfaError(
             ErrorCode.RATE_LIMITED,
-            `Tenant rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
+            `Space rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
           );
         }
       }

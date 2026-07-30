@@ -512,6 +512,13 @@
       "when": 1784934456991,
       "tag": "0072_backfill_account_holder_items",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1784934456992,
+      "tag": "0073_rename_tenant_to_space",
+      "breakpoints": true
     }
   ]
 }

@@ -1,10 +1,10 @@
 /**
- * Owner-assertion guard for auth/tenant provisioning writes.
+ * Owner-assertion guard for auth/space provisioning writes.
  *
  * Regression for the hosted sign-up failure: the owner write began running as
  * the restricted `marfa_app` role — a streaming session-level `SET ROLE`
  * stranded on a shared pooled connection and was inherited by the sign-up
- * write — so it hit RLS and `auth_user`/`users`/`tenant` never got created.
+ * write — so it hit RLS and `auth_user`/`users`/`space` never got created.
  * The root fix routes streaming off the pooled endpoint; `withOwnerRole` is
  * the defense-in-depth layer that forces the owner role for the provisioning
  * writes regardless, via a transaction-scoped `SET LOCAL ROLE NONE`.
@@ -26,7 +26,7 @@ import type { PgClient } from "./connection.js";
 const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
 const rand = (): string => Math.random().toString(36).slice(2, 10);
 
-const INSERT_USER = `INSERT INTO users (id, name, provider, provider_id, tenant_id, created_at, updated_at)
+const INSERT_USER = `INSERT INTO users (id, name, provider, provider_id, space_id, created_at, updated_at)
    VALUES ($1, $2, 'test', $1, $3, $4, $4)`;
 
 describe.skipIf(!isPg)(
@@ -45,11 +45,11 @@ describe.skipIf(!isPg)(
     });
 
     it("SET LOCAL ROLE NONE neutralizes a stranded marfa_app for a users write", async () => {
-      if (!ctx.storage.tenants || !ctx.storage.users) {
+      if (!ctx.storage.spaces || !ctx.storage.users) {
         throw new Error("hosted storage expected");
       }
       // FK target, created as owner via the normal pooled connection.
-      const tenant = await ctx.storage.tenants.create(`owner-role-${rand()}`);
+      const space = await ctx.storage.spaces.create(`owner-role-${rand()}`);
       const now = new Date().toISOString();
 
       const reserved = await client.reserve();
@@ -63,12 +63,7 @@ describe.skipIf(!isPg)(
         // Control: a `users` write under the stranded role is denied —
         // proving `marfa_app` genuinely cannot perform this write.
         await expect(
-          reserved.unsafe(INSERT_USER, [
-            `ctl-${rand()}`,
-            "ctl",
-            tenant.id,
-            now,
-          ]),
+          reserved.unsafe(INSERT_USER, [`ctl-${rand()}`, "ctl", space.id, now]),
         ).rejects.toThrow();
 
         // Treatment: inside a transaction, `SET LOCAL ROLE NONE` resets to the
@@ -82,7 +77,7 @@ describe.skipIf(!isPg)(
             { u: string }[]
           >`SELECT current_user AS u`;
           expect(within[0]?.u).not.toBe("marfa_app");
-          await reserved.unsafe(INSERT_USER, [okId, "ok", tenant.id, now]);
+          await reserved.unsafe(INSERT_USER, [okId, "ok", space.id, now]);
           await reserved.unsafe("COMMIT");
         } catch (err) {
           await reserved.unsafe("ROLLBACK");
@@ -100,13 +95,13 @@ describe.skipIf(!isPg)(
             __pgClient: (
               q: string,
               p?: unknown[],
-            ) => Promise<{ tenant_id: string }[]>;
+            ) => Promise<{ space_id: string }[]>;
           }
         ).__pgClient;
-        const rows = await owner(`SELECT tenant_id FROM users WHERE id = $1`, [
+        const rows = await owner(`SELECT space_id FROM users WHERE id = $1`, [
           okId,
         ]);
-        expect(rows[0]?.tenant_id).toBe(tenant.id);
+        expect(rows[0]?.space_id).toBe(space.id);
       } finally {
         // Reset the poison before returning the connection to the pool.
         try {

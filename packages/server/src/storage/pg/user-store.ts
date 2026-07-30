@@ -15,7 +15,7 @@ function rowToUser(row: typeof users.$inferSelect): User {
     avatar_blob_hash: row.avatar_blob_hash,
     provider: row.provider,
     provider_id: row.provider_id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     handle: row.handle,
     auth_user_id: row.auth_user_id,
     role: row.role as User["role"],
@@ -31,7 +31,7 @@ export class PgUserStore implements UserStore {
     name?: string;
     provider: string;
     provider_id: string;
-    tenant_id: string;
+    space_id: string;
     handle?: string;
     auth_user_id?: string;
     role?: MarfaRole;
@@ -46,7 +46,7 @@ export class PgUserStore implements UserStore {
       avatar_blob_hash: null,
       provider: input.provider,
       provider_id: input.provider_id,
-      tenant_id: input.tenant_id,
+      space_id: input.space_id,
       handle: input.handle ?? null,
       auth_user_id: input.auth_user_id ?? null,
       role: input.role ?? "member",
@@ -128,11 +128,11 @@ export class PgUserStore implements UserStore {
     return row ? rowToUser(row) : null;
   }
 
-  async getByTenantId(tenantId: string): Promise<User | null> {
+  async getBySpaceId(spaceId: string): Promise<User | null> {
     const [row] = await this.db
       .select()
       .from(users)
-      .where(eq(users.tenant_id, tenantId));
+      .where(eq(users.space_id, spaceId));
     return row ? rowToUser(row) : null;
   }
 

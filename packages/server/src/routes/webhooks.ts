@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import { requireSpaceAdmin } from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -121,7 +121,7 @@ const listWebhooksRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns every outbound webhook subscription in the caller's tenant. Secrets are redacted here — the plaintext is only returned at create time.",
+    "Returns every outbound webhook subscription in the caller's space. Secrets are redacted here — the plaintext is only returned at create time.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -356,9 +356,9 @@ export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createWebhookRoute, async (c) => {
-    // tenant_admin only. Storage filters by key.tenant_id, so cross-tenant
+    // space_admin only. Storage filters by key.space_id, so cross-space
     // attempts return WEBHOOK_NOT_FOUND rather than 403.
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
 
     // Reserved around the create below rather than checked here, so
     // concurrent creates cannot each see room against the same pre-write
@@ -392,13 +392,13 @@ export function webhookRoutes(storage: Storage) {
           type_filter: body.type_filter ?? undefined,
           secret: body.secret ?? undefined,
         },
-        key.tenant_id,
+        key.space_id,
       );
     });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.create",
       resource_type: "webhook",
@@ -408,8 +408,8 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listWebhooksRoute, async (c) => {
-    const key = requireTenantAdmin(c);
-    const webhooks = await storage.outboundWebhooks.list(key.tenant_id);
+    const key = requireSpaceAdmin(c);
+    const webhooks = await storage.outboundWebhooks.list(key.space_id);
     return c.json(
       {
         webhooks: webhooks.map((w) => ({
@@ -422,9 +422,9 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(getWebhookRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
-    const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
+    const webhook = await storage.outboundWebhooks.get(id, key.space_id);
     if (!webhook) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -432,11 +432,11 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(updateWebhookRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
-    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.space_id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -472,7 +472,7 @@ export function webhookRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.update",
       resource_type: "webhook",
@@ -482,10 +482,10 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(deleteWebhookRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
 
-    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.space_id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -493,7 +493,7 @@ export function webhookRoutes(storage: Storage) {
     await storage.outboundWebhooks.delete(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.delete",
       resource_type: "webhook",
@@ -503,11 +503,11 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listDeliveriesRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 
-    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.space_id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }

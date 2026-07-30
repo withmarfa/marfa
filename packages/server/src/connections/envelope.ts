@@ -16,7 +16,7 @@ export interface QueueMessageBody {
   kind: "item-event";
   integration_name: string;
   connection_id: string;
-  tenant_id?: string;
+  space_id?: string;
   event_type: string;
   item_id: string;
   cycle: {
@@ -29,11 +29,11 @@ export interface QueueMessageBody {
 export interface SubscriptionEntry {
   connection_id: string;
   integration_name: string;
-  /** Tenant scope for cross-tenant fanout suppression. Read from
-   *  `connection.tenant_id` so the bridge can drop cross-tenant events
-   *  cheaply. Single-tenant self-hosts leave this null on every
+  /** Space scope for cross-space fanout suppression. Read from
+   *  `connection.space_id` so the bridge can drop cross-space events
+   *  cheaply. Single-space self-hosts leave this null on every
    *  connection — the gate trivially passes. */
-  tenant_id: string | null;
+  space_id: string | null;
 }
 
 interface ConnectionProperties {
@@ -73,7 +73,7 @@ export async function buildEntryForConnection(
     id: string;
     state?: string;
     properties: unknown;
-    tenant_id?: string | null;
+    space_id?: string | null;
   },
 ): Promise<SubscriptionEntry | null> {
   // Both lifecycle layers must hold — `state === "active"` (canonical
@@ -103,7 +103,7 @@ export async function buildEntryForConnection(
   return {
     connection_id: connection.id,
     integration_name: validated.manifest.name,
-    tenant_id: connection.tenant_id ?? null,
+    space_id: connection.space_id ?? null,
   };
 }
 
@@ -123,7 +123,7 @@ export function buildQueueMessageBody(
     kind: "item-event",
     integration_name: entry.integration_name,
     connection_id: entry.connection_id,
-    ...(event.tenantId !== undefined && { tenant_id: event.tenantId }),
+    ...(event.spaceId !== undefined && { space_id: event.spaceId }),
     event_type: `item.${event.type}`,
     item_id: event.item.id,
     cycle: {
@@ -138,13 +138,13 @@ export type DispatchOutcome =
   | { would_dispatch: true }
   | {
       would_dispatch: false;
-      reason: "self_event" | "cross_tenant";
+      reason: "self_event" | "cross_space";
     };
 
 /**
  * The bridge's per-subscriber gate. Runs in order:
  *   1. self-event (the subscriber is the connection that originated the event)
- *   2. cross-tenant (the subscriber's tenant doesn't match the event's)
+ *   2. cross-space (the subscriber's space doesn't match the event's)
  *
  * Returns `{ would_dispatch: true }` when both gates pass — the caller
  * may then build the envelope. Hop-budget enforcement is upstream of the
@@ -158,14 +158,14 @@ export function evaluateDispatch(
   if (entry.connection_id === event.originatingConnectionId) {
     return { would_dispatch: false, reason: "self_event" };
   }
-  // Normalize to null on both sides so single-tenant self-hosted (where
-  // both event.tenantId and entry.tenant_id are typically `undefined`)
+  // Normalize to null on both sides so single-space self-hosted (where
+  // both event.spaceId and entry.space_id are typically `undefined`)
   // doesn't fall foul of `undefined !== null` and accidentally drop every
-  // subscriber. Hosted multi-tenant: both sides carry strings; the
-  // comparison is the explicit cross-tenant guard.
-  const eventTenantId = event.tenantId ?? null;
-  if ((entry.tenant_id ?? null) !== eventTenantId) {
-    return { would_dispatch: false, reason: "cross_tenant" };
+  // subscriber. Hosted multi-space: both sides carry strings; the
+  // comparison is the explicit cross-space guard.
+  const eventSpaceId = event.spaceId ?? null;
+  if ((entry.space_id ?? null) !== eventSpaceId) {
+    return { would_dispatch: false, reason: "cross_space" };
   }
   return { would_dispatch: true };
 }

@@ -67,9 +67,9 @@ export function sanitizeQueueName(name: string): string {
 export interface SupervisorConfig {
   apiUrl: string;
   apiKeySalt: string;
-  /** Whether this deployment has tenants. Threaded into the mint so a
-   *  Connection with no tenant cannot produce a platform-tier credential
-   *  on a multi-tenant instance. */
+  /** Whether this deployment has spaces. Threaded into the mint so a
+   *  Connection with no space cannot produce a platform-tier credential
+   *  on a multi-space instance. */
   authMode: "hosted" | "keys";
   registrations: LocalIntegrationRegistration[];
   executor: Executor;
@@ -136,8 +136,8 @@ export function createSupervisor(
           message,
           integrationName: registration.name,
           echo: registration.echo,
-          ...(message.tenant_id !== undefined && {
-            tenantId: message.tenant_id,
+          ...(message.space_id !== undefined && {
+            spaceId: message.space_id,
           }),
           hopBudget,
           cursorSnapshot: state.cursors,

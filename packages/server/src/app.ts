@@ -65,18 +65,18 @@ import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { adminRoutes } from "./routes/admin.js";
 import { userAuthRoutes } from "./routes/users.js";
-import { tenantRoutes } from "./routes/tenants.js";
+import { spaceRoutes } from "./routes/spaces.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { cycleMiddleware } from "./middleware/cycle.js";
-import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
+import { spaceSuspensionMiddleware } from "./middleware/space-suspension.js";
 import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
 import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
-import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
+import { rlsSpaceContextMiddleware } from "./middleware/rls-space-context.js";
 import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
@@ -115,7 +115,7 @@ export function createApp(
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
 
-  // Stamp request_id / key_id / tenant_id onto the active OTel span and
+  // Stamp request_id / key_id / space_id onto the active OTel span and
   // mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
@@ -300,15 +300,15 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // Tenant-suspension write-guard. Sits AFTER `authMiddleware` so the
+  // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
   // credential is resolved when this runs. Rejects every non-GET request
-  // from a non-platform credential whose tenant is suspended with HTTP 403
-  // `tenant_suspended`. Reads pass through; platform-admin keys bypass so
-  // operators can manage a suspended tenant.
-  app.use("*", tenantSuspensionMiddleware(storage));
+  // from a non-platform credential whose space is suspended with HTTP 403
+  // `space_suspended`. Reads pass through; platform-admin keys bypass so
+  // operators can manage a suspended space.
+  app.use("*", spaceSuspensionMiddleware(storage));
 
   // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
-  // tenant suspension guard so suspended-tenant rejection still wins.
+  // space suspension guard so suspended-space rejection still wins.
   // Only triggers on the better-auth sign-in paths — every other path
   // is a pass-through. The gate is created once so its in-memory cancel-
   // email cooldown is SHARED between the middleware (better-auth JSON
@@ -398,31 +398,31 @@ export function createApp(
           // to avoid a dead prefix in the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
-        // Per-tenant rate ceiling on top of the per-credential window.
-        // Reads tenant_quotas.rate_per_minute_limit (with env fallback)
-        // via a 60s in-process cache. No-op for tenant-less keys.
+        // Per-space rate ceiling on top of the per-credential window.
+        // Reads space_quotas.rate_per_minute_limit (with env fallback)
+        // via a 60s in-process cache. No-op for space-less keys.
         storage,
-        tenantDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
+        spaceDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
-        // can't multiply across path groups and tenant-less identifiers
+        // can't multiply across path groups and space-less identifiers
         // still hit a ceiling. `0` disables it.
         aggregateMultiplier: config.rateLimitAggregateMultiplier,
       }),
     );
   }
 
-  // Postgres RLS request-level enforcement. Wraps each tenant-bounded
+  // Postgres RLS request-level enforcement. Wraps each space-bounded
   // request in a transaction with `SET LOCAL ROLE marfa_app` and
-  // `set_config('marfa.tenant_id', $tenant, true)` so the per-table RLS
+  // `set_config('marfa.space_id', $space, true)` so the per-table RLS
   // policies actually filter queries. Pass-through when
   // `MARFA_RLS_ENFORCE=false`, when storage is SQLite (`pgDb` undefined),
-  // or when the request has no tenant on its api key (platform admin /
-  // public routes). See `middleware/rls-tenant-context.ts` for the full
+  // or when the request has no space on its api key (platform admin /
+  // public routes). See `middleware/rls-space-context.ts` for the full
   // contract — including the streaming-response exemption.
   app.use(
     "*",
-    rlsTenantContextMiddleware({
+    rlsSpaceContextMiddleware({
       rlsEnforce: config.rlsEnforce ?? false,
       db: (storage.pgDb as PgDb | undefined) ?? null,
     }),
@@ -458,7 +458,7 @@ export function createApp(
       marfaEmailTransport: emailTransport,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
       // (storeTokens.hash matches Marfa's hashApiKey, clientReference
-      // resolves tenant_id, hooks.after projects grants into system.connection).
+      // resolves space_id, hooks.after projects grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
       // Opt-in override for `requireEmailVerification`. When unset, the
@@ -575,12 +575,12 @@ export function createApp(
     "/integrations",
     integrationRoutes(storage, config.apiKeySalt, auth),
   );
-  app.route("/tenants", tenantRoutes(storage));
+  app.route("/spaces", spaceRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
   // session-level RLS on a dedicated pool connection for the stream's
   // lifetime — closing the bypass that the per-request transaction
-  // middleware can't cover. SQLite + tenant-less callers continue to run
+  // middleware can't cover. SQLite + space-less callers continue to run
   // on the owner connection (no DB-level fence).
   const streamingRoutesOptions = {
     rlsEnforce: config.rlsEnforce ?? false,
@@ -606,7 +606,7 @@ export function createApp(
       deletionGate.evaluatePendingDeletion,
     ),
   );
-  if (config.authMode === "hosted" && storage.users && storage.tenants) {
+  if (config.authMode === "hosted" && storage.users && storage.spaces) {
     app.route("/auth", userAuthRoutes(storage));
   }
   // Account-lifecycle routes — initiate / confirm / cancel. Mounted

@@ -29,8 +29,8 @@ export async function resolveRuntimeCredentialManifest(
     .integration_ref;
   if (!integrationRef) return undefined;
 
-  const tenantId = connection.tenant_id ?? undefined;
-  const integration = await storage.items.get(integrationRef, tenantId, {
+  const spaceId = connection.space_id ?? undefined;
+  const integration = await storage.items.get(integrationRef, spaceId, {
     includePlatformScoped: true,
   });
   if (integration?.type !== "system.integration") return undefined;
@@ -43,37 +43,37 @@ export async function resolveRuntimeCredentialManifest(
 
 /**
  * Refuse to mint a runtime credential whose reach would not be fenced
- * by a tenant.
+ * by a space.
  *
- * A credential with no `tenant_id` is not a narrow credential — it is
- * the platform tier. The per-request RLS wrapper skips a tenant-less
- * caller entirely, and the storage layer's tenant predicate widens from
+ * A credential with no `space_id` is not a narrow credential — it is
+ * the platform tier. The per-request RLS wrapper skips a space-less
+ * caller entirely, and the storage layer's space predicate widens from
  * an equality to no predicate at all, so the credential reads and
- * writes every tenant's rows. A Connection installed by a platform
- * admin without naming a tenant produces exactly that: an integration
+ * writes every space's rows. A Connection installed by a platform
+ * admin without naming a space produces exactly that: an integration
  * built for one customer holding a key to all of them.
  *
- * Only a deployment that has tenants can be wrong about this. In `keys`
- * mode nothing carries a `tenant_id`, so a tenant-less credential is as
+ * Only a deployment that has spaces can be wrong about this. In `keys`
+ * mode nothing carries a `space_id`, so a space-less credential is as
  * scoped as every other credential on the instance and refusing would
  * break every self-host. `authMode` is the switch that says whether
- * tenants exist, which is why the rule reads it rather than inferring
- * from whether some tenant happens to have been created.
+ * spaces exist, which is why the rule reads it rather than inferring
+ * from whether some space happens to have been created.
  *
  * A refused Connection becomes undispatchable rather than dangerous.
  * That is the intended trade: the failure is loud, it names the missing
- * tenant, and an operator fixes it by installing the Connection into a
- * tenant.
+ * space, and an operator fixes it by installing the Connection into a
+ * space.
  */
-export function assertMintableTenantScope(
+export function assertMintableSpaceScope(
   connection: Item,
   authMode: "hosted" | "keys",
 ): void {
   if (authMode !== "hosted") return;
-  if (connection.tenant_id) return;
+  if (connection.space_id) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
-    `Connection ${connection.id} has no tenant; a runtime credential minted for it would reach every tenant`,
+    `Connection ${connection.id} has no space; a runtime credential minted for it would reach every space`,
     { connection_id: connection.id },
   );
 }
@@ -107,7 +107,7 @@ export async function assertConnectionBelongsToIntegration(
   const integration = integrationRef
     ? await storage.items.get(
         integrationRef,
-        connection.tenant_id ?? undefined,
+        connection.space_id ?? undefined,
         {
           includePlatformScoped: true,
         },
@@ -159,13 +159,13 @@ export async function assertConnectionBelongsToIntegration(
 export async function revokeSupersededRuntimeCredentials(
   storage: Storage,
   connectionId: string,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   mintedId: string,
 ): Promise<void> {
   try {
     const siblings = await storage.keys.listByConnectionId(
       connectionId,
-      tenantId,
+      spaceId,
     );
     for (const key of siblings) {
       if (key.id === mintedId || !key.is_runtime_credential) continue;

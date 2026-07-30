@@ -129,23 +129,23 @@ describe("GET /metrics", () => {
     expect(body.keys.runtime_credentials.active).toBe(1);
   });
 
-  it("refuses a tenant-bound credential", async () => {
+  it("refuses a space-bound credential", async () => {
     // Four of the five counters this route reports (blobs, keys, webhooks,
-    // custom types) are instance-wide; only `items` is tenant-scoped. That
+    // custom types) are instance-wide; only `items` is space-scoped. That
     // makes the whole response platform-operator data, so the gate is
-    // platform-only and a credential confined to a tenant is refused
+    // platform-only and a credential confined to a space is refused
     // whatever its role — closing the read rather than partially scoping it.
-    const raw = `marfa_k1_tenant_a_${Math.random().toString(36).slice(2, 10)}`;
+    const raw = `marfa_k1_space_a_${Math.random().toString(36).slice(2, 10)}`;
     await ctx.storage.keys.create(
       {
-        label: "tenant-a-admin",
-        source: `tenant-a-${raw.slice(-8)}`,
+        label: "space-a-admin",
+        source: `space-a-${raw.slice(-8)}`,
         role: "admin",
         type_permissions: {},
         default_tier: "feed",
       },
       hashApiKey(raw, "test-salt"),
-      "tenant-a",
+      "space-a",
     );
 
     const res = await request(ctx.app, "GET", "/metrics", { key: raw });

@@ -241,36 +241,36 @@ describe("GET /audit", () => {
     }
   });
 
-  it("tenant-scopes reads: bootstrap admin (no tenant_id) sees every row", async () => {
-    // Seed three rows directly into the audit store: one for tenant A, one
-    // for tenant B, one bootstrap-shape (tenant_id null). The bootstrap
-    // admin in the test context has no tenant_id, so `GET /audit` must
-    // return all three. Tenant-scoped reads are exercised at the storage
+  it("space-scopes reads: bootstrap admin (no space_id) sees every row", async () => {
+    // Seed three rows directly into the audit store: one for space A, one
+    // for space B, one bootstrap-shape (space_id null). The bootstrap
+    // admin in the test context has no space_id, so `GET /audit` must
+    // return all three. Space-scoped reads are exercised at the storage
     // layer below — keying full HTTP coverage off a freshly-minted
-    // tenant-scoped key requires plumbing the raw key + hash that the
+    // space-scoped key requires plumbing the raw key + hash that the
     // test fixture doesn't expose; the storage assertion is the
     // load-bearing one.
-    const uniqueAction = `test.tenant.${Math.random().toString(36).slice(2, 8)}`;
+    const uniqueAction = `test.space.${Math.random().toString(36).slice(2, 8)}`;
     await ctx.storage.audit.log({
       action: uniqueAction,
       resource_type: "test",
       resource_id: "row-a",
-      tenant_id: "tenant-a",
+      space_id: "space-a",
     });
     await ctx.storage.audit.log({
       action: uniqueAction,
       resource_type: "test",
       resource_id: "row-b",
-      tenant_id: "tenant-b",
+      space_id: "space-b",
     });
     await ctx.storage.audit.log({
       action: uniqueAction,
       resource_type: "test",
       resource_id: "row-bootstrap",
-      tenant_id: null,
+      space_id: null,
     });
 
-    // Bootstrap admin (no tenant_id) sees every row through the route.
+    // Bootstrap admin (no space_id) sees every row through the route.
     const bootstrapRes = await request(
       ctx.app,
       "GET",
@@ -286,58 +286,58 @@ describe("GET /audit", () => {
     expect(bootstrapResourceIds).toContain("row-b");
     expect(bootstrapResourceIds).toContain("row-bootstrap");
 
-    // Storage-level: a tenant-scoped read returns only rows with the
-    // matching tenant_id. System-stamped (null) rows do NOT leak to a
-    // tenant-scoped reader — the route's filter contract is "rows where
-    // tenant_id = caller's tenant_id". This is the load-bearing
+    // Storage-level: a space-scoped read returns only rows with the
+    // matching space_id. System-stamped (null) rows do NOT leak to a
+    // space-scoped reader — the route's filter contract is "rows where
+    // space_id = caller's space_id". This is the load-bearing
     // assertion for the hosted-mode isolation property.
-    const tenantA = await ctx.storage.audit.list({
+    const spaceA = await ctx.storage.audit.list({
       action: uniqueAction,
-      tenant_id: "tenant-a",
+      space_id: "space-a",
     });
-    const tenantAResourceIds = new Set(tenantA.data.map((e) => e.resource_id));
-    expect(tenantAResourceIds).toContain("row-a");
-    expect(tenantAResourceIds).not.toContain("row-b");
-    expect(tenantAResourceIds).not.toContain("row-bootstrap");
+    const spaceAResourceIds = new Set(spaceA.data.map((e) => e.resource_id));
+    expect(spaceAResourceIds).toContain("row-a");
+    expect(spaceAResourceIds).not.toContain("row-b");
+    expect(spaceAResourceIds).not.toContain("row-bootstrap");
 
-    const tenantB = await ctx.storage.audit.list({
+    const spaceB = await ctx.storage.audit.list({
       action: uniqueAction,
-      tenant_id: "tenant-b",
+      space_id: "space-b",
     });
-    const tenantBResourceIds = new Set(tenantB.data.map((e) => e.resource_id));
-    expect(tenantBResourceIds).toContain("row-b");
-    expect(tenantBResourceIds).not.toContain("row-a");
-    expect(tenantBResourceIds).not.toContain("row-bootstrap");
+    const spaceBResourceIds = new Set(spaceB.data.map((e) => e.resource_id));
+    expect(spaceBResourceIds).toContain("row-b");
+    expect(spaceBResourceIds).not.toContain("row-a");
+    expect(spaceBResourceIds).not.toContain("row-bootstrap");
 
-    // Route-layer end-to-end: mint a tenant-scoped admin key, hit
-    // GET /audit, assert it sees only tenant-A rows. Verifies the
-    // `tenant_id: callerTenantId` line in the route handler hasn't
+    // Route-layer end-to-end: mint a space-scoped admin key, hit
+    // GET /audit, assert it sees only space-A rows. Verifies the
+    // `space_id: callerSpaceId` line in the route handler hasn't
     // regressed back to an unfiltered shape.
-    const tenantAKey = "marfa_k1_test_tenant_a_admin";
+    const spaceAKey = "marfa_k1_test_space_a_admin";
     await ctx.storage.keys.create(
       {
-        label: "tenant-a-admin",
-        source: "tenant-a-admin",
+        label: "space-a-admin",
+        source: "space-a-admin",
         role: "admin",
         type_permissions: {},
         default_tier: "library",
         is_platform: false,
       },
-      hashApiKey(tenantAKey, TEST_API_KEY_SALT),
-      "tenant-a",
+      hashApiKey(spaceAKey, TEST_API_KEY_SALT),
+      "space-a",
     );
-    const tenantARouteRes = await request(
+    const spaceARouteRes = await request(
       ctx.app,
       "GET",
       `/audit?action=${uniqueAction}`,
-      { key: tenantAKey },
+      { key: spaceAKey },
     );
-    expect(tenantARouteRes.status).toBe(200);
-    const tenantARouteBody = (await tenantARouteRes.json()) as AuditPage;
+    expect(spaceARouteRes.status).toBe(200);
+    const spaceARouteBody = (await spaceARouteRes.json()) as AuditPage;
     const routeResourceIds = new Set(
-      tenantARouteBody.data.map((e) => e.resource_id),
+      spaceARouteBody.data.map((e) => e.resource_id),
     );
-    // Tenant A's admin sees its own rows only.
+    // Space A's admin sees its own rows only.
     expect(routeResourceIds).toContain("row-a");
     expect(routeResourceIds).not.toContain("row-b");
     expect(routeResourceIds).not.toContain("row-bootstrap");

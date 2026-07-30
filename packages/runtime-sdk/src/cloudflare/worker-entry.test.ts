@@ -228,9 +228,9 @@ describe("buildConsumerEnv.mintCredential broker classification", () => {
 
   it("does NOT convert a platform-credential 403 — it is fleet-wide, not per-connection", async () => {
     // The server refuses a mint from a non-platform credential with 403
-    // `forbidden`. A broker key rotated to a valid but tenant-scoped
+    // `forbidden`. A broker key rotated to a valid but space-scoped
     // admin key produces exactly this for every connection in every
-    // tenant, so reading it as terminal deschedules the whole fleet
+    // space, so reading it as terminal deschedules the whole fleet
     // inside one cron period.
     stubBroker(403, {
       error: "forbidden",

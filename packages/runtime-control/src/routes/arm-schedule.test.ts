@@ -17,7 +17,7 @@
  * Inbound, the caller is the Marfa server presenting the platform broker
  * key. Outbound, the Worker receives a key derived for that Worker
  * alone. Forwarding the inbound one would put a credential that mints
- * against any Connection in any tenant onto every Worker in the fleet.
+ * against any Connection in any space onto every Worker in the fleet.
  *
  * The tests mount the real Hono app with a stubbed service binding, so
  * they pin the auth gate, the idempotency contract, and the dispatch

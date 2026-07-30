@@ -317,7 +317,7 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
     "  EXCEPTION",
     "    WHEN insufficient_privilege THEN",
     "      RAISE NOTICE",
-    "        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before tenant-scoped requests will succeed.',",
+    "        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before space-scoped requests will succeed.',",
     "        current_user, SQLERRM;",
     "  END;",
     "END",
@@ -547,7 +547,7 @@ function buildConstraintGuardSql(
 }
 
 /**
- * Split a column-list string like `tenant_id, hash` or `"order"` into an
+ * Split a column-list string like `space_id, hash` or `"order"` into an
  * array of bare identifiers (quotes stripped).
  */
 function parseColumnList(raw: string): string[] {

@@ -16,26 +16,26 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { tenantRoutes } from "./tenants.js";
+import { spaceRoutes } from "./spaces.js";
 
 const SALT = "test-salt";
 
 // The default createTestContext() runs in `authMode: "keys"`, which does
-// not wire up `storage.tenants`. The handler-level fallback paths are
-// covered with that context; the happy-path tenant-scoped routes need a
+// not wire up `storage.spaces`. The handler-level fallback paths are
+// covered with that context; the happy-path space-scoped routes need a
 // hosted-mode app, built inline below.
 interface HostedContext {
   app: Hono<AppEnv>;
   storage: Storage;
   platformAdminKey: string;
-  tenantAdminKey: string;
-  tenantId: string;
+  spaceAdminKey: string;
+  spaceId: string;
   cleanup: () => Promise<void>;
 }
 
 async function createHostedContext(): Promise<HostedContext> {
   const dialect = process.env.DB_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-tenants-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-spaces-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;
@@ -95,11 +95,11 @@ async function createHostedContext(): Promise<HostedContext> {
 
   const suffix = Math.random().toString(36).slice(2, 10);
   const platformAdminKey = `marfa_k1_platform_quotas_${suffix}`;
-  const tenantAdminKey = `marfa_k1_tenant_cfg_${suffix}`;
+  const spaceAdminKey = `marfa_k1_space_cfg_${suffix}`;
 
-  // Create the tenant row first (required for FK under hosted-mode pg).
-  const tenant = await storage.tenants!.create();
-  const tenantId = tenant.id;
+  // Create the space row first (required for FK under hosted-mode pg).
+  const space = await storage.spaces!.create();
+  const spaceId = space.id;
 
   await storage.keys.create(
     {
@@ -115,14 +115,14 @@ async function createHostedContext(): Promise<HostedContext> {
 
   await storage.keys.create(
     {
-      label: "tenant-cfg-admin",
-      source: `tenant-cfg-${suffix}`,
+      label: "space-cfg-admin",
+      source: `space-cfg-${suffix}`,
       role: "admin",
       type_permissions: {},
       default_tier: "feed",
     },
-    hashApiKey(tenantAdminKey, SALT),
-    tenantId,
+    hashApiKey(spaceAdminKey, SALT),
+    spaceId,
   );
   await storage.settings.set("bootstrapped", "true");
 
@@ -130,8 +130,8 @@ async function createHostedContext(): Promise<HostedContext> {
     app,
     storage,
     platformAdminKey,
-    tenantAdminKey,
-    tenantId,
+    spaceAdminKey,
+    spaceId,
     cleanup: async () => {
       if (pgCleanup) {
         await pgCleanup();
@@ -153,16 +153,16 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("GET /tenants/me/config — keys-mode fallback", () => {
+describe("GET /spaces/me/config — keys-mode fallback", () => {
   it("requires admin — 401 without credentials", async () => {
-    const res = await request(ctx.app, "GET", "/tenants/me/config");
+    const res = await request(ctx.app, "GET", "/spaces/me/config");
     expect(res.status).toBe(401);
   });
 
-  it("returns {} for a non-tenant-scoped admin (no tenant store)", async () => {
-    // The bootstrap test admin has no tenant_id, and authMode is "keys"
-    // so storage.tenants is undefined. The handler short-circuits to {}.
-    const res = await request(ctx.app, "GET", "/tenants/me/config", {
+  it("returns {} for a non-space-scoped admin (no space store)", async () => {
+    // The bootstrap test admin has no space_id, and authMode is "keys"
+    // so storage.spaces is undefined. The handler short-circuits to {}.
+    const res = await request(ctx.app, "GET", "/spaces/me/config", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
@@ -171,16 +171,16 @@ describe("GET /tenants/me/config — keys-mode fallback", () => {
   });
 });
 
-describe("PUT /tenants/me/config — keys-mode fallback", () => {
+describe("PUT /spaces/me/config — keys-mode fallback", () => {
   it("requires admin — 401 without credentials", async () => {
-    const res = await request(ctx.app, "PUT", "/tenants/me/config", {
+    const res = await request(ctx.app, "PUT", "/spaces/me/config", {
       body: {},
     });
     expect(res.status).toBe(401);
   });
 
-  it("rejects a non-tenant-scoped credential with 400 VALIDATION_ERROR", async () => {
-    const res = await request(ctx.app, "PUT", "/tenants/me/config", {
+  it("rejects a non-space-scoped credential with 400 VALIDATION_ERROR", async () => {
+    const res = await request(ctx.app, "PUT", "/spaces/me/config", {
       key: ctx.adminKey,
       body: {},
     });
@@ -190,8 +190,8 @@ describe("PUT /tenants/me/config — keys-mode fallback", () => {
   });
 });
 
-// ----- Hosted-mode context: exercises the tenant store happy paths -------
-describe("Tenant config — hosted mode", () => {
+// ----- Hosted-mode context: exercises the space store happy paths -------
+describe("Space config — hosted mode", () => {
   let hosted: HostedContext;
 
   beforeAll(async () => {
@@ -202,14 +202,14 @@ describe("Tenant config — hosted mode", () => {
     await hosted.cleanup();
   });
 
-  it("GET returns stored config for a tenant-scoped admin", async () => {
-    expect(hosted.storage.tenants).toBeDefined();
-    await hosted.storage.tenants!.updateConfig(hosted.tenantId, {
+  it("GET returns stored config for a space-scoped admin", async () => {
+    expect(hosted.storage.spaces).toBeDefined();
+    await hosted.storage.spaces!.updateConfig(hosted.spaceId, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
-    const res = await request(hosted.app, "GET", "/tenants/me/config", {
-      key: hosted.tenantAdminKey,
+    const res = await request(hosted.app, "GET", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -219,8 +219,8 @@ describe("Tenant config — hosted mode", () => {
   });
 
   it("PUT rejects a negative cleanup-job override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/tenants/me/config", {
-      key: hosted.tenantAdminKey,
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
       body: {
         audit_retention_days: -1,
       },
@@ -235,8 +235,8 @@ describe("Tenant config — hosted mode", () => {
       enforcement: { strict_mode: { types: ["core.note"] } },
       audit_retention_days: 45,
     };
-    const res = await request(hosted.app, "PUT", "/tenants/me/config", {
-      key: hosted.tenantAdminKey,
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
       body: config,
     });
     expect(res.status).toBe(200);
@@ -245,8 +245,8 @@ describe("Tenant config — hosted mode", () => {
     expect(body.audit_retention_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
-    const getRes = await request(hosted.app, "GET", "/tenants/me/config", {
-      key: hosted.tenantAdminKey,
+    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
@@ -258,21 +258,21 @@ describe("Tenant config — hosted mode", () => {
     const auditResult = await waitForAudit(
       () =>
         hosted.storage.audit.list({
-          action: "tenant.config.update",
-          resource_id: hosted.tenantId,
+          action: "space.config.update",
+          resource_id: hosted.spaceId,
         }),
       (r) => r.data.length >= 1,
     );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
-    expect(auditResult.data[0]?.resource_type).toBe("tenant");
+    expect(auditResult.data[0]?.resource_type).toBe("space");
   });
 
-  it("GET /tenants/:id/quotas returns not_found for an unknown tenant", async () => {
-    const unknownTenantId = "tenant_unknown_get";
+  it("GET /spaces/:id/quotas returns not_found for an unknown space", async () => {
+    const unknownSpaceId = "space_unknown_get";
     const res = await request(
       hosted.app,
       "GET",
-      `/tenants/${unknownTenantId}/quotas`,
+      `/spaces/${unknownSpaceId}/quotas`,
       { key: hosted.platformAdminKey },
     );
 
@@ -281,12 +281,12 @@ describe("Tenant config — hosted mode", () => {
     expect(body.error.code).toBe("not_found");
   });
 
-  it("PUT /tenants/:id/quotas returns not_found without creating an orphan quota row", async () => {
-    const unknownTenantId = "tenant_unknown_put";
+  it("PUT /spaces/:id/quotas returns not_found without creating an orphan quota row", async () => {
+    const unknownSpaceId = "space_unknown_put";
     const res = await request(
       hosted.app,
       "PUT",
-      `/tenants/${unknownTenantId}/quotas`,
+      `/spaces/${unknownSpaceId}/quotas`,
       {
         key: hosted.platformAdminKey,
         body: { items_limit: 10 },
@@ -296,14 +296,14 @@ describe("Tenant config — hosted mode", () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("not_found");
-    expect(await hosted.storage.tenantQuotas.get(unknownTenantId)).toBeNull();
+    expect(await hosted.storage.spaceQuotas.get(unknownSpaceId)).toBeNull();
   });
 
-  it("PUT and GET /tenants/:id/quotas preserve the known-tenant happy path", async () => {
+  it("PUT and GET /spaces/:id/quotas preserve the known-space happy path", async () => {
     const putRes = await request(
       hosted.app,
       "PUT",
-      `/tenants/${hosted.tenantId}/quotas`,
+      `/spaces/${hosted.spaceId}/quotas`,
       {
         key: hosted.platformAdminKey,
         body: { items_limit: 25 },
@@ -314,7 +314,7 @@ describe("Tenant config — hosted mode", () => {
     const getRes = await request(
       hosted.app,
       "GET",
-      `/tenants/${hosted.tenantId}/quotas`,
+      `/spaces/${hosted.spaceId}/quotas`,
       { key: hosted.platformAdminKey },
     );
     expect(getRes.status).toBe(200);
@@ -325,9 +325,9 @@ describe("Tenant config — hosted mode", () => {
   it("documents not_found on both explicit quota operations", () => {
     // The published and live specs intentionally filter platform-internal
     // operations, so inspect this route group's pre-finalization document.
-    const spec = tenantRoutes(hosted.storage).getOpenAPIDocument({
+    const spec = spaceRoutes(hosted.storage).getOpenAPIDocument({
       openapi: "3.1.0",
-      info: { title: "Tenant route test", version: "1" },
+      info: { title: "Space route test", version: "1" },
     });
     const quotaPath = spec.paths["/{id}/quotas"];
     if (!quotaPath) throw new Error("quota path missing from route document");

@@ -6,9 +6,9 @@ import {
   AuthSessionCleaner,
   DcrClientCleaner,
   RuntimeCredentialReaper,
-  runTenantCleanup,
+  runSpaceCleanup,
 } from "./retention.js";
-import type { TenantFanout } from "./retention.js";
+import type { SpaceFanout } from "./retention.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
@@ -36,7 +36,7 @@ async function seedItemWithUpdatedAt(opts: {
   state: "active" | "archived" | "trashed";
   tier: "library" | "feed";
   updatedAtIso: string;
-  tenantId?: string;
+  spaceId?: string;
 }): Promise<void> {
   await ctx.storage.items.create(
     {
@@ -45,10 +45,10 @@ async function seedItemWithUpdatedAt(opts: {
       properties: { body: `seed ${opts.id}` },
       tier: opts.tier,
     },
-    opts.tenantId,
+    opts.spaceId,
   );
   if (opts.state !== "active") {
-    await ctx.storage.items.transition(opts.id, opts.state, opts.tenantId);
+    await ctx.storage.items.transition(opts.id, opts.state, opts.spaceId);
   }
   // Force the updated_at to a contrived value via raw SQL — both dialects
   // expose `__pgClient` / `__sqliteAll` / `__sqliteRun` escape hatches on
@@ -230,27 +230,27 @@ describe("TrashPurger.runOnce — behavioral", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-tenant fan-out
+// Per-space fan-out
 // ---------------------------------------------------------------------------
 
-describe("TrashPurger fan-out — per-tenant retention overrides", () => {
-  it("honors per-tenant trash_retention_days, falling back to instance default for tenants without override and the NULL bucket", async () => {
-    if (!ctx.storage.tenants) {
+describe("TrashPurger fan-out — per-space retention overrides", () => {
+  it("honors per-space trash_retention_days, falling back to instance default for spaces without override and the NULL bucket", async () => {
+    if (!ctx.storage.spaces) {
       // Should always be wired in current shape but guarding defensively.
-      throw new Error("tenants store missing — test pre-condition violated");
+      throw new Error("spaces store missing — test pre-condition violated");
     }
-    const tenantA = await ctx.storage.tenants.create("tenant-A");
-    const tenantB = await ctx.storage.tenants.create("tenant-B");
-    const tenantC = await ctx.storage.tenants.create("tenant-C-default");
-    // Tenant A: aggressive 1-day retention.
-    await ctx.storage.tenants.updateConfig(tenantA.id, {
+    const spaceA = await ctx.storage.spaces.create("space-A");
+    const spaceB = await ctx.storage.spaces.create("space-B");
+    const spaceC = await ctx.storage.spaces.create("space-C-default");
+    // Space A: aggressive 1-day retention.
+    await ctx.storage.spaces.updateConfig(spaceA.id, {
       trash_retention_days: 1,
     });
-    // Tenant B: lax 30-day retention.
-    await ctx.storage.tenants.updateConfig(tenantB.id, {
+    // Space B: lax 30-day retention.
+    await ctx.storage.spaces.updateConfig(spaceB.id, {
       trash_retention_days: 30,
     });
-    // Tenant C: no override → uses instance default (5 days here).
+    // Space C: no override → uses instance default (5 days here).
 
     // Ten-day-old trashed items in each scope, including the NULL bucket.
     const ids2 = {
@@ -267,21 +267,21 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
       state: "trashed",
       tier: "library",
       updatedAtIso: tenDaysAgo,
-      tenantId: tenantA.id,
+      spaceId: spaceA.id,
     });
     await seedItemWithUpdatedAt({
       id: ids2.b,
       state: "trashed",
       tier: "library",
       updatedAtIso: tenDaysAgo,
-      tenantId: tenantB.id,
+      spaceId: spaceB.id,
     });
     await seedItemWithUpdatedAt({
       id: ids2.c,
       state: "trashed",
       tier: "library",
       updatedAtIso: tenDaysAgo,
-      tenantId: tenantC.id,
+      spaceId: spaceC.id,
     });
     await seedItemWithUpdatedAt({
       id: ids2.none,
@@ -290,13 +290,13 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
       updatedAtIso: tenDaysAgo,
     });
 
-    const fanout: TenantFanout = {
-      tenants: ctx.storage.tenants,
+    const fanout: SpaceFanout = {
+      spaces: ctx.storage.spaces,
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
       ctx.storage.items,
-      5, // instance default — applies to tenant C and the NULL bucket
+      5, // instance default — applies to space C and the NULL bucket
       3_600_000,
       () => FIXED_NOW,
       ctx.storage.coordination,
@@ -313,10 +313,10 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
     expect(await rowExists(ids2.none)).toBe(false);
   });
 
-  it("treats per-tenant trash_retention_days = 0 as 'disable for that tenant'", async () => {
-    if (!ctx.storage.tenants) throw new Error("tenants store missing");
-    const t = await ctx.storage.tenants.create("disabled-tenant");
-    await ctx.storage.tenants.updateConfig(t.id, {
+  it("treats per-space trash_retention_days = 0 as 'disable for that space'", async () => {
+    if (!ctx.storage.spaces) throw new Error("spaces store missing");
+    const t = await ctx.storage.spaces.create("disabled-space");
+    await ctx.storage.spaces.updateConfig(t.id, {
       trash_retention_days: 0,
     });
     const itemId = id("fb01");
@@ -327,11 +327,11 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 365 * MS_PER_DAY,
       ).toISOString(),
-      tenantId: t.id,
+      spaceId: t.id,
     });
 
-    const fanout: TenantFanout = {
-      tenants: ctx.storage.tenants,
+    const fanout: SpaceFanout = {
+      spaces: ctx.storage.spaces,
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
@@ -348,93 +348,93 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
   });
 });
 
-describe("runTenantCleanup — audit and event-log fan-out", () => {
-  it("calls the sweep function with each tenant's effective retention", async () => {
-    if (!ctx.storage.tenants) throw new Error("tenants store missing");
-    const tA = await ctx.storage.tenants.create("audit-tenant-A");
-    const tB = await ctx.storage.tenants.create("audit-tenant-B");
-    await ctx.storage.tenants.updateConfig(tA.id, {
+describe("runSpaceCleanup — audit and event-log fan-out", () => {
+  it("calls the sweep function with each space's effective retention", async () => {
+    if (!ctx.storage.spaces) throw new Error("spaces store missing");
+    const tA = await ctx.storage.spaces.create("audit-space-A");
+    const tB = await ctx.storage.spaces.create("audit-space-B");
+    await ctx.storage.spaces.updateConfig(tA.id, {
       audit_retention_days: 7,
     });
-    await ctx.storage.tenants.updateConfig(tB.id, {
+    await ctx.storage.spaces.updateConfig(tB.id, {
       // No override — tB falls through to instance default.
     });
 
-    const calls: { retention: number; tenantId: string | null | undefined }[] =
+    const calls: { retention: number; spaceId: string | null | undefined }[] =
       [];
-    const total = await runTenantCleanup({
+    const total = await runSpaceCleanup({
       jobName: "test-audit-cleanup",
       coordination: ctx.storage.coordination,
       fanout: {
-        tenants: ctx.storage.tenants,
+        spaces: ctx.storage.spaces,
         configField: "audit_retention_days",
       },
       instanceDefault: 30,
       unitMs: MS_PER_DAY,
-      sweep: (retention, tenantId) => {
-        calls.push({ retention, tenantId });
+      sweep: (retention, spaceId) => {
+        calls.push({ retention, spaceId });
         return Promise.resolve(1); // pretend each scope deleted one row
       },
     });
 
     // Three calls expected: tA(7), tB(30), NULL(30). Plus the total
     // sums those.
-    const byTenant = new Map(calls.map((c) => [c.tenantId, c.retention]));
-    expect(byTenant.get(tA.id)).toBe(7);
-    expect(byTenant.get(tB.id)).toBe(30);
-    expect(byTenant.get(null)).toBe(30);
+    const bySpace = new Map(calls.map((c) => [c.spaceId, c.retention]));
+    expect(bySpace.get(tA.id)).toBe(7);
+    expect(bySpace.get(tB.id)).toBe(30);
+    expect(bySpace.get(null)).toBe(30);
     expect(calls.length).toBe(3);
     expect(total).toBe(3);
   });
 
-  it("skips tenants whose effective retention is 0 (disabled)", async () => {
-    if (!ctx.storage.tenants) throw new Error("tenants store missing");
-    const t = await ctx.storage.tenants.create("disabled-event-log");
-    await ctx.storage.tenants.updateConfig(t.id, {
+  it("skips spaces whose effective retention is 0 (disabled)", async () => {
+    if (!ctx.storage.spaces) throw new Error("spaces store missing");
+    const t = await ctx.storage.spaces.create("disabled-event-log");
+    await ctx.storage.spaces.updateConfig(t.id, {
       event_log_retention_hours: 0,
     });
 
-    const calls: { retention: number; tenantId: string | null | undefined }[] =
+    const calls: { retention: number; spaceId: string | null | undefined }[] =
       [];
-    await runTenantCleanup({
+    await runSpaceCleanup({
       jobName: "test-eventlog-cleanup",
       coordination: ctx.storage.coordination,
       fanout: {
-        tenants: ctx.storage.tenants,
+        spaces: ctx.storage.spaces,
         configField: "event_log_retention_hours",
       },
       instanceDefault: 168,
       unitMs: 3_600_000,
-      sweep: (retention, tenantId) => {
-        calls.push({ retention, tenantId });
+      sweep: (retention, spaceId) => {
+        calls.push({ retention, spaceId });
         return Promise.resolve(0);
       },
     });
 
-    // The disabled tenant is skipped; only the NULL-bucket sweep runs
+    // The disabled space is skipped; only the NULL-bucket sweep runs
     // (instance default = 168h).
-    const tenants = calls.map((c) => c.tenantId);
-    expect(tenants).not.toContain(t.id);
-    expect(tenants).toContain(null);
+    const spaces = calls.map((c) => c.spaceId);
+    expect(spaces).not.toContain(t.id);
+    expect(spaces).toContain(null);
   });
 
   it("falls back to a single global sweep when no fanout is provided", async () => {
-    const calls: { retention: number; tenantId: string | null | undefined }[] =
+    const calls: { retention: number; spaceId: string | null | undefined }[] =
       [];
-    const total = await runTenantCleanup({
+    const total = await runSpaceCleanup({
       jobName: "test-no-fanout",
       coordination: ctx.storage.coordination,
       fanout: undefined,
       instanceDefault: 90,
       unitMs: MS_PER_DAY,
-      sweep: (retention, tenantId) => {
-        calls.push({ retention, tenantId });
+      sweep: (retention, spaceId) => {
+        calls.push({ retention, spaceId });
         return Promise.resolve(5);
       },
     });
     expect(calls.length).toBe(1);
     expect(calls[0]?.retention).toBe(90);
-    expect(calls[0]?.tenantId).toBeUndefined();
+    expect(calls[0]?.spaceId).toBeUndefined();
     expect(total).toBe(5);
   });
 });

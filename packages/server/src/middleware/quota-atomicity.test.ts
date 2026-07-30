@@ -4,9 +4,9 @@
  * The check used to precede the write and nothing joined them, so a count
  * read by one writer did not include a write another had already been
  * admitted for. N writers at `limit - 1` each saw room, each wrote, and the
- * tenant settled at `limit + N - 1`.
+ * space settled at `limit + N - 1`.
  *
- * `reserveQuota` closes it by taking a `(tenant, resource)` lock on the
+ * `reserveQuota` closes it by taking a `(space, resource)` lock on the
  * transaction the write commits in, so the count a writer reads already
  * includes every write admitted ahead of it. That is the property under test
  * here, and it can only be tested by running the writes at once — a
@@ -66,32 +66,30 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A tenant with an items ceiling, and a member key inside it. */
-async function tenantWithItemLimit(
+/** A space with an items ceiling, and a member key inside it. */
+async function spaceWithItemLimit(
   limit: number,
-): Promise<{ tenantId: string; key: string }> {
-  const tenant = await ctx.storage.tenants!.create(
+): Promise<{ spaceId: string; key: string }> {
+  const space = await ctx.storage.spaces!.create(
     `quota-${Math.random().toString(36).slice(2, 8)}`,
   );
-  const quotaRes = await request(
-    ctx.app,
-    "PUT",
-    `/tenants/${tenant.id}/quotas`,
-    { key: ctx.adminKey, body: { items_limit: limit } },
-  );
+  const quotaRes = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
+    key: ctx.adminKey,
+    body: { items_limit: limit },
+  });
   expect(quotaRes.status).toBeLessThan(400);
 
   const suffix = Math.random().toString(36).slice(2, 10);
   const keyRes = await request(
     ctx.app,
     "POST",
-    `/admin/tenants/${tenant.id}/keys`,
+    `/admin/spaces/${space.id}/keys`,
     {
       key: ctx.adminKey,
       body: {
         label: `quota-${suffix}`,
         source: `quota-${suffix}`,
-        role: "tenant_admin",
+        role: "space_admin",
         default_tier: "library",
         type_permissions: { "*": "write" },
       },
@@ -99,7 +97,7 @@ async function tenantWithItemLimit(
   );
   expect(keyRes.status).toBe(201);
   return {
-    tenantId: tenant.id,
+    spaceId: space.id,
     key: ((await keyRes.json()) as { key: string }).key,
   };
 }
@@ -111,8 +109,8 @@ function createNote(key: string, body: string): Promise<Response> {
   });
 }
 
-async function itemCount(tenantId: string): Promise<number> {
-  return ctx.storage.tenantQuotas.count(tenantId, "items");
+async function itemCount(spaceId: string): Promise<number> {
+  return ctx.storage.spaceQuotas.count(spaceId, "items");
 }
 
 /**
@@ -121,11 +119,11 @@ async function itemCount(tenantId: string): Promise<number> {
  * about what is left behind, not about concurrency.
  */
 describe("a refused blob upload leaves nothing on disk", () => {
-  async function tenantWithBlobLimit(
+  async function spaceWithBlobLimit(
     limit: number,
-  ): Promise<{ tenantId: string; key: string }> {
-    const t = await tenantWithItemLimit(500);
-    const res = await request(ctx.app, "PUT", `/tenants/${t.tenantId}/quotas`, {
+  ): Promise<{ spaceId: string; key: string }> {
+    const t = await spaceWithItemLimit(500);
+    const res = await request(ctx.app, "PUT", `/spaces/${t.spaceId}/quotas`, {
       key: ctx.adminKey,
       body: { items_limit: 500, blobs_limit: limit },
     });
@@ -146,7 +144,7 @@ describe("a refused blob upload leaves nothing on disk", () => {
   }
 
   it("REGRESSION: bytes written for a refused upload are removed again", async () => {
-    const { key } = await tenantWithBlobLimit(1);
+    const { key } = await spaceWithBlobLimit(1);
     expect((await upload(key, "first blob")).status).toBe(201);
 
     // Second upload is over the ceiling. Its bytes reached disk before the
@@ -167,10 +165,10 @@ describe("a refused blob upload leaves nothing on disk", () => {
       .update(Buffer.from(shared))
       .digest("hex")}`;
 
-    const a = await tenantWithBlobLimit(5);
+    const a = await spaceWithBlobLimit(5);
     expect((await upload(a.key, shared)).status).toBe(201);
 
-    const b = await tenantWithBlobLimit(1);
+    const b = await spaceWithBlobLimit(1);
     expect((await upload(b.key, "b fills its one slot")).status).toBe(201);
     expect((await upload(b.key, shared)).status).toBe(429);
 
@@ -185,14 +183,14 @@ describe("a refused blob upload leaves nothing on disk", () => {
 describe.skipIf(!isPg)("items quota under concurrency", () => {
   it("REGRESSION: simultaneous creates at the ceiling do not overshoot it", async () => {
     const limit = 5;
-    const { tenantId, key } = await tenantWithItemLimit(limit);
+    const { spaceId, key } = await spaceWithItemLimit(limit);
 
     // Fill to one below the ceiling sequentially: this part was never in
     // doubt, and it sets up the state where the race bites.
     for (let i = 0; i < limit - 1; i++) {
       expect((await createNote(key, `seed ${String(i)}`)).status).toBe(201);
     }
-    expect(await itemCount(tenantId)).toBe(limit - 1);
+    expect(await itemCount(spaceId)).toBe(limit - 1);
 
     // Now eight writers at once, with room for exactly one.
     const results = await Promise.all(
@@ -205,12 +203,12 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
     expect(refused).toBe(7);
     // The count is the property, not the status distribution: a route that
     // returned 429 while still writing would pass the assertions above.
-    expect(await itemCount(tenantId)).toBe(limit);
+    expect(await itemCount(spaceId)).toBe(limit);
   });
 
   it("refuses every writer when the ceiling is already reached", async () => {
     const limit = 3;
-    const { tenantId, key } = await tenantWithItemLimit(limit);
+    const { spaceId, key } = await spaceWithItemLimit(limit);
     for (let i = 0; i < limit; i++) {
       expect((await createNote(key, `seed ${String(i)}`)).status).toBe(201);
     }
@@ -219,7 +217,7 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
       Array.from({ length: 6 }, (_, i) => createNote(key, `over ${String(i)}`)),
     );
     expect(results.every((r) => r.status === 429)).toBe(true);
-    expect(await itemCount(tenantId)).toBe(limit);
+    expect(await itemCount(spaceId)).toBe(limit);
   });
 
   it("does not serialise writers in different spaces", async () => {
@@ -227,8 +225,8 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
     // alone would still close the race, and would turn every space's writes
     // into one global queue to do it — a worse outcome than the overshoot,
     // and invisible in a response status.
-    const a = await tenantWithItemLimit(50);
-    const b = await tenantWithItemLimit(50);
+    const a = await spaceWithItemLimit(50);
+    const b = await spaceWithItemLimit(50);
     lockKeys = [];
     const results = await Promise.all([
       ...Array.from({ length: 4 }, (_, i) =>
@@ -239,33 +237,33 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
       ),
     ]);
     expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(await itemCount(a.tenantId)).toBe(4);
-    expect(await itemCount(b.tenantId)).toBe(4);
+    expect(await itemCount(a.spaceId)).toBe(4);
+    expect(await itemCount(b.spaceId)).toBe(4);
 
     // Eight writes, eight locks, and the two spaces never share a key.
     expect(lockKeys.length).toBe(8);
     expect(new Set(lockKeys)).toEqual(
-      new Set([`quota:${a.tenantId}:items`, `quota:${b.tenantId}:items`]),
+      new Set([`quota:${a.spaceId}:items`, `quota:${b.spaceId}:items`]),
     );
   });
 
   it("leaves an unlimited space unlocked and unbounded", async () => {
     // No ceiling means no reservation and no lock: serialising writers
     // against a limit that does not exist is pure contention.
-    const tenant = await ctx.storage.tenants!.create(
+    const space = await ctx.storage.spaces!.create(
       `unl-${Math.random().toString(36).slice(2, 8)}`,
     );
     const suffix = Math.random().toString(36).slice(2, 10);
     const keyRes = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${tenant.id}/keys`,
+      `/admin/spaces/${space.id}/keys`,
       {
         key: ctx.adminKey,
         body: {
           label: `unl-${suffix}`,
           source: `unl-${suffix}`,
-          role: "tenant_admin",
+          role: "space_admin",
           default_tier: "library",
           type_permissions: { "*": "write" },
         },
@@ -278,7 +276,7 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
       Array.from({ length: 10 }, (_, i) => createNote(key, `u${String(i)}`)),
     );
     expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(await itemCount(tenant.id)).toBe(10);
+    expect(await itemCount(space.id)).toBe(10);
     expect(lockKeys).toEqual([]);
   });
 });

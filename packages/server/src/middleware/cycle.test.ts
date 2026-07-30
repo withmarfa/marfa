@@ -178,7 +178,7 @@ describe("cycleMiddleware", () => {
   });
 
   describe("human sentinel — fallback of last resort", () => {
-    it("yields { null, 0 } for a tenantless admin api key with no connection binding", async () => {
+    it("yields { null, 0 } for a space-less admin api key with no connection binding", async () => {
       const app = buildApp({ apiKey: apiKey() });
       const res = await app.request("/echo");
       const body = (await res.json()) as { cycle: unknown };

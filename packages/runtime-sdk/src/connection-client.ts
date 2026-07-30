@@ -325,7 +325,7 @@ export class ConnectionClient {
   /**
    * Upload bytes as a content-addressed Marfa blob. Forwards to the
    * server's `POST /blobs` route using this connection's runtime
-   * credential — tenant scoping, dedup, and per-tenant `blobs` +
+   * credential — space scoping, dedup, and per-space `blobs` +
    * `storage_bytes` quotas are enforced server-side. The returned
    * `hash` is the canonical `sha256:<hex>` reference: stamp it onto
    * item properties (e.g. `properties.blob_ref` on `core.file`) on

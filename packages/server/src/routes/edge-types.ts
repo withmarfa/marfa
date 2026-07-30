@@ -10,7 +10,7 @@ import {
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireTenantAdmin,
+  requireSpaceAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -78,7 +78,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Space-admin or platform-admin; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -113,7 +113,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Tenant-admin required",
+      description: "Space-admin required",
     },
     409: {
       content: {
@@ -133,7 +133,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+    "Returns every edge type registered in the space — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -156,7 +156,7 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a custom edge type registration scoped to the caller's tenant. Tenant-admin or platform-admin; core edge types are rejected, another tenant's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+    "Removes a custom edge type registration scoped to the caller's space. Space-admin or platform-admin; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string().describe("Edge type id.") }) },
   responses: {
@@ -192,12 +192,12 @@ export function edgeTypeRoutes(storage: Storage) {
 
   router.openapi(createEdgeTypeRoute, async (c) => {
     // Registering a custom edge type is gated by the metadata.edge_types
-    // scope (admin / tenant_admin API keys bypass via role; OAuth apps must
+    // scope (admin / space_admin API keys bypass via role; OAuth apps must
     // carry the granted scope — `metadata.edge_types:write` is requestable
     // but not part of the default consent bundle, so an app that registers
     // edge types asks for it explicitly). Mirrors `POST /types`. The create
-    // below stamps tenant_id from the caller, so a scope-bearing member can
-    // only register within its own tenant.
+    // below stamps space_id from the caller, so a scope-bearing member can
+    // only register within its own space.
     requireMetadataPermission(c, "edge_types", "write");
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
@@ -242,12 +242,12 @@ export function edgeTypeRoutes(storage: Storage) {
       >,
     };
 
-    const tenantId = c.get("apiKey")?.tenant_id;
-    await storage.edgeTypes.create(schema, tenantId);
-    registerEdgeTypeSchema(schema, tenantId);
+    const spaceId = c.get("apiKey")?.space_id;
+    await storage.edgeTypes.create(schema, spaceId);
+    registerEdgeTypeSchema(schema, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.create",
       resource_type: "edge_type",
@@ -257,17 +257,17 @@ export function edgeTypeRoutes(storage: Storage) {
   });
 
   router.openapi(listEdgeTypesRoute, async (c) => {
-    requireTenantAdmin(c);
+    requireSpaceAdmin(c);
     // Core types are global; custom types resolve only within the caller's
-    // tenant. `listEdgeTypes(tenantId)` returns core plus this tenant's own
-    // custom edge types — never another tenant's.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    // space. `listEdgeTypes(spaceId)` returns core plus this space's own
+    // custom edge types — never another space's.
+    const spaceId = c.get("apiKey")?.space_id;
     const { listEdgeTypes } = await import("@withmarfa/shared");
-    return c.json({ edge_types: listEdgeTypes(tenantId) }, 200);
+    return c.json({ edge_types: listEdgeTypes(spaceId) }, 200);
   });
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
-    requireTenantAdmin(c);
+    requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
       throw new MarfaError(
@@ -275,22 +275,22 @@ export function edgeTypeRoutes(storage: Storage) {
         `${id} is a core edge type and cannot be deleted`,
       );
     }
-    const tenantId = c.get("apiKey")?.tenant_id;
-    // Tenant-scoped lookup: a tenant_admin can only see (and so delete) its
-    // own custom edge types. A probe for another tenant's id resolves to
-    // nothing here and 404s — cross-tenant deletes are impossible.
-    const existing = await storage.edgeTypes.get(id, tenantId);
+    const spaceId = c.get("apiKey")?.space_id;
+    // Space-scoped lookup: a space_admin can only see (and so delete) its
+    // own custom edge types. A probe for another space's id resolves to
+    // nothing here and 404s — cross-space deletes are impossible.
+    const existing = await storage.edgeTypes.get(id, spaceId);
     if (!existing) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
         `Edge type ${id} not found`,
       );
     }
-    await storage.edgeTypes.delete(id, tenantId);
-    unregisterEdgeTypeSchema(id, tenantId);
+    await storage.edgeTypes.delete(id, spaceId);
+    unregisterEdgeTypeSchema(id, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.delete",
       resource_type: "edge_type",

@@ -2,9 +2,9 @@
  * Postgres RLS schema scaffold.
  *
  * Verifies the migration applied: `marfa_app` role exists, RLS is enabled
- * on every tenant-scoped table, and the per-table policies are present.
+ * on every space-scoped table, and the per-table policies are present.
  *
- * Cross-tenant denial via the actual role-on-checkout path is tested in
+ * Cross-space denial via the actual role-on-checkout path is tested in
  * `rls-enforcement.test.ts`. SQLite skips the entire suite — RLS is a
  * Postgres-only concern.
  */
@@ -38,7 +38,7 @@ describe.skipIf(!isPg)("Postgres RLS scaffold", () => {
     expect(rows).toHaveLength(1);
   });
 
-  const TENANT_SCOPED_TABLES = [
+  const SPACE_SCOPED_TABLES = [
     "items",
     "edges",
     "versions",
@@ -55,13 +55,13 @@ describe.skipIf(!isPg)("Postgres RLS scaffold", () => {
     "connection_leased_tokens",
     "bulk_action_jobs",
     "users",
-    "tenant_quotas",
+    "space_quotas",
     "outbound_webhook_deliveries",
     "inbound_webhook_events",
   ];
 
-  it.each(TENANT_SCOPED_TABLES)(
-    "enables RLS + has tenant_isolation policy on %s",
+  it.each(SPACE_SCOPED_TABLES)(
+    "enables RLS + has space_isolation policy on %s",
     async (table) => {
       // RLS enabled?
       const enabled = (await pgClient(
@@ -76,13 +76,13 @@ describe.skipIf(!isPg)("Postgres RLS scaffold", () => {
         `SELECT polname FROM pg_policy
            WHERE polrelid = (SELECT oid FROM pg_class WHERE relname = $1 AND relkind = 'r')
              AND polname = $2`,
-        [table, `${table}_tenant_isolation`],
+        [table, `${table}_space_isolation`],
       )) as { polname: string }[];
       expect(policy).toHaveLength(1);
     },
   );
 
-  it("grants CRUD on tenant-scoped tables to marfa_app", async () => {
+  it("grants CRUD on space-scoped tables to marfa_app", async () => {
     // Spot-check a couple of tables
     for (const table of ["items", "edges", "blobs"]) {
       const grants = (await pgClient(

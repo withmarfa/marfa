@@ -40,7 +40,7 @@ async function createConnection(
   source: string,
 ): Promise<string> {
   // Stamping `source` makes the dedup index forgive repeated runs that
-  // happen to share a tenant; pass-through unknown property `feed_activity`
+  // happen to share a space; pass-through unknown property `feed_activity`
   // is preserved by the loose-object validation.
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,

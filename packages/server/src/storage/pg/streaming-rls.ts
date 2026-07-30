@@ -6,28 +6,28 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
 /**
  * Session-level RLS for streaming routes (`/events`, `/export`).
  *
- * The transaction-wrapping middleware (`rls-tenant-context.ts`) cannot
+ * The transaction-wrapping middleware (`rls-space-context.ts`) cannot
  * cover streaming responses — the stream holds the response open for an
  * arbitrary duration and a long-lived transaction would pin a pool
  * connection in the same scope, accumulate locks, and risk deadlocks.
  *
- * This helper achieves the same DB-level tenant fence via a different
+ * This helper achieves the same DB-level space fence via a different
  * mechanism: it reserves one pool connection for the stream, issues
  * **session-level** (not `SET LOCAL`) `SET ROLE marfa_app` plus
- * `set_config('marfa.tenant_id', '<id>', false)`, and pins the
+ * `set_config('marfa.space_id', '<id>', false)`, and pins the
  * connection in the request-context ALS so the existing storage proxy
  * routes every read through it. On stream end (normal completion,
  * error, client disconnect, server shutdown) the helper resets the
- * session state — `RESET ROLE` plus clearing the `marfa.tenant_id`
+ * session state — `RESET ROLE` plus clearing the `marfa.space_id`
  * GUC — and returns the connection to the pool. If the reset fails the
  * connection is destroyed instead so it never returns poisoned. The
  * scoped reset is the precise match for the cleanup invariant ("no
- * leaked tenant context on connection return to pool"); using
+ * leaked space context on connection return to pool"); using
  * `DISCARD ALL` also invalidated server-side prepared statements while
  * postgres.js retained their client-side names, surfacing as
  * `prepared statement "<name>" does not exist` 500s on subsequent
  * writes under concurrent SSE + write load. RLS policies read
- * `current_setting('marfa.tenant_id')` at execute time, not bind time,
+ * `current_setting('marfa.space_id')` at execute time, not bind time,
  * so cached statements are safe to survive the reset.
  *
  * **Why session-level rather than per-event short transactions:**
@@ -82,7 +82,7 @@ export interface StreamRlsContext {
   /** Synchronous variant for generator-style flows. Use the async
    *  variant unless you specifically need sync. */
   withInstalledContextSync: <T>(fn: () => T) => T;
-  /** Idempotent cleanup: resets the session role + tenant GUC and
+  /** Idempotent cleanup: resets the session role + space GUC and
    *  releases the connection to the pool, or destroys it if cleanup
    *  fails. Safe to call from multiple termination paths. */
   release: () => Promise<void>;
@@ -100,13 +100,13 @@ export interface StreamRlsContext {
  */
 export async function acquireStreamRls(
   client: PgClient,
-  tenantId: string,
+  spaceId: string,
 ): Promise<StreamRlsContext> {
   const reserved = await client.reserve();
   try {
     // Session-level (`false` = not LOCAL) — persists for the reserved
     // connection's lifetime, including across nested storage transactions.
-    await reserved`SELECT set_config('marfa.tenant_id', ${tenantId}, false)`;
+    await reserved`SELECT set_config('marfa.space_id', ${spaceId}, false)`;
     // SET ROLE doesn't accept parameters; hardcoded role name is safe.
     await reserved.unsafe(`SET ROLE marfa_app`);
   } catch (err) {
@@ -159,10 +159,10 @@ export async function acquireStreamRls(
  */
 export async function withStreamRls<T>(
   client: PgClient,
-  tenantId: string,
+  spaceId: string,
   fn: (streamDb: PgDb) => Promise<T>,
 ): Promise<T> {
-  const ctx = await acquireStreamRls(client, tenantId);
+  const ctx = await acquireStreamRls(client, spaceId);
   try {
     return await ctx.withInstalledContext(() => fn(ctx.streamDb));
   } finally {
@@ -172,7 +172,7 @@ export async function withStreamRls<T>(
 
 /**
  * Scoped reset + release. On failure, destroy the connection rather than
- * returning it to the pool with leaked tenant context. See module-level
+ * returning it to the pool with leaked space context. See module-level
  * doc for the DISCARD ALL / prepared-statement rationale.
  */
 async function disposeReserved(
@@ -180,7 +180,7 @@ async function disposeReserved(
 ): Promise<void> {
   try {
     await reserved.unsafe(`RESET ROLE`);
-    await reserved`SELECT set_config('marfa.tenant_id', '', false)`;
+    await reserved`SELECT set_config('marfa.space_id', '', false)`;
   } catch (err) {
     // Reset failed — destroy rather than return a poisoned connection.
     // Repeated warnings here are a real signal (connectivity issue or

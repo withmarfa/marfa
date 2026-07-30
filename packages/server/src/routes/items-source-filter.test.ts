@@ -23,7 +23,7 @@ import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
-let tenantId: string;
+let spaceId: string;
 let trustedKey: string;
 let untrustedKey: string;
 
@@ -31,7 +31,7 @@ let untrustedKey: string;
  * Credentials stamp `source` onto every item they write, so "an item from an
  * untrusted source" means "an item written by a second credential".
  */
-async function mintTenantKey(source: string): Promise<string> {
+async function mintSpaceKey(source: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const raw = `marfa_k1_src_${suffix}`;
   await ctx.storage.keys.create(
@@ -43,17 +43,17 @@ async function mintTenantKey(source: string): Promise<string> {
       default_tier: "library",
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
 
 beforeAll(async () => {
   ctx = await createTestContext({ authMode: "hosted" });
-  const tenant = await ctx.storage.tenants!.create("source-filter");
-  tenantId = tenant.id;
-  trustedKey = await mintTenantKey("trusted");
-  untrustedKey = await mintTenantKey("untrusted");
+  const space = await ctx.storage.spaces!.create("source-filter");
+  spaceId = space.id;
+  trustedKey = await mintSpaceKey("trusted");
+  untrustedKey = await mintSpaceKey("untrusted");
 
   for (const key of [trustedKey, untrustedKey]) {
     const created = await request(ctx.app, "POST", "/items", {
@@ -73,7 +73,7 @@ beforeAll(async () => {
   });
   expect(unlisted.status).toBe(201);
 
-  await ctx.storage.tenants!.updateConfig(tenantId, {
+  await ctx.storage.spaces!.updateConfig(spaceId, {
     enforcement: {
       source_filter: { types: ["core.note"], sources: ["trusted"] },
     },

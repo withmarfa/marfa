@@ -11,7 +11,7 @@
  *
  * Present the broker key and the dispatch succeeds — while handing the
  * receiving Worker a credential that mints against any Connection in any
- * tenant. That is the failure with no symptom at all, so what has to be
+ * space. That is the failure with no symptom at all, so what has to be
  * asserted is the absence of that value from the outgoing request.
  *
  * **Asserted on the `Request`, not on the source.** An earlier version of
@@ -185,7 +185,7 @@ function mockMarfaFetch(): typeof fetch {
           JSON.stringify({
             connection_id: "conn_1",
             integration_name: INTEGRATION,
-            tenant_id: null,
+            space_id: null,
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),

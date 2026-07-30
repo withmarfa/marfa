@@ -4,7 +4,7 @@
  * Output: generated/type-registry.ts, generated/edge-type-registry.ts
  *
  * Every schema goes through the same `validateTypeSchema` the runtime
- * `POST /types` endpoint uses, so a schema that builds here is one a tenant
+ * `POST /types` endpoint uses, so a schema that builds here is one a space
  * could have submitted over the wire — there is no build-time dialect.
  *
  * Usage: pnpm generate
@@ -296,7 +296,7 @@ lines.push("");
 // platform agrees on, and a deployment that talks to none of those vendors
 // carries them purely as a compatibility target. Emitting them separately is
 // what lets the catalog say which is which; both families register into the
-// same runtime registry, so the identifiers a tenant sees are unchanged.
+// same runtime registry, so the identifiers a space sees are unchanged.
 for (const schema of connectorTypes) emitSchema(schema, lines);
 lines.push("export const ALL_CONNECTOR_TYPES: TypeSchema[] = [");
 for (const schema of connectorTypes) lines.push(`  ${varName(schema.id)},`);

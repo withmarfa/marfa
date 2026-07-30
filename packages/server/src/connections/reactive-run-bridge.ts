@@ -308,7 +308,7 @@ async function loadSubscriptions(
         id: connection.id,
         state: connection.state,
         properties: connection.properties,
-        tenant_id: connection.tenant_id ?? null,
+        space_id: connection.space_id ?? null,
       });
       if (entry) out.set(connection.id, entry);
     }
@@ -347,7 +347,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     pools.set(origin, pool);
     return pool;
   };
-  // Per-tenant, per-integration state for "no queue URL mapped" activity
+  // Per-space, per-integration state for "no queue URL mapped" activity
   // rows. Successful writes stay deduped for the process lifetime. Failed
   // writes use an in-flight gate plus bounded backoff so a busy event stream
   // cannot hammer storage while the alert surface is unhealthy.
@@ -377,10 +377,10 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     const replacement = Array.from(subscriptions.values()).find(
       (candidate) =>
         candidate.integration_name === entry.integration_name &&
-        candidate.tenant_id === entry.tenant_id,
+        candidate.space_id === entry.space_id,
     );
     const key = unmappedActivityKey(
-      entry.tenant_id ?? undefined,
+      entry.space_id ?? undefined,
       entry.integration_name,
     );
     const state = unmappedActivityStates.get(key);
@@ -413,7 +413,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       id: item.id,
       state: item.state,
       properties: item.properties,
-      tenant_id: item.tenant_id ?? null,
+      space_id: item.space_id ?? null,
     });
     if (entry) {
       // Clear stale failure state when an operator clears runtime_status off
@@ -593,13 +593,13 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * events it produced (cycle prevention is upstream via hop_count, but
  * this is the cheaper, earlier check).
  *
- * Tenant scoping: enforced at the bridge layer. Each subscription entry
- * carries its connection's `tenant_id`; the fanout loop drops events
- * whose `event.tenantId` doesn't match the subscriber's tenant. The
+ * Space scoping: enforced at the bridge layer. Each subscription entry
+ * carries its connection's `space_id`; the fanout loop drops events
+ * whose `event.spaceId` doesn't match the subscriber's space. The
  * downstream Worker still authenticates with a per-Connection runtime
  * credential, so the API permission gate remains as the inner backstop
- * — and cross-tenant work doesn't pay the queue / Worker cost.
- * Single-tenant self-hosted: every connection and event are tenantless
+ * — and cross-space work doesn't pay the queue / Worker cost.
+ * Single-space self-hosted: every connection and event are space-less
  * (null), the gate trivially passes (null === null).
  *
  * Parallel fanout: subscribers receive concurrently via
@@ -608,7 +608,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * on every other subscriber behind it. Parallel dispatch decouples
  * subscribers; per-subscriber retry, timeout, and error-isolation paths
  * apply inside each task. At very high subscriber counts (a few hundred
- * per tenant) we'd want bounded concurrency to avoid overwhelming
+ * per space) we'd want bounded concurrency to avoid overwhelming
  * Cloudflare Queues; that's a separate optimization.
  */
 async function fanoutEvent(
@@ -625,7 +625,7 @@ async function fanoutEvent(
   const tasks: Promise<unknown>[] = [];
   const now = Date.now();
   for (const entry of subscriptions.values()) {
-    // The bridge's per-subscriber gate (self-event + tenant) is shared
+    // The bridge's per-subscriber gate (self-event + space) is shared
     // with `POST /connections/preview-event` via the `evaluateDispatch`
     // helper — same code, same semantics, two callers.
     if (!evaluateDispatch(event, entry).would_dispatch) continue;
@@ -652,14 +652,14 @@ async function fanoutEvent(
     if (queueUrl === null) {
       const activityTask = handleUnmappedIntegration(
         entry,
-        event.tenantId,
+        event.spaceId,
         unmappedActivityStates,
         config,
         storage,
       );
       // The alert path carries its own rejection handling. Do not await it in
       // this event's fanout: a slow activity store must not hold mapped queue
-      // sends, later events, or unrelated tenants behind it.
+      // sends, later events, or unrelated spaces behind it.
       if (activityTask) void activityTask;
       continue;
     }
@@ -699,7 +699,7 @@ async function fanoutEvent(
 /**
  * Handle a fanout target whose integration has no queue URL mapped in
  * the bridge's resolver. Logged loudly every time; the operator-visible
- * `system.activity` row is deduped per tenant + integration. Writes are
+ * `system.activity` row is deduped per space + integration. Writes are
  * idempotent across ambiguous outcomes and guarded by in-flight + backoff
  * state so a broken activity store cannot turn a busy event stream into a
  * write storm. Best-effort throughout; the bridge must never crash on an
@@ -707,7 +707,7 @@ async function fanoutEvent(
  */
 function handleUnmappedIntegration(
   entry: SubscriptionEntry,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   states: Map<string, UnmappedActivityState>,
   config: BridgeConfig,
   storage: Storage,
@@ -715,7 +715,7 @@ function handleUnmappedIntegration(
   console.error(
     `[reactive-run-bridge] no queue URL mapped for integration "${entry.integration_name}" (connection ${entry.connection_id}); skipping dispatch — set CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS to include this integration`,
   );
-  const key = unmappedActivityKey(tenantId, entry.integration_name);
+  const key = unmappedActivityKey(spaceId, entry.integration_name);
   let state = states.get(key);
   if (!state) {
     state = {
@@ -728,7 +728,7 @@ function handleUnmappedIntegration(
     };
     states.set(key, state);
   } else {
-    // A tenant can have several Connections for the same Integration. Keep a
+    // A space can have several Connections for the same Integration. Keep a
     // live representative so a later retry never attributes the alert to a
     // Connection that was removed while the first write was in flight.
     state.entry = entry;
@@ -748,7 +748,7 @@ function handleUnmappedIntegration(
       armUnmappedActivityRetry(
         key,
         state,
-        tenantId,
+        spaceId,
         states,
         config,
         storage,
@@ -760,7 +760,7 @@ function handleUnmappedIntegration(
 
   const attempt = (async (): Promise<void> => {
     try {
-      await writeUnmappedActivity(entry, tenantId, storage);
+      await writeUnmappedActivity(entry, spaceId, storage);
       state.reported = true;
       if (state.retryTimer) clearTimeout(state.retryTimer);
       state.retryTimer = null;
@@ -782,7 +782,7 @@ function handleUnmappedIntegration(
       armUnmappedActivityRetry(
         key,
         state,
-        tenantId,
+        spaceId,
         states,
         config,
         storage,
@@ -812,7 +812,7 @@ function handleUnmappedIntegration(
 function armUnmappedActivityRetry(
   key: string,
   state: UnmappedActivityState,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   states: Map<string, UnmappedActivityState>,
   config: BridgeConfig,
   storage: Storage,
@@ -833,7 +833,7 @@ function armUnmappedActivityRetry(
       }
       void handleUnmappedIntegration(
         state.entry,
-        tenantId,
+        spaceId,
         states,
         config,
         storage,
@@ -844,18 +844,18 @@ function armUnmappedActivityRetry(
 }
 
 function unmappedActivityKey(
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   integrationName: string,
 ): string {
-  return JSON.stringify([tenantId ?? null, integrationName]);
+  return JSON.stringify([spaceId ?? null, integrationName]);
 }
 
 const UNMAPPED_ACTIVITY_SOURCE = "marfa/reactive-run-bridge";
 
 function unmappedActivitySourceId(key: string): string {
-  // The database uniqueness constraint is global across tenants, so the
-  // tenant-inclusive key must remain part of source_id even though lookups
-  // also pass tenantId for read isolation.
+  // The database uniqueness constraint is global across spaces, so the
+  // space-inclusive key must remain part of source_id even though lookups
+  // also pass spaceId for read isolation.
   return `unmapped-integration:${key}`;
 }
 
@@ -878,12 +878,12 @@ function unmappedActivityProperties(entry: SubscriptionEntry): {
 
 function isMatchingUnmappedActivity(
   item: Item | null,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   integrationName: string,
 ): boolean {
   if (
     item?.type !== "system.activity" ||
-    (item.tenant_id ?? null) !== (tenantId ?? null)
+    (item.space_id ?? null) !== (spaceId ?? null)
   ) {
     return false;
   }
@@ -904,17 +904,17 @@ function isMatchingUnmappedActivity(
 
 async function writeUnmappedActivity(
   entry: SubscriptionEntry,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   storage: Storage,
 ): Promise<void> {
-  const key = unmappedActivityKey(tenantId, entry.integration_name);
+  const key = unmappedActivityKey(spaceId, entry.integration_name);
   const sourceId = unmappedActivitySourceId(key);
   const existing = await storage.items.findBySourceIdIncludingTrashed(
     UNMAPPED_ACTIVITY_SOURCE,
     sourceId,
-    tenantId,
+    spaceId,
   );
-  if (isMatchingUnmappedActivity(existing, tenantId, entry.integration_name)) {
+  if (isMatchingUnmappedActivity(existing, spaceId, entry.integration_name)) {
     return;
   }
   if (existing) {
@@ -931,19 +931,19 @@ async function writeUnmappedActivity(
         source: UNMAPPED_ACTIVITY_SOURCE,
         source_id: sourceId,
       },
-      tenantId,
+      spaceId,
     );
   } catch (createError) {
     // A transport/driver rejection does not prove the transaction failed.
-    // Re-read the natural key and accept only the same tenant-scoped,
+    // Re-read the natural key and accept only the same space-scoped,
     // semantically identical alert; an unrelated collision remains a failure.
     const committed = await storage.items.findBySourceIdIncludingTrashed(
       UNMAPPED_ACTIVITY_SOURCE,
       sourceId,
-      tenantId,
+      spaceId,
     );
     if (
-      isMatchingUnmappedActivity(committed, tenantId, entry.integration_name)
+      isMatchingUnmappedActivity(committed, spaceId, entry.integration_name)
     ) {
       return;
     }
@@ -1013,7 +1013,7 @@ async function handleSubscriberFailure(
           detail: { reason, item_id: event.item.id },
         },
       },
-      event.tenantId,
+      event.spaceId,
     );
   } catch {
     // Don't crash the drainer over a follow-up activity write.
@@ -1053,7 +1053,7 @@ async function handleSubscriberFailure(
       storage,
       entry,
       reason,
-      event.tenantId,
+      event.spaceId,
       escalationThreshold,
     );
     // Drop the subscriber from the in-memory registry now — the
@@ -1079,7 +1079,7 @@ async function markSubscriberFailing(
   storage: Storage,
   entry: SubscriptionEntry,
   reason: string,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   consecutiveFailures: number,
 ): Promise<void> {
   try {
@@ -1103,7 +1103,7 @@ async function markSubscriberFailing(
           last_error_at: new Date().toISOString(),
         },
       },
-      tenantId,
+      spaceId,
     );
   } catch (err) {
     // Best-effort — the per-event error row already informed operators.
@@ -1129,7 +1129,7 @@ async function markSubscriberFailing(
           },
         },
       },
-      tenantId,
+      spaceId,
     );
   } catch {
     // Don't crash the drainer over a follow-up activity write.

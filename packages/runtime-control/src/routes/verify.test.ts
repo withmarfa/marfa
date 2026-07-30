@@ -56,7 +56,7 @@ function mockBinding(
 interface MarfaFetchOptions {
   verifyContext?: {
     integration_name: string;
-    tenant_id: string | null;
+    space_id: string | null;
   };
   verifyContextStatus?: number;
   verifyContextErrorMessage?: string;
@@ -96,7 +96,7 @@ function mockMarfaFetch(opts: MarfaFetchOptions = {}): typeof fetch {
       }
       const body = opts.verifyContext ?? {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       };
       return Promise.resolve(
         new Response(
@@ -257,7 +257,7 @@ describe("POST /connections/:id/verify", () => {
   it("returns 503 when no service binding is declared for the integration", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMarfaFetch({
-      verifyContext: { integration_name: "acme.unknown", tenant_id: null },
+      verifyContext: { integration_name: "acme.unknown", space_id: null },
     });
     try {
       const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
@@ -300,7 +300,7 @@ describe("POST /connections/:id/verify", () => {
     globalThis.fetch = mockMarfaFetch({
       verifyContext: {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       },
       activityRows: activity,
     });
@@ -372,7 +372,7 @@ describe("POST /connections/:id/verify", () => {
     globalThis.fetch = mockMarfaFetch({
       verifyContext: {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       },
     });
     const binding = mockBinding(false, { reason: "upstream_500" });
@@ -418,13 +418,13 @@ describe("POST /connections/:id/verify", () => {
     // the header the dispatch 401s and verify reports dispatch_failed,
     // so the assertion is what keeps the two ends of the hop in step.
     // The platform broker key must not be what travels: it mints
-    // against any Connection in any tenant, and this hop crosses into
+    // against any Connection in any space, and this hop crosses into
     // code the control plane does not own.
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMarfaFetch({
       verifyContext: {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       },
     });
     const binding = mockBinding(true);
@@ -466,7 +466,7 @@ describe("POST /connections/:id/verify", () => {
     globalThis.fetch = mockMarfaFetch({
       verifyContext: {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       },
     });
     const binding = mockBinding(true);
@@ -503,7 +503,7 @@ describe("POST /connections/:id/verify", () => {
     globalThis.fetch = mockMarfaFetch({
       verifyContext: {
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       },
     });
     const binding = mockBinding(true);

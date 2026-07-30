@@ -147,44 +147,44 @@ describe("POST /items/bulk-get", () => {
     expect(data.error.code).toBe("validation_error");
   });
 
-  // The critical security test: ids belonging to another tenant must never
-  // surface, even to a tenant_admin requesting them by exact id. `getMany`
-  // filters by tenant_id, so the cross-tenant rows are simply absent.
-  it("never returns items from another tenant (cross-tenant isolation)", async () => {
-    if (!ctx.storage.tenants) return;
+  // The critical security test: ids belonging to another space must never
+  // surface, even to a space_admin requesting them by exact id. `getMany`
+  // filters by space_id, so the cross-space rows are simply absent.
+  it("never returns items from another space (cross-space isolation)", async () => {
+    if (!ctx.storage.spaces) return;
 
-    const tenantA = await ctx.storage.tenants.create("bulk-get-tenant-a");
-    const tenantB = await ctx.storage.tenants.create("bulk-get-tenant-b");
+    const spaceA = await ctx.storage.spaces.create("bulk-get-space-a");
+    const spaceB = await ctx.storage.spaces.create("bulk-get-space-b");
 
-    // An item owned by tenant B.
+    // An item owned by space B.
     const bItem = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant B secret" } },
-      tenantB.id,
+      { type: "core.note", properties: { body: "space B secret" } },
+      spaceB.id,
     );
-    // An item owned by tenant A.
+    // An item owned by space A.
     const aItem = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant A note" } },
-      tenantA.id,
+      { type: "core.note", properties: { body: "space A note" } },
+      spaceA.id,
     );
 
-    // A tenant_admin key scoped to tenant A.
+    // A space_admin key scoped to space A.
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_bulkget_a_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `bulkget-a-${suffix}`,
         source: `bulkget-a-${suffix}`,
-        role: "tenant_admin",
+        role: "space_admin",
         default_tier: "library",
         is_platform: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
-      tenantA.id,
+      spaceA.id,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
       key: rawKey,
-      // Ask for BOTH ids — only tenant A's may come back.
+      // Ask for BOTH ids — only space A's may come back.
       body: { ids: [aItem.id, bItem.id] },
     });
     expect(res.status).toBe(200);

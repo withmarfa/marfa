@@ -20,12 +20,12 @@ import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteAuthSessionStore } from "./auth-session-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
-import { SqliteTenantStore } from "./tenant-store.js";
+import { SqliteSpaceStore } from "./space-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
-import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
+import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
@@ -84,18 +84,18 @@ export async function createSqliteStorage(
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
 
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
-    for (const { tenant_id, schema } of types) {
-      // Register into the owning tenant's overlay so one tenant's custom
-      // edge types never resolve for another tenant's lookups.
-      if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, tenant_id);
+    for (const { space_id, schema } of types) {
+      // Register into the owning space's overlay so one space's custom
+      // edge types never resolve for another space's lookups.
+      if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, space_id);
     }
   });
 
   void typeStore.loadCustomTypes().then((types) => {
-    for (const { tenant_id, schema } of types) {
-      // Register into the owning tenant's overlay so one tenant's custom types
-      // never resolve for another tenant's lookups.
-      if (!isCoreType(schema.id)) registerTypeSchema(schema, tenant_id);
+    for (const { space_id, schema } of types) {
+      // Register into the owning space's overlay so one space's custom types
+      // never resolve for another space's lookups.
+      if (!isCoreType(schema.id)) registerTypeSchema(schema, space_id);
     }
   });
 
@@ -132,17 +132,17 @@ export async function createSqliteStorage(
     // Async bulk-action substrate — single-process; see
     // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
     bulkActionJobs: new SqliteBulkActionJobStore(db),
-    tenantQuotas: new SqliteTenantQuotaStore(db),
+    spaceQuotas: new SqliteSpaceQuotaStore(db),
     // Rate-limit + per-email throttle counters. Same shape as the PG
     // wiring; SQLite is single-process by file lock so "cluster-shared"
     // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
-    // Tenant store is wired unconditionally so the per-tenant cleanup
-    // fan-out has one code path on every deployment. Tenant rows are only
-    // ever created by the hosted sign-up flow, so on a single-tenant
-    // deployment this lists zero tenants and the cleanup falls through to
+    // Space store is wired unconditionally so the per-space cleanup
+    // fan-out has one code path on every deployment. Space rows are only
+    // ever created by the hosted sign-up flow, so on a single-space
+    // deployment this lists zero spaces and the cleanup falls through to
     // the NULL-bucket sweep.
-    tenants: new SqliteTenantStore(db),
+    spaces: new SqliteSpaceStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
     }),

@@ -10,7 +10,7 @@
  * This script handles the residue:
  *
  *   1. Every `auth_user` without a corresponding `users` row gets one
- *      provisioned (tenant + users + admin api key — same shape as a
+ *      provisioned (space + users + admin api key — same shape as a
  *      sign-up). Username is generated from `auth_user.email`'s local
  *      part, sanitized + collision-suffixed.
  *
@@ -223,13 +223,13 @@ export async function grandfatherProfilesT074(
     failed: 0,
     failures: [],
   };
-  if (!storage.users || !storage.tenants) {
+  if (!storage.users || !storage.spaces) {
     throw new Error(
-      "UserStore + TenantStore are required (run against a hosted-mode storage)",
+      "UserStore + SpaceStore are required (run against a hosted-mode storage)",
     );
   }
   const userStore = storage.users;
-  const tenantStore = storage.tenants;
+  const spaceStore = storage.spaces;
 
   // Pass 1: orphan auth_user rows that have no users row yet.
   const authUsers = await listAuthUsers(storage);
@@ -247,12 +247,12 @@ export async function grandfatherProfilesT074(
       }
       const candidate = candidateFromEmail(au.email);
       const handle = await pickFreeHandle(storage, candidate);
-      const tenant = await tenantStore.create(au.name ?? au.email);
+      const space = await spaceStore.create(au.name ?? au.email);
       await userStore.create({
         name: au.name ?? undefined,
         provider: "better-auth",
         provider_id: au.id,
-        tenant_id: tenant.id,
+        space_id: space.id,
         handle,
         auth_user_id: au.id,
       });
@@ -265,11 +265,11 @@ export async function grandfatherProfilesT074(
           type_permissions: { "*": "write" },
         },
         hashApiKey(rawKey, apiKeySalt),
-        tenant.id,
+        space.id,
       );
       report.users_created += 1;
       console.log(
-        `[t074-grandfather] provisioned auth_user ${au.id} -> tenant ${tenant.id}, handle ${handle}`,
+        `[t074-grandfather] provisioned auth_user ${au.id} -> space ${space.id}, handle ${handle}`,
       );
     } catch (err) {
       report.failed += 1;

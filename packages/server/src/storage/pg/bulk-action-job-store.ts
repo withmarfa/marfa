@@ -25,19 +25,19 @@ export class PgBulkActionJobStore implements BulkActionJobStore {
   async create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow> {
     // Idempotency path: when an idempotency_key is set, ON CONFLICT
     // returns the existing row. The partial-unique index guards the
-    // (tenant_id, idempotency_key) pair when idempotency_key is not
+    // (space_id, idempotency_key) pair when idempotency_key is not
     // null; rows without a key always insert fresh.
     if (input.idempotency_key) {
       const result = await this.db.execute(sql`
         INSERT INTO bulk_action_jobs (
-          id, tenant_id, api_key_id, status, action,
+          id, space_id, api_key_id, status, action,
           input, matched_ids, matched_count, idempotency_key, created_at
         ) VALUES (
-          ${input.id}, ${input.tenant_id}, ${input.api_key_id}, 'queued', ${input.action},
+          ${input.id}, ${input.space_id}, ${input.api_key_id}, 'queued', ${input.action},
           ${input.input}, ${input.matched_ids}, ${input.matched_count},
           ${input.idempotency_key}, ${input.created_at}
         )
-        ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+        ON CONFLICT (space_id, idempotency_key) WHERE idempotency_key IS NOT NULL
         DO UPDATE SET id = bulk_action_jobs.id
         RETURNING *
       `);
@@ -53,7 +53,7 @@ export class PgBulkActionJobStore implements BulkActionJobStore {
       .insert(bulkActionJobs)
       .values({
         id: input.id,
-        tenant_id: input.tenant_id,
+        space_id: input.space_id,
         api_key_id: input.api_key_id,
         status: "queued",
         action: input.action,
@@ -217,7 +217,7 @@ export class PgBulkActionJobStore implements BulkActionJobStore {
 function rowToJob(row: typeof bulkActionJobs.$inferSelect): BulkActionJobRow {
   return {
     id: row.id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     api_key_id: row.api_key_id,
     status: row.status as BulkActionJobStatus,
     action: row.action,

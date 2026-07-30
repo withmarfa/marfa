@@ -20,9 +20,9 @@
  *     and renders a success page that links to the connection's runtime
  *     view.
  *
- * Auth: `requireTenantAdmin` on both verbs, matching the install routes.
- * Tenant scoping flows through `apiKey.tenant_id`; cross-tenant probes
- * 404-cloak via the tenant-bounded item read.
+ * Auth: `requireSpaceAdmin` on both verbs, matching the install routes.
+ * Space scoping flows through `apiKey.space_id`; cross-space probes
+ * 404-cloak via the space-bounded item read.
  *
  * The route is mounted at `/connections` so it sits alongside the JSON
  * install + uninstall routes that already live under that prefix.
@@ -30,7 +30,7 @@
 import { Hono } from "hono";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { Item } from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
@@ -375,7 +375,7 @@ interface ConnectionPropertiesShape {
   kind?: string;
   integration_ref?: string;
   configuration?: Record<string, unknown>;
-  tenant_id?: string;
+  space_id?: string;
 }
 
 async function resolveIntegrationManifest(
@@ -408,7 +408,7 @@ async function resolveIntegrationManifest(
  */
 export type CalendarListFetcher = (args: {
   connectionId: string;
-  tenantId: string | undefined;
+  spaceId: string | undefined;
 }) => Promise<CalendarListEntry[]>;
 
 export interface ConnectionConfigureOptions {
@@ -430,11 +430,11 @@ export function connectionConfigureRoutes(
     (async () => []);
 
   r.get("/:id/configure", async (c) => {
-    const apiKey = requireTenantAdmin(c);
-    const tenantId = apiKey.tenant_id;
+    const apiKey = requireSpaceAdmin(c);
+    const spaceId = apiKey.space_id;
     const id = c.req.param("id");
 
-    const connection = await storage.items.get(id, tenantId);
+    const connection = await storage.items.get(id, spaceId);
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
@@ -469,7 +469,7 @@ export function connectionConfigureRoutes(
 
     // Confirm OAuth tokens exist — if not, the picker can't list
     // calendars and the user must complete the OAuth dance first.
-    const tokens = await storage.connectionOauthTokens.get(id, tenantId);
+    const tokens = await storage.connectionOauthTokens.get(id, spaceId);
     if (!tokens) {
       setNoStore(c);
       return c.redirect(`/connections/${encodeURIComponent(id)}/oauth/start`);
@@ -477,7 +477,7 @@ export function connectionConfigureRoutes(
 
     let calendars: CalendarListEntry[];
     try {
-      calendars = await fetchCalendars({ connectionId: id, tenantId });
+      calendars = await fetchCalendars({ connectionId: id, spaceId });
     } catch (err) {
       // Keep the raw cause in the server log; show the user calm, curated copy
       // rather than the upstream error string.
@@ -526,11 +526,11 @@ export function connectionConfigureRoutes(
   });
 
   r.post("/:id/configure", async (c) => {
-    const apiKey = requireTenantAdmin(c);
-    const tenantId = apiKey.tenant_id;
+    const apiKey = requireSpaceAdmin(c);
+    const spaceId = apiKey.space_id;
     const id = c.req.param("id");
 
-    const connection = await storage.items.get(id, tenantId);
+    const connection = await storage.items.get(id, spaceId);
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
@@ -587,12 +587,12 @@ export function connectionConfigureRoutes(
         target_type: parsed.payload.target_type,
       },
     };
-    await storage.items.update(id, { properties: newProps }, tenantId);
+    await storage.items.update(id, { properties: newProps }, spaceId);
 
     void storage.audit.log({
       key_id: apiKey.id,
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "connection.configure",
       resource_type: "item",
       resource_id: id,

@@ -78,7 +78,7 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "type",
   "state",
   "tier",
-  "tenant_id",
+  "space_id",
   "properties",
   "created_at",
   "updated_at",
@@ -126,7 +126,7 @@ export type TypeSchemaValidationResult =
 export interface SchemaValidationContext {
   /**
    * Resolves an already-registered schema by identifier, for the inheritance
-   * and `compatible_with` checks. The runtime binds this to the tenant-scoped
+   * and `compatible_with` checks. The runtime binds this to the space-scoped
    * registry lookup; the codegen binds it to the in-tree schema map.
    */
   resolveSchema: (typeId: string) => TypeSchema | undefined;

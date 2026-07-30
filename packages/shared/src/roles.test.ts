@@ -8,9 +8,9 @@ describe("ROLE_RANK", () => {
     }
   });
 
-  it("orders admin above tenant_admin above member", () => {
-    expect(ROLE_RANK.admin).toBeGreaterThan(ROLE_RANK.tenant_admin);
-    expect(ROLE_RANK.tenant_admin).toBeGreaterThan(ROLE_RANK.member);
+  it("orders admin above space_admin above member", () => {
+    expect(ROLE_RANK.admin).toBeGreaterThan(ROLE_RANK.space_admin);
+    expect(ROLE_RANK.space_admin).toBeGreaterThan(ROLE_RANK.member);
   });
 
   it("matches the descending order MARFA_ROLES is declared in", () => {
@@ -22,16 +22,16 @@ describe("ROLE_RANK", () => {
 describe("canGrantRole", () => {
   it("permits granting a role at or below the granter's own", () => {
     expect(canGrantRole("admin", "admin")).toBe(true);
-    expect(canGrantRole("admin", "tenant_admin")).toBe(true);
+    expect(canGrantRole("admin", "space_admin")).toBe(true);
     expect(canGrantRole("admin", "member")).toBe(true);
-    expect(canGrantRole("tenant_admin", "tenant_admin")).toBe(true);
-    expect(canGrantRole("tenant_admin", "member")).toBe(true);
+    expect(canGrantRole("space_admin", "space_admin")).toBe(true);
+    expect(canGrantRole("space_admin", "member")).toBe(true);
     expect(canGrantRole("member", "member")).toBe(true);
   });
 
   it("refuses granting a role above the granter's own", () => {
-    expect(canGrantRole("tenant_admin", "admin")).toBe(false);
+    expect(canGrantRole("space_admin", "admin")).toBe(false);
     expect(canGrantRole("member", "admin")).toBe(false);
-    expect(canGrantRole("member", "tenant_admin")).toBe(false);
+    expect(canGrantRole("member", "space_admin")).toBe(false);
   });
 });

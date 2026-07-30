@@ -168,7 +168,7 @@ describe("typePatternToSql", () => {
 });
 
 describe("resolving names alone", () => {
-  it("consults no registry when the caller supplies no tenant scope", () => {
+  it("consults no registry when the caller supplies no space scope", () => {
     // Webhook filters and scope parsing match on identifiers only. Omitting the
     // scope has to keep them on exactly the predicate they always emitted, so
     // the declared half is opt-in rather than something a pure caller inherits.
@@ -180,7 +180,7 @@ describe("resolving names alone", () => {
   });
 });
 
-describe("declared descendants are resolved per tenant", () => {
+describe("declared descendants are resolved per space", () => {
   const child = (id: string, parent: string): TypeSchema =>
     ({
       id,
@@ -192,38 +192,38 @@ describe("declared descendants are resolved per tenant", () => {
     }) as unknown as TypeSchema;
 
   afterEach(() => {
-    unregisterTypeSchema("user.alpha_child", "tenant-alpha");
-    unregisterTypeSchema("user.beta_child", "tenant-beta");
+    unregisterTypeSchema("user.alpha_child", "space-alpha");
+    unregisterTypeSchema("user.beta_child", "space-beta");
   });
 
-  it("resolves only the asking tenant's declared children", () => {
-    registerTypeSchema(child("user.alpha_child", "core.note"), "tenant-alpha");
-    registerTypeSchema(child("user.beta_child", "core.note"), "tenant-beta");
+  it("resolves only the asking space's declared children", () => {
+    registerTypeSchema(child("user.alpha_child", "core.note"), "space-alpha");
+    registerTypeSchema(child("user.beta_child", "core.note"), "space-beta");
 
     expect(
-      declaredDescendantsOutsideNamespace("core.note", "tenant-alpha"),
+      declaredDescendantsOutsideNamespace("core.note", "space-alpha"),
     ).toEqual(["user.alpha_child"]);
     expect(
-      declaredDescendantsOutsideNamespace("core.note", "tenant-beta"),
+      declaredDescendantsOutsideNamespace("core.note", "space-beta"),
     ).toEqual(["user.beta_child"]);
   });
 
-  // The item store's tenant fence would drop another tenant's rows anyway, so a
-  // cross-tenant resolver leaks no data today. This is the second layer, and it
+  // The item store's space fence would drop another space's rows anyway, so a
+  // cross-space resolver leaks no data today. This is the second layer, and it
   // is asserted here rather than left to the first: a resolver that reaches the
   // global set is wrong on its own terms, and proving it through the query path
   // only proves the fence.
-  it("does not reach another tenant's registry", () => {
-    registerTypeSchema(child("user.beta_child", "core.note"), "tenant-beta");
+  it("does not reach another space's registry", () => {
+    registerTypeSchema(child("user.beta_child", "core.note"), "space-beta");
     expect(
-      declaredDescendantsOutsideNamespace("core.note", "tenant-alpha"),
+      declaredDescendantsOutsideNamespace("core.note", "space-alpha"),
     ).not.toContain("user.beta_child");
   });
 
   it("returns nothing for a root nothing declares", () => {
-    registerTypeSchema(child("user.alpha_child", "core.note"), "tenant-alpha");
+    registerTypeSchema(child("user.alpha_child", "core.note"), "space-alpha");
     expect(
-      declaredDescendantsOutsideNamespace("core.bookmark", "tenant-alpha"),
+      declaredDescendantsOutsideNamespace("core.bookmark", "space-alpha"),
     ).toEqual([]);
   });
 });

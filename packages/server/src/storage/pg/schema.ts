@@ -21,18 +21,18 @@ const tsvector = customType<{ data: string; driverData: string }>({
 });
 
 // ---------------------------------------------------------------------------
-// tenants + users (hosted mode)
+// spaces + users (hosted mode)
 // ---------------------------------------------------------------------------
 
-export const tenants = pgTable("tenants", {
+export const spaces = pgTable("spaces", {
   id: text("id").primaryKey(),
   name: text("name"),
   config: jsonb("config"),
   created_at: text("created_at").notNull(),
-  // Operator-controlled tenant status. `'active'` (default) allows writes;
+  // Operator-controlled space status. `'active'` (default) allows writes;
   // `'suspended'` blocks them at the auth middleware. Reads pass through
   // regardless. Platform-admin keys bypass the gate so operators can
-  // inspect a suspended tenant.
+  // inspect a suspended space.
   status: text("status").notNull().default("active"),
 });
 
@@ -47,15 +47,15 @@ export const users = pgTable(
     avatar_blob_hash: text("avatar_blob_hash"),
     provider: text("provider").notNull(),
     provider_id: text("provider_id").notNull(),
-    tenant_id: text("tenant_id")
+    space_id: text("space_id")
       .notNull()
-      .references(() => tenants.id),
+      .references(() => spaces.id),
     handle: text("handle"),
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
     /** Principal role projected onto OAuth bearer principals. Defaults to
-     *  `member`; operator elevates via SQL. Gates `requireTenantAdmin` /
+     *  `member`; operator elevates via SQL. Gates `requireSpaceAdmin` /
      *  `requireAdmin` routes for OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
@@ -76,7 +76,7 @@ export const items = pgTable(
   "items",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
@@ -130,7 +130,7 @@ export const edges = pgTable(
   "edges",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     // source_id and target_id are NOT foreign keys to items(id). App-level
     // existence checks run in assertEdgeCanBeCreated; orphan-edge cleanup on
     // item delete is handled by planCascadeDelete + explicit
@@ -144,12 +144,12 @@ export const edges = pgTable(
   },
   (table) => [
     index("idx_edges_source").on(
-      table.tenant_id,
+      table.space_id,
       table.source_id,
       table.edge_type,
     ),
     index("idx_edges_target").on(
-      table.tenant_id,
+      table.space_id,
       table.target_id,
       table.edge_type,
     ),
@@ -183,7 +183,7 @@ export const apiKeys = pgTable(
   "api_keys",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     key_hash: text("key_hash").notNull().unique(),
     label: text("label").notNull(),
     source: text("source").notNull(),
@@ -212,8 +212,8 @@ export const apiKeys = pgTable(
     last_used_at: text("last_used_at"),
   },
   (table) => [
-    uniqueIndex("idx_api_keys_source_per_tenant")
-      .on(table.tenant_id, table.source)
+    uniqueIndex("idx_api_keys_source_per_space")
+      .on(table.space_id, table.source)
       .where(sql`revoked_at IS NULL`),
     // Every reaper pass and the metrics counter filter on
     // `is_runtime_credential` first. Partial on true: the runtime-credential
@@ -229,18 +229,18 @@ export const apiKeys = pgTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-// Composite PK on (tenant_id, hash); empty-string sentinel for instance-wide /
-// platform-admin / single-tenant rows. See sqlite/schema.ts for design rationale.
+// Composite PK on (space_id, hash); empty-string sentinel for instance-wide /
+// platform-admin / single-space rows. See sqlite/schema.ts for design rationale.
 export const blobs = pgTable(
   "blobs",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     hash: text("hash").notNull(),
     mime_type: text("mime_type").notNull(),
     size: integer("size").notNull(),
     storage_path: text("storage_path").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.hash] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.hash] })],
 );
 
 // ---------------------------------------------------------------------------
@@ -279,38 +279,38 @@ export const oauthDeviceCodes = pgTable(
 // custom_types (runtime type registration)
 // ---------------------------------------------------------------------------
 
-// Custom types are namespaced per tenant. The composite PK on (tenant_id, id)
-// lets two tenants register the same type id independently — each owns its own
-// type vocabulary. `tenant_id` is NOT NULL DEFAULT '' (empty-string sentinel)
-// for single-tenant self-host / platform registrations, mirroring the `blobs`
+// Custom types are namespaced per space. The composite PK on (space_id, id)
+// lets two spaces register the same type id independently — each owns its own
+// type vocabulary. `space_id` is NOT NULL DEFAULT '' (empty-string sentinel)
+// for single-space self-host / platform registrations, mirroring the `blobs`
 // and `custom_edge_types` tables.
 export const customTypes = pgTable(
   "custom_types",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     id: text("id").notNull(),
     schema: text("schema").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
 );
 
-// Custom edge types are namespaced per tenant. The composite PK on
-// (tenant_id, id) lets two tenants register the same edge-type id
-// independently — each owns its own relationship vocabulary. `tenant_id`
-// is NOT NULL DEFAULT '' (empty-string sentinel) for single-tenant
+// Custom edge types are namespaced per space. The composite PK on
+// (space_id, id) lets two spaces register the same edge-type id
+// independently — each owns its own relationship vocabulary. `space_id`
+// is NOT NULL DEFAULT '' (empty-string sentinel) for single-space
 // self-host / platform registrations, mirroring the `blobs` table.
 export const customEdgeTypes = pgTable(
   "custom_edge_types",
   {
-    tenant_id: text("tenant_id").notNull().default(""),
+    space_id: text("space_id").notNull().default(""),
     id: text("id").notNull(),
     schema: text("schema").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+  (t) => [primaryKey({ columns: [t.space_id, t.id] })],
 );
 
 // ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ export const customEdgeTypes = pgTable(
 
 export const outboundWebhooks = pgTable("outbound_webhooks", {
   id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
+  space_id: text("space_id"),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
   events: text("events").notNull().default("[]"),
@@ -364,7 +364,7 @@ export const inboundWebhooks = pgTable(
   "inbound_webhooks",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     // App-level reference to a system.connection item (kind:
     // integration). Not a DB-level FK — matches the
     // existing pattern for other connection-referencing tables.
@@ -441,7 +441,7 @@ export const connectionOauthTokens = pgTable(
   {
     id: text("id").primaryKey(),
     connection_id: text("connection_id").notNull(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     access_token_encrypted: text("access_token_encrypted").notNull(),
     refresh_token_encrypted: text("refresh_token_encrypted"),
     expires_at: text("expires_at").notNull(),
@@ -468,7 +468,7 @@ export const connectionLeasedTokens = pgTable(
   {
     id: text("id").primaryKey(),
     connection_id: text("connection_id").notNull(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     capability_id: text("capability_id").notNull(),
     lease_token_hash: text("lease_token_hash").notNull(),
     scopes: text("scopes").notNull().default("[]"),
@@ -499,13 +499,13 @@ export const auditLog = pgTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Tenant scope. Stamped from the calling api key's `tenant_id` (or
+     * Space scope. Stamped from the calling api key's `space_id` (or
      * `null` for system-initiated audits / bootstrap-admin keys with no
-     * tenant). Reads filter by this column when the caller is
-     * tenant-scoped; keys without a tenant (bootstrap admin) see all rows.
+     * space). Reads filter by this column when the caller is
+     * space-scoped; keys without a space (bootstrap admin) see all rows.
      * Indexed because `GET /audit` filters here on every hosted-mode request.
      */
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
     resource_id: text("resource_id"),
@@ -515,7 +515,7 @@ export const auditLog = pgTable(
     index("idx_audit_log_timestamp").on(table.timestamp),
     index("idx_audit_log_action").on(table.action),
     index("idx_audit_log_resource_type").on(table.resource_type),
-    index("idx_audit_log_tenant_id").on(table.tenant_id),
+    index("idx_audit_log_space_id").on(table.space_id),
   ],
 );
 
@@ -536,7 +536,7 @@ export const auditLog = pgTable(
 // BulkActionInput for replay / debugging / audit.
 //
 // `idempotency_key` carries the optional `Idempotency-Key` header — a
-// partial unique index (tenant_id, idempotency_key) lets replayed POSTs
+// partial unique index (space_id, idempotency_key) lets replayed POSTs
 // resolve to the same job row.
 //
 // GC: completed / failed / cancelled rows expire after
@@ -546,7 +546,7 @@ export const bulkActionJobs = pgTable(
   "bulk_action_jobs",
   {
     id: text("id").primaryKey(),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     api_key_id: text("api_key_id"),
     status: text("status").notNull(),
     action: text("action").notNull(),
@@ -567,18 +567,18 @@ export const bulkActionJobs = pgTable(
   },
   (table) => [
     index("idx_bulk_action_jobs_status").on(table.status),
-    index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
+    index("idx_bulk_action_jobs_space_id").on(table.space_id),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
     // NULLS NOT DISTINCT is applied by a migration because Drizzle's
     // uniqueIndex builder doesn't expose .nullsNotDistinct() yet — only
     // `unique()` constraints carry it, and those don't support WHERE.
-    // Without it, two replays from a tenant-less admin credential
-    // (tenant_id IS NULL) wouldn't conflict on the (NULL, key) pair
+    // Without it, two replays from a space-less admin credential
+    // (space_id IS NULL) wouldn't conflict on the (NULL, key) pair
     // because PG defaults treat NULLs as distinct in unique indexes.
     // Idempotency would silently double-fire for the admin path.
     // When drizzle-orm grows the API, fold this back into the declaration.
     uniqueIndex("idx_bulk_action_jobs_idempotency")
-      .on(table.tenant_id, table.idempotency_key)
+      .on(table.space_id, table.idempotency_key)
       .where(sql`idempotency_key IS NOT NULL`),
   ],
 );
@@ -589,8 +589,8 @@ export const bulkActionJobs = pgTable(
 
 // Single table backing two consumers:
 //   - `rate-limit middleware` (family = "rate") — per-credential and
-//     per-tenant request windows. Window keys are
-//     "<credential-id-or-ip>:<path-prefix>" and "tenant:<tenant-id>".
+//     per-space request windows. Window keys are
+//     "<credential-id-or-ip>:<path-prefix>" and "space:<space-id>".
 //   - `forgot-password per-email throttle` (family = "throttle") —
 //     window key "forgot-password:<lowercased-email>", window 1h.
 //
@@ -627,11 +627,11 @@ export const settings = pgTable("settings", {
 });
 
 // ---------------------------------------------------------------------------
-// tenant_quotas (per-tenant resource caps)
+// space_quotas (per-space resource caps)
 // ---------------------------------------------------------------------------
 
-export const tenantQuotas = pgTable("tenant_quotas", {
-  tenant_id: text("tenant_id").primaryKey(),
+export const spaceQuotas = pgTable("space_quotas", {
+  space_id: text("space_id").primaryKey(),
   items_limit: integer("items_limit"),
   webhooks_limit: integer("webhooks_limit"),
   blobs_limit: integer("blobs_limit"),
@@ -661,7 +661,7 @@ export const eventLog = pgTable(
     // item events set item_id; edge events set edge_id. Both nullable (relaxed in migration 0014).
     item_id: text("item_id"),
     edge_id: text("edge_id"),
-    tenant_id: text("tenant_id"),
+    space_id: text("space_id"),
     payload: text("payload").notNull(),
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
@@ -835,7 +835,7 @@ export const auth_oauth_client = pgTable(
     public: boolean("public"),
     type: text("type"),
     requirePKCE: boolean("require_pkce"),
-    /** Tenant binding from `clientReference` (Marfa: tenant_id). */
+    /** Space binding from `clientReference` (Marfa: space_id). */
     referenceId: text("reference_id"),
     /** JSON object — additional client metadata */
     metadata: jsonb("metadata"),

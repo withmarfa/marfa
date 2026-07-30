@@ -1,10 +1,10 @@
 /**
- * Blob storage tenant scoping.
+ * Blob storage space scoping.
  *
- * Cross-tenant probes for the same hash bytes return 404 even though the
+ * Cross-space probes for the same hash bytes return 404 even though the
  * underlying file is shared via content-addressed deduplication. Each
- * tenant's metadata row is private; the empty-string sentinel covers
- * platform-admin / single-tenant uploads so existing self-hosts continue
+ * space's metadata row is private; the empty-string sentinel covers
+ * platform-admin / single-space uploads so existing self-hosts continue
  * to work unchanged.
  */
 
@@ -17,10 +17,10 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
-async function mintTenantAdmin(
+async function mintSpaceAdmin(
   ctx: TestContext,
   label: string,
-  tenantId: string,
+  spaceId: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_blob_test_${suffix}`;
@@ -28,35 +28,35 @@ async function mintTenantAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: {},
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
 
-describe("blobs — tenant scoping", () => {
+describe("blobs — space scoping", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("tenant B cannot fetch a blob uploaded by tenant A (cross-tenant probe is 404)", async () => {
+  it("space B cannot fetch a blob uploaded by space A (cross-space probe is 404)", async () => {
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
-    const adminA = await mintTenantAdmin(ctx, "blob-admin-a", tenantA);
-    const adminB = await mintTenantAdmin(ctx, "blob-admin-b", tenantB);
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
+    const adminA = await mintSpaceAdmin(ctx, "blob-admin-a", spaceA);
+    const adminB = await mintSpaceAdmin(ctx, "blob-admin-b", spaceB);
 
     // A uploads
     const upload = await request(ctx.app, "POST", "/blobs", {
       key: adminA,
       headers: { "Content-Type": "application/octet-stream" },
-      body: "tenant-a-secret",
+      body: "space-a-secret",
     });
     expect(upload.status).toBe(201);
     const { hash } = (await upload.json()) as { hash: string };
@@ -80,14 +80,14 @@ describe("blobs — tenant scoping", () => {
     expect(headB.status).toBe(404);
   });
 
-  it("tenant B uploading the same bytes gets their own row; both can read independently", async () => {
+  it("space B uploading the same bytes gets their own row; both can read independently", async () => {
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
-    const adminA = await mintTenantAdmin(ctx, "blob-admin-a-2", tenantA);
-    const adminB = await mintTenantAdmin(ctx, "blob-admin-b-2", tenantB);
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
+    const adminA = await mintSpaceAdmin(ctx, "blob-admin-a-2", spaceA);
+    const adminB = await mintSpaceAdmin(ctx, "blob-admin-b-2", spaceB);
 
-    const sameBytes = "shared-content-different-tenants";
+    const sameBytes = "shared-content-different-spaces";
     const headers = { "Content-Type": "application/octet-stream" };
 
     const upA = await request(ctx.app, "POST", "/blobs", {
@@ -108,7 +108,7 @@ describe("blobs — tenant scoping", () => {
 
     expect(hashA).toBe(hashB);
 
-    // Both tenants can independently fetch
+    // Both spaces can independently fetch
     const getA = await request(ctx.app, "GET", `/blobs/${hashA}`, {
       key: adminA,
     });
@@ -119,15 +119,15 @@ describe("blobs — tenant scoping", () => {
     expect(getB.status).toBe(200);
   });
 
-  it("platform-admin upload (no tenant_id) goes to instance-wide sentinel; tenant probes still 404", async () => {
-    // The default test admin has no tenant_id — its upload goes to the
+  it("platform-admin upload (no space_id) goes to instance-wide sentinel; space probes still 404", async () => {
+    // The default test admin has no space_id — its upload goes to the
     // empty-string sentinel row.
     ctx = await createTestContext();
-    const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-    const adminA = await mintTenantAdmin(ctx, "blob-admin-iso", tenantA);
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+    const adminA = await mintSpaceAdmin(ctx, "blob-admin-iso", spaceA);
 
     const upload = await request(ctx.app, "POST", "/blobs", {
-      key: ctx.adminKey, // platform admin (no tenant)
+      key: ctx.adminKey, // platform admin (no space)
       headers: { "Content-Type": "application/octet-stream" },
       body: "platform-admin-content",
     });
@@ -140,8 +140,8 @@ describe("blobs — tenant scoping", () => {
     });
     expect(getPlatform.status).toBe(200);
 
-    // Tenant-bound caller cannot fetch the platform-admin's blob
-    // (different tenant scopes — empty-string sentinel ≠ tenant A)
+    // Space-bound caller cannot fetch the platform-admin's blob
+    // (different space scopes — empty-string sentinel ≠ space A)
     const getA = await request(ctx.app, "GET", `/blobs/${hash}`, {
       key: adminA,
     });

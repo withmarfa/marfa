@@ -334,7 +334,7 @@ export function edgePermissionCovers(
  * presentation + request convenience: the issued token still carries the
  * concrete scopes a bundle expands to, enforced through the usual permission
  * maps. The generous default bundle expands to the `*` wildcard so an app
- * works against a tenant's runtime `user.*` types without those types ever
+ * works against a space's runtime `user.*` types without those types ever
  * appearing in the static scope allowlist.
  */
 export interface PermissionBundle {

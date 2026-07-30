@@ -27,7 +27,7 @@ export type {
   CreateWithAttachmentsInput,
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
-  TenantApiKeySummary,
+  SpaceApiKeySummary,
   SecureStorage,
 } from "./client.js";
 
@@ -92,10 +92,10 @@ export type {
   MergeStrategy,
   Profile,
   UpdateProfileInput,
-  Tenant,
-  TenantStatus,
-  TenantMetrics,
-  TenantActivityEntry,
-  TenantQuota,
+  Space,
+  SpaceStatus,
+  SpaceMetrics,
+  SpaceActivityEntry,
+  SpaceQuota,
 } from "@withmarfa/shared";
 export type { TypeSchema } from "@withmarfa/shared";

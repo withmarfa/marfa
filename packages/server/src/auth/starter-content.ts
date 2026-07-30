@@ -2,15 +2,15 @@ import { applyInlineEdges } from "../routes/_edges-inline.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
- * Seed a brand-new tenant with a few starter items on sign-up so a fresh
+ * Seed a brand-new space with a few starter items on sign-up so a fresh
  * space demonstrates the typed-data model — distinct item types joined by a
  * typed edge — instead of opening empty.
  *
  * Gated by `MARFA_SEED_STARTER_CONTENT` and called best-effort from the
  * sign-up provisioning hook: the caller swallows any throw so a seed failure
  * can never strand account creation. Writes run on the provisioning hook's
- * owner connection with `tenantId` stamped explicitly — there is no
- * per-request RLS context in the hook, matching how the tenant and users row
+ * owner connection with `spaceId` stamped explicitly — there is no
+ * per-request RLS context in the hook, matching how the space and users row
  * are created alongside.
  *
  * Copy is intentionally free of em-dashes, per the house style for
@@ -18,7 +18,7 @@ import type { Storage } from "../storage/interface.js";
  */
 export async function seedStarterContent(
   storage: Storage,
-  tenantId: string,
+  spaceId: string,
 ): Promise<void> {
   // Three core types so the space shows the model at a glance: a note, a
   // bookmark, and a task.
@@ -31,7 +31,7 @@ export async function seedStarterContent(
       },
       tags: ["welcome"],
     },
-    tenantId,
+    spaceId,
   );
 
   const docs = await storage.items.create(
@@ -43,7 +43,7 @@ export async function seedStarterContent(
       },
       tags: ["reference"],
     },
-    tenantId,
+    spaceId,
   );
 
   await storage.items.create(
@@ -52,7 +52,7 @@ export async function seedStarterContent(
       properties: { title: "Make your first connection" },
       tags: ["getting-started"],
     },
-    tenantId,
+    spaceId,
   );
 
   // One typed edge so the space reads as a graph, not a flat list: the
@@ -64,7 +64,7 @@ export async function seedStarterContent(
       storage,
       welcome.id,
       { references: [docs.id] },
-      tenantId,
+      spaceId,
       // No permission gate: this runs inside sign-up provisioning, on a
       // space with no credentials yet and no caller to check. Every other
       // call site passes the request's edge-type gate.

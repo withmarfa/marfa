@@ -464,7 +464,7 @@ describe("ConnectionClient — server-response unwrap", () => {
 // ConnectionClient.uploadBlob
 //
 // The SDK forwards raw bytes to the server's `POST /blobs` route using the
-// connection's runtime credential. Server-side concerns (tenant scoping, R2
+// connection's runtime credential. Server-side concerns (space scoping, R2
 // keying, dedup, quota enforcement) are covered in @withmarfa/server's blob
 // tests. These cover the SDK contract: input shapes, headers + body bytes,
 // 401-refresh single-flight, error surfacing, boundary rejection.

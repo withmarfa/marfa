@@ -195,7 +195,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / tenant_admin bypass; members need the per-type permission), and operates only within the caller's tenant.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -448,7 +448,7 @@ async function processBulkItem(
   index: number,
   options: {
     mode: "upsert" | "create_only";
-    tenantId: string | undefined;
+    spaceId: string | undefined;
     stampedSource: string | undefined;
     /**
      * Whether the caller has already opened the batch transaction (atomic
@@ -464,7 +464,7 @@ async function processBulkItem(
     atomic: boolean;
     /**
      * Per-item write authorization. Mirrors the single-item `POST /items`
-     * gate (`requireTypeAccess(c, type, "write")`): admin / tenant_admin
+     * gate (`requireTypeAccess(c, type, "write")`): admin / space_admin
      * bypass; a member must hold write on the item's type. Throws
      * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
      * outcome in best-effort mode and aborts the batch in atomic mode.
@@ -522,7 +522,7 @@ async function processBulkItem(
 
   const {
     mode,
-    tenantId,
+    spaceId,
     stampedSource,
     atomic,
     checkWrite,
@@ -541,10 +541,10 @@ async function processBulkItem(
     edgeSet: Record<string, string[]>,
   ): Promise<void> => {
     if (atomic) {
-      await applyInlineEdges(storage, id, edgeSet, tenantId, checkEdgeWrite);
+      await applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite);
     } else {
       await storage.runInTransaction(() =>
-        applyInlineEdges(storage, id, edgeSet, tenantId, checkEdgeWrite),
+        applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite),
       );
     }
   };
@@ -569,7 +569,7 @@ async function processBulkItem(
     existing = await storage.items.findBySourceId(
       stampedSource,
       sourceId,
-      tenantId,
+      spaceId,
     );
     if (existing) matchedBy = "source_id";
   }
@@ -582,7 +582,7 @@ async function processBulkItem(
   // would fall through to `storage.items.create(...)`, which trips a
   // unique-constraint violation and surfaces as an opaque 500.
   if (!existing && raw.id !== undefined) {
-    existing = await storage.items.get(raw.id, tenantId);
+    existing = await storage.items.get(raw.id, spaceId);
     if (existing) matchedBy = "id";
   }
 
@@ -624,7 +624,7 @@ async function processBulkItem(
         tier: raw.tier,
         timestamp: raw.timestamp,
       },
-      tenantId,
+      spaceId,
     );
     if ("error" in updated) {
       return {
@@ -681,7 +681,7 @@ async function processBulkItem(
       ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
     };
-    const created = await storage.items.create(createInput, tenantId);
+    const created = await storage.items.create(createInput, spaceId);
     if (raw.edges) {
       await reconcileEdges(created.id, raw.edges);
     }
@@ -708,9 +708,9 @@ export function bulkRoutes(storage: Storage) {
   // POST /items/bulk — list-in
   router.openapi(bulkRoute, async (c) => {
     // Authenticated + per-item type-write authorization, mirroring the
-    // single-item `POST /items` gate. admin / tenant_admin bypass type
-    // permissions; a member must hold write on each item's type. tenant
-    // scoping is threaded through every storage call below via `tenantId`.
+    // single-item `POST /items` gate. admin / space_admin bypass type
+    // permissions; a member must hold write on each item's type. space
+    // scoping is threaded through every storage call below via `spaceId`.
     requireAuth(c);
     const checkWrite = (raw: { type: string; properties?: unknown }): void => {
       requireTypeAccess(c, raw.type, "write");
@@ -759,7 +759,7 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const stampedSource = itemProvenanceSource(c.get("apiKey"));
 
     if (items.length === 0) {
@@ -824,7 +824,7 @@ export function bulkRoutes(storage: Storage) {
       for (const [i, raw] of items.entries()) {
         const result = await processBulkItem(storage, raw, i, {
           mode,
-          tenantId,
+          spaceId,
           stampedSource,
           atomic,
           checkWrite,
@@ -864,14 +864,14 @@ export function bulkRoutes(storage: Storage) {
     if (emitEvents) {
       for (const r of results) {
         if (r.id && (r.outcome === "created" || r.outcome === "updated")) {
-          const item = await storage.items.get(r.id, tenantId);
+          const item = await storage.items.get(r.id, spaceId);
           if (item) {
             const metadata = await storage.metadata.get(r.id);
             await publish({
               type: r.outcome === "created" ? "created" : "updated",
               item,
               metadata,
-              tenantId,
+              spaceId,
             });
           }
         }
@@ -880,7 +880,7 @@ export function bulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk",
       resource_type: "items.bulk",
@@ -957,7 +957,7 @@ export function bulkRoutes(storage: Storage) {
       }
     }
 
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
 
     // Non-admin callers see their match set narrowed to writable types.
     // Purge already rejected non-admin above, so getTypeFilter is a no-op
@@ -968,7 +968,7 @@ export function bulkRoutes(storage: Storage) {
     // `system.activity` sits in every runtime credential's type filter —
     // that grant is what lets a connector report its own progress — so a
     // filter naming the type matches every connector's rows in the
-    // tenant, and the worker applies the action to the frozen id list
+    // space, and the worker applies the action to the frozen id list
     // without re-deriving who may write what. One credential could
     // rewrite, retier or revoke every sibling's activity in a single
     // call. Narrowing rather than refusing, because that is the answer
@@ -996,7 +996,7 @@ export function bulkRoutes(storage: Storage) {
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        tenantId,
+        spaceId,
         type: filter.type,
         state: filter.state,
         source: filter.source,
@@ -1058,7 +1058,7 @@ export function bulkRoutes(storage: Storage) {
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
       id: generateId(),
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       api_key_id: apiKeyId,
       action,
       input: JSON.stringify(body),
@@ -1073,7 +1073,7 @@ export function bulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk_action",
       resource_type: "items.bulk_action",
@@ -1125,18 +1125,18 @@ export function bulkRoutes(storage: Storage) {
 // Who may read or cancel a job, in the order the checks run:
 //
 //   - an unbound admin, which is platform authority, reaches any job;
-//   - a tenant-bound admin reaches every job in its own tenant, and is
+//   - a space-bound admin reaches every job in its own space, and is
 //     cloaked from the rest;
 //   - anyone else reaches only jobs their own credential created, since
-//     within a tenant separate credentials do not observe each other's
+//     within a space separate credentials do not observe each other's
 //     bulk_action jobs.
 //
-// The role alone is not platform authority: `POST /admin/tenants/:id/keys`
-// mints admin keys bound to one tenant, and `getById` applies no tenant
+// The role alone is not platform authority: `POST /admin/spaces/:id/keys`
+// mints admin keys bound to one space, and `getById` applies no space
 // filter, so trusting the role by itself hands a bound key every other
-// tenant's jobs. Postgres row-level security already fences tenanted rows
-// independently, but it cannot fence the null-tenant slice, and every
-// purge job is null-tenant because purge is platform-gated. This function
+// space's jobs. Postgres row-level security already fences spaceed rows
+// independently, but it cannot fence the null-space slice, and every
+// purge job is null-space because purge is platform-gated. This function
 // is the fence that covers both, and the only one on SQLite.
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
@@ -1145,13 +1145,13 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   }
   // Platform authority reaches every job: `bulkActionJobs.getById` is
   // deliberately unscoped, so this is the only fence, and a purge job
-  // carries no tenant at all.
+  // carries no space at all.
   if (hasPlatformAuthority(apiKey)) return;
   if (apiKey.role === "admin") {
-    if (apiKey.tenant_id === job.tenant_id) return;
-    // Cloaked as absent rather than refused, so a cross-tenant probe
+    if (apiKey.space_id === job.space_id) return;
+    // Cloaked as absent rather than refused, so a cross-space probe
     // cannot enumerate job ids. Matches the treatment of `/keys/:id`.
-    // The credential branch below keeps its 403: within one tenant the
+    // The credential branch below keeps its 403: within one space the
     // job's existence is not a secret, only its contents.
     throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
   }
