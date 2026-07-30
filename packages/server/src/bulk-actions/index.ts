@@ -13,6 +13,10 @@
  *     reuses these so the schema is canonical at one place.
  */
 export { BulkActionWorker, type BulkActionWorkerOptions } from "./worker.js";
+export {
+  setBulkJobEnqueueListener,
+  notifyBulkJobEnqueued,
+} from "./enqueue-signal.js";
 export { BulkActionJobGcSweeper } from "./gc.js";
 export { runChunk, type ChunkOutcome, type RunChunkContext } from "./runner.js";
 export {

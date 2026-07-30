@@ -43,6 +43,7 @@ import { checkMultiReplica } from "./multi-replica-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
+  setBulkJobEnqueueListener,
   BulkActionJobGcSweeper,
 } from "./bulk-actions/index.js";
 
@@ -296,6 +297,12 @@ async function main() {
     pollIntervalMs: config.bulkActionPollIntervalMs ?? 500,
     maxPollIntervalMs: config.bulkActionPollMaxIntervalMs ?? 60_000,
     pollBackoffMultiplier: config.bulkActionPollBackoffMultiplier ?? 2,
+  });
+  // Enqueue wakes the worker. The route cannot hold a worker reference —
+  // the app is constructed before the worker exists — so the signal is
+  // registered here, where both are in scope.
+  setBulkJobEnqueueListener(() => {
+    bulkActionWorker.wake();
   });
   await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(

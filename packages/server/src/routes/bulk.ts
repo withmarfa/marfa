@@ -46,6 +46,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
+import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
@@ -1066,6 +1067,9 @@ export function bulkRoutes(storage: Storage) {
       idempotency_key: idempotencyKey,
       created_at: new Date().toISOString(),
     });
+    // Wake the worker rather than leaving the job to be found by the idle
+    // poll, whose backoff widens to a minute while the queue is quiet.
+    notifyBulkJobEnqueued();
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

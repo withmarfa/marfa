@@ -183,3 +183,186 @@ describe("BulkActionWorker idle-poll backoff", () => {
     worker.stop();
   });
 });
+
+// ---------------------------------------------------------------------------
+// wake() — enqueue does not wait out the idle backoff
+// ---------------------------------------------------------------------------
+
+/**
+ * The backoff above is correct and was also the entire pickup latency.
+ *
+ * It widens to a sixty-second ceiling while the queue is quiet, and nothing
+ * shortened it, so a job arriving into a settled worker waited out whatever
+ * interval happened to be pending. Measured on staging: thirty-two seconds
+ * queued, then sixty-five milliseconds of work, on a warm container — so it
+ * was not a cold start.
+ *
+ * These drive the same fake clock as the backoff tests, because the property
+ * is about *when* the next tick fires, and a real-clock test would only be
+ * able to say "quickly".
+ */
+describe("BulkActionWorker.wake", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("REGRESSION: a settled worker ticks immediately instead of waiting out the backoff", async () => {
+    const stub = makeStubStorage();
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 500,
+      maxPollIntervalMs: 60_000,
+      pollBackoffMultiplier: 2,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // Let the backoff widen. After these the armed delay is 60s: the state
+    // a worker settles into between bursts, and the one the reported job
+    // arrived into.
+    for (const delay of [1000, 2000, 4000, 8000, 16_000, 32_000]) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    const settled = stub.ticks();
+
+    // Nothing happens for a long while — this is the defect.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(stub.ticks()).toBe(settled);
+
+    // An enqueue arrives.
+    worker.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stub.ticks()).toBe(settled + 1);
+
+    worker.stop();
+  });
+
+  it("resets the backoff, so the tick after a wake is at the base cadence", async () => {
+    // Waking once without resetting would fire one prompt tick and then
+    // return to a minute of silence, which is the same defect one job later.
+    const stub = makeStubStorage();
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 500,
+      maxPollIntervalMs: 60_000,
+      pollBackoffMultiplier: 2,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const delay of [1000, 2000, 4000, 8000, 16_000, 32_000]) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+
+    worker.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    const afterWake = stub.ticks();
+
+    // The empty poll from the woken tick re-widens from the base (500 * 2),
+    // not from the ceiling.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(stub.ticks()).toBe(afterWake);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stub.ticks()).toBe(afterWake + 1);
+
+    worker.stop();
+  });
+
+  it("collapses a burst of enqueues into one tick", async () => {
+    // Every enqueue in a batch signals. Arming one timer per signal would
+    // turn a bulk import into a tick storm against the database.
+    const stub = makeStubStorage();
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 500,
+      maxPollIntervalMs: 60_000,
+      pollBackoffMultiplier: 2,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const before = stub.ticks();
+
+    for (let i = 0; i < 20; i++) worker.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stub.ticks()).toBe(before + 1);
+
+    worker.stop();
+  });
+
+  it("does not arm a second timer when a tick is already running", async () => {
+    // The burst test above passes with or without the in-flight guard,
+    // because clearing the pending timer is what collapses a burst. This is
+    // the case the guard is actually for: waking mid-tick would arm a timer
+    // that the running tick's own re-arm then orphans, leaving two live
+    // timers and a duplicate tick.
+    let release: (() => void) | undefined;
+    let claims = 0;
+    const jobs: Partial<BulkActionJobStore> = {
+      recoverStale: () => Promise.resolve(0),
+      claimNext: () => {
+        claims += 1;
+        // Hold the first tick open so wake() lands while it is in flight.
+        if (claims === 1) {
+          return new Promise<null>((resolve) => {
+            release = () => {
+              resolve(null);
+            };
+          });
+        }
+        return Promise.resolve(null);
+      },
+      getById: () => Promise.resolve(makeRow()),
+      complete: () => Promise.resolve(),
+      updateProgress: () => Promise.resolve(),
+      fail: () => Promise.resolve(),
+    };
+    const worker = new BulkActionWorker({
+      storage: { bulkActionJobs: jobs as BulkActionJobStore } as Storage,
+      pollIntervalMs: 500,
+      maxPollIntervalMs: 60_000,
+      pollBackoffMultiplier: 2,
+    });
+
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(claims).toBe(1); // in flight, awaiting claimNext
+
+    worker.wake();
+    worker.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    // Still one: the guard refused to arm behind a running tick.
+    expect(claims).toBe(1);
+
+    release?.();
+    await vi.advanceTimersByTimeAsync(0);
+    // The running tick re-armed from the reset base — an empty poll widens
+    // before arming, so 500 doubles to 1000 — and exactly one timer is
+    // live, so exactly one further tick lands there rather than two.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(claims).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(claims).toBe(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(claims).toBe(2);
+
+    worker.stop();
+  });
+
+  it("does nothing once stopped", async () => {
+    const stub = makeStubStorage();
+    const worker = new BulkActionWorker({ storage: stub.storage });
+    await worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const before = stub.ticks();
+
+    worker.stop();
+    worker.wake();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(stub.ticks()).toBe(before);
+  });
+});
