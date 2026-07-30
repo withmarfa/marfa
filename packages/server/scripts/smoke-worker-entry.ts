@@ -98,7 +98,7 @@ const stub = createServer((req, res) => {
           type: "system.activity",
           state: "active",
           tier: "library",
-          tenant_id: null,
+          space_id: null,
           properties: parsed.properties ?? {},
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

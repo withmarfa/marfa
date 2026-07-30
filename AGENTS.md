@@ -357,7 +357,7 @@ A bare noun reads as neither yes nor no — rename it to one of the shapes above
 
 An isolated data boundary is a **space**, in code, in schemas, in DB columns, on the wire, in the role vocabulary (`space_admin`) and in anything a person reads. There is no second term and no translation step.
 
-It used to be `space` internally and "space" externally. That split cost a translation on every route, log line and error message, forever, to save a reader learning one word once — and the word it protected was the less precise of the two anyway, since a space is usually one person rather than an organisation. Not "instance", which is a server deployment, and not "workspace", which oversells the team angle.
+The code used to say `tenant` while everything user-facing said "space". That split cost a translation on every route, log line and error message, forever, to save a reader learning one word once, and the word it protected was the less precise of the two anyway: a space is usually one person rather than an organization. Not "instance", which is a server deployment, and not "workspace", which oversells the team angle.
 
 The old term survives in exactly two places, both immutable: applied database migrations, and commit history. Anywhere else it is a missed rename rather than a compatibility shim, so remove it if dead and update it if live.
 

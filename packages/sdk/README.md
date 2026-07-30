@@ -22,7 +22,7 @@ const note = await client.items.create({
 
 ## Surface
 
-`client.{items,types,keys,edges,search,metadata,tenants,webhooks,connections,auth}` — one nested namespace per API surface. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
+`client.{items,types,keys,edges,search,metadata,spaces,webhooks,connections,auth}` — one nested namespace per API surface. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
 
 The OAuth helpers (PKCE, device flow, token storages, `MarfaAuth`) ship under the `@withmarfa/sdk/auth` subpath.
 
@@ -69,7 +69,7 @@ try {
 
 ### Hosted-mode fixture (`createHostedModeFixture`)
 
-For SDK surfaces that resolve an `auth_user` from the bearer (account lifecycle, future passkey shims, anything that needs `client.auth.account.*`). Boots the server in `authMode: 'hosted'`, signs up a fresh user via the wrapped form endpoint (which provisions `tenants` + `users` bridge atomically), marks email-verified directly, and mints a `tenant_admin` API key bound to the new user's tenant. The returned client uses that key as bearer; account-lifecycle routes resolve through the bridge.
+For SDK surfaces that resolve an `auth_user` from the bearer (account lifecycle, future passkey shims, anything that needs `client.auth.account.*`). Boots the server in `authMode: 'hosted'`, signs up a fresh user via the wrapped form endpoint (which provisions `spaces` + `users` bridge atomically), marks email-verified directly, and mints a `space_admin` API key bound to the new user's space. The returned client uses that key as bearer; account-lifecycle routes resolve through the bridge.
 
 ```ts
 import {
@@ -95,15 +95,15 @@ try {
 }
 ```
 
-The fixture exposes `email`, `authUserId`, `tenantId`, and `bearerKey` for tests that need to assert on or interact with the underlying user — e.g. minting additional clients against the same tenant, or correlating audit rows.
+The fixture exposes `email`, `authUserId`, `spaceId`, and `bearerKey` for tests that need to assert on or interact with the underlying user — e.g. minting additional clients against the same space, or correlating audit rows.
 
 ### When to use which
 
-| Surface under test                                                                    | Fixture                   |
-| ------------------------------------------------------------------------------------- | ------------------------- |
-| `items` / `edges` / `search` / `types` / `metadata` / `tenants` / `webhooks` / `keys` | `createKeysModeFixture`   |
-| `auth.account.{requestDelete,confirmDelete,cancel}`                                   | `createHostedModeFixture` |
-| Any future SDK surface that resolves `auth_user.id` from the bearer                   | `createHostedModeFixture` |
+| Surface under test                                                                   | Fixture                   |
+| ------------------------------------------------------------------------------------ | ------------------------- |
+| `items` / `edges` / `search` / `types` / `metadata` / `spaces` / `webhooks` / `keys` | `createKeysModeFixture`   |
+| `auth.account.{requestDelete,confirmDelete,cancel}`                                  | `createHostedModeFixture` |
+| Any future SDK surface that resolves `auth_user.id` from the bearer                  | `createHostedModeFixture` |
 
 Both fixtures share the same SQLite-backed in-process server. PG matrix coverage of the SDK lives off this scope — it runs through the server's `test:pg` matrix on every PR, not the SDK's `pnpm test`.
 
