@@ -229,7 +229,7 @@ export class PgSearchStore implements SearchStore {
       SELECT
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.version,
-        i.schema_version, i.device, i.tier,
+        i.schema_version, i.device, i.tier, i.tenant_id,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions,
         ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,

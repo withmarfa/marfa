@@ -602,7 +602,10 @@ function zodCacheKey(typeId: string, tenantId?: string | null): string {
   // Core/system types are global — cache them once under the null-tenant key
   // regardless of who looked them up, so every tenant shares the same entry.
   const scope = _coreRegistry.has(typeId) ? NULL_TENANT : tenantKey(tenantId);
-  return `${scope} ${typeId}`;
+  // The separator is written as an escape, not as a literal NUL byte. A NUL
+  // in the source makes grep treat the whole file as binary and report no
+  // matches at all, so every search of this file silently comes back empty.
+  return `${scope}\u0000${typeId}`;
 }
 
 function getZodSchema(
@@ -723,6 +726,22 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
     trashed: [],
     revoked: [],
   };
+
+/**
+ * The state a soft delete puts an item in, which is not the same state for
+ * every type. `DELETE /items/:id` is a soft delete, and for most types that
+ * means `trashed` — but `trashed` is not in the `system.*` lifecycle at all,
+ * so a delete that assumed it put platform records into a state their own
+ * type forbids, reachable by no transition and hidden from the default
+ * listing that omits trashed rows. `revoked` is the terminal state the
+ * bounded lifecycle actually has.
+ *
+ * Read this rather than hard-coding `trashed`: it is derived from the same
+ * type classification the transition graph keys on, so the two cannot drift.
+ */
+export function softDeleteState(typeId: string): ItemState {
+  return SYSTEM_TYPE_IDS.has(typeId) ? "revoked" : "trashed";
+}
 
 const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
   "active",
