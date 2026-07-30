@@ -47,6 +47,7 @@ import {
   requireAuth,
   roleBypassesPermissionMaps,
   hasPlatformAuthority,
+  requireRowWritable,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -385,6 +386,9 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    // The extension layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(apiKey, item);
 
     // connection.runtime is the runtime credential's hot-state subtree.
     // Only credentials minted by the lease broker may write it, and
@@ -467,6 +471,9 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    // The extension layer reaches the same row the properties doors
+    // guard, so it answers to the same row-level rule.
+    requireRowWritable(apiKey, item);
 
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {

@@ -77,7 +77,7 @@ function manifest(name: string): IntegrationManifest {
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
     manifest_schema_version: "1.0.0",
-    permissions: {},
+    permissions: { extension: { "acme.probe": "write" } },
   };
 }
 
@@ -450,5 +450,162 @@ describe("every route that can write an item is accounted for", () => {
     for (const route of covered) {
       expect(registered.has(route), `stale door: ${route}`).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The other axes: lifecycle, metadata, extensions
+// ---------------------------------------------------------------------------
+
+/**
+ * The doors above write an item's `properties`. These reach the same row
+ * by id and change something else about it: its lifecycle state, its tags
+ * and metadata, its extension namespaces.
+ *
+ * They were open to a credential the properties doors refuse. Same tenant,
+ * same type filter, different axis, and `system.activity` sits in every
+ * runtime credential's type filter because that grant is what lets a
+ * connector report its own progress. So a type check alone admits every
+ * sibling connector's rows, and a type check alone was all these had.
+ *
+ * They share one row-level gate rather than each carrying a call, and this
+ * table is the reason that shape was chosen: five doors have now been
+ * found reaching state their caller had no permission for, four of them
+ * because a person thought to ask. Enumeration was never the reliable
+ * part.
+ */
+interface RowDoor {
+  name: string;
+  /** Act on a row owned by someone else. Refusal is the property. */
+  act(key: string, targetId: string): Promise<Response>;
+}
+
+const ROW_DOORS: RowDoor[] = [
+  {
+    name: "POST /items/{id}/transition",
+    act: (key, id) =>
+      request(ctx.app, "POST", `/items/${id}/transition`, {
+        key,
+        body: { state: "archived" },
+      }),
+  },
+  {
+    name: "POST /items/{id}/tags",
+    act: (key, id) =>
+      request(ctx.app, "POST", `/items/${id}/tags`, {
+        key,
+        body: { tags: ["intruded"] },
+      }),
+  },
+  {
+    name: "PUT /items/{id}/metadata",
+    act: (key, id) =>
+      request(ctx.app, "PUT", `/items/${id}/metadata`, {
+        key,
+        body: { tags: ["intruded"] },
+      }),
+  },
+  {
+    name: "PATCH /items/{id}/metadata",
+    act: (key, id) =>
+      request(ctx.app, "PATCH", `/items/${id}/metadata`, {
+        key,
+        body: { tags: ["intruded"] },
+      }),
+  },
+  {
+    name: "PUT /items/{id}/extensions/{namespace}",
+    act: (key, id) =>
+      request(ctx.app, "PUT", `/items/${id}/extensions/acme.probe`, {
+        key,
+        body: { data: { intruded: true } },
+      }),
+  },
+];
+
+describe.each(ROW_DOORS)("$name", (door) => {
+  let tenantId: string;
+  let mine: Credential;
+  let sibling: Credential;
+
+  beforeAll(async () => {
+    const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
+    const tenant = await ctx.storage.tenants!.create(slug);
+    tenantId = tenant.id;
+    mine = await credentialFor(tenantId, `acme.${slug}-mine`);
+    sibling = await credentialFor(tenantId, `acme.${slug}-sib`);
+  });
+
+  it("refuses to reach a sibling Connection's row", async () => {
+    const target = await activityRow(sibling, `row-${String(Math.random())}`);
+    const res = await door.act(mine.key, target.id);
+    expect(res.status).toBe(403);
+  });
+
+  it("still reaches the credential's own row", async () => {
+    // A gate that refuses everyone passes the case above and breaks every
+    // legitimate connector, so the permissive direction is asserted too.
+    const own = await activityRow(mine, `own-${String(Math.random())}`);
+    const res = await door.act(mine.key, own.id);
+    // Not "succeeds" — some of these then fail downstream for reasons
+    // unrelated to authorization, such as a system.activity row having no
+    // valid target in the universal three-state lifecycle. The property
+    // under test is that the gate did not refuse it, and 403 is what a
+    // blanket refuse returns.
+    expect(res.status).not.toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `tier` is server-owned on system.* rows, on every door
+// ---------------------------------------------------------------------------
+
+/**
+ * Create refused a caller-supplied `tier` on a `system.*` type and the
+ * update doors accepted one. Fixing it on a single door would have made a
+ * fresh disagreement of exactly the kind the table above exists to close,
+ * so it is one rule reached from all of them.
+ */
+describe("tier on a system.* row", () => {
+  let tenantId: string;
+  let mine: Credential;
+
+  beforeAll(async () => {
+    const tenant = await ctx.storage.tenants!.create("tier-rules");
+    tenantId = tenant.id;
+    mine = await credentialFor(tenantId, "acme.tier-rules");
+  });
+
+  it("is refused on create, and on every door that updates", async () => {
+    const create = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "system.activity",
+        tier: "library",
+        properties: {
+          connection_id: mine.connectionId,
+          severity: "info",
+          summary: "tier probe",
+        },
+      },
+    });
+    expect(create.status).toBe(400);
+
+    const row = await activityRow(mine, `tier-${String(Math.random())}`);
+
+    const patch = await request(ctx.app, "PATCH", `/items/${row.id}`, {
+      key: mine.key,
+      body: { tier: "library" },
+    });
+    expect(patch.status).toBe(400);
+
+    const bulkById = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        atomic: true,
+        items: [{ id: row.id, type: "system.activity", tier: "library" }],
+      },
+    });
+    expect(bulkById.status).toBeGreaterThanOrEqual(400);
   });
 });

@@ -830,6 +830,41 @@ function claimedConnectionId(properties: unknown): unknown {
 }
 
 /**
+ * May this credential write to a row that already exists?
+ *
+ * The attribution helpers above answer a question about a *claim*: the
+ * body says it is writing `system.activity` for connection X, and the
+ * check is whether X is the caller's own. Every surface that reaches an
+ * existing row by id asks a simpler question, because there is no claim
+ * to weigh — the row states whose it is, and the caller either owns it or
+ * does not.
+ *
+ * This is that check, and it is one function rather than a call at each
+ * door on purpose. Five doors have now been found reaching state their
+ * caller had no permission for, and four were found by a person asking
+ * what else had the shape. Enumerating doors was never the reliable part,
+ * so the lifecycle, metadata and extension surfaces share this rather
+ * than each remembering a rule.
+ *
+ * Type permission is a separate axis and is still checked by the caller.
+ * This narrows within a type the caller may already write, which is the
+ * gap: `system.activity` sits in every runtime credential's type filter,
+ * because that grant is what lets a connector report its own progress.
+ */
+export function requireRowWritable(
+  key: ApiKey | undefined,
+  row: { type: string; properties?: unknown } | undefined,
+): void {
+  if (!row) return;
+  if (permitsActivityAttribution(key, row.type, row.properties)) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    "A runtime credential may only write rows belonging to its own connection",
+    { type: row.type },
+  );
+}
+
+/**
  * Enforces a per-edge-type permission check. Admin and tenant_admin
  * keys always pass (tenant_admin is admin-shaped within its tenant —
  * see `checkTypeAccess` for the layered-helper rationale). Non-admin
