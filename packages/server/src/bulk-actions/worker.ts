@@ -154,6 +154,37 @@ export class BulkActionWorker {
   // Internals
   // ---------------------------------------------------------------------
 
+  /**
+   * Tell the worker a job was just enqueued.
+   *
+   * Without this the idle backoff is the whole latency. It widens
+   * geometrically to a sixty-second ceiling while the queue is quiet, and
+   * nothing shortened it, so a job arriving into a settled worker waited
+   * out whatever interval happened to be pending. Measured on staging: a
+   * job sat queued for about thirty-two seconds and then did sixty-five
+   * milliseconds of work. Cold start was ruled out; the container was warm.
+   *
+   * Thirty seconds to pick up half a second of work is the kind of number
+   * that becomes a support question rather than a bug report, because the
+   * user triggers an action, sees nothing, and by the time they look again
+   * it is done. Nobody files that.
+   *
+   * Idempotent and cheap: it resets the backoff and pulls the pending timer
+   * forward to now. A burst of enqueues collapses into one immediate tick
+   * rather than one per job, and a tick already in flight is left alone —
+   * it will re-arm at the reset cadence when it finishes.
+   */
+  wake(): void {
+    if (this.stopped) return;
+    this.currentPollMs = this.pollIntervalMs;
+    if (this.inFlight) return;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.scheduleNext(0);
+  }
+
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
     this.timer = setTimeout(() => {
