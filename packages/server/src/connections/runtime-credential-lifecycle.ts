@@ -135,24 +135,33 @@ export async function assertConnectionBelongsToIntegration(
 }
 
 /**
- * Revoke credentials that can no longer belong to a live dispatch.
+ * Revoke every other runtime credential on this connection.
  *
- * Expiry is the cutoff for stamped rows. Rows created before expiry stamping
- * use age against the mint TTL, matching the retention reaper's rollout
- * behavior. Failures are best-effort because the reaper remains the backstop
- * and a cleanup failure must not discard the newly minted credential.
+ * A mint means a dispatch is starting, and dispatches on one connection are
+ * serialised: the local supervisor takes `connection-dispatch:<id>` around
+ * the whole dispatch and mints inside it, and the hosted path mints through
+ * the connection lifecycle lock. So a mint arriving is evidence that no
+ * earlier dispatch on this connection is still holding its credential, and
+ * every sibling can go.
+ *
+ * That serialisation is why this revokes unconditionally now. It used to
+ * revoke only *expired* siblings, on the reasoning that the bearer gate
+ * already refuses those so revoking one cannot break a running dispatch.
+ * The reasoning was sound and the bound it produced was not: nothing retired
+ * a live credential on supersede, so three consecutive mints left three
+ * usable credentials and accumulation was bounded only by the TTL. Measured
+ * on staging, three mints left five.
+ *
+ * Failures stay best-effort. The retention reaper is the backstop, and a
+ * cleanup failure must never discard the credential the caller is waiting
+ * for.
  */
 export async function revokeSupersededRuntimeCredentials(
   storage: Storage,
   connectionId: string,
   tenantId: string | undefined,
   mintedId: string,
-  ttlMs: number,
 ): Promise<void> {
-  const now = Date.now();
-  const nowIso = new Date(now).toISOString();
-  const legacyCutoff = new Date(now - ttlMs).toISOString();
-
   try {
     const siblings = await storage.keys.listByConnectionId(
       connectionId,
@@ -160,10 +169,7 @@ export async function revokeSupersededRuntimeCredentials(
     );
     for (const key of siblings) {
       if (key.id === mintedId || !key.is_runtime_credential) continue;
-      const expired = key.expires_at
-        ? key.expires_at <= nowIso
-        : key.created_at < legacyCutoff;
-      if (expired) await storage.keys.revoke(key.id);
+      await storage.keys.revoke(key.id);
     }
   } catch (err) {
     log("error", "Runtime credential supersede revoke failed", {

@@ -199,7 +199,6 @@ export async function mintLocalRuntimeCredential(
       connectionId,
       tenantId,
       minted.id,
-      ttlMs,
     );
 
     return {

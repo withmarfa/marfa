@@ -449,7 +449,6 @@ export function runtimeCredentialRoutes(
         );
 
         const ttlSeconds = body.ttl_seconds ?? 600;
-        const ttlMs = ttlSeconds * 1000;
         const expiresAt = new Date(
           Date.now() + ttlSeconds * 1000,
         ).toISOString();
@@ -493,7 +492,6 @@ export function runtimeCredentialRoutes(
           body.connection_id,
           connection.tenant_id ?? undefined,
           stored.id,
-          ttlMs,
         );
 
         void storage.audit.log({
