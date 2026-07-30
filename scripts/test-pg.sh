@@ -28,9 +28,16 @@ PG_PASSWORD="marfa"
 PG_DB="marfa_test"
 
 if ! docker info >/dev/null 2>&1; then
-  echo "⊘ Docker is not running — skipping test:pg." >&2
-  echo "  Postgres-dialect tests still run in GitHub Actions on every PR." >&2
-  echo "  To run them locally, start OrbStack / Docker Desktop and retry." >&2
+  # In CI this script IS the Postgres coverage, so a missing Docker is a
+  # failure. Skipping would report green for a dialect nothing exercised,
+  # which is the failure mode the hosted service container never had.
+  if [ -n "${CI:-}" ]; then
+    echo "✗ Docker is not available, so the Postgres suite cannot run." >&2
+    echo "  This is CI, where this script is the only Postgres coverage." >&2
+    exit 1
+  fi
+  echo "⊘ Docker is not running, skipping test:pg." >&2
+  echo "  To run these locally, start OrbStack / Docker Desktop and retry." >&2
   exit 0
 fi
 

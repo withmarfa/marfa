@@ -13,13 +13,22 @@
 #
 # Usage: bash packages/server/scripts/with-temp-pg.sh <command> [args...]
 #
-# Skips gracefully (exit 0, ⊘ message) if Docker is not running, matching the
-# test:pg.sh pattern — the corresponding CI job still runs the generator
-# against the runner's services: postgres:17 container.
+# Skips gracefully (exit 0, ⊘ message) when Docker is not running locally, so a
+# contributor without it is not blocked. Under CI it fails instead: there this
+# wrapper is the only database, and a skip would report green for work that
+# never ran.
 set -euo pipefail
 
 if ! docker info >/dev/null 2>&1; then
-  echo "⊘ Docker is not running — skipping with-temp-pg." >&2
+  # In CI this wrapper IS the Postgres, so a missing Docker is a failure.
+  # Skipping would let the caller report success without ever reaching a
+  # database, which for a drift check means green on a diff nobody generated.
+  if [ -n "${CI:-}" ]; then
+    echo "✗ Docker is not available, so no Postgres could be started." >&2
+    echo "  This is CI, where this wrapper provides the database." >&2
+    exit 1
+  fi
+  echo "⊘ Docker is not running, skipping with-temp-pg." >&2
   echo "  To run locally, start OrbStack / Docker Desktop and retry." >&2
   exit 0
 fi
