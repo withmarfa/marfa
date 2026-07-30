@@ -1882,7 +1882,7 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
-  it("treats a trashed prior unmapped activity as already reported after restart", async () => {
+  it("treats a soft-deleted prior unmapped activity as already reported after restart", async () => {
     const integrationName = "acme.unmapped-trashed-alert";
     const integrationId = await createIntegration(
       manifest({ name: integrationName }),
@@ -1929,8 +1929,24 @@ describe("bridge — unmapped integration handling", () => {
       await firstBridge!.stop();
     }
 
+    // A soft delete of a `system.*` row lands in `revoked`, the terminal
+    // state of its bounded lifecycle, not in `trashed` — which that lifecycle
+    // does not contain. `revoked` is deliberately still readable, because the
+    // platform reasons about revoked rows (refusing to pause one, for
+    // instance), so this is not the trashed-is-invisible case.
     await ctx.storage.items.delete(activityId);
-    expect(await ctx.storage.items.get(activityId)).toBeNull();
+    const softDeleted = await ctx.storage.items.get(activityId);
+    expect(softDeleted?.state).toBe("revoked");
+    // The property the bridge depends on: the natural key stays reserved, so
+    // a restart finds the prior alert and does not re-report it.
+    expect(
+      (
+        await ctx.storage.items.findBySourceIdIncludingTrashed(
+          softDeleted!.source,
+          softDeleted!.source_id!,
+        )
+      )?.id,
+    ).toBe(activityId);
 
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
     const originalFindBySourceIdIncludingTrashed =

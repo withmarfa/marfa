@@ -21,6 +21,7 @@ import {
   validateProperties,
   coerceNullProperties,
   validateTransition,
+  softDeleteState,
   parseFilter,
   MarfaError,
   ErrorCode,
@@ -822,9 +823,25 @@ export class PgItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
+    // A soft delete is a transition, so it goes through the same gate the
+    // explicit transition route uses. Writing `trashed` unconditionally put
+    // `system.*` rows into a state their own lifecycle does not contain:
+    // no transition could produce it, no transition could leave it, and the
+    // default listing hides trashed rows, so the result was invisible until
+    // someone enumerated every state by hand.
+    const target = softDeleteState(row.type);
+    // Idempotent: deleting something already soft-deleted is not an error,
+    // and `trashed → trashed` is not a legal transition, so this has to
+    // return before the gate rather than be admitted by it.
+    if (row.state === target) return;
+    const error = validateTransition(row.type, row.state, target);
+    if (error) {
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, error);
+    }
+
     await this.db
       .update(items)
-      .set({ state: "trashed", updated_at: new Date().toISOString() })
+      .set({ state: target, updated_at: new Date().toISOString() })
       .where(this.tenantWhere(id, tenantId));
 
     await this.searchStore.remove(id);
@@ -835,10 +852,15 @@ export class PgItemStore implements ItemStore {
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
-    if (row.state !== "trashed") {
+    // Purge is the hard delete behind a soft one, so the gate is "already
+    // soft-deleted" rather than the literal `trashed` — which a `system.*`
+    // row can never reach, and which would therefore make its rows
+    // unpurgeable.
+    const target = softDeleteState(row.type);
+    if (row.state !== target) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Only trashed items can be purged",
+        `Only ${target} items can be purged`,
       );
     }
 
