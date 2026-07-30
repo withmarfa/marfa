@@ -19,13 +19,15 @@ on:
   # a PR that touches schema or shared-type sources. See marfa/CLAUDE.md for
   # when to fire this.
   #
-  # Three jobs need a `postgres:17` service container, which the self-hosted
-  # runners cannot provide, so they are the only ones billed to the hosted
-  # allowance. They are gated on the `RUN_HOSTED_CI` repository variable and
-  # are off by default: `pnpm test:pg` covers the same ground locally against
-  # a throwaway container, so the marginal signal per pull request did not
-  # justify the spend. Set the variable to `true` to turn them back on, which
-  # is what the release pass does before shipping.
+  # Every job here runs on the pool the project already owns. The three
+  # Postgres jobs used to be the exception, billed to the hosted allowance and
+  # switched off by default, because a `services:` container is the obvious way
+  # to get a database and the Actions runner only performs container operations
+  # on Linux. That is a limit of the `services:` feature, not of the runner's
+  # host: an ordinary `docker run` from a step works anywhere Docker does. Each
+  # of the three now boots its own throwaway `postgres:17` through the same
+  # script a contributor runs locally, so the coverage is back on every pull
+  # request and costs nothing.
   workflow_dispatch:
 
 concurrency:
@@ -167,38 +169,15 @@ jobs:
             exit 1
           fi
 
-  # T-145: detect drift between Drizzle migrations and the auto-generated
+  # Detects drift between the Drizzle migrations and the auto-generated
   # SCHEMA_SQL bootstrap. Same trigger pattern as the other freshness jobs:
-  # main + manual dispatch. Hardcoded ubuntu-latest because the PG generator
-  # needs a services: container (Linux-only — same constraint as ci-pg).
+  # main + manual dispatch.
   schema-sql-freshness:
     name: SCHEMA_SQL generator freshness
-    if: github.event_name != 'pull_request' && vars.RUN_HOSTED_CI == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_schema_dump
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: marfa
-          POSTGRES_PASSWORD: marfa
-          POSTGRES_DB: marfa_schema_dump
-        ports:
-          - 5432:5432
-        # `pg_isready` alone returns OK before the cluster actually serves
-        # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initializing). Chaining a real
-        # `psql … SELECT 1` against the `postgres` system DB is the only
-        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
-        # fix; symmetric across all three PG service containers in this
-        # workflow.
-        options: >-
-          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -222,34 +201,20 @@ jobs:
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # Install pg_dump 17 — the runner's preinstalled client tools are older
-      # than the postgres:17 service container, and pg_dump refuses to dump a
-      # newer-version server. The postgresql-client-17 package lands a real
-      # binary at /usr/lib/postgresql/17/bin/pg_dump, but /usr/bin/pg_dump
-      # is `pg_wrapper` (from postgresql-common) which defaults to PG 16
-      # when both clients are present. Prepend /usr/lib/postgresql/17/bin
-      # to PATH so the generator picks the matching version.
-      - name: Install postgresql-client-17
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release
-          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-17
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - name: Regenerate SQLite SCHEMA_SQL
         run: pnpm --filter @withmarfa/server run schema-sql:generate:sqlite
       - name: Regenerate Postgres SCHEMA_SQL
-        # Bypass the with-temp-pg.sh wrapper — runner reaches services
-        # container directly on localhost:5432, and uses the host pg_dump 17
-        # installed above (PG_CONTAINER_NAME stays unset so the generator
-        # falls back to the host binary path). Sanity-check pg_dump version
-        # before the run so a wrapper-resolution regression fails loudly
-        # instead of producing diff churn.
-        run: |
-          pg_dump --version
-          pnpm --filter @withmarfa/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
+        # Through the wrapper, which is also what a contributor runs locally.
+        # It exports `PG_CONTAINER_NAME`, so the generator reaches pg_dump by
+        # `docker exec` into the same `postgres:17` it just started and the
+        # dump is version-matched by construction.
+        #
+        # The alternative, a service container plus a host pg_dump, needed the
+        # host binary installed and its version reconciled by hand: pg_dump
+        # refuses to dump a newer server, and on the hosted image `/usr/bin/
+        # pg_dump` is a wrapper that resolves to whichever client it prefers
+        # rather than the one just installed. None of that survives here.
+        run: bash packages/server/scripts/with-temp-pg.sh pnpm --filter @withmarfa/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
       - name: Check for drift
         run: |
           if ! git diff --exit-code packages/server/src/storage/{pg,sqlite}/schema-sql.generated.ts; then
@@ -353,41 +318,10 @@ jobs:
   ci-pg:
     name: CI (Postgres)
     needs: changes
-    # Also gated on the diff: this is the one job billed to the hosted
-    # allowance, so a documentation-only pull request must never reach it even
-    # in a release window with `RUN_HOSTED_CI` switched on.
-    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true' && needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DB_DIALECT: pg
-      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_test
-      # The vitest globalSetup uses MARFA_TEST_PG_ADMIN_URL to CREATE / DROP
-      # the test template + per-file clones on the cluster. Points at the
-      # default `postgres` system DB so it's always reachable. See
-      # packages/server/src/storage/pg/test-template.ts.
-      MARFA_TEST_PG_ADMIN_URL: postgresql://marfa:marfa@localhost:5432/postgres
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: marfa
-          POSTGRES_PASSWORD: marfa
-          POSTGRES_DB: marfa_test
-        ports:
-          - 5432:5432
-        # `pg_isready` alone returns OK before the cluster actually serves
-        # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initializing). Chaining a real
-        # `psql … SELECT 1` against the `postgres` system DB is the only
-        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
-        # fix; symmetric across all three PG service containers in this
-        # workflow.
-        options: >-
-          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -413,7 +347,17 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
+      # The same script a contributor runs locally, rather than a second
+      # definition of the same environment in YAML. It boots its own
+      # `postgres:17`, waits on a real `SELECT 1`, exports both PG URLs the
+      # vitest globalSetup needs, and tears the container down on exit.
+      #
+      # `services:` would be the obvious shape and cannot be used: the Actions
+      # runner only performs container operations on Linux, so a service
+      # container pinned this job to a hosted runner. An ordinary `docker run`
+      # is not that feature and works anywhere Docker does, which is what moves
+      # the job onto the pool the project already owns.
+      - run: pnpm test:pg
 
   # Exercises the full drizzle migration chain end-to-end against a fresh,
   # empty database — no SCHEMA_SQL bootstrap. The existing ci-sqlite / ci-pg
@@ -463,33 +407,11 @@ jobs:
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
     needs: changes
-    if: github.event_name != 'workflow_dispatch' && vars.RUN_HOSTED_CI == 'true' && needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DB_DIALECT: pg
-      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_migrate_test
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: marfa
-          POSTGRES_PASSWORD: marfa
-          POSTGRES_DB: marfa_migrate_test
-        ports:
-          - 5432:5432
-        # `pg_isready` alone returns OK before the cluster actually serves
-        # queries (well-known false positive — fast first pass that succeeds
-        # while the database is still initializing). Chaining a real
-        # `psql … SELECT 1` against the `postgres` system DB is the only
-        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
-        # fix; symmetric across all three PG service containers in this
-        # workflow.
-        options: >-
-          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -513,5 +435,10 @@ jobs:
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # The wrapper supplies an empty `postgres:17` and exports `DATABASE_URL`
+      # at it, which is exactly what this job needs: a database with no
+      # SCHEMA_SQL bootstrap, so the migration chain has to stand on its own.
+      # A `services:` container would do the same and would pin the job to a
+      # hosted Linux runner to do it.
       - name: Run migrations against fresh DB
-        run: pnpm --filter @withmarfa/server migrate
+        run: bash packages/server/scripts/with-temp-pg.sh pnpm --filter @withmarfa/server migrate
