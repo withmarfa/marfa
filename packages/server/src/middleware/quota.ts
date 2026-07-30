@@ -8,46 +8,91 @@ import type { AppEnv } from "./auth.js";
 /**
  * Per-tenant quota enforcement.
  *
- * Checks the current count for `resource` against the effective limit
- * (tenant override OR env default OR Infinity). Throws `QUOTA_EXCEEDED`
- * (HTTP 429) when adding `increment` would push the tenant past their
- * cap. Counts are computed on-demand via `tenantQuotas.count(...)` —
- * no eager-increment / reconcile machinery.
+ * Reserve this write's quota. **Call it as the first statement inside the
+ * transaction the write commits in**, and hold that transaction until the
+ * write is done.
  *
- * **No-op when caller has no tenant_id.** Platform-admin keys (single-
- * tenant self-hosts and the bootstrap admin) bypass quota enforcement
- * entirely — there's no "tenant" to constrain. Hosted-mode tenant
- * credentials always carry a `tenant_id` so they pass through the
- * check.
+ * A `(tenant, resource)` lock is taken on that transaction, then the count is
+ * read under it, so the number already includes every write admitted ahead of
+ * this one and no other writer of the same resource in the same space can
+ * read a count that omits this write. A check that returned before the write
+ * could not do that: N concurrent writers each read the same pre-write count,
+ * each saw room, and the space settled at `limit + N - 1`.
  *
- * **No-op when limit is unset.** A NULL `<resource>_limit` on the
- * tenant_quotas row plus an unset env default means "unlimited"; the
- * check returns immediately.
+ * **The lock rides the caller's transaction; it must not bracket it.** Two
+ * reasons, both pointing the same way. A lock released before the write
+ * commits leaves the next holder counting rows that do not include it, which
+ * is the race this closes. And a lock holding a pool connection of its own
+ * while the request already holds one deadlocks the pool once enough
+ * concurrent writers each wait for a second slot — pool size, not load, sets
+ * the concurrency at which every quota-gated write stops. `withExclusiveLock`
+ * is that shape and is the wrong tool here; see
+ * `CoordinationStore.lockInTransaction`.
+ *
+ * **This does not open a transaction of its own**, deliberately. Wrapping the
+ * caller would nest one transaction inside another where the caller already
+ * has one, and would impose one where it does not — and a route holding a
+ * transaction across work it did not previously is a real cost, not a
+ * formality: SQLite admits a single writer, so a transaction taken around a
+ * blob's physical write serialises against every other writer in the process
+ * for as long as the bytes take to land.
+ *
+ * Multiple reservations lock in sorted resource order. Blob upload reserves
+ * both `blobs` and `storage_bytes`, and two callers taking those in opposite
+ * orders would deadlock against each other; a deterministic order is what
+ * makes the second reservation safe to add.
+ *
+ * No-op for a caller with no tenant: platform-admin keys, single-tenant
+ * self-hosts and the bootstrap admin have no space to constrain. Also a no-op
+ * when nothing is limited, so an unlimited space is never serialised against
+ * a ceiling that does not exist — a NULL `<resource>_limit` on the
+ * tenant_quotas row with no env default means unlimited.
+ *
+ * Counts stay computed on demand rather than eagerly incremented. The lock is
+ * what makes an on-demand count correct, which is what an eager counter would
+ * have been for, and it leaves no second source of truth to reconcile.
  */
-export async function enforceQuota(
+export async function reserveQuota(
   c: Context<AppEnv>,
   storage: Storage,
-  resource: QuotaResource,
-  increment = 1,
+  reservations: readonly { resource: QuotaResource; increment: number }[],
 ): Promise<void> {
   const tenantId = c.get("apiKey")?.tenant_id;
-  if (!tenantId) return;
+  if (!tenantId || reservations.length === 0) return;
 
-  const limit = await effectiveLimit(
-    storage,
-    tenantId,
-    resource,
-    c.get("config"),
+  const config = c.get("config");
+
+  const limits: {
+    resource: QuotaResource;
+    increment: number;
+    limit: number;
+  }[] = [];
+  for (const r of reservations) {
+    const limit = await effectiveLimit(storage, tenantId, r.resource, config);
+    if (limit !== null) limits.push({ ...r, limit });
+  }
+  if (limits.length === 0) return;
+
+  const ordered = [...limits].sort((a, b) =>
+    a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0,
   );
-  if (limit === null) return;
 
-  const current = await storage.tenantQuotas.count(tenantId, resource);
-  if (current + increment > limit) {
-    throw new MarfaError(
-      ErrorCode.QUOTA_EXCEEDED,
-      `Tenant quota for ${resource} exceeded`,
-      { resource, limit, current },
+  for (const r of ordered) {
+    await storage.coordination.lockInTransaction(
+      `quota:${tenantId}:${r.resource}`,
     );
+  }
+  // Every lock is held for the rest of the caller's transaction. Count now,
+  // so the number includes every write already committed under the same lock.
+  for (const r of ordered) {
+    const current = await storage.tenantQuotas.count(tenantId, r.resource);
+    if (current + r.increment > r.limit) {
+      throw new MarfaError(
+        ErrorCode.QUOTA_EXCEEDED,
+        `Tenant quota for ${r.resource} exceeded`,
+        { resource: r.resource, limit: r.limit, current },
+      );
+    }
   }
 }
 

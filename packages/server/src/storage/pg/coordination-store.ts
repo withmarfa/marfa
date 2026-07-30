@@ -1,5 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { CoordinationStore } from "../interface.js";
-import type { PgClient } from "./connection.js";
+import type { PgClient, PgDb } from "./connection.js";
 
 /**
  * Postgres-backed coordination via advisory locks.
@@ -47,7 +48,27 @@ import type { PgClient } from "./connection.js";
  * try-lock never waits.
  */
 export class PgCoordinationStore implements CoordinationStore {
-  constructor(private client: PgClient) {}
+  constructor(
+    private client: PgClient,
+    private db: PgDb,
+  ) {}
+
+  /**
+   * `pg_advisory_xact_lock` on the transaction the caller is already inside,
+   * so it costs no second pool slot and releases on that transaction's commit
+   * or rollback. Issued through the request-context-aware Drizzle instance,
+   * which is what puts it on the ambient transaction's connection rather than
+   * an arbitrary one — the same routing `runInTransaction` and the search
+   * indexer rely on. Called outside a transaction it degrades to a
+   * statement-scoped lock that releases immediately, which is why the
+   * interface makes the requirement explicit rather than trying to detect it.
+   */
+  async lockInTransaction(name: string): Promise<void> {
+    const key = `marfa:${name}`;
+    await this.db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+    );
+  }
 
   withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const key = `marfa:${name}`;

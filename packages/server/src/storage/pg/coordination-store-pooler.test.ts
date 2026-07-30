@@ -31,13 +31,47 @@
  *   MARFA_TEST_PGBOUNCER_URL=postgres://…@pooler-host:6432/db
  *   MARFA_TEST_PGBOUNCER_DIRECT_URL=postgres://…@pg-host:5432/db
  *
- * A small `default_pool_size` makes the shared backend the probe needs
- * the one it is certain to get.
+ * Set `default_pool_size = 1`. The premise case needs the two clients to
+ * share a backend, and with a larger pool they get one each — a session-
+ * scoped lock then excludes correctly and the case fails, reporting a
+ * pooler-safe database rather than a misconfigured fixture.
  */
 import { describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { PgCoordinationStore } from "./coordination-store.js";
-import type { PgClient } from "./connection.js";
+import type { PgClient, PgDb } from "./connection.js";
+
+/**
+ * Every case here exercises `withExclusiveLock`, which holds its own
+ * connection and never consults the Drizzle instance. The instance is still
+ * built over the same client so the store is constructed the way production
+ * constructs it.
+ */
+const storeOn = (client: PgClient): PgCoordinationStore =>
+  new PgCoordinationStore(client, drizzle(client));
+
+/**
+ * Run `fn` inside a Drizzle transaction with `name` locked on it, which is
+ * what a quota reservation does: production reaches the same object through
+ * the request-context proxy, which resolves to the ambient Drizzle
+ * transaction. `tx` satisfies the `execute` surface the store uses; the cast
+ * is because Drizzle types a transaction as its own narrower type.
+ */
+async function withLockOnTransaction<T>(
+  client: PgClient,
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const db = drizzle(client);
+  return await db.transaction(async (tx) => {
+    await new PgCoordinationStore(
+      client,
+      tx as unknown as PgDb,
+    ).lockInTransaction(name);
+    return await fn();
+  });
+}
 
 const pooledUrl = process.env.MARFA_TEST_PGBOUNCER_URL ?? "";
 const directUrl = process.env.MARFA_TEST_PGBOUNCER_DIRECT_URL ?? "";
@@ -182,9 +216,47 @@ describe.skipIf(!enabled)(
         client: PgClient,
         name: string,
         fn: () => Promise<T>,
-      ): Promise<T> =>
-        new PgCoordinationStore(client).withExclusiveLock(name, fn);
+      ): Promise<T> => storeOn(client).withExclusiveLock(name, fn);
       expect(await peakConcurrentHolders(take, pooledUrl, LOCK_NAME)).toBe(1);
+    });
+
+    it("excludes concurrent holders when the lock rides the caller's transaction", async () => {
+      // The shape a quota reservation uses: the caller owns the
+      // transaction, the lock is taken inside it as a statement, and it
+      // releases on that transaction's commit. Same pooler-safety argument
+      // as `withExclusiveLock` — the transaction is the unit a pooler keeps
+      // on one backend — but it has to be measured, not assumed, because a
+      // session-scoped lock in this position would also succeed at every
+      // statement while excluding nothing.
+      expect(
+        await peakConcurrentHolders(
+          withLockOnTransaction,
+          pooledUrl,
+          `${LOCK_NAME}:in-tx`,
+        ),
+      ).toBe(1);
+    });
+
+    it("releases a transaction-scoped lock on commit and on rollback", async () => {
+      // A reservation that stranded its lock would wedge every later write
+      // of the same resource in that space, and the throw path is the one
+      // that matters: refusing a write over quota is the ordinary outcome,
+      // not the exceptional one.
+      const name = `${LOCK_NAME}:in-tx-release`;
+      const client = pool(pooledUrl);
+      try {
+        await withLockOnTransaction(client, name, () => Promise.resolve());
+        expect(await lockIsHeld(name)).toBe(false);
+
+        await expect(
+          withLockOnTransaction(client, name, () => {
+            throw new Error("quota_exceeded");
+          }),
+        ).rejects.toThrow("quota_exceeded");
+        expect(await lockIsHeld(name)).toBe(false);
+      } finally {
+        await client.end();
+      }
     });
 
     it("leaves no lock behind, on either exit path", async () => {
@@ -193,7 +265,7 @@ describe.skipIf(!enabled)(
       // ordinary one and the throw a mint's own state check produces.
       const name = `${LOCK_NAME}:release`;
       const client = pool(pooledUrl);
-      const store = new PgCoordinationStore(client);
+      const store = storeOn(client);
       try {
         await store.withExclusiveLock(name, () => Promise.resolve());
         expect(await lockIsHeld(name)).toBe(false);

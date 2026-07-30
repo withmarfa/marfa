@@ -12,6 +12,15 @@ export class SqliteCoordinationStore implements CoordinationStore {
     return fn();
   }
 
+  /**
+   * No-op. `runInTransaction` opens `BEGIN IMMEDIATE`, which takes SQLite's
+   * single write lock for the whole transaction, so writers in one process
+   * are already serialised and there is no second process to exclude.
+   */
+  lockInTransaction(): Promise<void> {
+    return Promise.resolve();
+  }
+
   async withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.exclusiveTails.get(name) ?? Promise.resolve();
     let release!: () => void;
