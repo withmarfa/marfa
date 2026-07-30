@@ -1,5 +1,6 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
+import { serveThroughContainer } from "./cold-start.js";
 
 /**
  * Worker front for the Marfa server running on Cloudflare Containers.
@@ -15,8 +16,14 @@ import { env } from "cloudflare:workers";
  *
  * Config reaches the container through `envVars`: plain values come from
  * wrangler `[vars]`, secrets from `wrangler secret put` — both surface
- * synchronously on `env`, so a class-level `envVars` is sufficient (no async
- * `startAndWaitForPorts` needed).
+ * synchronously on `env`, so a class-level `envVars` is sufficient.
+ *
+ * The fetch handler waits for the container to be listening before it proxies.
+ * A bare passthrough answers the request that triggers a wake with the proxy
+ * layer's own failure string, so the first person to open Marfa after a quiet
+ * spell saw an error page rather than the app — and the experimental web app
+ * reported "Couldn't reach the default instance" for an instance that was
+ * merely asleep.
  */
 interface Env {
   MARFA_SERVER: DurableObjectNamespace<MarfaServerContainer>;
@@ -179,6 +186,9 @@ export class MarfaServerContainer extends Container<Env> {
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
-    return getContainer(env.MARFA_SERVER).fetch(request);
+    // The waiting and the error shaping live in `cold-start.ts` so they can be
+    // tested without the Workers runtime; this stays the thin binding it looks
+    // like.
+    return serveThroughContainer(request, getContainer(env.MARFA_SERVER));
   },
 };
