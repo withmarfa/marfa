@@ -26,16 +26,18 @@
  *   5. Revoke every active `connection_leased_tokens` row.
  *   6. Disable every `inbound_webhooks` subscription bound to this
  *      connection so further deliveries are dropped.
- *   7. Transition the `system.connection` item state from `active` to
- *      `revoked` (the bounded system.* lifecycle's terminal state).
+ *   7. Revoke the `system.connection`: transition its state from `active`
+ *      to `revoked`, and set `properties.status` to match in the same
+ *      transaction. The two are the same fact stored twice, and they were
+ *      allowed to disagree.
  *   8. Emit a `system.activity` row recording the uninstall.
  *   9. Awaited audit-log write.
  *
  * Authorization lives at the route layer — this function is callable
  * with any storage handle and trusts the caller to have gated already.
  *
- * Internal-call bypass — the `system.connection` transition at step 7
- * uses `storage.items.transition` directly rather than the HTTP route,
+ * Internal-call bypass — the `system.connection` writes at step 7
+ * use the storage layer directly rather than the HTTP route,
  * sidestepping the platform-credential gate that route enforces. This
  * intentionally mirrors `performInstall`'s direct-storage create: at
  * uninstall time the caller is a tenant admin or platform admin acting
@@ -262,11 +264,44 @@ async function performUninstallLocked(
   }
 
   // -------------------------------------------------------------------
-  // Step 7: transition system.connection state to revoked.
-  // active → revoked is the only allowed system.* lifecycle transition,
-  // matching the precondition asserted in step 1.
+  // Step 7: revoke the connection — lifecycle state and the denormalised
+  // properties that describe it.
+  //
+  // `properties.status` is the type's own "Lifecycle status (universal
+  // across all kinds)" field, and its enum is exactly `active | revoked`.
+  // Transitioning `state` and leaving it behind produced a row reading
+  // `state: revoked` beside `status: active`, which is not an ambiguity to
+  // interpret: the field is documented as the lifecycle status and it was
+  // not set. `runtime_status: healthy` on a connection whose credentials
+  // are all revoked is wrong for the same reason.
+  //
+  // Both writes land in one transaction so a partial failure cannot leave
+  // them disagreeing, which is the state this fixes.
   // -------------------------------------------------------------------
-  await storage.items.transition(input.connectionId, "revoked", input.tenantId);
+  // `runtime_status` is stamped, not cleared. A property cannot be removed
+  // through the update path at all: the merge is shallow and an explicit
+  // null on an optional field means "leave unset", so a delete here would
+  // silently leave `healthy` in place. That is how the stale value
+  // survived. The field gained a `revoked` member for this, because a
+  // status enum that cannot express "the runtime is gone" will always be
+  // reporting the health of something that no longer runs.
+  const revokedProperties: Record<string, unknown> = {
+    ...connection.properties,
+    status: "revoked",
+    runtime_status: "revoked",
+  };
+  await storage.runInTransaction(async () => {
+    await storage.items.transition(
+      input.connectionId,
+      "revoked",
+      input.tenantId,
+    );
+    await storage.items.update(
+      input.connectionId,
+      { properties: revokedProperties },
+      input.tenantId,
+    );
+  });
 
   // -------------------------------------------------------------------
   // Step 8: emit system.activity row.

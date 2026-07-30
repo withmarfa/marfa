@@ -902,7 +902,7 @@ const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
   description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
-  version: 1,
+  version: 2,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },
     client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
@@ -917,7 +917,7 @@ const systemConnection: TypeSchema = {
     direction: { type: "enum", description: "For kind: integration — does this integration read from, write to, or both", enum_values: ["read", "write", "both"] },
     triggers: { type: "array", description: "For kind: integration — array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid.", items_type: "object" },
     attached_device: { type: "string", description: "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync agent host)" },
-    runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only (the runtime executor is the legitimate writer; there is no client write surface).", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required"] },
+    runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only (the runtime executor is the legitimate writer; there is no client write surface). `revoked` means the runtime is gone: uninstall stamps it so the field cannot keep reporting the health of something that no longer runs.", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required", "revoked"] },
     last_sync_at: { type: "datetime", description: "For kind: integration — last successful sync run timestamp" },
     next_run_at: { type: "datetime", description: "For kind: integration — next scheduled run, when applicable" },
     last_error_at: { type: "datetime", description: "For kind: integration — most recent failure timestamp (cleared on next success)" },

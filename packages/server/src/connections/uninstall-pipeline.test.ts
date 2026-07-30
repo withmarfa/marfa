@@ -123,12 +123,26 @@ describe("performUninstall — happy path", () => {
     );
     expect(credAfter).toBeUndefined();
 
-    // Connection state flipped to revoked.
+    // Connection state flipped to revoked — and so did the properties
+    // that describe the same fact.
+    //
+    // Asserting `state` alone is why this shipped a row reading
+    // `state: revoked` beside `status: active`. The type documents
+    // `status` as the lifecycle status and its enum is exactly
+    // `active | revoked`, so the two cannot legitimately disagree. The
+    // shape is asserted whole rather than field by field for that reason.
     const conn = await ctx.storage.items.getIncludingTrashed(
       installed.connectionId,
       undefined,
     );
     expect(conn?.state).toBe("revoked");
+    expect(conn?.properties.status).toBe("revoked");
+    // Stamped rather than cleared: a property cannot be removed through
+    // the update path (shallow merge, and an explicit null on an optional
+    // field means "leave unset"), which is exactly how `healthy` survived
+    // an uninstall. The enum gained a `revoked` member so the field can
+    // say the runtime is gone instead of reporting stale health.
+    expect(conn?.properties.runtime_status).toBe("revoked");
 
     // Activity row was emitted with the right summary + provenance.
     const activity = await ctx.storage.items.get(result.activity_id, undefined);
