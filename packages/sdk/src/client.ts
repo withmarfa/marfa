@@ -1828,11 +1828,9 @@ export class MarfaClient {
        * suite, a self-hoster seeding an instance — with no supported path.
        */
       create: async (input?: { name?: string }): Promise<Tenant> => {
-        return this.transport.request<Tenant>(
-          "POST",
-          "/admin/tenants",
-          input ?? {},
-        );
+        return this.transport.request<Tenant>("POST", "/admin/tenants", {
+          body: input ?? {},
+        });
       },
 
       /** List every tenant in the instance with current status. */
