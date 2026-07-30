@@ -3,7 +3,8 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
-import { enforceQuota } from "../middleware/quota.js";
+import { reserveQuota } from "../middleware/quota.js";
+import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
@@ -351,35 +352,66 @@ export function blobRoutes(
       );
     }
 
-    // Enforce per-tenant blobs + storage_bytes ceilings. enforceQuota is
-    // a no-op for tenant-less keys (single-tenant self-hosts, platform
-    // admin) so the instance-wide flow is unaffected. Both checks run
-    // against the same tenant_id so they're either both present or both
-    // absent.
-    await enforceQuota(c, storage, "blobs", 1);
-    await enforceQuota(c, storage, "storage_bytes", data.length);
-
     // Compute content-addressed hash
     const hex = createHash("sha256").update(data).digest("hex");
     const hash = `sha256:${hex}`;
 
-    // Store if not already present
-    if (!(await blobBackend.exists(hash))) {
+    // Both ceilings are reserved around the registration, not checked
+    // before it. `storage_bytes` is the one that matters most here: it is
+    // unbounded disk, so an overshoot costs real space rather than a row.
+    //
+    // The physical write happens inside the reservation too. Putting bytes
+    // on disk that the registration then refuses would leak them, since
+    // nothing sweeps an unregistered blob — and content addressing means a
+    // later legitimate upload of the same bytes finds them already there.
+    const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
+    // Content addressing makes `existed` decide two things at once: whether
+    // these bytes need writing, and whether a later refusal has anything to
+    // undo. Bytes already on disk belong to whoever registered them.
+    const existed = await blobBackend.exists(hash);
+    if (!existed) {
       await blobBackend.put(hash, data, mimeType);
     }
-
-    // Register the metadata row scoped to the caller's tenant. Empty-
-    // string sentinel for instance-wide / single-tenant / platform-admin
-    // uploads. Different tenants uploading the same hash bytes get
-    // separate rows; the storage backend dedupes the physical file.
-    const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
-    await storage.blobs.register(
-      hash,
-      mimeType,
-      data.length,
-      hash,
-      blobTenantId,
-    );
+    try {
+      await storage.runInTransaction(async () => {
+        await reserveQuota(c, storage, [
+          { resource: "blobs", increment: 1 },
+          { resource: "storage_bytes", increment: data.length },
+        ]);
+        // Register the metadata row scoped to the caller's space. Empty-
+        // string sentinel for instance-wide / single-tenant / platform-admin
+        // uploads. Different spaces uploading the same hash bytes get
+        // separate rows; the storage backend dedupes the physical file.
+        await storage.blobs.register(
+          hash,
+          mimeType,
+          data.length,
+          hash,
+          blobTenantId,
+        );
+      });
+    } catch (err) {
+      // Refused, or the registration failed. An unregistered blob is
+      // unreachable and nothing sweeps it, so undo this request's own put —
+      // and only its own. A failure to undo leaves bytes behind rather than
+      // failing the request a second time, so it is logged, not thrown: the
+      // caller's error is the one worth surfacing.
+      if (!existed) {
+        try {
+          await blobBackend.delete(hash);
+        } catch (cleanupErr) {
+          log("error", "blob.orphaned_after_refused_upload", {
+            hash,
+            size: data.length,
+            error:
+              cleanupErr instanceof Error
+                ? cleanupErr.message
+                : String(cleanupErr),
+          });
+        }
+      }
+      throw err;
+    }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

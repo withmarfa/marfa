@@ -1039,15 +1039,19 @@ describe("RuntimeCredentialReaper — scheduling and coordination", () => {
           names.push(name);
           return opts.granted ? await fn() : undefined;
         },
-        // The reaper never takes this lock, but the store has to satisfy
-        // the interface. Always running `fn` matches the real contract:
-        // an exclusive lock waits rather than skipping.
+        // The reaper takes neither of the two below, but the store has to
+        // satisfy the interface. Always running `fn` matches the real
+        // contract: an exclusive lock waits rather than skipping.
         withExclusiveLock: async <T>(
           name: string,
           fn: () => Promise<T>,
         ): Promise<T> => {
           names.push(name);
           return await fn();
+        },
+        lockInTransaction: (name: string): Promise<void> => {
+          names.push(name);
+          return Promise.resolve();
         },
       },
     };

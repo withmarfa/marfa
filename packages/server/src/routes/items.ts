@@ -30,7 +30,7 @@ import {
   requireRowWritable,
   getTypeFilter,
 } from "../middleware/auth.js";
-import { enforceQuota } from "../middleware/quota.js";
+import { reserveQuota } from "../middleware/quota.js";
 import type { Storage, ItemSortField } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -873,10 +873,10 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, type, "write");
     const tenantId = c.get("apiKey")?.tenant_id;
 
-    // Per-tenant items quota. No-op for tenant-less keys (single-tenant +
-    // platform admin). Throws 429 quota_exceeded if this create would push
-    // the tenant past its items ceiling.
-    await enforceQuota(c, storage, "items");
+    // The items quota is reserved around the write itself, further down,
+    // rather than checked here. A count taken at this point is a check
+    // against a number the write is about to change, so N concurrent
+    // creates each see room and the tenant lands at limit + N - 1.
 
     if (Array.isArray(body.tags) && body.tags.length > 100) {
       throw new MarfaError(
@@ -1166,6 +1166,10 @@ export function itemRoutes(storage: Storage) {
     }
 
     const { item, metadata } = await storage.runInTransaction(async () => {
+      // The reservation is the first thing in this transaction and holds for
+      // the rest of it, so the count it reads includes every create already
+      // committed against this space's ceiling.
+      await reserveQuota(c, storage, [{ resource: "items", increment: 1 }]);
       const created = await storage.items.create(
         {
           type,

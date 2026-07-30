@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin } from "../middleware/auth.js";
-import { enforceQuota } from "../middleware/quota.js";
+import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -360,8 +360,9 @@ export function webhookRoutes(storage: Storage) {
     // attempts return WEBHOOK_NOT_FOUND rather than 403.
     const key = requireTenantAdmin(c);
 
-    await enforceQuota(c, storage, "webhooks");
-
+    // Reserved around the create below rather than checked here, so
+    // concurrent creates cannot each see room against the same pre-write
+    // count.
     const body = c.req.valid("json");
 
     try {
@@ -382,15 +383,18 @@ export function webhookRoutes(storage: Storage) {
       }
     }
 
-    const webhook = await storage.outboundWebhooks.create(
-      {
-        url: body.url,
-        events: body.events,
-        type_filter: body.type_filter ?? undefined,
-        secret: body.secret ?? undefined,
-      },
-      key.tenant_id,
-    );
+    const webhook = await storage.runInTransaction(async () => {
+      await reserveQuota(c, storage, [{ resource: "webhooks", increment: 1 }]);
+      return storage.outboundWebhooks.create(
+        {
+          url: body.url,
+          events: body.events,
+          type_filter: body.type_filter ?? undefined,
+          secret: body.secret ?? undefined,
+        },
+        key.tenant_id,
+      );
+    });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

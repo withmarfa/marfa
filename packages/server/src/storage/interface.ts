@@ -1902,6 +1902,22 @@ export interface CoordinationStore {
    * held here survives exactly as long as this call and no longer.
    */
   withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  /**
+   * Take a named lock on the caller's **current** transaction, releasing it
+   * when that transaction ends. Must be called inside `runInTransaction`.
+   *
+   * This exists because `withExclusiveLock` cannot guard a write. It holds
+   * its own connection for the length of `fn`, so a request that already
+   * holds one needs a second — and once enough concurrent requests each hold
+   * one and wait for another, the pool is exhausted by callers who will never
+   * release. `runInTransaction` avoids that by routing through the ambient
+   * transaction; a lock guarding a write has to do the same. It also has to,
+   * for correctness: `withExclusiveLock` releases before the caller's
+   * transaction commits, so the next lock-holder can read a count that does
+   * not yet include the write it was meant to be excluded from. A lock that
+   * ends with the transaction cannot have that gap.
+   */
+  lockInTransaction(name: string): Promise<void>;
 }
 
 /**
