@@ -109,6 +109,15 @@ export type EmailBackend = "cloudflare" | "smtp" | "none";
  */
 export interface EmailTransportConfig {
   backend: EmailBackend;
+  /** The instance's auth mode, when the caller knows it.
+   *
+   *  `hosted` gates sign-up on email verification, so a backend that cannot
+   *  send makes sign-up impossible. `createEmailTransport` refuses to build a
+   *  `none` transport in that mode rather than letting the instance boot into
+   *  a state where every account creation stalls with nothing in the logs
+   *  naming email as the cause. Omitted by tests that are exercising a
+   *  transport rather than a deployment. */
+  authMode?: "hosted" | "keys";
   /** Default `from` address. Domain must match a verified Cloudflare
    *  Email sending domain when `backend === "cloudflare"` —
    *  `senderDomainCheck` enforces this at boot. Format: `Name <addr@domain>`

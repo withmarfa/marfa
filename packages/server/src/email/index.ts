@@ -37,6 +37,23 @@ export async function createEmailTransport(
 
   switch (config.backend) {
     case "none": {
+      // A hosted instance gates sign-up on email verification, so a transport
+      // that cannot send makes account creation impossible rather than
+      // degraded. Refusing at boot is the only place that failure is legible.
+      //
+      // Nothing downstream reports it. Sends are best-effort by design, so a
+      // magic-link request mints its token, answers "check your email", and
+      // returns 200 whether or not anything was sent — which is also what
+      // enumeration resistance requires it to do. An instance in this state
+      // looks healthy from every angle and cannot create a user.
+      if (config.authMode === "hosted") {
+        throw new Error(
+          "MARFA_EMAIL_BACKEND is unset or 'none', which cannot send. " +
+            "A hosted instance gates sign-up on email verification, so this " +
+            "leaves account creation permanently stalled. Set it to " +
+            "'cloudflare' or 'smtp'.",
+        );
+      }
       log("info", "Email transport: none (email-dependent flows will 503)");
       return new NoneTransport();
     }
