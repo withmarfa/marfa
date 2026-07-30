@@ -1,0 +1,224 @@
+/**
+ * A connection's owner can pause and resume it.
+ *
+ * They could not. Pause was built as a direct `items.transition`, so it hit
+ * the reserved-namespace rule and returned `403 type_not_permitted` naming
+ * a namespace the user never asked to write. The rule is right — tenant
+ * credentials must not write `system.*` directly — and the mistake was
+ * building pause as a direct write when uninstall already did the same
+ * class of write through a mediated route and worked.
+ *
+ * So the shipped feature let an owner install a connection and destroy it,
+ * but not temporarily stop it. The only route from running to not-running
+ * was the irreversible one that drops the OAuth grant.
+ *
+ * It was broken twice over: the `system.connection` lifecycle is bounded to
+ * `active | revoked`, so the `archived` state the old code transitioned to
+ * does not exist for the type. Pause lives on `runtime_status`, which has a
+ * `paused` member for the purpose.
+ *
+ * These tests prove it by permission, with a real non-platform tenant key,
+ * rather than by mocking the gate — the gate is the thing under test.
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestContext, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+import type { IntegrationManifest } from "@withmarfa/shared";
+
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext({ authMode: "hosted" });
+});
+
+afterAll(async () => {
+  await ctx.cleanup();
+});
+
+function manifest(name: string): IntegrationManifest {
+  return {
+    name,
+    version: "1.0.0",
+    publisher: "Acme",
+    description: "pause test",
+    direction: "read",
+    triggers: [{ type: "manual" }],
+    target_types: ["core.note"],
+    runtime_compatibility: ["local"],
+    bidirectional_handling: {
+      echo_ttl_seconds: 60,
+      lag_window_seconds: 60,
+      tombstone_mapping: "state-trashed",
+      partial_write_mode: "all-or-nothing",
+    },
+    oauth_requirements: {},
+    webhook_verification: { method: "hmac-sha256" },
+    manifest_schema_version: "1.0.0",
+    permissions: {},
+  };
+}
+
+/** A tenant-admin key with no platform flag: the shape a space owner holds. */
+async function ownerKey(tenantId: string): Promise<string> {
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const res = await request(
+    ctx.app,
+    "POST",
+    `/admin/tenants/${tenantId}/keys`,
+    {
+      key: ctx.adminKey,
+      body: {
+        label: `owner-${suffix}`,
+        source: `owner-${suffix}`,
+        role: "tenant_admin",
+        default_tier: "library",
+        type_permissions: { "*": "write" },
+      },
+    },
+  );
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as { key: string; is_platform?: boolean };
+  // The premise of the test: this key must NOT be a platform credential,
+  // or it would bypass the very gate that made pause unusable.
+  expect(body.is_platform ?? false).toBe(false);
+  return body.key;
+}
+
+/** An installed, active integration connection in the given space. */
+async function connectionIn(tenantId: string): Promise<string> {
+  const name = `acme.pause-${Math.random().toString(36).slice(2, 10)}`;
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest_name: name,
+        manifest_version: "1.0.0",
+        publisher: "Acme",
+        manifest: manifest(name),
+        registered_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        runtime_status: "healthy",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+      },
+    },
+    tenantId,
+  );
+  return connection.id;
+}
+
+describe("pause and resume are reachable by the connection's owner", () => {
+  let tenantId: string;
+  let key: string;
+
+  beforeAll(async () => {
+    const tenant = await ctx.storage.tenants!.create("pause-owner");
+    tenantId = tenant.id;
+    key = await ownerKey(tenantId);
+  });
+
+  it("REGRESSION: an ordinary tenant key pauses, then resumes, its own connection", async () => {
+    const id = await connectionIn(tenantId);
+
+    const paused = await request(ctx.app, "POST", `/connections/${id}/pause`, {
+      key,
+    });
+    expect(paused.status).toBe(200);
+    expect(
+      ((await paused.json()) as { runtime_status: string }).runtime_status,
+    ).toBe("paused");
+
+    const afterPause = await ctx.storage.items.get(id, tenantId);
+    expect(afterPause?.properties.runtime_status).toBe("paused");
+    // The lifecycle is untouched: pause is not a soft uninstall, and the
+    // credentials and grant survive so resume needs no re-consent.
+    expect(afterPause?.state).toBe("active");
+
+    const resumed = await request(
+      ctx.app,
+      "POST",
+      `/connections/${id}/resume`,
+      {
+        key,
+      },
+    );
+    expect(resumed.status).toBe(200);
+    const afterResume = await ctx.storage.items.get(id, tenantId);
+    expect(afterResume?.properties.runtime_status).toBe("healthy");
+  });
+
+  it("still refuses the same key a direct system.* write", async () => {
+    // The reserved-namespace rule is correct and must survive the fix. If
+    // this starts passing, pause was made to work by widening the gate
+    // rather than by mediating the write.
+    const res = await request(ctx.app, "POST", "/items", {
+      key,
+      body: {
+        type: "system.connection",
+        properties: { kind: "integration", status: "active" },
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses to pause a connection in another space", async () => {
+    const other = await ctx.storage.tenants!.create("pause-other");
+    const theirs = await connectionIn(other.id);
+    const res = await request(ctx.app, "POST", `/connections/${theirs}/pause`, {
+      key,
+    });
+    // Not found rather than forbidden: a cross-space probe must not
+    // confirm the id exists.
+    expect(res.status).toBe(404);
+  });
+
+  it("refuses to pause twice, and to resume something running", async () => {
+    const id = await connectionIn(tenantId);
+    expect(
+      (await request(ctx.app, "POST", `/connections/${id}/pause`, { key }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await request(ctx.app, "POST", `/connections/${id}/pause`, { key }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await request(ctx.app, "POST", `/connections/${id}/resume`, { key }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await request(ctx.app, "POST", `/connections/${id}/resume`, { key }))
+        .status,
+    ).toBe(400);
+  });
+
+  it("refuses to pause a revoked connection", async () => {
+    const id = await connectionIn(tenantId);
+    await ctx.storage.items.transition(id, "revoked", tenantId);
+    const res = await request(ctx.app, "POST", `/connections/${id}/pause`, {
+      key,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("records the pause as activity the owner can see", async () => {
+    const id = await connectionIn(tenantId);
+    const res = await request(ctx.app, "POST", `/connections/${id}/pause`, {
+      key,
+    });
+    const body = (await res.json()) as { activity_id: string };
+    const activity = await ctx.storage.items.get(body.activity_id, tenantId);
+    expect(activity?.type).toBe("system.activity");
+    expect(activity?.properties.connection_id).toBe(id);
+    expect(String(activity?.properties.summary)).toMatch(/^Paused connection /);
+  });
+});
