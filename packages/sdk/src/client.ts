@@ -7,17 +7,17 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
-  CreateTenantKeyInput,
+  CreateSpaceKeyInput,
   UpdateKeyInput,
   PaginatedResult,
   SearchResult,
   ItemState,
   Tier,
-  TenantConfig,
-  TenantQuota,
-  Tenant,
-  TenantMetrics,
-  TenantActivityEntry,
+  SpaceConfig,
+  SpaceQuota,
+  Space,
+  SpaceMetrics,
+  SpaceActivityEntry,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
@@ -121,7 +121,7 @@ export interface UpdateOptions {
   /**
    * Repoint the item at a new natural-key identifier under the caller's
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
-   * per tenant — a collision returns HTTP 409 `source_id_conflict`. PATCHing
+   * per space — a collision returns HTTP 409 `source_id_conflict`. PATCHing
    * the value the item already carries is a no-op success. Used by the
    * sync agent to preserve item identity through file renames.
    */
@@ -243,7 +243,7 @@ export interface MetadataInput {
  * deliberately surfaces only the identifying fields + timestamps needed
  * for emergency revocation.
  */
-export interface TenantApiKeySummary {
+export interface SpaceApiKeySummary {
   id: string;
   label: string;
   source: string;
@@ -707,8 +707,8 @@ export class MarfaClient {
 
     /**
      * Read many items by id in one round-trip via `POST /items/bulk-get`.
-     * Tenant-scoped and permission-filtered exactly like `get`: ids the
-     * caller cannot read (other tenant, type not permitted, trashed, or
+     * Space-scoped and permission-filtered exactly like `get`: ids the
+     * caller cannot read (other space, type not permitted, trashed, or
      * non-existent) are silently omitted, so the returned array may be
      * shorter than `ids` and is in no guaranteed order. Capped at 100 ids
      * server-side — an over-cap request throws a `validation_error`.
@@ -1212,7 +1212,7 @@ export class MarfaClient {
 
     /**
      * Enumerate the distinct set of tags in use across items the caller can
-     * read. Tenant-scoped, type-permission scoped, excludes trashed items.
+     * read. Space-scoped, type-permission scoped, excludes trashed items.
      * Returns tags with usage counts, sorted by count desc then tag asc.
      */
     listTags: async (): Promise<{ tag: string; count: number }[]> => {
@@ -1286,7 +1286,7 @@ export class MarfaClient {
 
   readonly edges = {
     /**
-     * Global edge listing across the tenant, filtered by edge type
+     * Global edge listing across the space, filtered by edge type
      * (comma-separated string or array of type ids). Use this when you
      * need "all edges of type X" — replaces the walk-every-item
      * pattern. Per-target filters live on `listFromSource` /
@@ -1637,8 +1637,8 @@ export class MarfaClient {
      * JSON install of an Integration manifest — server-side sibling of
      * the browser consent flow at `POST /integrations/:id/install`.
      * Skips the HTML consent screen so operators and tooling can install
-     * connections non-interactively. Admin-only; tenant admins install
-     * into their own tenant scope.
+     * connections non-interactively. Admin-only; space admins install
+     * into their own space scope.
      *
      * `integration_id` references a `system.integration` item (registered
      * via `POST /integrations`). `label` is optional — the server
@@ -1668,8 +1668,8 @@ export class MarfaClient {
      *
      * Idempotent at the artifact level — revoking already-revoked
      * tokens is a no-op — but rejects with 400 when the connection
-     * itself is already in state `revoked`. Admin-only; tenant admins
-     * can uninstall connections in their own tenant scope.
+     * itself is already in state `revoked`. Admin-only; space admins
+     * can uninstall connections in their own space scope.
      */
     uninstall: async (id: string): Promise<ConnectionUninstallResult> => {
       return this.transport.request<ConnectionUninstallResult>(
@@ -1688,7 +1688,7 @@ export class MarfaClient {
      * on a connection that is already paused, or revoked.
      *
      * Mediated server-side rather than a direct item write: pausing
-     * means writing a `system.*` item, which ordinary tenant
+     * means writing a `system.*` item, which ordinary space
      * credentials are correctly refused, so this route does the
      * privileged write on the owner's behalf.
      */
@@ -1719,12 +1719,12 @@ export class MarfaClient {
      * route returns one row per subscribing connection — either
      * `would_dispatch: true` with the synthesized envelope, or
      * `would_dispatch: false` with a `dispatch_reason` (`self_event`,
-     * `cross_tenant`, `hop_budget_exceeded`, `subscription_inactive`).
+     * `cross_space`, `hop_budget_exceeded`, `subscription_inactive`).
      *
-     * Defaults to all subscribers in the caller's tenant; pass
+     * Defaults to all subscribers in the caller's space; pass
      * `connection_id` to filter to one. The optional `cycle` override
      * lets you reproduce reactive scenarios ("what if hop_count was N?").
-     * Tenant-admin only.
+     * Space-admin only.
      */
     previewEvent: async (
       input: PreviewEventRequest,
@@ -1737,53 +1737,53 @@ export class MarfaClient {
     },
   };
 
-  // ---- Tenants (admin) ----
+  // ---- Spaces (admin) ----
 
-  /** Tenant-scoped configuration. Carries the three optional schema-
+  /** Space-scoped configuration. Carries the three optional schema-
    * enforcement levers (`strict_mode`, `source_allowlist`,
-   * `source_filter`) and the per-tenant cleanup-job overrides
+   * `source_filter`) and the per-space cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
    * `trash_retention_days`). All endpoints are admin-only. */
-  readonly tenants = {
-    /** Returns the current tenant's config. Empty object when nothing
+  readonly spaces = {
+    /** Returns the current space's config. Empty object when nothing
      * is configured. */
-    getConfig: async (): Promise<TenantConfig> => {
-      return this.transport.request<TenantConfig>("GET", "/tenants/me/config");
+    getConfig: async (): Promise<SpaceConfig> => {
+      return this.transport.request<SpaceConfig>("GET", "/spaces/me/config");
     },
 
-    /** Replaces the current tenant's config (PUT semantics — full
+    /** Replaces the current space's config (PUT semantics — full
      * replacement, not merge). */
-    setConfig: async (config: TenantConfig): Promise<TenantConfig> => {
-      return this.transport.request<TenantConfig>("PUT", "/tenants/me/config", {
+    setConfig: async (config: SpaceConfig): Promise<SpaceConfig> => {
+      return this.transport.request<SpaceConfig>("PUT", "/spaces/me/config", {
         body: config,
       });
     },
 
-    /** Per-tenant resource quotas. Empty / missing limits fall back to
+    /** Per-space resource quotas. Empty / missing limits fall back to
      *  the instance defaults from env. Quotas are platform-admin-managed. */
     quotas: {
       /**
-       * Read the calling tenant's quota row. Resolves the tenant from
-       * the bearer's `tenant_id`; rejects with 400 when the credential
-       * is tenant-less (platform admin, single-tenant self-host
+       * Read the calling space's quota row. Resolves the space from
+       * the bearer's `space_id`; rejects with 400 when the credential
+       * is space-less (platform admin, single-space self-host
        * bootstrap). Use `getById` instead in that case.
        */
-      getOwn: async (): Promise<TenantQuota> => {
-        return this.transport.request<TenantQuota>("GET", "/tenants/me/quotas");
+      getOwn: async (): Promise<SpaceQuota> => {
+        return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");
       },
 
-      /** Read a specific tenant's quota row (platform admin only). */
-      getById: async (tenantId: string): Promise<TenantQuota> => {
-        return this.transport.request<TenantQuota>(
+      /** Read a specific space's quota row (platform admin only). */
+      getById: async (spaceId: string): Promise<SpaceQuota> => {
+        return this.transport.request<SpaceQuota>(
           "GET",
-          `/tenants/${encodeURIComponent(tenantId)}/quotas`,
+          `/spaces/${encodeURIComponent(spaceId)}/quotas`,
         );
       },
 
-      /** Replace a tenant's quota row (platform admin only). Pass null
+      /** Replace a space's quota row (platform admin only). Pass null
        *  on a field to clear it (revert to env default). */
       set: async (
-        tenantId: string,
+        spaceId: string,
         input: {
           items_limit?: number | null;
           webhooks_limit?: number | null;
@@ -1791,10 +1791,10 @@ export class MarfaClient {
           storage_bytes_limit?: number | null;
           rate_per_minute_limit?: number | null;
         },
-      ): Promise<TenantQuota> => {
-        return this.transport.request<TenantQuota>(
+      ): Promise<SpaceQuota> => {
+        return this.transport.request<SpaceQuota>(
           "PUT",
-          `/tenants/${encodeURIComponent(tenantId)}/quotas`,
+          `/spaces/${encodeURIComponent(spaceId)}/quotas`,
           { body: input },
         );
       },
@@ -1811,118 +1811,118 @@ export class MarfaClient {
    * in CLI / UI layers.
    *
    * Quota read/write is intentionally NOT duplicated here — it lives on
-   * `client.tenants.quotas.{getById, set}` and is already platform-
+   * `client.spaces.quotas.{getById, set}` and is already platform-
    * admin-gated. The admin namespace mirrors what the CLI's `my admin`
-   * tree exposes; quotas are reached via the existing tenants surface.
+   * tree exposes; quotas are reached via the existing spaces surface.
    */
   readonly admin = {
-    tenants: {
+    spaces: {
       /**
-       * Create an empty tenant. Pair with `admin.keys.create(tenantId, …)` to
+       * Create an empty space. Pair with `admin.keys.create(spaceId, …)` to
        * issue a credential scoped to it.
        *
-       * Every other operator verb on a tenant predates this one, so a tenant
+       * Every other operator verb on a space predates this one, so a space
        * could previously only come into being through a hosted sign-up. That
        * left an operator with no way to provision a space, and anything
-       * needing a tenant-scoped credential — a test harness, a conformance
+       * needing a space-scoped credential — a test harness, a conformance
        * suite, a self-hoster seeding an instance — with no supported path.
        */
-      create: async (input?: { name?: string }): Promise<Tenant> => {
-        return this.transport.request<Tenant>("POST", "/admin/tenants", {
+      create: async (input?: { name?: string }): Promise<Space> => {
+        return this.transport.request<Space>("POST", "/admin/spaces", {
           body: input ?? {},
         });
       },
 
-      /** List every tenant in the instance with current status. */
-      list: async (): Promise<Tenant[]> => {
-        const res = await this.transport.request<{ data: Tenant[] }>(
+      /** List every space in the instance with current status. */
+      list: async (): Promise<Space[]> => {
+        const res = await this.transport.request<{ data: Space[] }>(
           "GET",
-          "/admin/tenants",
+          "/admin/spaces",
         );
         return res.data;
       },
 
       /**
-       * Single tenant + per-tenant quota overrides + the most-recent
-       * `system.activity` items for the tenant (`null` quotas when no
+       * Single space + per-space quota overrides + the most-recent
+       * `system.activity` items for the space (`null` quotas when no
        * override is configured; quota fields then resolve to instance
        * defaults).
        */
       show: async (
-        tenantId: string,
+        spaceId: string,
       ): Promise<{
-        tenant: Tenant;
-        quotas: TenantQuota | null;
-        recent_activity: TenantActivityEntry[];
+        space: Space;
+        quotas: SpaceQuota | null;
+        recent_activity: SpaceActivityEntry[];
       }> => {
         return this.transport.request<{
-          tenant: Tenant;
-          quotas: TenantQuota | null;
-          recent_activity: TenantActivityEntry[];
-        }>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}`);
+          space: Space;
+          quotas: SpaceQuota | null;
+          recent_activity: SpaceActivityEntry[];
+        }>("GET", `/admin/spaces/${encodeURIComponent(spaceId)}`);
       },
 
       /**
-       * Flip the tenant's status to `'suspended'`. Future non-GET
-       * requests from credentials in the tenant return HTTP 403
-       * `tenant_suspended`. Reads pass through; platform-admin keys
+       * Flip the space's status to `'suspended'`. Future non-GET
+       * requests from credentials in the space return HTTP 403
+       * `space_suspended`. Reads pass through; platform-admin keys
        * bypass. Idempotent.
        */
-      suspend: async (tenantId: string): Promise<Tenant> => {
-        return this.transport.request<Tenant>(
+      suspend: async (spaceId: string): Promise<Space> => {
+        return this.transport.request<Space>(
           "POST",
-          `/admin/tenants/${encodeURIComponent(tenantId)}/suspend`,
+          `/admin/spaces/${encodeURIComponent(spaceId)}/suspend`,
         );
       },
 
       /** Reverse of `suspend`. Idempotent. */
-      unsuspend: async (tenantId: string): Promise<Tenant> => {
-        return this.transport.request<Tenant>(
+      unsuspend: async (spaceId: string): Promise<Space> => {
+        return this.transport.request<Space>(
           "POST",
-          `/admin/tenants/${encodeURIComponent(tenantId)}/unsuspend`,
+          `/admin/spaces/${encodeURIComponent(spaceId)}/unsuspend`,
         );
       },
 
       /**
-       * Per-tenant usage snapshot — item count by state, blob count
+       * Per-space usage snapshot — item count by state, blob count
        * and total bytes, custom-type count, plus recent activity.
        */
-      metrics: async (tenantId: string): Promise<TenantMetrics> => {
-        return this.transport.request<TenantMetrics>(
+      metrics: async (spaceId: string): Promise<SpaceMetrics> => {
+        return this.transport.request<SpaceMetrics>(
           "GET",
-          `/admin/tenants/${encodeURIComponent(tenantId)}/metrics`,
+          `/admin/spaces/${encodeURIComponent(spaceId)}/metrics`,
         );
       },
     },
 
     keys: {
-      /** Active (non-revoked) keys for the named tenant. Operator
+      /** Active (non-revoked) keys for the named space. Operator
        *  surface for emergency revocation — pair with `client.keys.revoke`. */
-      list: async (tenantId: string): Promise<TenantApiKeySummary[]> => {
+      list: async (spaceId: string): Promise<SpaceApiKeySummary[]> => {
         const res = await this.transport.request<{
-          data: TenantApiKeySummary[];
-        }>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}/keys`);
+          data: SpaceApiKeySummary[];
+        }>("GET", `/admin/spaces/${encodeURIComponent(spaceId)}/keys`);
         return res.data;
       },
 
       /**
-       * Mint a key bound to the named tenant. The raw key value is returned
+       * Mint a key bound to the named space. The raw key value is returned
        * exactly once, same as `client.keys.create`.
        *
        * This is the route to reach for when a platform admin needs to issue
        * a credential for someone else's space. `client.keys.create` always
-       * binds the new key to the *caller's* tenant, so a platform admin
-       * (which has none) cannot produce a tenant-bound key through it at
+       * binds the new key to the *caller's* space, so a platform admin
+       * (which has none) cannot produce a space-bound key through it at
        * all. `role` defaults to `member`; the route cannot mint a platform
        * credential.
        */
       create: async (
-        tenantId: string,
-        input: CreateTenantKeyInput,
+        spaceId: string,
+        input: CreateSpaceKeyInput,
       ): Promise<ApiKey & { key: string }> => {
         return this.transport.request<ApiKey & { key: string }>(
           "POST",
-          `/admin/tenants/${encodeURIComponent(tenantId)}/keys`,
+          `/admin/spaces/${encodeURIComponent(spaceId)}/keys`,
           { body: input },
         );
       },
@@ -1959,7 +1959,7 @@ export class MarfaClient {
    *
    * The data plane (every other namespace on the client) authenticates
    * with a bearer token; these account-management endpoints accept
-   * EITHER a bearer (tenant_admin / admin in the user's tenant)
+   * EITHER a bearer (space_admin / admin in the user's space)
    * OR a better-auth session cookie. The CLI flow uses a bearer (the
    * user's own key); web flows use the cookie. The transport sends
    * the bearer header by default, so SDK callers operating with a
@@ -2013,7 +2013,7 @@ export class MarfaClient {
    * Apps that need a third-party-OAuth-style read should use the
    * standard OIDC `profile` / `email` scopes via `/auth/oauth2/userinfo`
    * instead — this surface is for first-party callers (CLI, MCP, the
-   * user themselves) holding a tenant-scoped bearer.
+   * user themselves) holding a space-scoped bearer.
    */
   /**
    * The change stream.

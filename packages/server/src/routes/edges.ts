@@ -21,7 +21,7 @@ import { publishEdge } from "../pubsub.js";
 
 const EdgeSchema = z.object({
   id: z.string(),
-  tenant_id: z.string().nullable().optional(),
+  space_id: z.string().nullable().optional(),
   source_id: z.string(),
   target_id: z.string(),
   edge_type: z.string(),
@@ -72,7 +72,7 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns a paginated list of edges across the tenant, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
+    "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -126,7 +126,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items in the tenant. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time.",
+    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -270,10 +270,10 @@ export function edgeRoutes(storage: Storage) {
 
   router.openapi(listEdgesRoute, async (c) => {
     requireAuth(c);
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const q = c.req.valid("query");
     const result = await storage.edges.list({
-      tenantId,
+      spaceId,
       edge_type: parseEdgeTypeFilter(q.edge_type),
       limit: q.limit,
       cursor: q.cursor,
@@ -290,11 +290,11 @@ export function edgeRoutes(storage: Storage) {
     if (!isValidId(body.target_id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid target_id");
     }
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
 
     // Dual gate: source item's type permission + edge type permission.
     // Admin keys bypass both via the helpers.
-    const sourceItem = await storage.items.get(body.source_id, tenantId);
+    const sourceItem = await storage.items.get(body.source_id, spaceId);
     if (!sourceItem) {
       throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
@@ -309,7 +309,7 @@ export function edgeRoutes(storage: Storage) {
         source_id: body.source_id,
         target_id: body.target_id,
         edge_type: body.edge_type,
-        tenant_id: tenantId,
+        space_id: spaceId,
       });
       return storage.edges.createRaw(
         {
@@ -318,13 +318,13 @@ export function edgeRoutes(storage: Storage) {
           edge_type: body.edge_type,
           properties: body.properties,
         },
-        tenantId,
+        spaceId,
       );
     });
-    await publishEdge({ type: "edge_created", edge, tenantId });
+    await publishEdge({ type: "edge_created", edge, spaceId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.create",
       resource_type: "edge",
@@ -342,13 +342,13 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
-    // tenant: a tenant-scoped caller must never learn another tenant's edge
-    // exists, let alone mutate it. Platform-admin / single-tenant keys carry
-    // no tenant_id and skip the check.
-    if (!existing || (tenantId && existing.tenant_id !== tenantId)) {
+    // space: a space-scoped caller must never learn another space's edge
+    // exists, let alone mutate it. Platform-admin / single-space keys carry
+    // no space_id and skip the check.
+    if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -358,7 +358,7 @@ export function edgeRoutes(storage: Storage) {
     // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
-      tenantId,
+      spaceId,
     );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
@@ -374,15 +374,15 @@ export function edgeRoutes(storage: Storage) {
         );
       }
     }
-    // Fence the write to the caller's tenant — belt to the 404-cloak above.
+    // Fence the write to the caller's space — belt to the 404-cloak above.
     const updated = await storage.edges.updateProperties(
       id,
       body.properties,
-      tenantId,
+      spaceId,
     );
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.update",
       resource_type: "edge",
@@ -395,13 +395,13 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
-    // tenant: a tenant-scoped caller must never learn another tenant's edge
-    // exists, let alone delete it. Platform-admin / single-tenant keys carry
-    // no tenant_id and skip the check.
-    if (!existing || (tenantId && existing.tenant_id !== tenantId)) {
+    // space: a space-scoped caller must never learn another space's edge
+    // exists, let alone delete it. Platform-admin / single-space keys carry
+    // no space_id and skip the check.
+    if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -411,20 +411,20 @@ export function edgeRoutes(storage: Storage) {
     // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
-      tenantId,
+      spaceId,
     );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
-    // Fence the delete to the caller's tenant — belt to the 404-cloak above.
-    await storage.edges.delete(id, tenantId);
+    // Fence the delete to the caller's space — belt to the 404-cloak above.
+    await storage.edges.delete(id, spaceId);
     await publishEdge({
       type: "edge_deleted",
       edge: existing,
-      tenantId,
+      spaceId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.delete",
       resource_type: "edge",
@@ -556,8 +556,8 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    const tenantId = c.get("apiKey")?.tenant_id;
-    const item = await storage.items.get(id, tenantId);
+    const spaceId = c.get("apiKey")?.space_id;
+    const item = await storage.items.get(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -576,8 +576,8 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    const tenantId = c.get("apiKey")?.tenant_id;
-    const item = await storage.items.get(id, tenantId);
+    const spaceId = c.get("apiKey")?.space_id;
+    const item = await storage.items.get(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }

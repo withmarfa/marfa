@@ -53,14 +53,14 @@ function activeConnection(id: string): {
   id: string;
   type: string;
   state: string;
-  tenant_id: string | null;
+  space_id: string | null;
   properties: Record<string, unknown>;
 } {
   return {
     id,
     type: "system.connection",
     state: "active",
-    tenant_id: null,
+    space_id: null,
     properties: { kind: "integration", status: "active" },
   };
 }
@@ -118,7 +118,7 @@ describe("performInstall — happy path", () => {
 
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
-      tenantId: undefined,
+      spaceId: undefined,
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
@@ -194,7 +194,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         "test-salt",
         {
           apiKeyId: "api_admin",
-          tenantId: undefined,
+          spaceId: undefined,
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
@@ -268,7 +268,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         "test-salt",
         {
           apiKeyId: "api_admin",
-          tenantId: undefined,
+          spaceId: undefined,
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
@@ -340,7 +340,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         "test-salt",
         {
           apiKeyId: "api_admin",
-          tenantId: undefined,
+          spaceId: undefined,
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
@@ -430,7 +430,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
-      tenantId: undefined,
+      spaceId: undefined,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -462,7 +462,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     await expect(
       performInstall(ctx.storage, "test-salt", {
         apiKeyId: adminKey.id,
-        tenantId: undefined,
+        spaceId: undefined,
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -490,7 +490,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     await expect(
       performInstall(ctx.storage, "test-salt", {
         apiKeyId: adminKey.id,
-        tenantId: undefined,
+        spaceId: undefined,
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -523,7 +523,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
-      tenantId: undefined,
+      spaceId: undefined,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -547,7 +547,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const result = await performInstall(ctx.storage, "test-salt", {
       apiKeyId: adminKey.id,
-      tenantId: undefined,
+      spaceId: undefined,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),

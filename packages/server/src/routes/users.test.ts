@@ -20,11 +20,11 @@ const SALT = "test-salt";
 
 // The default createTestContext() runs in `authMode: "keys"`, where the
 // user-auth routes are not mounted. Happy-path coverage needs a
-// hosted-mode app, built inline here (mirroring tenants.test.ts).
+// hosted-mode app, built inline here (mirroring spaces.test.ts).
 //
 // Legacy `POST /auth/signup` + `POST /auth/session` retired — Better Auth
 // at `/auth/sign-up/email` is the canonical sign-up surface. Tests below
-// mint user + tenant + admin key directly through storage rather than
+// mint user + space + admin key directly through storage rather than
 // driving signup as the test-fixture path.
 interface HostedContext {
   app: Hono<AppEnv>;
@@ -110,21 +110,21 @@ interface User {
   name: string | null;
   provider: string;
   provider_id: string;
-  tenant_id: string;
+  space_id: string;
   handle?: string | null;
   // email + avatar_url are not on the `users` table; auth_user.email is
   // canonical. The /auth/me wire shape no longer returns email — callers
   // reach for /profile/me (joined to auth_user).
 }
 
-interface Tenant {
+interface Space {
   id: string;
   name: string | null;
 }
 
 interface MeResponse {
   user: User | null;
-  tenant: Tenant;
+  space: Space;
 }
 
 interface ErrorBody {
@@ -132,7 +132,7 @@ interface ErrorBody {
 }
 
 /**
- * Mints a user + tenant + admin API key directly through storage —
+ * Mints a user + space + admin API key directly through storage —
  * replaces the legacy `POST /auth/signup` fixture path. Returns the raw
  * key so tests can authenticate against `/auth/me` and `/auth/me/handle`.
  */
@@ -142,7 +142,7 @@ async function mintUser(
   options: { name?: string } = {},
 ): Promise<{
   user: User;
-  tenant: Tenant;
+  space: Space;
   apiKey: string;
   provider: string;
   providerAccountId: string;
@@ -152,12 +152,12 @@ async function mintUser(
   const providerAccountId = `${prefix}-${suffix}`;
   const displayName = options.name ?? `${prefix}-${suffix}@example.com`;
 
-  const tenant = await storage.tenants!.create(displayName);
+  const space = await storage.spaces!.create(displayName);
   const user = (await storage.users!.create({
     name: options.name,
     provider,
     provider_id: providerAccountId,
-    tenant_id: tenant.id,
+    space_id: space.id,
   })) as unknown as User;
 
   const rawKey = `marfa_k1_test_${prefix}_${suffix}`;
@@ -169,12 +169,12 @@ async function mintUser(
       type_permissions: { "*": "write" },
     },
     hashApiKey(rawKey, SALT),
-    tenant.id,
+    space.id,
   );
 
   return {
     user,
-    tenant: tenant as unknown as Tenant,
+    space: space as unknown as Space,
     apiKey: rawKey,
     provider,
     providerAccountId,
@@ -282,7 +282,7 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(res.status).toBe(401);
     });
 
-    it("returns user + tenant for the authenticated caller (200)", async () => {
+    it("returns user + space for the authenticated caller (200)", async () => {
       const minted = await mintUser(hosted.storage, "me-happy", {
         name: "Me Test",
       });
@@ -293,7 +293,7 @@ describe("User-auth routes — authMode=hosted", () => {
       const body = (await res.json()) as MeResponse;
       expect(body.user?.id).toBe(minted.user.id);
       expect(body.user?.provider_id).toBe(minted.providerAccountId);
-      expect(body.tenant.id).toBe(minted.tenant.id);
+      expect(body.space.id).toBe(minted.space.id);
     });
   });
 

@@ -9,7 +9,7 @@ import type { TestContext } from "../test-utils.js";
 
 /**
  * Subtree resolution consults the type registry, and the registry is
- * tenant-scoped because custom types are. That makes tenant isolation a
+ * space-scoped because custom types are. That makes space isolation a
  * property of the matcher itself rather than only of the query around it: a
  * resolver that reached the global set would let one space's declared
  * descendants widen another space's reads.
@@ -42,17 +42,17 @@ function childSchema(): { id: string; [k: string]: unknown } {
   };
 }
 
-async function newTenant(
+async function newSpace(
   c: TestContext,
   label: string,
   permissions: Record<string, "read" | "write" | "none">,
-  role: "tenant_admin" | "member" = "tenant_admin",
-): Promise<{ tenantId: string; key: string }> {
-  const tenants = c.storage.tenants;
-  // Hosted mode always wires the tenant store; a keys-mode context would not,
+  role: "space_admin" | "member" = "space_admin",
+): Promise<{ spaceId: string; key: string }> {
+  const spaces = c.storage.spaces;
+  // Hosted mode always wires the space store; a keys-mode context would not,
   // and this suite is meaningless without two spaces to keep apart.
-  if (!tenants) throw new Error("tenant store unavailable in this context");
-  const tenant = await tenants.create(
+  if (!spaces) throw new Error("space store unavailable in this context");
+  const space = await spaces.create(
     `${label}-${Math.random().toString(36).slice(2, 8)}`,
   );
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -68,16 +68,16 @@ async function newTenant(
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenant.id,
+    space.id,
   );
-  return { tenantId: tenant.id, key: raw };
+  return { spaceId: space.id, key: raw };
 }
 
 describe("declared descendants stay inside their own space", () => {
   it("does not let one space's declared child widen another space's subtree read", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
-    const alpha = await newTenant(ctx, "alpha", { "*": "write" });
-    const beta = await newTenant(ctx, "beta", { "*": "write" });
+    const alpha = await newSpace(ctx, "alpha", { "*": "write" });
+    const beta = await newSpace(ctx, "beta", { "*": "write" });
 
     // Alpha registers a child of core.note named outside that namespace, and
     // writes one item of it.
@@ -120,7 +120,7 @@ describe("declared descendants stay inside their own space", () => {
 
   it("registering a type does not make an existing row readable", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
-    const alpha = await newTenant(ctx, "alpha", { "*": "write" });
+    const alpha = await newSpace(ctx, "alpha", { "*": "write" });
 
     // A row written before any custom type exists.
     const note = await request(ctx.app, "POST", "/items", {
@@ -143,7 +143,7 @@ describe("declared descendants stay inside their own space", () => {
         is_platform: false,
       },
       hashApiKey(scoped, TEST_API_KEY_SALT),
-      alpha.tenantId,
+      alpha.spaceId,
     );
 
     // It registers a type under the subtree it holds. Widening which types a

@@ -1,7 +1,7 @@
 /**
  * Console page renderer for `/auth/keys`.
  *
- * Auth-gated (Better Auth cookie session). Lets a signed-in tenant owner
+ * Auth-gated (Better Auth cookie session). Lets a signed-in space owner
  * mint, view, and revoke their own long-lived `marfa_k1_` API keys without
  * dropping to the bearer-only data plane — the self-serve credential path a
  * brand-new hosted user needs after sign-up + verification.

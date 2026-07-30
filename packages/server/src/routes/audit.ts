@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTenantAdmin } from "../middleware/auth.js";
+import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -9,10 +9,10 @@ const AuditEntrySchema = z.object({
   timestamp: z.string(),
   key_id: z.string().nullable(),
   /**
-   * Tenant scope. Stamped at write time from the calling api key's
-   * `tenant_id`. Null for system-initiated audits and bootstrap-admin keys.
+   * Space scope. Stamped at write time from the calling api key's
+   * `space_id`. Null for system-initiated audits and bootstrap-admin keys.
    */
-  tenant_id: z.string().nullable(),
+  space_id: z.string().nullable(),
   action: z.string(),
   resource_type: z.string(),
   resource_id: z.string().nullable(),
@@ -31,7 +31,7 @@ const listAuditRoute = createRoute({
   tags: ["Audit"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or tenant_admin: a tenant-scoped caller sees only its own tenant's entries, a platform admin sees every entry.",
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or space_admin: a space-scoped caller sees only its own space's entries, a platform admin sees every entry.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -93,7 +93,7 @@ const listAuditRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or tenant_admin",
+      description: "Caller is not an admin or space_admin",
     },
   },
 });
@@ -102,18 +102,18 @@ export function auditRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listAuditRoute, async (c) => {
-    // Tenant-bounded, not platform-only: the single storage call below is
-    // filtered by the caller's own tenant, so a tenant admin reading its
+    // Space-bounded, not platform-only: the single storage call below is
+    // filtered by the caller's own space, so a space admin reading its
     // own space's trail stays inside its own data.
-    requireTenantAdmin(c);
+    requireSpaceAdmin(c);
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
-    // Platform-admin keys (no `tenant_id`) read every row — preserves
-    // the self-hosted single-tenant operator view. Tenant-scoped keys
-    // read only their own tenant. Mirrors the `ItemStore.list`
-    // admit-all-when-tenantless pattern.
-    const callerTenantId = c.get("apiKey")?.tenant_id ?? null;
+    // Platform-admin keys (no `space_id`) read every row — preserves
+    // the self-hosted single-space operator view. Space-scoped keys
+    // read only their own space. Mirrors the `ItemStore.list`
+    // admit-all-when-space-less pattern.
+    const callerSpaceId = c.get("apiKey")?.space_id ?? null;
 
     const result = await storage.audit.list({
       action,
@@ -123,7 +123,7 @@ export function auditRoutes(storage: Storage) {
       until,
       limit,
       cursor,
-      tenant_id: callerTenantId,
+      space_id: callerSpaceId,
     });
 
     return c.json(result, 200);

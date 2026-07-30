@@ -17,7 +17,7 @@
 # Secrets (set via `wrangler secret put --env <env>`):
 #   - CONNECTION_ID   the system.connection id baked into the
 #                     Service-Binding path (one Email Worker per
-#                     Connection in the v1 single-tenant shape).
+#                     Connection in the v1 single-space shape).
 #   - WEBHOOK_SECRET  matches the subscription's encrypted secret on
 #                     the Marfa server.
 #

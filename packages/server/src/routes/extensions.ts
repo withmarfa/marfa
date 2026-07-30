@@ -26,8 +26,8 @@ const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
  * reserved *type* namespaces, which `checkTypeAccess` gates on
  * `is_platform` rather than on rank. Read them the same way: platform
  * authority, or an explicit platform credential — never rank alone. A
- * tenant-bound `admin` (the shape `POST /admin/tenants/{id}/keys` mints)
- * is admin within one tenant, not a platform principal, so it does not
+ * space-bound `admin` (the shape `POST /admin/spaces/{id}/keys` mints)
+ * is admin within one space, not a platform principal, so it does not
  * qualify to write platform-internal namespaces.
  */
 function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
@@ -322,7 +322,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.tenant_id;
+    const tid = apiKey?.space_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -347,7 +347,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.tenant_id;
+    const tid = apiKey?.space_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -381,7 +381,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.tenant_id;
+    const tid = apiKey?.space_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -448,7 +448,7 @@ export function extensionRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.set",
       resource_type: "item",
@@ -466,7 +466,7 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.tenant_id;
+    const tid = apiKey?.space_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -516,7 +516,7 @@ export function extensionRoutes(storage: Storage) {
     const extensions = await storage.metadata.deleteExtension(id, namespace);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.delete",
       resource_type: "item",

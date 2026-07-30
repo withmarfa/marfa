@@ -27,32 +27,32 @@ afterEach(async () => {
   await ctx.cleanup();
 });
 
-function tenants() {
-  if (!ctx.storage.tenants) {
-    throw new Error("hosted-mode storage missing tenant store");
+function spaces() {
+  if (!ctx.storage.spaces) {
+    throw new Error("hosted-mode storage missing space store");
   }
-  return ctx.storage.tenants;
+  return ctx.storage.spaces;
 }
 
 describe("bearer middleware role projection (OAuth)", () => {
   it("projects users.role 'admin' onto the OAuth principal — /keys CRUD succeeds", async () => {
-    const tenant = await tenants().create("admin-tenant");
+    const space = await spaces().create("admin-space");
     const { token } = await seedOauthBearer(
       ctx.storage,
       // No data-plane scopes needed — /keys is gated on role, not scopes.
       [],
-      { tenantId: tenant.id, userRole: "admin" },
+      { spaceId: space.id, userRole: "admin" },
     );
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
   });
 
-  it("projects users.role 'tenant_admin' onto the OAuth principal — /keys CRUD succeeds (tenant-scoped)", async () => {
-    const tenant = await tenants().create("tenant-admin-tenant");
+  it("projects users.role 'space_admin' onto the OAuth principal — /keys CRUD succeeds (space-scoped)", async () => {
+    const space = await spaces().create("space-admin-space");
     const { token } = await seedOauthBearer(ctx.storage, [], {
-      tenantId: tenant.id,
-      userRole: "tenant_admin",
+      spaceId: space.id,
+      userRole: "space_admin",
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
@@ -60,15 +60,15 @@ describe("bearer middleware role projection (OAuth)", () => {
   });
 
   it("projects users.role 'member' onto the OAuth principal — /keys CRUD forbidden", async () => {
-    const tenant = await tenants().create("member-tenant");
+    const space = await spaces().create("member-space");
     const { token } = await seedOauthBearer(ctx.storage, [], {
-      tenantId: tenant.id,
+      spaceId: space.id,
       userRole: "member",
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     // Authenticated but insufficient role → 403, not 401. The gate is
-    // gradient: admin/tenant_admin pass, member fails.
+    // gradient: admin/space_admin pass, member fails.
     expect(res.status).toBe(403);
   });
 
@@ -82,9 +82,9 @@ describe("bearer middleware role projection (OAuth)", () => {
   });
 
   it("blocks an admin OAuth principal from minting an API key (no grant laundering)", async () => {
-    const tenant = await tenants().create("platform-ceiling-tenant");
+    const space = await spaces().create("platform-ceiling-space");
     const { token } = await seedOauthBearer(ctx.storage, [], {
-      tenantId: tenant.id,
+      spaceId: space.id,
       userRole: "admin",
     });
 

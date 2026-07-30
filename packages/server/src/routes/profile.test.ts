@@ -27,7 +27,7 @@ import { ensureAccountHolderItem } from "../auth/account-holder.js";
  * Every test here is targeted at a real bug class — if the endpoint
  * landed without these, the failure modes would be:
  *
- *   - leaking another tenant's profile (lookup-by-tenant guarantee)
+ *   - leaking another space's profile (lookup-by-space guarantee)
  *   - accepting a reserved or colliding handle (validator wiring)
  *   - serving a non-image MIME type as an avatar (XSS via SVG / etc.)
  *   - bouncing the email join silently when auth_user_id is missing
@@ -121,7 +121,7 @@ async function createHostedContext(): Promise<HostedContext> {
 interface ProvisionedUser {
   apiKey: string;
   userId: string;
-  tenantId: string;
+  spaceId: string;
   authUserId: string;
   email: string;
   handle: string;
@@ -129,19 +129,19 @@ interface ProvisionedUser {
 
 /**
  * Stand-up a hosted-mode user end-to-end: create an auth_user row, a
- * tenant, a `users` row bound to both, and an admin api key for the
- * tenant. Returns the bearer + the ids needed to assert against state.
+ * space, a `users` row bound to both, and an admin api key for the
+ * space. Returns the bearer + the ids needed to assert against state.
  */
 async function provisionUser(
   hosted: HostedContext,
   opts: { handle: string; email: string },
 ): Promise<ProvisionedUser> {
   const { storage } = hosted;
-  if (!storage.users || !storage.tenants) {
-    throw new Error("hosted-mode test fixture must wire users + tenants");
+  if (!storage.users || !storage.spaces) {
+    throw new Error("hosted-mode test fixture must wire users + spaces");
   }
   const userStore = storage.users;
-  const tenantStore = storage.tenants;
+  const spaceStore = storage.spaces;
 
   // Insert directly into the auth_user table. Better Auth would do this
   // on /auth/sign-up, but that path also requires email verification —
@@ -157,12 +157,12 @@ async function provisionUser(
     updatedAt: now,
   });
 
-  const tenant = await tenantStore.create("Test Tenant");
+  const space = await spaceStore.create("Test Space");
   const user = await userStore.create({
     name: "Test User",
     provider: "test",
     provider_id: authUserId,
-    tenant_id: tenant.id,
+    space_id: space.id,
     handle: opts.handle,
     auth_user_id: authUserId,
   });
@@ -176,13 +176,13 @@ async function provisionUser(
       type_permissions: {},
     },
     hashApiKey(rawKey, SALT),
-    tenant.id,
+    space.id,
   );
 
   return {
     apiKey: rawKey,
     userId: user.id,
-    tenantId: tenant.id,
+    spaceId: space.id,
     authUserId,
     email: opts.email,
     handle: opts.handle,
@@ -311,7 +311,7 @@ describe("Profile routes", () => {
       ).json()) as ProfileBody;
       expect(before.account_holder_item_id).toBeUndefined();
 
-      const handle = await ensureAccountHolderItem(hosted.storage, u.tenantId);
+      const handle = await ensureAccountHolderItem(hosted.storage, u.spaceId);
       const after = (await (
         await request(hosted.app, "GET", "/profile/me", { key: u.apiKey })
       ).json()) as ProfileBody;
@@ -319,7 +319,7 @@ describe("Profile routes", () => {
     });
 
     // Confirm /profile/me resolves the same user payload when the bearer
-    // is an OAuth access token (synthetic ApiKey with `tenant_id` populated
+    // is an OAuth access token (synthetic ApiKey with `space_id` populated
     // from the grant) — matches the userinfo path. Optional fields
     // (first_name / last_name / bio) may be unset; the resolution path
     // itself must work regardless.
@@ -337,7 +337,7 @@ describe("Profile routes", () => {
         ["openid", "profile", "email"],
         {
           clientName: "olive-test-client",
-          tenantId: u.tenantId,
+          spaceId: u.spaceId,
           authUserId: u.authUserId,
         },
       );

@@ -38,11 +38,11 @@ interface MintedToken {
  */
 async function mintOAuthToken(opts: {
   scopes: string[];
-  tenantId?: string;
+  spaceId?: string;
 }): Promise<MintedToken> {
   const { token, grantId } = await seedOauthBearer(ctx.storage, opts.scopes, {
     clientName: "Scope Enforcement Test App",
-    tenantId: opts.tenantId,
+    spaceId: opts.spaceId,
   });
   return { rawToken: token, grantId };
 }
@@ -365,7 +365,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       expect(body.data).toEqual([]);
       // The tag aggregate reads the same empty allow-list and has to agree.
       // It used to skip the type clause on an empty list and hand back the
-      // tenant's whole vocabulary, naming what exists to a token that can
+      // space's whole vocabulary, naming what exists to a token that can
       // read none of it.
       const tags = await request(ctx.app, "GET", "/metadata/tags", {
         key: rawToken,
@@ -389,7 +389,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The four-bundle keystone: an OAuth token reaches a tenant's RUNTIME `user.*`
+// The four-bundle keystone: an OAuth token reaches a space's RUNTIME `user.*`
 // types — which never appear in the static scope allowlist — through the
 // wildcard the generous default bundle grants. No role bypass involved (the
 // token is a member-tier synthetic key).

@@ -16,7 +16,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireTenantAdmin,
+  requireSpaceAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -33,9 +33,9 @@ import {
 
 /**
  * Every platform-shipped type, across all three families. These come from
- * codegen rather than a tenant registration, so `PUT` and `DELETE` refuse
- * them: a tenant editing a shipped schema would change what the identifier
- * means for every other tenant, and items already written against it.
+ * codegen rather than a space registration, so `PUT` and `DELETE` refuse
+ * them: a space editing a shipped schema would change what the identifier
+ * means for every other space, and items already written against it.
  *
  * The set spans core, connector and system types deliberately — a connector
  * type is no more mutable than a core one, and reading only `ALL_TYPES` here
@@ -48,12 +48,12 @@ const SHIPPED_TYPE_IDS = new Set(
 const MAX_INHERITANCE_DEPTH = 10;
 
 /** Validate parent chain: parent must exist, no circular references, depth
- *  capped. Parents resolve within the caller's tenant so a custom type may
- *  inherit from another of the tenant's custom types (or from a core type). */
+ *  capped. Parents resolve within the caller's space so a custom type may
+ *  inherit from another of the space's custom types (or from a core type). */
 function validateParentChain(
   typeId: string,
   parentId: string,
-  tenantId?: string,
+  spaceId?: string,
 ): void {
   let current = parentId;
   let depth = 0;
@@ -71,7 +71,7 @@ function validateParentChain(
         "Circular inheritance detected",
       );
     }
-    const parentSchema = getTypeSchema(current, tenantId);
+    const parentSchema = getTypeSchema(current, spaceId);
     if (!parentSchema) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -129,7 +129,7 @@ const listTypesRoute = createRoute({
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type registered in the tenant — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
+    "Returns every type registered in the space — the core type catalog plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -158,7 +158,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and tenant-registered custom types.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and space-registered custom types.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -362,20 +362,20 @@ export function typeRoutes(storage: Storage) {
   router.openapi(listTypesRoute, (c) => {
     requireAuth(c);
     // Core/system types are global; custom types resolve only within the
-    // caller's tenant. `listTypes(tenantId)` returns core/system plus this
-    // tenant's own custom types — never another tenant's.
-    const tenantId = c.get("apiKey")?.tenant_id;
-    return c.json(listTypes(tenantId), 200);
+    // caller's space. `listTypes(spaceId)` returns core/system plus this
+    // space's own custom types — never another space's.
+    const spaceId = c.get("apiKey")?.space_id;
+    return c.json(listTypes(spaceId), 200);
   });
 
   router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    // Resolve through the tenant-scoped lookup so a probe for another tenant's
+    // Resolve through the space-scoped lookup so a probe for another space's
     // custom type id resolves to nothing here and 404s.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
     const schema = resolveTypeSchema(id, (typeId) =>
-      getTypeSchema(typeId, tenantId),
+      getTypeSchema(typeId, spaceId),
     );
     if (!schema) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
@@ -386,10 +386,10 @@ export function typeRoutes(storage: Storage) {
   router.openapi(registerTypeRoute, async (c) => {
     requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
-    // The registration is scoped to the caller's tenant: every inheritance,
+    // The registration is scoped to the caller's space: every inheritance,
     // compatible-with, parent-chain, and existence check below resolves within
-    // this tenant's overlay, so a custom type is isolated to it from creation.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    // this space's overlay, so a custom type is isolated to it from creation.
+    const spaceId = c.get("apiKey")?.space_id;
 
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MarfaError(
@@ -400,7 +400,7 @@ export function typeRoutes(storage: Storage) {
     // Platform-credential gate. Only credentials marked as platform may
     // register `core.*`, `system.*`, or `marfa.*` types — these tiers are
     // platform-shipped/operational, not authored at runtime by ordinary
-    // tenant admins.
+    // space admins.
     if (typeof body.id === "string") {
       const tier = classifyNamespace(body.id);
       const isPlatformCaller = c.get("apiKey")?.is_platform === true;
@@ -422,7 +422,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const result = validateTypeSchema(body, tenantId);
+    const result = validateTypeSchema(body, spaceId);
     if (!result.success) {
       // Surface specific error codes so clients can disambiguate from generic schema failures.
       const hasPropertyShadowsField = result.errors.some(
@@ -464,20 +464,20 @@ export function typeRoutes(storage: Storage) {
     }
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent, tenantId);
+      validateParentChain(schema.id, schema.parent, spaceId);
     }
 
-    if (getTypeSchema(schema.id, tenantId)) {
+    if (getTypeSchema(schema.id, spaceId)) {
       throw new MarfaError(
         ErrorCode.TYPE_ALREADY_EXISTS,
         `Type "${schema.id}" already exists`,
       );
     }
 
-    const created = await storage.types.create(schema, tenantId);
+    const created = await storage.types.create(schema, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.register",
       resource_type: "type",
@@ -487,12 +487,12 @@ export function typeRoutes(storage: Storage) {
   });
 
   router.openapi(updateTypeRoute, async (c) => {
-    requireTenantAdmin(c);
+    requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
-    // Scope to the caller's tenant: a tenant_admin sees and mutates only its
-    // own custom types. A probe for another tenant's id resolves to nothing
+    // Scope to the caller's space: a space_admin sees and mutates only its
+    // own custom types. A probe for another space's id resolves to nothing
     // and 404s.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
 
     if (!isValidTypeIdentifier(id)) {
       throw new MarfaError(
@@ -508,13 +508,13 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id, tenantId);
+    const existing = getTypeSchema(id, spaceId);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const body = c.req.valid("json");
-    const result = validateTypeSchema({ ...body, id }, tenantId);
+    const result = validateTypeSchema({ ...body, id }, spaceId);
     if (!result.success) {
       throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
@@ -524,7 +524,7 @@ export function typeRoutes(storage: Storage) {
     const schema = result.data;
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent, tenantId);
+      validateParentChain(schema.id, schema.parent, spaceId);
     }
 
     // Server-side semver diff via a structural classifier: no-op
@@ -552,10 +552,10 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const updated = await storage.types.update(id, schema, tenantId);
+    const updated = await storage.types.update(id, schema, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.update",
       resource_type: "type",
@@ -565,11 +565,11 @@ export function typeRoutes(storage: Storage) {
   });
 
   router.openapi(deleteTypeRoute, async (c) => {
-    requireTenantAdmin(c);
+    requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
-    // Scope to the caller's tenant: a tenant_admin can only delete its own
-    // custom types; another tenant's id resolves as not-found.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    // Scope to the caller's space: a space_admin can only delete its own
+    // custom types; another space's id resolves as not-found.
+    const spaceId = c.get("apiKey")?.space_id;
 
     if (SHIPPED_TYPE_IDS.has(id)) {
       throw new MarfaError(
@@ -578,7 +578,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id, tenantId);
+    const existing = getTypeSchema(id, spaceId);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
@@ -586,7 +586,7 @@ export function typeRoutes(storage: Storage) {
     const { force } = c.req.valid("query");
     if (force !== "true") {
       const items = await storage.items.list({
-        tenantId,
+        spaceId,
         type: id,
         limit: 1,
       });
@@ -598,10 +598,10 @@ export function typeRoutes(storage: Storage) {
       }
     }
 
-    await storage.types.delete(id, tenantId);
+    await storage.types.delete(id, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.delete",
       resource_type: "type",

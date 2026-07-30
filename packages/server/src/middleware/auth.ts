@@ -176,8 +176,8 @@ const oauthLastUsedCache = new Map<string, number>();
  *      most one row write per `DEBOUNCE_MS` per grant.
  *
  * Callers fire-and-forget — failures must never break the auth path.
- * Tenant-scoped via `tenantId` so a hosted-mode caller cannot trip
- * this against another tenant's grant row.
+ * Space-scoped via `spaceId` so a hosted-mode caller cannot trip
+ * this against another space's grant row.
  *
  * Used by:
  *   - `authMiddleware` for every authenticated bearer-bearing request.
@@ -188,7 +188,7 @@ const oauthLastUsedCache = new Map<string, number>();
 export async function stampOAuthGrantLastUsed(
   storage: Storage,
   connectionItemId: string,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): Promise<void> {
   const cacheKey = `oauth:${connectionItemId}`;
   const now = Date.now();
@@ -198,7 +198,7 @@ export async function stampOAuthGrantLastUsed(
   try {
     await storage.oauth.updateLastUsedAt(
       connectionItemId,
-      tenantId ?? null,
+      spaceId ?? null,
       DEBOUNCE_MS,
     );
   } catch {
@@ -207,7 +207,7 @@ export async function stampOAuthGrantLastUsed(
 }
 
 /**
- * Stamp `last_used_at` keyed by (tenantId, clientId, authUserId)
+ * Stamp `last_used_at` keyed by (spaceId, clientId, authUserId)
  * instead of a pre-resolved `connection_item_id`.
  *
  * The bearer middleware needs this because the plugin's
@@ -227,7 +227,7 @@ export async function stampOAuthGrantLastUsed(
 export async function stampOAuthGrantLastUsedByGrantKey(
   storage: Storage,
   opts: {
-    tenantId: string | undefined;
+    spaceId: string | undefined;
     clientId: string;
     authUserId: string;
   },
@@ -241,14 +241,14 @@ export async function stampOAuthGrantLastUsedByGrantKey(
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
     const itemId = await storage.oauthProvider?.findGrantItemId({
-      tenantId: opts.tenantId ?? null,
+      spaceId: opts.spaceId ?? null,
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     });
     if (!itemId) return;
     await storage.oauth.updateLastUsedAt(
       itemId,
-      opts.tenantId ?? null,
+      opts.spaceId ?? null,
       DEBOUNCE_MS,
     );
   } catch {
@@ -313,7 +313,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     // `customAccessTokenClaims` only embeds in JWT tokens, and Marfa
     // keeps opaque tokens (correct for our profile — DB lookup is
     // sub-ms, revocation stays clean). The row itself carries
-    // `referenceId` (= tenant_id, populated by `clientReference` at
+    // `referenceId` (= space_id, populated by `clientReference` at
     // issuance), `userId`, `clientId`, and `scopes`. Everything the
     // synthetic ApiKey needs comes from the single row.
     //
@@ -347,9 +347,9 @@ export function authMiddleware(storage: Storage, salt: string) {
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
-      // Tenant id from the plugin's referenceId column (= our clientReference
-      // output, which returns the user's tenant_id at consent time).
-      const oauthTenantId = oauthToken.referenceId ?? undefined;
+      // Space id from the plugin's referenceId column (= our clientReference
+      // output, which returns the user's space_id at consent time).
+      const oauthSpaceId = oauthToken.referenceId ?? undefined;
       // Stable composite label/source. Used in audit rows; doesn't need
       // to be a real foreign-key handle — system.connection projection
       // is maintained separately.
@@ -365,14 +365,14 @@ export function authMiddleware(storage: Storage, salt: string) {
       // Falls back to `member` when no `users` row maps to the
       // auth_user (an unmapped auth_user, or a token whose user was
       // hard-deleted mid-session).
-      let projectedRole: "admin" | "tenant_admin" | "member" = "member";
+      let projectedRole: "admin" | "space_admin" | "member" = "member";
       if (oauthToken.userId && storage.users) {
         const user = await storage.users.getByAuthUserId(oauthToken.userId);
         if (user) projectedRole = user.role;
       }
       c.set("apiKey", {
         id: oauthToken.id,
-        tenant_id: oauthTenantId,
+        space_id: oauthSpaceId,
         label: `oauth:${grantHandle}`,
         source: `oauth:${grantHandle}`,
         role: projectedRole,
@@ -394,7 +394,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
-          tenantId: oauthTenantId,
+          spaceId: oauthSpaceId,
           clientId: oauthToken.clientId,
           authUserId: oauthToken.userId,
         });
@@ -447,7 +447,7 @@ export function authMiddleware(storage: Storage, salt: string) {
  * cycle resolver's origin derivation all match on them.
  *
  * A caller-supplied `source` is free text, so without this reservation a
- * tenant admin could mint a plain `member` key labelled
+ * space admin could mint a plain `member` key labelled
  * `oauth:<connection-id>` and hold connector authority over that
  * connection — proxying through its decrypted upstream token, issuing
  * leases, rewriting its inbound webhooks — while carrying none of the
@@ -483,21 +483,21 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 
 /**
  * Platform-admin gate. Guards the surfaces whose authority is instance-wide
- * rather than tenant-bounded: tenant CRUD, cross-tenant quota writes,
+ * rather than space-bounded: space CRUD, cross-space quota writes,
  * instance metrics, the audit log, archive restore, blob reconciliation.
  *
- * Platform authority is authority that is NOT confined to a tenant, so the
- * gate tests two things: the `admin` role AND the absence of a tenant
+ * Platform authority is authority that is NOT confined to a space, so the
+ * gate tests two things: the `admin` role AND the absence of a space
  * binding. Role alone is not sufficient. A credential can legitimately
- * carry `role: "admin"` while bound to a single tenant — `POST
- * /admin/tenants/{id}/keys` mints exactly that, and describes the result as
+ * carry `role: "admin"` while bound to a single space — `POST
+ * /admin/spaces/{id}/keys` mints exactly that, and describes the result as
  * a credential "whose authority is confined to id". Admitting it here would
- * hand a tenant-scoped principal the cross-tenant surface, contradicting
+ * hand a space-scoped principal the cross-space surface, contradicting
  * the route that issued it.
  *
  * Consequence for callers: a key that passes this gate always has
- * `tenant_id === undefined`. Routes needing a tenant-bounded admin want
- * `checkTenantAdmin` instead, and must thread `key.tenant_id` per its
+ * `space_id === undefined`. Routes needing a space-bounded admin want
+ * `checkSpaceAdmin` instead, and must thread `key.space_id` per its
  * contract.
  */
 export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
@@ -511,51 +511,51 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
 /**
  * Predicate form of `checkAdmin`'s test, for the handful of routes that
  * need the answer as a boolean rather than a throw (they combine it with
- * a connector-credential branch, or use it to widen a tenant filter).
+ * a connector-credential branch, or use it to widen a space filter).
  *
  * Exported so no callsite re-derives it. A hand-rolled `role === "admin"`
- * silently readmits the tenant-bound admin this gate exists to exclude,
+ * silently readmits the space-bound admin this gate exists to exclude,
  * and the two definitions then drift apart with nothing to catch it.
  */
 export function hasPlatformAuthority(key: ApiKey): boolean {
-  return key.role === "admin" && !key.tenant_id;
+  return key.role === "admin" && !key.space_id;
 }
 
 /**
- * Predicate form of `checkTenantAdmin`'s test: admin-shaped authority
+ * Predicate form of `checkSpaceAdmin`'s test: admin-shaped authority
  * within whatever scope the credential is bound to. Says nothing about
- * which tenant — the caller still owes the tenant fence on every storage
- * call, exactly as `checkTenantAdmin` documents.
+ * which space — the caller still owes the space fence on every storage
+ * call, exactly as `checkSpaceAdmin` documents.
  */
-export function hasTenantAdminAuthority(key: ApiKey): boolean {
-  return key.role === "admin" || key.role === "tenant_admin";
+export function hasSpaceAdminAuthority(key: ApiKey): boolean {
+  return key.role === "admin" || key.role === "space_admin";
 }
 
 /**
- * Tenant-bounded admin gate. Admits both `admin` (platform admin, full
- * instance authority) and `tenant_admin` (tenant-bounded admin within
- * own `tenant_id`). Used for routes that genuinely belong inside a
- * tenant — own keys, webhooks, types, connections, extensions, blobs,
- * export. Routes that need platform authority (system config, cross-tenant
+ * Space-bounded admin gate. Admits both `admin` (platform admin, full
+ * instance authority) and `space_admin` (space-bounded admin within
+ * own `space_id`). Used for routes that genuinely belong inside a
+ * space — own keys, webhooks, types, connections, extensions, blobs,
+ * export. Routes that need platform authority (system config, cross-space
  * ops, platform-credential mint) keep `checkAdmin` / `requireAdmin`.
  *
- * Cross-tenant safety is the route's responsibility:
+ * Cross-space safety is the route's responsibility:
  *   - Routes that take a path id (`/webhooks/:id`, `/keys/:id`) must pass
- *     `key.tenant_id` into the storage lookup so a tenant_admin
- *     attempting to address another tenant's resource gets a 404.
- *   - Routes that list resources must pass `key.tenant_id` into the list
- *     query so tenant_admins see only their own.
+ *     `key.space_id` into the storage lookup so a space_admin
+ *     attempting to address another space's resource gets a 404.
+ *   - Routes that list resources must pass `key.space_id` into the list
+ *     query so space_admins see only their own.
  *   - Routes that create resources must stamp the new resource's
- *     `tenant_id` from `key.tenant_id` (the storage layer typically does
+ *     `space_id` from `key.space_id` (the storage layer typically does
  *     this; verify on each callsite).
  *
- * The DB-layer Postgres RLS policies enforce tenant isolation
+ * The DB-layer Postgres RLS policies enforce space isolation
  * independently; the application layer is the additional fence and
- * every tenant_admin-accepting route must thread `tenant_id` correctly.
+ * every space_admin-accepting route must thread `space_id` correctly.
  */
-export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
+export function checkSpaceAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (!hasTenantAdminAuthority(key)) {
+  if (!hasSpaceAdminAuthority(key)) {
     throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
@@ -563,12 +563,12 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
 
 /**
  * Whether a credential skips the per-resource permission maps (type / edge /
- * metadata) by virtue of its role. `admin` and `tenant_admin` keys are
+ * metadata) by virtue of its role. `admin` and `space_admin` keys are
  * admin-shaped within their scope and bypass the maps — EXCEPT
  * `scope_enforced` credentials (OAuth-derived synthetic keys), which are
  * held to exactly the scopes the user granted the app. A user's role is the
  * ceiling on what an app can be granted, not an automatic full-access pass
- * for every app they sign into. Role gates (`requireTenantAdmin` /
+ * for every app they sign into. Role gates (`requireSpaceAdmin` /
  * `requireAdmin`) still consult the projected role regardless of this flag —
  * only the data-plane permission-map checks honor it.
  *
@@ -576,7 +576,7 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
  * which has no `require*` helper of its own) makes the same decision inline.
  * A hand-rolled `role === "admin"` there is wrong twice over: it hands an
  * OAuth app the full extension surface whenever the signed-in user happens
- * to be an admin, and it withholds it from the tenant_admin every hosted
+ * to be an admin, and it withholds it from the space_admin every hosted
  * sign-up is provisioned as.
  *
  * Accepts `undefined` so anonymous-capable routes can call it directly; a
@@ -585,7 +585,7 @@ export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
 export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
   if (!key) return false;
   if (key.scope_enforced) return false;
-  return key.role === "admin" || key.role === "tenant_admin";
+  return key.role === "admin" || key.role === "space_admin";
 }
 
 export function checkTypeAccess(
@@ -596,17 +596,17 @@ export function checkTypeAccess(
   const key = checkAuth(apiKey);
 
   // Platform-credential gate. Writes to `system.*` (and the internal-only
-  // `marfa.*`) require `is_platform: true` independent of role — tenant
-  // admins are admin-shaped within their tenant but are NOT platform-
+  // `marfa.*`) require `is_platform: true` independent of role — space
+  // admins are admin-shaped within their space but are NOT platform-
   // shaped by default; only the bootstrap admin and credentials it
   // mints with `is_platform: true` may write platform-internal items.
   //
   // `core.*` writes are NOT gated here — core types are user-facing
-  // (core.note, core.task, core.bookmark) and tenant admins write them
+  // (core.note, core.task, core.bookmark) and space admins write them
   // routinely; only registration of new core types is platform-gated
   // (see `routes/types.ts:331`).
   //
-  // Reads to `system.*` / `marfa.*` are unrestricted (filtered by tenant
+  // Reads to `system.*` / `marfa.*` are unrestricted (filtered by space
   // scoping at the storage layer); only writes need `is_platform`.
   //
   // Carve-out: runtime credentials (`is_runtime_credential: true`) may
@@ -629,8 +629,8 @@ export function checkTypeAccess(
     }
   }
 
-  // admin / tenant_admin bypass type_permissions — admin-shaped within the
-  // tenant, with RLS + app-layer scoping as the isolation boundary. OAuth
+  // admin / space_admin bypass type_permissions — admin-shaped within the
+  // space, with RLS + app-layer scoping as the isolation boundary. OAuth
   // (`scope_enforced`) keys do NOT bypass: they're held to granted scopes.
   if (roleBypassesPermissionMaps(key)) return;
 
@@ -652,7 +652,7 @@ export function checkTypeAccess(
 export function computeTypeFilter(
   apiKey: ApiKey | undefined,
 ): string[] | undefined {
-  // admin / tenant_admin see the full type surface; tenant isolation is
+  // admin / space_admin see the full type surface; space isolation is
   // enforced separately at the storage layer. OAuth (`scope_enforced`) keys
   // fall through to their projected type_permissions (which carry the
   // granted wildcards) rather than seeing everything.
@@ -681,13 +681,13 @@ export function requireAdmin(c: Context<AppEnv>): ApiKey {
 }
 
 /**
- * Tenant-bounded admin gate. Admits `admin` (platform) OR `tenant_admin`
- * (tenant-bounded). See `checkTenantAdmin` for the safety contract:
- * the calling route MUST thread `key.tenant_id` into storage queries so a
- * tenant_admin cannot reach another tenant's resources via path id.
+ * Space-bounded admin gate. Admits `admin` (platform) OR `space_admin`
+ * (space-bounded). See `checkSpaceAdmin` for the safety contract:
+ * the calling route MUST thread `key.space_id` into storage queries so a
+ * space_admin cannot reach another space's resources via path id.
  */
-export function requireTenantAdmin(c: Context<AppEnv>): ApiKey {
-  return checkTenantAdmin(c.get("apiKey"));
+export function requireSpaceAdmin(c: Context<AppEnv>): ApiKey {
+  return checkSpaceAdmin(c.get("apiKey"));
 }
 
 export function requireTypeAccess(
@@ -705,9 +705,9 @@ export function requireTypeAccess(
  * A handler resolves its own `properties.configuration` with a plain
  * `GET /items/:connection_id`, so it needs read access to a
  * `system.connection` row. Granting `system.connection: read` in
- * `type_permissions` would be tenant-wide — `type_permissions` keys on
+ * `type_permissions` would be space-wide — `type_permissions` keys on
  * type, with no per-item axis — handing every connector read access to
- * every other Connection's configuration in the tenant. This carve-out is
+ * every other Connection's configuration in the space. This carve-out is
  * the per-item form: the credential's `connection_id` stamp must equal
  * the item being read, so a connector sees its own Connection and no
  * other. Mirrors the identity check the connection-proxy and extension
@@ -731,7 +731,7 @@ export function isOwnConnectionRead(
  * immutable for the credential's life and therefore a stable identity.
  * Runtime credentials break that assumption: they are minted per
  * dispatch, and their `source` carries a per-mint suffix because the
- * column is unique per tenant among live credentials. Stamping it would
+ * column is unique per space among live credentials. Stamping it would
  * make provenance a function of which bearer generation happened to be
  * live at the time.
  *
@@ -767,7 +767,7 @@ export function itemProvenanceSource(
  * filters and alerts on, and it arrives in the request body.
  *
  * Left unchecked, one connector can write `severity: action_required`
- * rows against a sibling Connection in the same tenant: a Repairs inbox
+ * rows against a sibling Connection in the same space: a Repairs inbox
  * entry telling a user to re-authorize an integration that is working
  * fine, attributed to a connector that never ran. Nothing distinguishes
  * the row from a real one, because on the wire it is a real one.
@@ -865,8 +865,8 @@ export function requireRowWritable(
 }
 
 /**
- * Enforces a per-edge-type permission check. Admin and tenant_admin
- * keys always pass (tenant_admin is admin-shaped within its tenant —
+ * Enforces a per-edge-type permission check. Admin and space_admin
+ * keys always pass (space_admin is admin-shaped within its space —
  * see `checkTypeAccess` for the layered-helper rationale). Non-admin
  * keys (member + OAuth-derived synthetic keys) need either the
  * specific edge-type permission or the `*` wildcard at the requested
@@ -906,8 +906,8 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  // Same admin-tier shape as `requireEdgePermission`: tenant_admin is
-  // admin-shaped within its tenant for metadata mutations too — except
+  // Same admin-tier shape as `requireEdgePermission`: space_admin is
+  // admin-shaped within its space for metadata mutations too — except
   // OAuth (`scope_enforced`) keys, which must carry the granted scope
   // (`metadata.types:write` / `metadata.edge_types:write`). The
   // platform-credential gate on reserved-namespace type registration still

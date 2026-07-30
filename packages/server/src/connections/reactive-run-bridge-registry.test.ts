@@ -60,13 +60,13 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  probeTenantId = `tenant-drain-probe-${Math.random().toString(36).slice(2, 8)}`;
+  probeSpaceId = `space-drain-probe-${Math.random().toString(36).slice(2, 8)}`;
   const probeIntegrationId = await createIntegration(
     manifest({ name: PROBE_INTEGRATION_NAME }),
   );
   probeConnectionId = await createConnection({
     integrationRef: probeIntegrationId,
-    tenantId: probeTenantId,
+    spaceId: probeSpaceId,
   });
   // The bridge drops self-originated events, so a probe stamped with its
   // own connection id would never be dispatched and every barrier below
@@ -131,7 +131,7 @@ async function createConnection(opts: {
   integrationRef?: string;
   kind?: string;
   status?: string;
-  tenantId?: string;
+  spaceId?: string;
 }): Promise<string> {
   const item = await ctx.storage.items.create(
     {
@@ -143,7 +143,7 @@ async function createConnection(opts: {
         integration_ref: opts.integrationRef,
       },
     },
-    opts.tenantId,
+    opts.spaceId,
   );
   return item.id;
 }
@@ -160,8 +160,8 @@ async function createConnection(opts: {
  * completion signal; a fixed sleep is only a guess about how long the
  * slowest of those steps took.
  *
- * The marker rides a dedicated subscription in its own tenant. The
- * bridge's cross-tenant gate then keeps probe traffic away from every
+ * The marker rides a dedicated subscription in its own space. The
+ * bridge's cross-space gate then keeps probe traffic away from every
  * subscriber under test, so the barrier can't perturb delivery counts or
  * a subscriber's consecutive-failure ladder. Each test wraps its own stub
  * transport with `interceptProbeTraffic` so probe messages are answered
@@ -172,7 +172,7 @@ const PROBE_INTEGRATION_NAME = "acme.drain-probe";
  *  connection's own id works; the bridge drops self-originated events. */
 const PROBE_EVENT_ORIGIN = "itm_drain_probe_origin";
 
-let probeTenantId: string;
+let probeSpaceId: string;
 let probeConnectionId: string;
 /** item_id → resolver, for probe events currently in flight. */
 const probeWaiters = new Map<string, () => void>();
@@ -206,7 +206,7 @@ let probeSequence = 0;
  * single-writer lock surfaces the loser as a `SQLITE_BUSY` that the code
  * under test swallows by design. A writing barrier would therefore delete
  * the very rows the assertions look for. Nothing here needs the item to
- * exist: the bridge reads only its id, tenant, and origin.
+ * exist: the bridge reads only its id, space, and origin.
  */
 async function probeRoundTrip(deadlineMs: number): Promise<boolean> {
   const itemId = `itm_drain_probe_${String(++probeSequence)}`;
@@ -238,7 +238,7 @@ async function probeRoundTrip(deadlineMs: number): Promise<boolean> {
         schema_version: 1,
         source: "drain-probe",
       } as unknown as ItemEventWithId["item"],
-      tenantId: probeTenantId,
+      spaceId: probeSpaceId,
       originatingConnectionId: PROBE_EVENT_ORIGIN,
     });
     return (await Promise.race([dispatched, expiry])) === "dispatched";
@@ -616,32 +616,32 @@ describe("bridge fanout via in-process pubsub", () => {
     await bridge!.stop();
   });
 
-  it("does not fan out cross-tenant — events for tenant A skip subscribers in tenant B", async () => {
-    // Cross-tenant fanout is suppressed at the bridge layer, before the
+  it("does not fan out cross-space — events for space A skip subscribers in space B", async () => {
+    // Cross-space fanout is suppressed at the bridge layer, before the
     // queue producer, rather than relying on the downstream Worker's
     // per-Connection runtime credential failing the API permission gate.
     //
-    // `items.tenant_id` is nullable with no FK in this codebase (the
-    // `tenants` table FK exists on `users` and api keys but not on items),
-    // so the test can use arbitrary tenant ids without first minting a
-    // `Tenant` row. Avoids the "tenants store only available under
+    // `items.space_id` is nullable with no FK in this codebase (the
+    // `spaces` table FK exists on `users` and api keys but not on items),
+    // so the test can use arbitrary space ids without first minting a
+    // `Space` row. Avoids the "spaces store only available under
     // authMode=hosted" coupling.
-    const tenantAId = `tenant-a-${Math.random().toString(36).slice(2, 8)}`;
-    const tenantBId = `tenant-b-${Math.random().toString(36).slice(2, 8)}`;
+    const spaceAId = `space-a-${Math.random().toString(36).slice(2, 8)}`;
+    const spaceBId = `space-b-${Math.random().toString(36).slice(2, 8)}`;
 
     const intA = await createIntegration(
-      manifest({ name: "acme.tenant-a-int" }),
+      manifest({ name: "acme.space-a-int" }),
     );
     const intB = await createIntegration(
-      manifest({ name: "acme.tenant-b-int" }),
+      manifest({ name: "acme.space-b-int" }),
     );
     const connA = await createConnection({
       integrationRef: intA,
-      tenantId: tenantAId,
+      spaceId: spaceAId,
     });
     const connB = await createConnection({
       integrationRef: intB,
-      tenantId: tenantBId,
+      spaceId: spaceBId,
     });
 
     interface Captured {
@@ -676,51 +676,51 @@ describe("bridge fanout via in-process pubsub", () => {
     await bridge!.start();
     await waitForDrainerAttached();
 
-    // Publish an event scoped to tenant A. Only connA (tenant A) should
-    // receive a queue message; connB (tenant B) must not.
+    // Publish an event scoped to space A. Only connA (space A) should
+    // receive a queue message; connB (space B) must not.
     const eventItemA = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant-a event" } },
-      tenantAId,
+      { type: "core.note", properties: { body: "space-a event" } },
+      spaceAId,
     );
     await publish({
       type: "created",
       item: eventItemA,
-      tenantId: tenantAId,
+      spaceId: spaceAId,
       originatingConnectionId: "itm_unrelated_a",
     });
     await drained();
 
-    const tenantAFanout = captured.filter(
-      (c) => c.body.body.integration_name === "acme.tenant-a-int",
+    const spaceAFanout = captured.filter(
+      (c) => c.body.body.integration_name === "acme.space-a-int",
     );
-    const tenantBFanout = captured.filter(
-      (c) => c.body.body.integration_name === "acme.tenant-b-int",
+    const spaceBFanout = captured.filter(
+      (c) => c.body.body.integration_name === "acme.space-b-int",
     );
-    expect(tenantAFanout.length).toBeGreaterThanOrEqual(1);
-    expect(tenantAFanout.some((c) => c.body.body.connection_id === connA)).toBe(
+    expect(spaceAFanout.length).toBeGreaterThanOrEqual(1);
+    expect(spaceAFanout.some((c) => c.body.body.connection_id === connA)).toBe(
       true,
     );
-    expect(tenantBFanout.length).toBe(0);
+    expect(spaceBFanout.length).toBe(0);
 
-    // Symmetric: an event for tenant B reaches connB but not connA.
+    // Symmetric: an event for space B reaches connB but not connA.
     captured.length = 0;
     const eventItemB = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant-b event" } },
-      tenantBId,
+      { type: "core.note", properties: { body: "space-b event" } },
+      spaceBId,
     );
     await publish({
       type: "created",
       item: eventItemB,
-      tenantId: tenantBId,
+      spaceId: spaceBId,
       originatingConnectionId: "itm_unrelated_b",
     });
     await drained();
 
     const reverseA = captured.filter(
-      (c) => c.body.body.integration_name === "acme.tenant-a-int",
+      (c) => c.body.body.integration_name === "acme.space-a-int",
     );
     const reverseB = captured.filter(
-      (c) => c.body.body.integration_name === "acme.tenant-b-int",
+      (c) => c.body.body.integration_name === "acme.space-b-int",
     );
     expect(reverseB.length).toBeGreaterThanOrEqual(1);
     expect(reverseB.some((c) => c.body.body.connection_id === connB)).toBe(
@@ -908,7 +908,7 @@ describe("bridge failure-tracking", () => {
     });
     if (!bridge) throw new Error("bridge not constructed");
     await bridge.start();
-    // Probe traffic is tenant-scoped away from both rig subscribers, so
+    // Probe traffic is space-scoped away from both rig subscribers, so
     // establishing the barrier leaves the attempt counters and the
     // consecutive-failure ladder these tests assert on untouched.
     await waitForDrainerAttached();
@@ -1305,7 +1305,7 @@ describe("bridge — unmapped integration handling", () => {
 
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
     let activityWriteAttempts = 0;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -1316,7 +1316,7 @@ describe("bridge — unmapped integration handling", () => {
           throw new Error("forced first activity write failure");
         }
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1389,7 +1389,7 @@ describe("bridge — unmapped integration handling", () => {
 
     const originalCreate = ctx.storage.items.create.bind(ctx.storage.items);
     let activityWriteAttempts = 0;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -1400,7 +1400,7 @@ describe("bridge — unmapped integration handling", () => {
           throw new Error("forced first activity write failure");
         }
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
 
     // Node fires a `setTimeout` up to a millisecond before its deadline, so a
@@ -1490,7 +1490,7 @@ describe("bridge — unmapped integration handling", () => {
       rejectWrite = reject;
     });
     let activityWriteAttempts = 0;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -1499,7 +1499,7 @@ describe("bridge — unmapped integration handling", () => {
         activityWriteAttempts++;
         return pendingWrite;
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1582,7 +1582,7 @@ describe("bridge — unmapped integration handling", () => {
       rejectWrite = reject;
     });
     let activityWriteAttempts = 0;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -1591,7 +1591,7 @@ describe("bridge — unmapped integration handling", () => {
         activityWriteAttempts++;
         return pendingWrite;
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1665,7 +1665,7 @@ describe("bridge — unmapped integration handling", () => {
     // Every alert names the connection the retry state was pointing at when it
     // was written, so the sequence of names is the whole subject of this test.
     const alertedConnections: string[] = [];
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as
         | { summary?: string; connection_id?: string }
         | undefined;
@@ -1676,16 +1676,16 @@ describe("bridge — unmapped integration handling", () => {
         alertedConnections.push(properties.connection_id ?? "");
         if (alertedConnections.length === 1) return pendingWrite;
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
     // The cache-invalidation subscriber reads each changed connection through
     // `items.get`, so watching that read is how the test knows a refresh has
     // been processed rather than guessing at a sleep.
     let refreshWatch: string | null = null;
     let refreshSeen = false;
-    ctx.storage.items.get = async (id, tenantId, options) => {
+    ctx.storage.items.get = async (id, spaceId, options) => {
       if (refreshWatch !== null && id === refreshWatch) refreshSeen = true;
-      return originalGet(id, tenantId, options);
+      return originalGet(id, spaceId, options);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1797,20 +1797,20 @@ describe("bridge — unmapped integration handling", () => {
     }
   });
 
-  it("deduplicates unmapped activity rows independently per tenant", async () => {
-    const integrationName = "acme.unmapped-tenant-scope";
+  it("deduplicates unmapped activity rows independently per space", async () => {
+    const integrationName = "acme.unmapped-space-scope";
     const integrationId = await createIntegration(
       manifest({ name: integrationName }),
     );
-    const tenantA = await ctx.storage.tenants!.create("Unmapped tenant A");
-    const tenantB = await ctx.storage.tenants!.create("Unmapped tenant B");
+    const spaceA = await ctx.storage.spaces!.create("Unmapped space A");
+    const spaceB = await ctx.storage.spaces!.create("Unmapped space B");
     await createConnection({
       integrationRef: integrationId,
-      tenantId: tenantA.id,
+      spaceId: spaceA.id,
     });
     await createConnection({
       integrationRef: integrationId,
-      tenantId: tenantB.id,
+      spaceId: spaceB.id,
     });
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {
@@ -1824,25 +1824,25 @@ describe("bridge — unmapped integration handling", () => {
 
     try {
       await bridge!.start();
-      for (const [tenantId, body] of [
-        [tenantA.id, "tenant A event"],
-        [tenantB.id, "tenant B event"],
+      for (const [spaceId, body] of [
+        [spaceA.id, "space A event"],
+        [spaceB.id, "space B event"],
       ] as const) {
         const note = await ctx.storage.items.create(
           { type: "core.note", properties: { body } },
-          tenantId,
+          spaceId,
         );
         await publish({
           type: "created",
           item: note,
-          tenantId,
+          spaceId,
           originatingConnectionId: "itm_unrelated_origin",
         });
         expect(
           await waitFor(
             async () => {
               const activity = await ctx.storage.items.list({
-                tenantId,
+                spaceId,
                 type: "system.activity",
                 limit: 100,
               });
@@ -1858,9 +1858,9 @@ describe("bridge — unmapped integration handling", () => {
 
       const matchingRows = async () => {
         const activity = await Promise.all(
-          [tenantA.id, tenantB.id].map((tenantId) =>
+          [spaceA.id, spaceB.id].map((spaceId) =>
             ctx.storage.items.list({
-              tenantId,
+              spaceId,
               type: "system.activity",
               limit: 100,
             }),
@@ -1874,8 +1874,8 @@ describe("bridge — unmapped integration handling", () => {
           });
       };
       const rows = await waitFor(matchingRows, (value) => value.length === 2);
-      expect(rows.map((row) => row.tenant_id).sort()).toEqual(
-        [tenantA.id, tenantB.id].sort(),
+      expect(rows.map((row) => row.space_id).sort()).toEqual(
+        [spaceA.id, spaceB.id].sort(),
       );
     } finally {
       await bridge!.stop();
@@ -1953,7 +1953,7 @@ describe("bridge — unmapped integration handling", () => {
       ctx.storage.items.findBySourceIdIncludingTrashed.bind(ctx.storage.items);
     let activityWriteAttempts = 0;
     let sourceLookupCompletions = 0;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -1961,17 +1961,17 @@ describe("bridge — unmapped integration handling", () => {
       ) {
         activityWriteAttempts++;
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
     ctx.storage.items.findBySourceIdIncludingTrashed = async (
       source,
       sourceId,
-      tenantId,
+      spaceId,
     ) => {
       const item = await originalFindBySourceIdIncludingTrashed(
         source,
         sourceId,
-        tenantId,
+        spaceId,
       );
       if (item?.id === activityId) sourceLookupCompletions++;
       return item;
@@ -2041,7 +2041,7 @@ describe("bridge — unmapped integration handling", () => {
     let sourceLookupAttempts = 0;
     let sourceLookupCompletions = 0;
 
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -2049,23 +2049,23 @@ describe("bridge — unmapped integration handling", () => {
       ) {
         activityWriteAttempts++;
         if (activityWriteAttempts === 1) {
-          const created = await originalCreate(input, tenantId);
+          const created = await originalCreate(input, spaceId);
           committedActivityId = created.id;
           throw new Error("commit outcome was lost after persistence");
         }
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
     ctx.storage.items.findBySourceIdIncludingTrashed = async (
       source,
       sourceId,
-      tenantId,
+      spaceId,
     ) => {
       sourceLookupAttempts++;
       const existing = await originalFindBySourceIdIncludingTrashed(
         source,
         sourceId,
-        tenantId,
+        spaceId,
       );
       sourceLookupCompletions++;
       if (
@@ -2180,7 +2180,7 @@ describe("bridge — unmapped integration handling", () => {
     let activityWriteAttempts = 0;
     let mappedFetches = 0;
     let now = 3_000;
-    ctx.storage.items.create = async (input, tenantId) => {
+    ctx.storage.items.create = async (input, spaceId) => {
       const properties = input.properties as { summary?: string } | undefined;
       if (
         input.type === "system.activity" &&
@@ -2189,7 +2189,7 @@ describe("bridge — unmapped integration handling", () => {
         activityWriteAttempts++;
         if (activityWriteAttempts === 1) return pendingFirstWrite;
       }
-      return originalCreate(input, tenantId);
+      return originalCreate(input, spaceId);
     };
 
     const bridge = tryStartReactiveRunBridge(ctx.storage, {

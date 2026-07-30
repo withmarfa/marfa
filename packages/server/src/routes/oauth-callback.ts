@@ -35,7 +35,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasTenantAdminAuthority } from "../middleware/auth.js";
+import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   encryptSecret,
@@ -87,11 +87,11 @@ async function readAuthorizeConfig(
       "Connection has no credential_ref — cannot start OAuth flow",
     );
   }
-  // Fence the credential lookup by the connection's tenant_id — defense-in-depth
-  // against a cross-tenant credential_ref that bypassed the install-pipeline check.
+  // Fence the credential lookup by the connection's space_id — defense-in-depth
+  // against a cross-space credential_ref that bypassed the install-pipeline check.
   const credential = await storage.items.get(
     credentialRef,
-    connection.tenant_id ?? undefined,
+    connection.space_id ?? undefined,
   );
   if (credential?.type !== "system.credential") {
     throw new MarfaError(
@@ -320,11 +320,11 @@ export interface OAuthCallbackOptions {
  * `authMode` — the deployment's auth mode. Decides how an EMPTY allowlist
  * is treated:
  *   - `hosted` → fail closed. An empty allowlist rejects every
- *     `redirect_uri`, because an admin-level caller on a multi-tenant
+ *     `redirect_uri`, because an admin-level caller on a multi-space
  *     deployment could otherwise point a connector's authorization code at
  *     an attacker-controlled redirect (authorization-code interception). The
  *     operator MUST set `MARFA_OAUTH_REDIRECT_ALLOWLIST`.
- *   - `keys` → unenforced passthrough. Single-tenant self-hosts run with no
+ *   - `keys` → unenforced passthrough. Single-space self-hosts run with no
  *     allowlist by default; the caller is the operator, so there's no
  *     attacker to intercept the code, and forcing the allowlist would break
  *     the out-of-the-box flow.
@@ -357,7 +357,7 @@ function isRedirectAllowed(
 ): boolean {
   if (!allowlist || allowlist.length === 0) {
     // Empty allowlist: fail closed on hosted (an unset allowlist on a
-    // multi-tenant deployment is an open-redirect / authorization-code
+    // multi-space deployment is an open-redirect / authorization-code
     // interception hole), passthrough on keys-mode self-host (single
     // operator, no attacker, allowlist optional for convenience).
     return authMode !== "hosted";
@@ -389,23 +389,23 @@ export function oauthStartRoutes(
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     const apiKey = requireAuth(c);
-    if (!hasTenantAdminAuthority(apiKey) && !apiKey.is_platform) {
+    if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "OAuth start requires admin or platform credential",
       );
     }
     const connectionId = c.req.param("id");
-    // Fenced on the caller's tenant. Rank alone does not confer
-    // cross-tenant reach: a credential carrying a `tenant_id` is confined
-    // to it whatever its role, and `POST /admin/tenants/{id}/keys` mints
+    // Fenced on the caller's space. Rank alone does not confer
+    // cross-space reach: a credential carrying a `space_id` is confined
+    // to it whatever its role, and `POST /admin/spaces/{id}/keys` mints
     // exactly that shape at `role: "admin"`. An unfenced lookup here
-    // would let such a key start an OAuth flow against another tenant's
+    // would let such a key start an OAuth flow against another space's
     // connection, and the signed state binds the connection id — so the
     // callback would persist the resulting tokens onto that connection.
     const connection = await storage.items.get(
       connectionId,
-      apiKey.tenant_id ?? undefined,
+      apiKey.space_id ?? undefined,
     );
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
@@ -527,7 +527,7 @@ export function oauthCallbackRoutes(
       const reason = `${provider} returned error=${upstreamError}${desc ? `: ${desc}` : ""}`;
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
-        tenant_id: c.get("apiKey")?.tenant_id ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.upstream_error",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -548,7 +548,7 @@ export function oauthCallbackRoutes(
     if (!stateResult.ok) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
-        tenant_id: c.get("apiKey")?.tenant_id ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.state_invalid",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -586,7 +586,7 @@ export function oauthCallbackRoutes(
     if (typeof envelope.code_verifier !== "string") {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
-        tenant_id: c.get("apiKey")?.tenant_id ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.state_missing_pkce",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -611,7 +611,7 @@ export function oauthCallbackRoutes(
     if (!exchange.ok) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
-        tenant_id: c.get("apiKey")?.tenant_id ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.exchange_failed",
         resource_type: "connection",
         resource_id: envelope.connection_id,
@@ -624,18 +624,18 @@ export function oauthCallbackRoutes(
       );
     }
 
-    // The connection's tenant comes from its row column, never from its
+    // The connection's space comes from its row column, never from its
     // properties bag — no writer of a `system.connection` puts a
-    // `tenant_id` there, so reading it that way always yielded
+    // `space_id` there, so reading it that way always yielded
     // `undefined` and persisted the upstream access and refresh tokens
-    // with a NULL tenant. The `connection_oauth_tokens` RLS policy admits
-    // NULL rows into every tenant's session, so those secrets were
-    // readable instance-wide, and the tenant-scoped read path in the
+    // with a NULL space. The `connection_oauth_tokens` RLS policy admits
+    // NULL rows into every space's session, so those secrets were
+    // readable instance-wide, and the space-scoped read path in the
     // proxy could not find them at all.
-    const tenantId = connection.tenant_id ?? undefined;
+    const spaceId = connection.space_id ?? undefined;
     await storage.connectionOauthTokens.upsert({
       connection_id: envelope.connection_id,
-      tenant_id: tenantId,
+      space_id: spaceId,
       access_token_encrypted: encryptSecret(
         exchange.access_token,
         SECRET_INFO.connectionOauthToken,
@@ -653,7 +653,7 @@ export function oauthCallbackRoutes(
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       action: "oauth_callback.tokens_stored",
       resource_type: "connection",
       resource_id: envelope.connection_id,

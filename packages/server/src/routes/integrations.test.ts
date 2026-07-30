@@ -13,7 +13,7 @@
  *     is_runtime_credential + connection_id) + system.activity. Cancel
  *     path returns no rows. Compensation: credential mint failure
  *     (forced via duplicate source) trashes the connection.
- *   - Cross-tenant isolation handled by the existing tenant_id flow on
+ *   - Cross-space isolation handled by the existing space_id flow on
  *     items.create / keys.createRuntimeCredential — exercised here via
  *     the basic positive path.
  */
@@ -250,7 +250,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
   describe("?credential_ref= pre-arm", () => {
     /**
      * The route accepts an optional `?credential_ref=<id>` query param.
-     * When set, the GET validates it resolves to a same-tenant
+     * When set, the GET validates it resolves to a same-space
      * `system.credential` of `kind: oauth_token` and renders it as a
      * hidden form field so the POST install carries it through to the
      * install pipeline. When unset (the historic default) the form
@@ -325,7 +325,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
       expect(html).toContain(cred.label);
     });
 
-    it("rejects credential_ref that does not resolve in this tenant", async () => {
+    it("rejects credential_ref that does not resolve in this space", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
         key: ctx.adminKey,
         body: { manifest: baseManifest({ name: "acme.bad-prearm" }) },
@@ -521,20 +521,20 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Catalog visibility for tenant-scoped member tokens.
+// Catalog visibility for space-scoped member tokens.
 //
 // Manifests register under platform credentials (is_platform: true), which
-// carry tenant_id: null. The default tenant-equality filter on items.list
-// hides them from any in-tenant caller — turning the marketplace surface
+// carry space_id: null. The default space-equality filter on items.list
+// hides them from any in-space caller — turning the marketplace surface
 // invisible to every real user. The catalog list opts into
 // `includePlatformScoped: true` so platform-scoped rows surface alongside
-// the caller's own; per-tenant integration rows must stay isolated, and the
+// the caller's own; per-space integration rows must stay isolated, and the
 // generic /items route must stay strictly equality-fenced.
 // ---------------------------------------------------------------------------
 
 describe("GET /integrations — catalog visibility", () => {
-  async function mintTenantKey(
-    tenantId: string,
+  async function mintSpaceKey(
+    spaceId: string,
     typePermissions: Record<string, "read" | "write" | "none"> = {},
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
@@ -550,14 +550,14 @@ describe("GET /integrations — catalog visibility", () => {
         is_platform: false,
       },
       hash,
-      tenantId,
+      spaceId,
     );
     return raw;
   }
 
-  it("returns platform-registered manifests to a member token in a tenant", async () => {
+  it("returns platform-registered manifests to a member token in a space", async () => {
     // The platform admin (ctx.adminKey) registers a fresh manifest. It
-    // lands with tenant_id: null because the admin carries no tenant.
+    // lands with space_id: null because the admin carries no space.
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.member-visibility" }) },
@@ -565,9 +565,9 @@ describe("GET /integrations — catalog visibility", () => {
     expect(reg.status).toBe(201);
     const regBody = (await reg.json()) as RegisterResponse;
 
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("tenant-member-vis");
-    const memberKey = await mintTenantKey(tenant.id, {
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("space-member-vis");
+    const memberKey = await mintSpaceKey(space.id, {
       "system.integration": "read",
     });
 
@@ -594,9 +594,9 @@ describe("GET /integrations — catalog visibility", () => {
       body: { manifest: baseManifest({ name: "acme.member-no-scope" }) },
     });
 
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("tenant-member-no-scope");
-    const memberKey = await mintTenantKey(tenant.id, {}); // no scope
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("space-member-no-scope");
+    const memberKey = await mintSpaceKey(space.id, {}); // no scope
 
     const res = await request(
       ctx.app,
@@ -628,38 +628,38 @@ describe("GET /integrations — catalog visibility", () => {
     ).toBe(true);
   });
 
-  it("does not leak a tenant-scoped manifest to another tenant's member", async () => {
+  it("does not leak a space-scoped manifest to another space's member", async () => {
     // Defense-in-depth — if a stray system.integration row carries a real
-    // tenant_id (whether seeded by accident, by a future code path, or
-    // copied during data migration), it must NOT cross the tenant
+    // space_id (whether seeded by accident, by a future code path, or
+    // copied during data migration), it must NOT cross the space
     // boundary just because the catalog endpoint widens to include
     // platform-scoped rows.
-    if (!ctx.storage.tenants) return;
-    const tenantA = await ctx.storage.tenants.create("tenant-iso-A");
-    const tenantB = await ctx.storage.tenants.create("tenant-iso-B");
+    if (!ctx.storage.spaces) return;
+    const spaceA = await ctx.storage.spaces.create("space-iso-A");
+    const spaceB = await ctx.storage.spaces.create("space-iso-B");
 
-    // Build a tenant-A-bound system.integration row by going through
-    // the storage layer directly (we don't expose a tenant-bound
+    // Build a space-A-bound system.integration row by going through
+    // the storage layer directly (we don't expose a space-bound
     // register API surface — this is a defensive shape test).
-    const tenantAOnly = await ctx.storage.items.create(
+    const spaceAOnly = await ctx.storage.items.create(
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.tenant-a-private",
+          manifest_name: "acme.space-a-private",
           manifest_version: "1.0.0",
           publisher: "Acme",
-          summary: "Tenant-A-only manifest fixture",
+          summary: "Space-A-only manifest fixture",
           direction: "read" as const,
           runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
-          manifest: { name: "acme.tenant-a-private", version: "1.0.0" },
+          manifest: { name: "acme.space-a-private", version: "1.0.0" },
         },
       },
-      tenantA.id,
+      spaceA.id,
     );
 
     // A platform-scoped manifest also lives in the catalog so we can
-    // assert the member in tenant B still sees null-tenant rows.
+    // assert the member in space B still sees null-space rows.
     const platformManifest = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
@@ -668,7 +668,7 @@ describe("GET /integrations — catalog visibility", () => {
     });
     const platformBody = (await platformManifest.json()) as RegisterResponse;
 
-    const memberB = await mintTenantKey(tenantB.id, {
+    const memberB = await mintSpaceKey(spaceB.id, {
       "system.integration": "read",
     });
     const res = await request(ctx.app, "GET", "/integrations?limit=200", {
@@ -677,29 +677,29 @@ describe("GET /integrations — catalog visibility", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
 
-    // tenant-A's private row must NOT leak to tenant B
-    expect(body.data.some((d) => d.id === tenantAOnly.id)).toBe(false);
+    // space-A's private row must NOT leak to space B
+    expect(body.data.some((d) => d.id === spaceAOnly.id)).toBe(false);
     expect(
-      body.data.some((d) => d.manifest_name === "acme.tenant-a-private"),
+      body.data.some((d) => d.manifest_name === "acme.space-a-private"),
     ).toBe(false);
 
     // ...but the platform-scoped catalog row IS visible
     expect(body.data.some((d) => d.id === platformBody.id)).toBe(true);
   });
 
-  it("does not widen the generic /items route — system.connection stays tenant-isolated", async () => {
+  it("does not widen the generic /items route — system.connection stays space-isolated", async () => {
     // Out-of-scope guard. The fix is local to the catalog endpoint;
-    // a stray system.connection row with tenant_id IS NULL must remain
+    // a stray system.connection row with space_id IS NULL must remain
     // invisible to a member token hitting the generic /items route.
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("tenant-items-gate");
-    const memberKey = await mintTenantKey(tenant.id, {
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("space-items-gate");
+    const memberKey = await mintSpaceKey(space.id, {
       "system.connection": "read",
     });
 
-    // Seed a NULL-tenant system.connection row to stand in for the
+    // Seed a NULL-space system.connection row to stand in for the
     // staging leftover.
-    const nullTenantConnection = await ctx.storage.items.create(
+    const nullSpaceConnection = await ctx.storage.items.create(
       {
         type: "system.connection",
         properties: {
@@ -714,7 +714,7 @@ describe("GET /integrations — catalog visibility", () => {
           runtime_compatibility: ["hosted"],
         },
       },
-      undefined, // tenant_id: null
+      undefined, // space_id: null
     );
 
     const res = await request(
@@ -727,25 +727,25 @@ describe("GET /integrations — catalog visibility", () => {
     const body = (await res.json()) as {
       data: { id: string; properties: Record<string, unknown> }[];
     };
-    expect(body.data.some((d) => d.id === nullTenantConnection.id)).toBe(false);
+    expect(body.data.some((d) => d.id === nullSpaceConnection.id)).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Platform-scoped get-by-id + install for tenant member callers.
+// Platform-scoped get-by-id + install for space member callers.
 //
 // The catalog list endpoint opts into `includePlatformScoped: true` so
-// platform-scoped manifests surface to in-tenant callers. The single-id
+// platform-scoped manifests surface to in-space callers. The single-id
 // `get` calls (`GET /integrations/:id`, `GET/POST /integrations/:id/install`)
 // and the admin install (`POST /connections/install`) thread the same
 // option through `items.get`. The install pipeline still stamps the new
-// `system.connection` with the caller's tenant_id (never the manifest's
-// null tenant) — the regression test below pins that.
+// `system.connection` with the caller's space_id (never the manifest's
+// null space) — the regression test below pins that.
 // ---------------------------------------------------------------------------
 
 describe("GET /integrations/:id + /:id/install — platform-scope", () => {
-  async function mintTenantMember(
-    tenantId: string,
+  async function mintSpaceMember(
+    spaceId: string,
     typePermissions: Record<string, "read" | "write" | "none"> = {
       "system.integration": "read",
     },
@@ -763,15 +763,15 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
         is_platform: false,
       },
       hash,
-      tenantId,
+      spaceId,
     );
     return raw;
   }
 
   it("GET /integrations/:id resolves a platform-scoped manifest for a member token", async () => {
-    // Manifest registered by platform admin → lives with tenant_id: null.
-    // Pre-fix this returned 404 to any caller with a real tenant; the
-    // tenant-fenced get filtered the null-tenant row out.
+    // Manifest registered by platform admin → lives with space_id: null.
+    // Pre-fix this returned 404 to any caller with a real space; the
+    // space-fenced get filtered the null-space row out.
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.t234-get-by-id" }) },
@@ -779,9 +779,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(reg.status).toBe(201);
     const regBody = (await reg.json()) as RegisterResponse;
 
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t234-tenant-get");
-    const memberKey = await mintTenantMember(tenant.id);
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-space-get");
+    const memberKey = await mintSpaceMember(space.id);
 
     const res = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
       key: memberKey,
@@ -792,16 +792,16 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(body.manifest_name).toBe("acme.t234-get-by-id");
   });
 
-  it("GET /integrations/:id/install renders consent HTML for a tenant member with a Bearer token", async () => {
+  it("GET /integrations/:id/install renders consent HTML for a space member with a Bearer token", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.t234-install-html" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t234-tenant-html");
-    const memberKey = await mintTenantMember(tenant.id);
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-space-html");
+    const memberKey = await mintSpaceMember(space.id);
 
     const res = await request(
       ctx.app,
@@ -816,16 +816,16 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(html).toContain('name="decision"');
   });
 
-  it("POST /integrations/:id/install completes for a tenant member and stamps the connection with the caller's tenant_id", async () => {
+  it("POST /integrations/:id/install completes for a space member and stamps the connection with the caller's space_id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.t234-install-post" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t234-tenant-post");
-    const memberKey = await mintTenantMember(tenant.id);
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-space-post");
+    const memberKey = await mintSpaceMember(space.id);
 
     const formBody = new URLSearchParams({
       decision: "approve",
@@ -844,12 +844,12 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     const html = await res.text();
     expect(html).toContain("Connection installed");
 
-    // Pin the load-bearing tenant invariant: the connection lands in
-    // the caller's tenant, NOT in the manifest's null tenant. Without
+    // Pin the load-bearing space invariant: the connection lands in
+    // the caller's space, NOT in the manifest's null space. Without
     // this guard a future regression in the install pipeline could
-    // silently land cross-tenant rows.
+    // silently land cross-space rows.
     const connections = await ctx.storage.items.list({
-      tenantId: tenant.id,
+      spaceId: space.id,
       type: "system.connection",
       limit: 50,
     });
@@ -859,7 +859,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
         regBody.id,
     );
     expect(installed).toBeDefined();
-    expect(installed?.tenant_id).toBe(tenant.id);
+    expect(installed?.space_id).toBe(space.id);
   });
 
   it("POST /integrations/:id/install on an unknown id still returns INTEGRATION_NOT_FOUND", async () => {
@@ -867,9 +867,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // into a 500 or a silent success. The type check on the next line
     // is the authoritative gate; only genuine `system.integration`
     // items pass.
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t234-tenant-missing");
-    const memberKey = await mintTenantMember(tenant.id);
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-space-missing");
+    const memberKey = await mintSpaceMember(space.id);
 
     const res = await ctx.app.request(
       "/integrations/01999999-9999-7999-9999-999999999999/install",
@@ -887,36 +887,36 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(body.error.code).toBe("integration_not_found");
   });
 
-  it("widening does not leak a tenant-scoped system.integration into another tenant via get-by-id", async () => {
+  it("widening does not leak a space-scoped system.integration into another space via get-by-id", async () => {
     // Defense-in-depth — if a stray system.integration row carries a
-    // real tenant_id (seeded by accident, or via a future tenant-bound
+    // real space_id (seeded by accident, or via a future space-bound
     // register path), it must not be reachable by id from another
-    // tenant via the catalog endpoint.
-    if (!ctx.storage.tenants) return;
-    const tenantA = await ctx.storage.tenants.create("t234-iso-A");
-    const tenantB = await ctx.storage.tenants.create("t234-iso-B");
+    // space via the catalog endpoint.
+    if (!ctx.storage.spaces) return;
+    const spaceA = await ctx.storage.spaces.create("t234-iso-A");
+    const spaceB = await ctx.storage.spaces.create("t234-iso-B");
 
-    const tenantABound = await ctx.storage.items.create(
+    const spaceABound = await ctx.storage.items.create(
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.t234-tenant-a-only",
+          manifest_name: "acme.t234-space-a-only",
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "read" as const,
           runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
-          manifest: { name: "acme.t234-tenant-a-only", version: "1.0.0" },
+          manifest: { name: "acme.t234-space-a-only", version: "1.0.0" },
         },
       },
-      tenantA.id,
+      spaceA.id,
     );
-    const memberB = await mintTenantMember(tenantB.id);
+    const memberB = await mintSpaceMember(spaceB.id);
 
     const res = await request(
       ctx.app,
       "GET",
-      `/integrations/${tenantABound.id}`,
+      `/integrations/${spaceABound.id}`,
       {
         key: memberB,
       },
@@ -1056,7 +1056,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     const html = await res.text();
     expect(html).toContain("Connection installed");
 
-    // Confirm the connection landed in the session user's tenant scope —
+    // Confirm the connection landed in the session user's space scope —
     // the audit row's key_id should carry the synthetic `auth_user:<id>`
     // marker so operators can recognize session-backed installs.
     const audit = await sessionCtx.storage.audit.list({

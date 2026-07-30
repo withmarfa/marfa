@@ -1,12 +1,12 @@
 /**
- * Custom item-type tenant scoping.
+ * Custom item-type space scoping.
  *
- * Custom item types are stored per tenant in `custom_types`, but the in-memory
- * type registry that the create-time gate consults must resolve a tenant's own
- * custom types plus the global core/system set — never another tenant's. This
- * proves the isolation end to end: tenant A registers a custom item type;
- * tenant B cannot see it and cannot create items of it (`unknown_type`), while
- * tenant A can. Two tenants registering the same id independently, and core
+ * Custom item types are stored per space in `custom_types`, but the in-memory
+ * type registry that the create-time gate consults must resolve a space's own
+ * custom types plus the global core/system set — never another space's. This
+ * proves the isolation end to end: space A registers a custom item type;
+ * space B cannot see it and cannot create items of it (`unknown_type`), while
+ * space A can. Two spaces registering the same id independently, and core
  * types resolving for everyone, round out the coverage.
  */
 
@@ -21,15 +21,15 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
+const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
 let adminA: string;
 let adminB: string;
 
 // Unique id per run — the type registry is module-level in @withmarfa/shared
-// and would otherwise leak across test files sharing a worker. Both tenants
-// register under the SAME id to prove per-tenant namespacing: the composite
-// (tenant_id, id) PK lets both coexist.
+// and would otherwise leak across test files sharing a worker. Both spaces
+// register under the SAME id to prove per-space namespacing: the composite
+// (space_id, id) PK lets both coexist.
 const TYPE_ID = `user.recipe_${Math.random().toString(36).slice(2, 8)}`;
 
 interface TypeSchema {
@@ -40,28 +40,25 @@ interface ErrorBody {
   error: { code: string };
 }
 
-async function mintTenantAdmin(
-  label: string,
-  tenantId: string,
-): Promise<string> {
+async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_ty_scope_${suffix}`;
   await ctx.storage.keys.create(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
       // Custom-type registration is gated on metadata.types:write for
-      // non-admin credentials; tenant_admin bypasses, but grant it
+      // non-admin credentials; space_admin bypasses, but grant it
       // explicitly so the intent is legible.
       metadata_permissions: { types: "write" },
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -93,32 +90,32 @@ async function createItem(key: string, type: string): Promise<Response> {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintTenantAdmin("ty-admin-a", tenantA);
-  adminB = await mintTenantAdmin("ty-admin-b", tenantB);
+  adminA = await mintSpaceAdmin("ty-admin-a", spaceA);
+  adminB = await mintSpaceAdmin("ty-admin-b", spaceB);
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("custom item types — registration is tenant-scoped", () => {
-  it("tenant_admin registers a custom item type scoped to their tenant (201)", async () => {
+describe("custom item types — registration is space-scoped", () => {
+  it("space_admin registers a custom item type scoped to their space (201)", async () => {
     const res = await registerType(adminA, TYPE_ID);
     expect(res.status).toBe(201);
     const data = (await res.json()) as { type: TypeSchema };
     expect(data.type.id).toBe(TYPE_ID);
   });
 
-  it("a second tenant registers the SAME id independently (per-tenant namespace)", async () => {
-    // The composite PK means tenant B's registration of an id tenant A
-    // already used is NOT a conflict — each tenant owns its own vocabulary.
+  it("a second space registers the SAME id independently (per-space namespace)", async () => {
+    // The composite PK means space B's registration of an id space A
+    // already used is NOT a conflict — each space owns its own vocabulary.
     const res = await registerType(adminB, TYPE_ID);
     expect(res.status).toBe(201);
     const data = (await res.json()) as { type: TypeSchema };
     expect(data.type.id).toBe(TYPE_ID);
   });
 
-  it("re-registering the same id within the same tenant is a 409", async () => {
+  it("re-registering the same id within the same space is a 409", async () => {
     const res = await registerType(adminA, TYPE_ID);
     expect(res.status).toBe(409);
     const body = (await res.json()) as ErrorBody;
@@ -126,10 +123,10 @@ describe("custom item types — registration is tenant-scoped", () => {
   });
 });
 
-describe("custom item types — cross-tenant isolation", () => {
-  it("tenant B cannot create an item of a type only tenant A registered (unknown_type)", async () => {
-    // The heart of the leak: a custom type only tenant A defined must NOT
-    // resolve in tenant B's create-time gate.
+describe("custom item types — cross-space isolation", () => {
+  it("space B cannot create an item of a type only space A registered (unknown_type)", async () => {
+    // The heart of the leak: a custom type only space A defined must NOT
+    // resolve in space B's create-time gate.
     const onlyA = `user.onlya_${Math.random().toString(36).slice(2, 8)}`;
     const reg = await registerType(adminA, onlyA);
     expect(reg.status).toBe(201);
@@ -140,7 +137,7 @@ describe("custom item types — cross-tenant isolation", () => {
     expect(body.error.code).toBe("unknown_type");
   });
 
-  it("tenant A CAN create an item of its own custom type", async () => {
+  it("space A CAN create an item of its own custom type", async () => {
     const aType = `user.aown_${Math.random().toString(36).slice(2, 8)}`;
     const reg = await registerType(adminA, aType);
     expect(reg.status).toBe(201);
@@ -151,7 +148,7 @@ describe("custom item types — cross-tenant isolation", () => {
     expect(data.item.type).toBe(aType);
   });
 
-  it("tenant B's type list does not see tenant A's distinct custom type", async () => {
+  it("space B's type list does not see space A's distinct custom type", async () => {
     const onlyA = `user.listonlya_${Math.random().toString(36).slice(2, 8)}`;
     const create = await registerType(adminA, onlyA);
     expect(create.status).toBe(201);
@@ -170,7 +167,7 @@ describe("custom item types — cross-tenant isolation", () => {
     expect(dataA.map((t) => t.id)).toContain(onlyA);
   });
 
-  it("tenant B cannot fetch a custom type that only tenant A owns (404)", async () => {
+  it("space B cannot fetch a custom type that only space A owns (404)", async () => {
     const onlyA = `user.getonlya_${Math.random().toString(36).slice(2, 8)}`;
     const reg = await registerType(adminA, onlyA);
     expect(reg.status).toBe(201);
@@ -188,8 +185,8 @@ describe("custom item types — cross-tenant isolation", () => {
   });
 });
 
-describe("custom item types — core types resolve for every tenant", () => {
-  it("both tenants can create core.note items", async () => {
+describe("custom item types — core types resolve for every space", () => {
+  it("both spaces can create core.note items", async () => {
     const resA = await createItem(adminA, "core.note");
     expect(resA.status).toBe(201);
     const resB = await createItem(adminB, "core.note");

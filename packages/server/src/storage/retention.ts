@@ -3,38 +3,38 @@ import type {
   CoordinationStore,
   ItemStore,
   Storage,
-  TenantStore,
+  SpaceStore,
 } from "./interface.js";
-import type { TenantConfig } from "@withmarfa/shared";
+import type { SpaceConfig } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Optional per-tenant fan-out wiring shared by both retention jobs. When
+ * Optional per-space fan-out wiring shared by both retention jobs. When
  * provided, the job:
- *   1. Lists every tenant via `tenants.list()`.
- *   2. For each tenant, resolves the effective retention (the tenant's
- *      `TenantConfig` override field, falling back to the instance default).
- *   3. Runs a tenant-scoped sweep with that effective retention.
- *   4. Also runs the NULL-tenant sweep at the instance default — catches
- *      single-tenant self-host items and any rows with no tenant scope.
+ *   1. Lists every space via `spaces.list()`.
+ *   2. For each space, resolves the effective retention (the space's
+ *      `SpaceConfig` override field, falling back to the instance default).
+ *   3. Runs a space-scoped sweep with that effective retention.
+ *   4. Also runs the NULL-space sweep at the instance default — catches
+ *      single-space self-host items and any rows with no space scope.
  *   5. Sums the deleted counts.
  *
- * Each per-tenant + the NULL sweep are gated by a per-tenant coordination
- * lock (`<jobName>:<tenant-id-or-null>`) so multi-instance deployments run
+ * Each per-space + the NULL sweep are gated by a per-space coordination
+ * lock (`<jobName>:<space-id-or-null>`) so multi-instance deployments run
  * each sweep once cluster-wide per tick.
  */
-export interface TenantFanout {
-  tenants: TenantStore;
+export interface SpaceFanout {
+  spaces: SpaceStore;
   /**
-   * Field on `TenantConfig` that holds the per-tenant retention
+   * Field on `SpaceConfig` that holds the per-space retention
    * override. The fan-out reads `config[configField]` and treats `0`
-   * as "disable for this tenant" (matches env-default semantics for
+   * as "disable for this space" (matches env-default semantics for
    * `TRASH_RETENTION_DAYS=0`).
    */
   configField: keyof Pick<
-    TenantConfig,
+    SpaceConfig,
     | "trash_retention_days"
     | "audit_retention_days"
     | "event_log_retention_hours"
@@ -56,10 +56,10 @@ export interface TenantFanout {
  * tick cluster-wide instead of once per instance.
  *
  * When `fanout` is supplied, a single `runOnce()` tick fans out across
- * every tenant + a NULL-bucket sweep, honoring per-tenant
- * `trash_retention_days` overrides from `TenantConfig`. When `fanout` is
+ * every space + a NULL-bucket sweep, honoring per-space
+ * `trash_retention_days` overrides from `SpaceConfig`. When `fanout` is
  * omitted the job runs a single unscoped sweep using the instance default.
- * Single-tenant self-hosts that never wire `tenants` get the simpler path.
+ * Single-space self-hosts that never wire `spaces` get the simpler path.
  */
 export class TrashPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -71,7 +71,7 @@ export class TrashPurger {
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
     private coordination?: CoordinationStore,
-    private fanout?: TenantFanout,
+    private fanout?: SpaceFanout,
   ) {}
 
   start(): void {
@@ -95,20 +95,20 @@ export class TrashPurger {
    * Computes the cutoff date from the injected clock and asks the
    * `ItemStore` to delete every trashed row strictly older than it.
    *
-   * Returns the total number of rows deleted across every tenant in
+   * Returns the total number of rows deleted across every space in
    * the fan-out (or just the global sweep when fan-out isn't wired).
    */
   async runOnce(): Promise<number> {
     return this.fanout
-      ? runTenantFanout({
+      ? runSpaceFanout({
           jobName: "trash-purge",
           coordination: this.coordination,
           fanout: this.fanout,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
-          sweep: (cutoff, tenantId) =>
-            this.items.purgeTrashedOlderThan(cutoff, tenantId),
+          sweep: (cutoff, spaceId) =>
+            this.items.purgeTrashedOlderThan(cutoff, spaceId),
         })
       : this.runOnceGlobal();
   }
@@ -151,8 +151,8 @@ export class TrashPurger {
  * (browser-side ephemeral cookies vanish on tab close, but the server-side
  * row stays around until the sweep catches up).
  *
- * Instance-wide — `auth_session` carries no `tenant_id` column and the
- * deletion criterion is purely time-based, so the per-tenant fan-out shape
+ * Instance-wide — `auth_session` carries no `space_id` column and the
+ * deletion criterion is purely time-based, so the per-space fan-out shape
  * used by retention-window jobs doesn't apply. Cluster-wide coordination
  * lock keyed `"auth-session-cleanup"` keeps multi-instance deployments
  * running once per tick.
@@ -318,7 +318,7 @@ export class PendingDeletePurger {
  * the GC just keeps the table from growing unboundedly across the long tail
  * of one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
  *
- * Instance-wide, not tenant-scoped — the table has no `tenant_id` column.
+ * Instance-wide, not space-scoped — the table has no `space_id` column.
  * Cluster-wide coordination lock keyed `"rate-limit-cleanup"` keeps
  * multi-instance deployments running once per tick.
  */
@@ -387,10 +387,10 @@ export class RateLimitWindowCleaner {
  *
  * Conservative: any single grant signal spares the row, so a client a user
  * actually authorized (or one with any live token) is never reaped. The
- * grant check is tenant-agnostic — a client with zero grants is dead
- * regardless of which tenant registered it — so this is an instance-wide
+ * grant check is space-agnostic — a client with zero grants is dead
+ * regardless of which space registered it — so this is an instance-wide
  * sweep (like `AuthSessionCleaner` / `RateLimitWindowCleaner`), not a
- * per-tenant fan-out. Cluster-wide coordination lock keyed
+ * per-space fan-out. Cluster-wide coordination lock keyed
  * `"dcr-client-cleanup"`.
  *
  * `retentionDays <= 0` disables the job — the operator can leave the
@@ -477,8 +477,8 @@ export class DcrClientCleaner {
  *      older than seven days. Per-dispatch machine artifacts, not human
  *      credentials — a week of post-revocation visibility is plenty.
  *
- * Instance-wide, not tenant-scoped — expiry is a property of the row, not
- * of tenant policy. Cluster-wide coordination lock keyed
+ * Instance-wide, not space-scoped — expiry is a property of the row, not
+ * of space policy. Cluster-wide coordination lock keyed
  * `"runtime-credential-reap"`. Disabled by wiring (interval `0` skips
  * construction in `index.ts`), matching the other cleaners.
  */
@@ -577,37 +577,37 @@ export class RuntimeCredentialReaper {
 }
 
 // ---------------------------------------------------------------------------
-// Per-tenant fan-out helper
+// Per-space fan-out helper
 // ---------------------------------------------------------------------------
 
 /**
  * Shared fan-out runner. Used by `TrashPurger` for the unit-of-days delete
- * job (and exposed via {@link runTenantCleanup} for the audit + event-log
+ * job (and exposed via {@link runSpaceCleanup} for the audit + event-log
  * jobs which live inline in `index.ts`).
  *
- * For each tenant + the NULL-tenant bucket, resolves an effective retention
- * (per-tenant override OR `instanceDefault`) and runs a tenant-scoped sweep
+ * For each space + the NULL-space bucket, resolves an effective retention
+ * (per-space override OR `instanceDefault`) and runs a space-scoped sweep
  * with `cutoff = now - retention * unitMs`. A value of `0` for the effective
  * retention is the documented "disable for this scope" sentinel and skips
  * the sweep without an error.
  *
- * Each per-tenant invocation grabs `coordination.withJobLock` on a
- * tenant-specific key (`<jobName>:<tenant-id-or-_no_tenant>`) so two server
- * instances racing the same tick don't double-process a tenant.
+ * Each per-space invocation grabs `coordination.withJobLock` on a
+ * space-specific key (`<jobName>:<space-id-or-_no_space>`) so two server
+ * instances racing the same tick don't double-process a space.
  */
-async function runTenantFanout(opts: {
+async function runSpaceFanout(opts: {
   jobName: string;
   coordination: CoordinationStore | undefined;
-  fanout: TenantFanout;
+  fanout: SpaceFanout;
   nowFn: () => Date;
   instanceDefault: number;
   unitMs: number;
-  sweep: (cutoff: string, tenantId: string | null) => Promise<number>;
+  sweep: (cutoff: string, spaceId: string | null) => Promise<number>;
 }): Promise<number> {
-  const tenants = await opts.fanout.tenants.list();
+  const spaces = await opts.fanout.spaces.list();
   let total = 0;
-  for (const tenant of tenants) {
-    const config = await opts.fanout.tenants.getConfig(tenant.id);
+  for (const space of spaces) {
+    const config = await opts.fanout.spaces.getConfig(space.id);
     const override = config?.[opts.fanout.configField];
     const effective =
       typeof override === "number" ? override : opts.instanceDefault;
@@ -617,14 +617,14 @@ async function runTenantFanout(opts: {
     ).toISOString();
     const deleted = await runOneScope(
       opts.coordination,
-      `${opts.jobName}:${tenant.id}`,
-      () => opts.sweep(cutoff, tenant.id),
+      `${opts.jobName}:${space.id}`,
+      () => opts.sweep(cutoff, space.id),
     );
     if (deleted) total += deleted;
   }
-  // NULL-tenant scope — single-tenant self-host items + any rows with
-  // no tenant scope. Always uses the instance default, which is the
-  // retention self-hosts get when they never configure per-tenant
+  // NULL-space scope — single-space self-host items + any rows with
+  // no space scope. Always uses the instance default, which is the
+  // retention self-hosts get when they never configure per-space
   // overrides.
   if (opts.instanceDefault > 0) {
     const cutoff = new Date(
@@ -632,7 +632,7 @@ async function runTenantFanout(opts: {
     ).toISOString();
     const deleted = await runOneScope(
       opts.coordination,
-      `${opts.jobName}:_no_tenant`,
+      `${opts.jobName}:_no_space`,
       () => opts.sweep(cutoff, null),
     );
     if (deleted) total += deleted;
@@ -659,14 +659,14 @@ async function runOneScope(
  * `3_600_000` for the event-log job (retention is in hours); passed in by
  * the caller so the helper stays unit-agnostic.
  */
-export async function runTenantCleanup(opts: {
+export async function runSpaceCleanup(opts: {
   jobName: string;
   coordination: CoordinationStore | undefined;
-  fanout: TenantFanout | undefined;
+  fanout: SpaceFanout | undefined;
   instanceDefault: number;
   unitMs: number;
-  /** Cleanup sweep — `tenantId === null` means "rows where tenant_id IS NULL". */
-  sweep: (retention: number, tenantId?: string | null) => Promise<number>;
+  /** Cleanup sweep — `spaceId === null` means "rows where space_id IS NULL". */
+  sweep: (retention: number, spaceId?: string | null) => Promise<number>;
 }): Promise<number> {
   if (!opts.fanout) {
     if (opts.instanceDefault <= 0) return 0;
@@ -674,25 +674,25 @@ export async function runTenantCleanup(opts: {
     if (!opts.coordination) return fn();
     return (await opts.coordination.withJobLock(opts.jobName, fn)) ?? 0;
   }
-  const tenants = await opts.fanout.tenants.list();
+  const spaces = await opts.fanout.spaces.list();
   let total = 0;
-  for (const tenant of tenants) {
-    const config = await opts.fanout.tenants.getConfig(tenant.id);
+  for (const space of spaces) {
+    const config = await opts.fanout.spaces.getConfig(space.id);
     const override = config?.[opts.fanout.configField];
     const effective =
       typeof override === "number" ? override : opts.instanceDefault;
     if (effective <= 0) continue;
     const deleted = await runOneScope(
       opts.coordination,
-      `${opts.jobName}:${tenant.id}`,
-      () => opts.sweep(effective, tenant.id),
+      `${opts.jobName}:${space.id}`,
+      () => opts.sweep(effective, space.id),
     );
     if (deleted) total += deleted;
   }
   if (opts.instanceDefault > 0) {
     const deleted = await runOneScope(
       opts.coordination,
-      `${opts.jobName}:_no_tenant`,
+      `${opts.jobName}:_no_space`,
       () => opts.sweep(opts.instanceDefault, null),
     );
     if (deleted) total += deleted;

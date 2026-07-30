@@ -15,7 +15,7 @@ export interface ControlPlaneEnv {
    *  schedule routes here.
    *
    *  It carries `is_platform: true`, so it can mint against any
-   *  Connection in any tenant. It stays between the server and this
+   *  Connection in any space. It stays between the server and this
    *  Worker: it is never presented to an integration Worker and never
    *  accepted from one. Those hops use per-Worker derived keys instead
    *  (`MARFA_WORKER_IDENTITY_SECRET`). */

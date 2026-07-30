@@ -27,8 +27,8 @@ import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
- * connection — used for SQLite, for tenant-less callers (platform
- * admin / single-tenant self-host), and when RLS enforcement is
+ * connection — used for SQLite, for space-less callers (platform
+ * admin / single-space self-host), and when RLS enforcement is
  * disabled instance-wide.
  */
 export interface ExportRoutesOptions {
@@ -37,49 +37,49 @@ export interface ExportRoutesOptions {
 }
 
 /**
- * Resolve the target tenant for an export request.
+ * Resolve the target space for an export request.
  *
  * Three cases:
- *   1. **tenant_admin / member with tenant_id** — caller's tenant
- *      wins; cross-tenant attempts (`?target_tenant_id` set to
+ *   1. **space_admin / member with space_id** — caller's space
+ *      wins; cross-space attempts (`?target_space_id` set to
  *      anything other than the caller's own) are rejected with 403.
- *   2. **platform admin (no tenant_id)** — MUST pass an explicit
- *      `?target_tenant_id=<id>` query param. Without it we reject
+ *   2. **platform admin (no space_id)** — MUST pass an explicit
+ *      `?target_space_id=<id>` query param. Without it we reject
  *      with 400, so a platform key never receives an export covering
- *      every tenant on the instance.
- *   3. **single-tenant self-host (anonymous / bootstrap admin
- *      mode)** — a tenant-less caller running against a DB whose items
- *      have no tenant_id (NULL) is the legitimate single-tenant path:
- *      pass `tenantId: undefined` through to the storage layer so list
- *      operations match `tenant_id IS NULL`, exporting the whole DB.
+ *      every space on the instance.
+ *   3. **single-space self-host (anonymous / bootstrap admin
+ *      mode)** — a space-less caller running against a DB whose items
+ *      have no space_id (NULL) is the legitimate single-space path:
+ *      pass `spaceId: undefined` through to the storage layer so list
+ *      operations match `space_id IS NULL`, exporting the whole DB.
  *      Distinguishing this
- *      from case 2 is the explicit `target_tenant_id` query param —
- *      operators on hosted multi-tenant deployments must set it;
- *      single-tenant operators don't.
+ *      from case 2 is the explicit `target_space_id` query param —
+ *      operators on hosted multi-space deployments must set it;
+ *      single-space operators don't.
  */
-function resolveExportTenant(
+function resolveExportSpace(
   apiKey: ApiKey | undefined,
   targetParam: string | undefined,
 ): string | undefined {
-  const callerTenant = apiKey?.tenant_id;
-  // Tenant-bound caller — own tenant wins.
-  if (callerTenant) {
-    if (targetParam !== undefined && targetParam !== callerTenant) {
+  const callerSpace = apiKey?.space_id;
+  // Space-bound caller — own space wins.
+  if (callerSpace) {
+    if (targetParam !== undefined && targetParam !== callerSpace) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        "Cannot export another tenant's data — target_tenant_id must match caller's tenant_id (or be omitted).",
+        "Cannot export another space's data — target_space_id must match caller's space_id (or be omitted).",
       );
     }
-    return callerTenant;
+    return callerSpace;
   }
-  // Tenant-less caller — platform admin OR single-tenant self-host.
-  // The presence of `target_tenant_id` distinguishes them: platform
-  // admins on hosted multi-tenant set it explicitly; single-tenant
+  // Space-less caller — platform admin OR single-space self-host.
+  // The presence of `target_space_id` distinguishes them: platform
+  // admins on hosted multi-space set it explicitly; single-space
   // self-hosts leave it unset.
   if (targetParam !== undefined) {
-    return targetParam; // platform admin scoping to a specific tenant
+    return targetParam; // platform admin scoping to a specific space
   }
-  return undefined; // single-tenant self-host fallback
+  return undefined; // single-space self-host fallback
 }
 
 // ---------------------------------------------------------------------------
@@ -87,13 +87,13 @@ function resolveExportTenant(
 // ---------------------------------------------------------------------------
 
 const exportRoute = createRoute({
-  operationId: "exportTenantData",
+  operationId: "exportSpaceData",
   method: "get",
   path: "/",
   tags: ["Export"],
-  summary: "Export tenant data",
+  summary: "Export space data",
   description:
-    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Tenant-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
+    "Streams the space's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -115,14 +115,14 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
-      // Platform admins scope a hosted-mode export to a specific tenant
-      // by passing `?target_tenant_id=<id>`. Tenant-bound callers
-      // (tenant_admin / member) get their own tenant automatically;
+      // Platform admins scope a hosted-mode export to a specific space
+      // by passing `?target_space_id=<id>`. Space-bound callers
+      // (space_admin / member) get their own space automatically;
       // supplying a mismatching value here returns 403.
-      target_tenant_id: z
+      target_space_id: z
         .string()
         .optional()
-        .describe("Platform admins scope the export to a specific tenant"),
+        .describe("Platform admins scope the export to a specific space"),
     }),
   },
   responses: {
@@ -170,46 +170,43 @@ export function exportRoutes(
 
     const query = c.req.valid("query");
 
-    const tenantId = resolveExportTenant(
-      c.get("apiKey"),
-      query.target_tenant_id,
-    );
+    const spaceId = resolveExportSpace(c.get("apiKey"), query.target_space_id);
 
     // Audit the export attempt before streaming starts — stamped for
     // both archive and NDJSON paths. `details.scope: "platform_unscoped"`
     // signals operators when a platform admin exports without a
-    // target_tenant_id (the self-host fallback that returns all rows —
-    // fine on single-tenant deployments, a real concern on hosted
-    // multi-tenant). Alerting on this shape catches accidental cross-
-    // tenant exports.
+    // target_space_id (the self-host fallback that returns all rows —
+    // fine on single-space deployments, a real concern on hosted
+    // multi-space). Alerting on this shape catches accidental cross-
+    // space exports.
     const platformUnscoped =
-      c.get("apiKey")?.tenant_id === undefined &&
-      query.target_tenant_id === undefined;
+      c.get("apiKey")?.space_id === undefined &&
+      query.target_space_id === undefined;
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       key_id: c.get("apiKey")?.id,
-      action: "export.tenant",
-      resource_type: "tenant",
-      resource_id: tenantId ?? undefined,
+      action: "export.space",
+      resource_type: "space",
+      resource_id: spaceId ?? undefined,
       details: {
         format: query.format ?? "ndjson",
-        scope: platformUnscoped ? "platform_unscoped" : "tenant",
-        ...(query.target_tenant_id !== undefined
-          ? { target_tenant_id: query.target_tenant_id }
+        scope: platformUnscoped ? "platform_unscoped" : "space",
+        ...(query.target_space_id !== undefined
+          ? { target_space_id: query.target_space_id }
           : {}),
       },
     });
 
-    // An export is a list read, so the tenant's read-narrowing lever applies
+    // An export is a list read, so the space's read-narrowing lever applies
     // to it. Leaving it out would make the control bypassable by swapping
     // endpoint rather than by rewording the query.
-    const tenantConfigForExport =
-      tenantId && storage.tenants
-        ? await storage.tenants.getConfig(tenantId)
+    const spaceConfigForExport =
+      spaceId && storage.spaces
+        ? await storage.spaces.getConfig(spaceId)
         : null;
     const sourceFilter = resolveEnforcement(
-      tenantConfigForExport,
+      spaceConfigForExport,
       c.get("apiKey"),
     ).source_filter;
 
@@ -219,7 +216,7 @@ export function exportRoutes(
         storage,
         blobBackend,
         options,
-        tenantId,
+        spaceId,
         sourceFilter,
       );
     }
@@ -253,15 +250,15 @@ export function exportRoutes(
     const stream = new ReadableStream({
       async start(controller) {
         const rlsCtx =
-          options.rlsEnforce && options.pgClient !== null && tenantId
-            ? await acquireStreamRls(options.pgClient, tenantId)
+          options.rlsEnforce && options.pgClient !== null && spaceId
+            ? await acquireStreamRls(options.pgClient, spaceId)
             : null;
         try {
           const work = async () => {
             let cursor: string | undefined;
             do {
               const result = await storage.items.list({
-                tenantId,
+                spaceId,
                 type,
                 state,
                 source,
@@ -317,13 +314,13 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * tenant_id stamped at export time. `null` for single-tenant
-   * self-host exports (no tenant scope on either side); a string for
+   * space_id stamped at export time. `null` for single-space
+   * self-host exports (no space scope on either side); a string for
    * hosted-mode exports. Used by `/admin/restore-archive` to verify
-   * cross-tenant restore attempts (rejected unless the platform admin
-   * passes an explicit `target_tenant_id`).
+   * cross-space restore attempts (rejected unless the platform admin
+   * passes an explicit `target_space_id`).
    */
-  tenant_id: string | null;
+  space_id: string | null;
   item_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
@@ -338,9 +335,9 @@ async function handleArchiveExport(
   blobBackend: BlobBackend,
   options: ExportRoutesOptions,
   /** Already resolved by the route handler — passed in rather than
-   *  re-resolved so the tenant decision happens exactly once per request. */
-  tenantId: string | undefined,
-  /** The tenant's `source_filter` lever, resolved alongside `tenantId`. */
+   *  re-resolved so the space decision happens exactly once per request. */
+  spaceId: string | undefined,
+  /** The space's `source_filter` lever, resolved alongside `spaceId`. */
   sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
@@ -357,8 +354,8 @@ async function handleArchiveExport(
   const allowedTypes = getTypeFilter(c);
 
   const rlsCtx =
-    options.rlsEnforce && options.pgClient !== null && tenantId
-      ? await acquireStreamRls(options.pgClient, tenantId)
+    options.rlsEnforce && options.pgClient !== null && spaceId
+      ? await acquireStreamRls(options.pgClient, spaceId)
       : null;
 
   const lines: string[] = [];
@@ -370,7 +367,7 @@ async function handleArchiveExport(
       let cursor: string | undefined;
       do {
         const result = await storage.items.list({
-          tenantId,
+          spaceId,
           type,
           state,
           source,
@@ -392,9 +389,9 @@ async function handleArchiveExport(
           : undefined;
       } while (cursor);
 
-      // Blob metadata lookup uses tenant_id; single-tenant self-hosts pass "" as the instance-wide sentinel.
+      // Blob metadata lookup uses space_id; single-space self-hosts pass "" as the instance-wide sentinel.
       for (const hash of blobHashes) {
-        const record = await storage.blobs.get(hash, tenantId ?? "");
+        const record = await storage.blobs.get(hash, spaceId ?? "");
         if (record) {
           blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
         }
@@ -416,7 +413,7 @@ async function handleArchiveExport(
     version: 1,
     format: "marfa-archive-v1",
     created_at: new Date().toISOString(),
-    tenant_id: tenantId ?? null,
+    space_id: spaceId ?? null,
     item_count: lines.length,
     blob_count: Object.keys(blobMeta).length,
     blobs: blobMeta,

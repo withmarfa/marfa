@@ -17,7 +17,7 @@ export interface ConnectionContext {
   /** Stable IDs for the run. */
   connection_id: string;
   integration_name: string;
-  tenant_id?: string;
+  space_id?: string;
 
   /** Authenticated Marfa API client scoped to this Connection. */
   marfa: ConnectionClient;

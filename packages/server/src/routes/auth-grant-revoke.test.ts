@@ -17,7 +17,7 @@
  *
  * The device flow is the vehicle for both because it is the shortest path
  * to a real projected grant: initiate, approve, and the
- * `system.connection { kind: "app" }` row exists with the right tenant.
+ * `system.connection { kind: "app" }` row exists with the right space.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {

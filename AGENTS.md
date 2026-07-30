@@ -76,7 +76,7 @@ The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the Better Auth
 
 ## System types
 
-The reserved `system.*` namespace carries platform-internal items. All `system.*` types use a bounded lifecycle (`active | revoked` only, not the universal three-state). Only platform-flagged credentials (`is_platform: true`) can write `system.*` items; ordinary tenant credentials are rejected at `POST /items` regardless of `type_permissions`.
+The reserved `system.*` namespace carries platform-internal items. All `system.*` types use a bounded lifecycle (`active | revoked` only, not the universal three-state). Only platform-flagged credentials (`is_platform: true`) can write `system.*` items; ordinary space credentials are rejected at `POST /items` regardless of `type_permissions`.
 
 - `system.device` — connected devices (name, kind, last-active timestamp).
 - `system.credential` — API keys and OAuth tokens (encrypted at rest under per-domain HKDF tags).
@@ -85,11 +85,11 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 - `system.connection` — approved relationships (the two kinds described under Authentication).
 - `system.integration` — published Integration manifests. One row per `(name, version)` pair; the install pipeline persists the manifest onto the `system.connection` it produces.
 - `system.activity` — operator-visible state: sync progress, errors, reauth prompts. Severity-tagged; the `severity: action_required` slice surfaces as a Repairs-style inbox.
-- `system.account_holder` — the graph handle for the person who owns a space, so edges such as `authored-by` can name them. One row per tenant, created by the sign-up provisioning hook and backfilled for existing tenants. Carries no fields: the profile endpoints stay the source of truth, and the item id is exposed on the profile wire shape as `account_holder_item_id`.
+- `system.account_holder` — the graph handle for the person who owns a space, so edges such as `authored-by` can name them. One row per space, created by the sign-up provisioning hook and backfilled for existing spaces. Carries no fields: the profile endpoints stay the source of truth, and the item id is exposed on the profile wire shape as `account_holder_item_id`.
 
 ## Reserved extension namespaces
 
-The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, recent error tail, retry counters. Inbound-delivery idempotency sits alongside it in **`connection.runtime.idempotency`**, split out because it has a different writer. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. `packages/server/AGENTS.md` carries the full list.
+The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, recent error tail, retry counters. Inbound-delivery idempotency sits alongside it in **`connection.runtime.idempotency`**, split out because it has a different writer. Writable only by the connection's own runtime credential; readable by space admins and the connection. `packages/server/AGENTS.md` carries the full list.
 
 ## Connections runtime substrate
 
@@ -97,7 +97,7 @@ Three coupled subsystems shipped together as the Connections build:
 
 - **Connection OAuth proxy** — `POST /connections/:id/proxy/*` forwards to the connection's configured upstream URL with `Authorization: Bearer <decrypted access_token>`. Refreshes on 401 (single-flight, with refresh-token rotation) and flips `runtime_status: reauth_required` on terminal failure.
 - **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Marfa directly without holding the connection's full credential. Manifest-capability gated.
-- **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show loop detection. The Cloudflare control plane (`runtime-control`) mints a short-lived per-connection broker key the Worker uses for callbacks.
+- **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the space's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show loop detection. The Cloudflare control plane (`runtime-control`) mints a short-lived per-connection broker key the Worker uses for callbacks.
 
 **Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. The `local` substrate is a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map is in `packages/server/AGENTS.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
 
@@ -121,26 +121,26 @@ Server package only (not needed for shared or SDK development):
 - `CDN_BASE_URL` — public CDN prefix rewritten onto blob URLs in responses; optional
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
-- `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+- `AUTH_MODE` — `keys` (default) or `hosted` (multi-space with user accounts)
 - `MARFA_REPLICA_COUNT` — how many server processes share this database. Purely declarative: it changes no behavior and exists so the boot-time multi-replica guard can warn. **Only one process per database is supported** — realtime delivery (SSE, outbound webhooks) runs through a process-local emitter in `pubsub.ts`, so additional processes drop events silently. Node cluster and PM2 workers are detected automatically; container orchestrators expose nothing readable, so set this when scaling that way.
-- `MARFA_DEFAULT_QUOTA_ITEMS` / `_WEBHOOKS` / `_BLOBS` / `_STORAGE_BYTES` / `_RATE_PER_MINUTE` — default per-tenant ceilings. Unset = unlimited. Per-tenant `tenant_quotas` rows take precedence. All five (`items`, `webhooks`, `blobs`, `storage_bytes`, `rate_per_minute`) are enforced.
-- `MARFA_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so per-table RLS policies filter queries (defense-in-depth beneath application-layer scoping). **Defaults to `true`**; opt out with `false`. SQLite is unaffected (the middleware skips when `storage.pgDb` is undefined). Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (`storage/pg/streaming-rls.ts`) — exempt from the transaction wrapper but not from RLS.
+- `MARFA_DEFAULT_QUOTA_ITEMS` / `_WEBHOOKS` / `_BLOBS` / `_STORAGE_BYTES` / `_RATE_PER_MINUTE` — default per-space ceilings. Unset = unlimited. Per-space `space_quotas` rows take precedence. All five (`items`, `webhooks`, `blobs`, `storage_bytes`, `rate_per_minute`) are enforced.
+- `MARFA_RLS_ENFORCE` — when `true`, each space-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE marfa_app` and `set_config('marfa.space_id', $space, true)` so per-table RLS policies filter queries (defense-in-depth beneath application-layer scoping). **Defaults to `true`**; opt out with `false`. SQLite is unaffected (the middleware skips when `storage.pgDb` is undefined). Platform-admin keys (no space_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (`storage/pg/streaming-rls.ts`) — exempt from the transaction wrapper but not from RLS.
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — `false` disables rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` adds the Strict-Transport-Security header (only behind TLS)
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
-- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Tenant override: `TenantConfig.audit_retention_days`.
+- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Space override: `SpaceConfig.audit_retention_days`.
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
-- `MARFA_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Bounds how far back an SSE client's `Last-Event-ID` can reach; older cursors get a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours`.
+- `MARFA_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Bounds how far back an SSE client's `Last-Event-ID` can reach; older cursors get a terminal `catchup_too_old` event. Space override: `SpaceConfig.event_log_retention_hours`.
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
 - `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
-- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Tenant override: `TenantConfig.trash_retention_days`. The env default applies to the NULL-tenant bucket and to tenants without an override.
+- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Space override: `SpaceConfig.trash_retention_days`. The env default applies to the NULL-space bucket and to spaces without an override.
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
-- `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the Better Auth session-cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not tenant-scoped — Better Auth owns the TTL.
-- `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS` — cadence (ms) for the runtime-credential reaper: revokes credentials past `expires_at`, drains credentials minted before expiry stamping once they age past the default TTL plus a one-TTL grace, and hard-deletes revoked runtime-credential rows after seven days (default: 3600000 / 1h; `0` disables). Instance-wide — expiry is a property of the row, not of tenant policy. The runtime-credential TTL itself is not env-tunable: it is derived from the substrate's dispatch bound because the local substrate cannot refresh a credential mid-run.
+- `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the Better Auth session-cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not space-scoped — Better Auth owns the TTL.
+- `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS` — cadence (ms) for the runtime-credential reaper: revokes credentials past `expires_at`, drains credentials minted before expiry stamping once they age past the default TTL plus a one-TTL grace, and hard-deletes revoked runtime-credential rows after seven days (default: 3600000 / 1h; `0` disables). Instance-wide — expiry is a property of the row, not of space policy. The runtime-credential TTL itself is not env-tunable: it is derived from the substrate's dispatch bound because the local substrate cannot refresh a credential mid-run.
 - `ERROR_WEBHOOK_URL` — webhook URL for 500-error notifications (optional, debounced)
 - `MARFA_ERROR_WEBHOOK_TIMEOUT_MS` — per-fetch timeout (ms) for error-webhook delivery (default: 5000), so a slow endpoint can't stall the error path.
 - `MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS` — per-account throttle (ms) on cancel-email emission from the deletion-guard middleware; stops a sign-in flood minting fresh cancel tokens and emails for a pending-deletion account (default: 3600000 / 1h; `0` disables).
@@ -164,17 +164,17 @@ Server package only (not needed for shared or SDK development):
 
 ## Schema-enforcement levers
 
-Three optional levers live in `TenantConfig.enforcement` (writable via `PUT /tenants/current/config`), plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
+Three optional levers live in `SpaceConfig.enforcement` (writable via `PUT /spaces/current/config`), plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
 
 - **Strict mode** — `enforcement.strict_mode.types: string[]`. For each listed type, unknown properties on writes are rejected with `INVALID_PROPERTIES` (`code: "unknown_property"`). The base `getZodSchema` flips from `z.looseObject` to `z.strictObject`.
 - **Source allow-list** — `enforcement.source_allowlist.{types, sources}`. For each listed type, writes whose credential `source` isn't in the allowed sources are rejected with `FORBIDDEN`. Stricter than the credential's own scope.
 - **Source filter** — `enforcement.source_filter.{types, sources}`. For each listed type, reads narrow to items whose `source` is in the allowed list. Filter-on-read, not enforcement-on-write: the read API silently omits rows that fail the filter.
 
-Per-credential `enforcement_override` merges over the tenant default: setting `strict_mode` on a credential does not clear the tenant's `source_allowlist`.
+Per-credential `enforcement_override` merges over the space default: setting `strict_mode` on a credential does not clear the space's `source_allowlist`.
 
 ## Platform credentials
 
-The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `marfa.*`). The seed value lives on the bootstrap admin credential created at install; only an existing platform credential may mint another. Ordinary tenant admin/member keys default to `is_platform: false` and are rejected when they claim reserved namespaces.
+The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `marfa.*`). The seed value lives on the bootstrap admin credential created at install; only an existing platform credential may mint another. Ordinary space admin/member keys default to `is_platform: false` and are rejected when they claim reserved namespaces.
 
 ## Database migrations
 
@@ -291,7 +291,7 @@ Three families of type ship with the platform, all registering into the same run
 - **Connector** (`packages/types/connectors/*.json`, 13 types) — one vendor's payload shape, so a connector has somewhere faithful to write. `google.*`, `raindrop.*`, `readwise.*`, `todoist.task`, `withmarfa.captured_email`.
 - **System** (`packages/types/core/system/*.json`, 8 types) — platform-internal records, with the restrictions described under System types below.
 
-The split is provenance, not behavior: it exists so a catalog can tell a tenant which types are the common vocabulary and which exist because a specific upstream service does. The codegen in `packages/types/scripts/generate.ts` emits one array per family into `generated/type-registry.ts`; shared bundles them at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry. Custom types register at runtime via `POST /types` and persist in the `custom_types` table. Platform-shipped types — all three families — cannot be modified or deleted via the API.
+The split is provenance, not behavior: it exists so a catalog can tell a space which types are the common vocabulary and which exist because a specific upstream service does. The codegen in `packages/types/scripts/generate.ts` emits one array per family into `generated/type-registry.ts`; shared bundles them at build time via tsup's `noExternal`. Schemas marked `_deferred: true` stay on disk as a record of shape but are skipped by the generator and excluded from the runtime registry. Custom types register at runtime via `POST /types` and persist in the `custom_types` table. Platform-shipped types — all three families — cannot be modified or deleted via the API.
 
 **One validator across both authoring paths.** `validateTypeSchema` lives in `@withmarfa/types` and is called by the in-tree codegen and by `POST /types` alike, so an in-tree JSON schema is a valid runtime submission verbatim. Every error it raises carries `field`, `expected`, `actual` and `hint`. See `packages/types/AGENTS.md`.
 
@@ -307,7 +307,7 @@ Relationships between items are first-class typed edges, not embedded references
 
 **Direction is spec-exact.** For `parent-of`, source = parent, target = child. For `in-thread`, source = member, target = thread. Every consumer (cycle-detection walks, filter SQL, cascade planner) obeys this.
 
-Custom edge types register at runtime via `POST /edge-types` (tenant-admin or platform-admin) and persist in `custom_edge_types`. They're tenant-scoped: a tenant's custom edge types resolve only within that tenant (composite `(tenant_id, id)` PK plus a per-tenant in-memory registry), while the eight core types stay global. Two tenants may register the same id independently. Core types cannot be redefined. Custom edge types do not inherit.
+Custom edge types register at runtime via `POST /edge-types` (space-admin or platform-admin) and persist in `custom_edge_types`. They're space-scoped: a space's custom edge types resolve only within that space (composite `(space_id, id)` PK plus a per-space in-memory registry), while the eight core types stay global. Two spaces may register the same id independently. Core types cannot be redefined. Custom edge types do not inherit.
 
 Atomic writes on `POST /items` accept `edges: { [type]: [target_ids] }`. Edge-only mutations go through `/edges` (create / update-properties-only / delete) or `/items/:id/edges` + `/backrefs` for listings. Single-item reads hydrate edges inline; list reads opt in via `?include=edges`.
 
@@ -353,9 +353,13 @@ Name a boolean so it reads as a yes/no. Three valid shapes:
 
 A bare noun reads as neither yes nor no — rename it to one of the shapes above. Applies to wire fields, DB columns, and in-code variables alike.
 
-### `tenant` vs "space"
+### One word: "space"
 
-The internal code term for an isolated data boundary is **`tenant`** — keep it in code, schemas, DB columns, and the role vocabulary (`tenant_admin`). The user-facing word is **"space"** — use it in product docs and user-visible copy. Not "instance" (a server deployment) and not "workspace" (oversells the team angle; a space is usually one person). The split is deliberate: don't surface `tenant` to users, don't invent a third term in code.
+An isolated data boundary is a **space**, in code, in schemas, in DB columns, on the wire, in the role vocabulary (`space_admin`) and in anything a person reads. There is no second term and no translation step.
+
+It used to be `space` internally and "space" externally. That split cost a translation on every route, log line and error message, forever, to save a reader learning one word once — and the word it protected was the less precise of the two anyway, since a space is usually one person rather than an organisation. Not "instance", which is a server deployment, and not "workspace", which oversells the team angle.
+
+The old term survives in exactly two places, both immutable: applied database migrations, and commit history. Anywhere else it is a missed rename rather than a compatibility shim, so remove it if dead and update it if live.
 
 ## Comments
 

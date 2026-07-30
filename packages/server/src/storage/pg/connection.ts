@@ -126,7 +126,7 @@ export async function createConnection(
   // session-level SET ROLE would strand on a shared backend and be inherited
   // by unrelated queries across the whole instance. Silently disabling
   // streaming RLS instead would trade a loud failure for a quiet loss of
-  // tenant isolation, so neither fallback is acceptable.
+  // space isolation, so neither fallback is acceptable.
   if (options?.poolMode === "transaction" && directConnectionString === "") {
     throw new Error(
       "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +

@@ -14,9 +14,9 @@
  *      (acceptable tradeoff; documented).
  *   2. `buildOauthProviderPlugin(...)` — constructs the plugin with
  *      opaque tokens hashed via Marfa's `hashApiKey(t, salt)`, the
- *      `marfa_at_` / `marfa_rt_` prefixes, tenant binding via
+ *      `marfa_at_` / `marfa_rt_` prefixes, space binding via
  *      `clientReference` + `postLogin.consentReferenceId`, and OIDC
- *      custom claims for profile + email + tenant_id.
+ *      custom claims for profile + email + space_id.
  *   3. `buildOauthProjectionPlugin(...)` — the before-hook that
  *      defends against refresh-token replay by pre-emptively revoking
  *      access tokens when a stale refresh is detected.
@@ -148,26 +148,26 @@ export function buildAllowedScopes(
 }
 
 // ---------------------------------------------------------------------------
-// Tenant resolution (auth_user.id → tenant_id via users table)
+// Space resolution (auth_user.id → space_id via users table)
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a Better Auth user's tenant_id by joining through the `users`
+ * Resolve a Better Auth user's space_id by joining through the `users`
  * table. Returns `undefined` in keys-mode (no users
- * table) or when the user has no tenant assigned yet.
+ * table) or when the user has no space assigned yet.
  *
  * Used by:
  *   - `clientReference` at client-registration time
  *   - `customAccessTokenClaims` at token-issuance time
  *   - the consent after-hook when projecting `system.connection`
  */
-export async function resolveTenantIdForAuthUser(
+export async function resolveSpaceIdForAuthUser(
   storage: Storage,
   authUserId: string,
 ): Promise<string | undefined> {
   if (!storage.users) return undefined;
   const user = await storage.users.getByAuthUserId(authUserId);
-  return user?.tenant_id ?? undefined;
+  return user?.space_id ?? undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,14 +218,14 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
 
-    // ----- Tenant binding -----
+    // ----- Space binding -----
     // `clientReference` is invoked at CLIENT-REGISTRATION time. The
     // returned value is written to `auth_oauth_client.reference_id`
     // and is immutable for the life of the client. Used for things
-    // like "list all clients a tenant has registered."
+    // like "list all clients a space has registered."
     clientReference: async ({ user }) => {
       if (!user) return undefined;
-      return resolveTenantIdForAuthUser(opts.storage, user.id);
+      return resolveSpaceIdForAuthUser(opts.storage, user.id);
     },
 
     // `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
@@ -234,17 +234,17 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // `auth_oauth_access_token.reference_id` for every minted token.
     //
     // The bearer middleware reads that column as the per-token
-    // `tenant_id`:
+    // `space_id`:
     //
     //   middleware/auth.ts:325:
-    //     const oauthTenantId = oauthToken.referenceId ?? undefined;
+    //     const oauthSpaceId = oauthToken.referenceId ?? undefined;
     //
     // Without this callback, `reference_id` is NULL on every issued
-    // token → the bearer middleware sees `tenant_id=undefined` →
-    // keys-mode behavior → multi-tenant scoping breaks. With it, each
-    // token is bound to the consenting user's tenant at issuance, so
-    // the same client can serve users from different tenants without
-    // cross-tenant leakage.
+    // token → the bearer middleware sees `space_id=undefined` →
+    // keys-mode behavior → multi-space scoping breaks. With it, each
+    // token is bound to the consenting user's space at issuance, so
+    // the same client can serve users from different spaces without
+    // cross-space leakage.
     //
     // The plugin's `postLogin` config wraps an OPTIONAL account-
     // selection flow (multi-account UX); Marfa has single-account-per-
@@ -252,14 +252,14 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // `/auth/post-login` page is never hit. We only wire this block
     // for the `consentReferenceId` field.
     //
-    // Single-tenant self-hosts return `undefined` here (no `users`
-    // store, so no tenant to resolve); their tokens land with
+    // Single-space self-hosts return `undefined` here (no `users`
+    // store, so no space to resolve); their tokens land with
     // `reference_id=NULL` which is correct for keys-mode.
     postLogin: {
       page: "/auth/post-login",
       shouldRedirect: () => false,
       consentReferenceId: async ({ user }) =>
-        resolveTenantIdForAuthUser(opts.storage, user.id),
+        resolveSpaceIdForAuthUser(opts.storage, user.id),
     },
 
     // ----- Scope grammar -----
@@ -315,7 +315,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
       const claims: Record<string, unknown> = {
         scope: scopes.join(" "),
       };
-      if (referenceId) claims.tenant_id = referenceId;
+      if (referenceId) claims.space_id = referenceId;
       if (user) claims.user_id = user.id;
       return claims;
     },

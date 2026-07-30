@@ -18,7 +18,7 @@ import { BulkActionWorker } from "./worker.js";
 function makeRow(): BulkActionJobRow {
   return {
     id: "job_1",
-    tenant_id: null,
+    space_id: null,
     api_key_id: null,
     status: "in_progress",
     action: "transition",

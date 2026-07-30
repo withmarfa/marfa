@@ -16,22 +16,22 @@ import type { PgDb } from "./connection.js";
 export class PgTypeStore implements TypeStore {
   constructor(private db: PgDb) {}
 
-  list(tenantId?: string): Promise<TypeSchema[]> {
-    return Promise.resolve(listTypes(tenantId));
+  list(spaceId?: string): Promise<TypeSchema[]> {
+    return Promise.resolve(listTypes(spaceId));
   }
 
-  get(id: string, tenantId?: string): Promise<TypeSchema | undefined> {
-    return Promise.resolve(getTypeSchema(id, tenantId));
+  get(id: string, spaceId?: string): Promise<TypeSchema | undefined> {
+    return Promise.resolve(getTypeSchema(id, spaceId));
   }
 
-  async create(schema: TypeSchema, tenantId?: string): Promise<TypeSchema> {
+  async create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema> {
     const now = new Date().toISOString();
     try {
       await this.db
         .insert(customTypes)
         .values({
           id: schema.id,
-          tenant_id: tenantId ?? "",
+          space_id: spaceId ?? "",
           schema: JSON.stringify(schema),
           created_at: now,
           updated_at: now,
@@ -50,35 +50,35 @@ export class PgTypeStore implements TypeStore {
       }
       throw err;
     }
-    registerTypeSchema(schema, tenantId);
+    registerTypeSchema(schema, spaceId);
     return schema;
   }
 
   async update(
     id: string,
     schema: TypeSchema,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db
       .update(customTypes)
       .set({ schema: JSON.stringify(schema), updated_at: now })
       .where(
-        and(eq(customTypes.id, id), eq(customTypes.tenant_id, tenantId ?? "")),
+        and(eq(customTypes.id, id), eq(customTypes.space_id, spaceId ?? "")),
       )
       .execute();
-    registerTypeSchema(schema, tenantId);
+    registerTypeSchema(schema, spaceId);
     return schema;
   }
 
-  async delete(id: string, tenantId?: string): Promise<void> {
+  async delete(id: string, spaceId?: string): Promise<void> {
     await this.db
       .delete(customTypes)
       .where(
-        and(eq(customTypes.id, id), eq(customTypes.tenant_id, tenantId ?? "")),
+        and(eq(customTypes.id, id), eq(customTypes.space_id, spaceId ?? "")),
       )
       .execute();
-    unregisterTypeSchema(id, tenantId);
+    unregisterTypeSchema(id, spaceId);
   }
 
   async loadCustomTypes(): Promise<LoadedType[]> {
@@ -91,7 +91,7 @@ export class PgTypeStore implements TypeStore {
         `custom_types.schema[${row.id}]`,
       );
       if (parsed) {
-        results.push({ tenant_id: row.tenant_id, schema: parsed });
+        results.push({ space_id: row.space_id, schema: parsed });
       }
     }
     return results;

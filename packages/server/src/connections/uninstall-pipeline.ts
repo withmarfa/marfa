@@ -40,7 +40,7 @@
  * use the storage layer directly rather than the HTTP route,
  * sidestepping the platform-credential gate that route enforces. This
  * intentionally mirrors `performInstall`'s direct-storage create: at
- * uninstall time the caller is a tenant admin or platform admin acting
+ * uninstall time the caller is a space admin or platform admin acting
  * deliberately, not an arbitrary `system.*` writer.
  */
 import type { Storage } from "../storage/interface.js";
@@ -49,8 +49,8 @@ import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
 export interface UninstallInput {
   /** The api_keys row id of the caller (audit trail). */
   apiKeyId: string;
-  /** Tenant scope. Must match the connection's tenant. */
-  tenantId?: string;
+  /** Space scope. Must match the connection's space. */
+  spaceId?: string;
   /** id of the system.connection item to uninstall. */
   connectionId: string;
   /** Resolved client IP. Threaded into the audit row. */
@@ -138,10 +138,7 @@ async function performUninstallLocked(
   // -------------------------------------------------------------------
   // Step 1: resolve the connection.
   // -------------------------------------------------------------------
-  const connection = await storage.items.get(
-    input.connectionId,
-    input.tenantId,
-  );
+  const connection = await storage.items.get(input.connectionId, input.spaceId);
   if (connection?.type !== "system.connection") {
     throw new UninstallError(
       "connection_not_found",
@@ -167,7 +164,7 @@ async function performUninstallLocked(
   // -------------------------------------------------------------------
   const credentials = await storage.keys.listByConnectionId(
     input.connectionId,
-    input.tenantId,
+    input.spaceId,
   );
   const revokedCredentialIds: string[] = [];
   for (const cred of credentials) {
@@ -209,7 +206,7 @@ async function performUninstallLocked(
     | undefined;
   const disarm = await disarmConnectionSchedule(storage, {
     connectionId: input.connectionId,
-    tenantId: input.tenantId,
+    spaceId: input.spaceId,
     integrationRef: integrationRefForDisarm,
     integrationRuntime: input.integrationRuntime ?? "local",
     controlPlaneUrl: input.controlPlaneUrl,
@@ -221,7 +218,7 @@ async function performUninstallLocked(
   // -------------------------------------------------------------------
   const existingToken = await storage.connectionOauthTokens.get(
     input.connectionId,
-    input.tenantId,
+    input.spaceId,
   );
   let oauthTokensDeleted = false;
   if (existingToken) {
@@ -237,7 +234,7 @@ async function performUninstallLocked(
     await storage.connectionLeasedTokens.listActiveByConnection(
       input.connectionId,
       nowIso,
-      input.tenantId,
+      input.spaceId,
     );
   let leasedTokensRevoked = 0;
   for (const lease of activeLeases) {
@@ -253,7 +250,7 @@ async function performUninstallLocked(
   // -------------------------------------------------------------------
   const inboundSubs = await storage.inboundWebhooks.listByConnection(
     input.connectionId,
-    input.tenantId,
+    input.spaceId,
   );
   let inboundWebhooksDisabled = 0;
   for (const sub of inboundSubs) {
@@ -294,12 +291,12 @@ async function performUninstallLocked(
     await storage.items.transition(
       input.connectionId,
       "revoked",
-      input.tenantId,
+      input.spaceId,
     );
     await storage.items.update(
       input.connectionId,
       { properties: revokedProperties },
-      input.tenantId,
+      input.spaceId,
     );
   });
 
@@ -326,7 +323,7 @@ async function performUninstallLocked(
         },
       },
     },
-    input.tenantId,
+    input.spaceId,
   );
 
   // -------------------------------------------------------------------
@@ -335,7 +332,7 @@ async function performUninstallLocked(
   await storage.audit.log({
     key_id: input.apiKeyId,
     client_ip: input.clientIp ?? null,
-    tenant_id: input.tenantId ?? null,
+    space_id: input.spaceId ?? null,
     action: "integration.uninstall",
     resource_type: "item",
     resource_id: input.connectionId,
@@ -445,7 +442,7 @@ async function disarmConnectionSchedule(
   storage: Storage,
   args: {
     connectionId: string;
-    tenantId?: string;
+    spaceId?: string;
     integrationRef?: string;
     integrationRuntime: "hosted" | "local";
     controlPlaneUrl?: string;
@@ -476,7 +473,7 @@ async function disarmConnectionSchedule(
   if (args.integrationRef) {
     const integration = await storage.items.get(
       args.integrationRef,
-      args.tenantId,
+      args.spaceId,
       { includePlatformScoped: true },
     );
     if (integration?.type === "system.integration") {
@@ -546,7 +543,7 @@ async function disarmConnectionSchedule(
           },
         },
       },
-      args.tenantId,
+      args.spaceId,
     );
   } catch {
     // The activity emit is the operator surface, not the source of

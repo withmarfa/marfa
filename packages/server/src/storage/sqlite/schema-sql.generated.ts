@@ -12,7 +12,7 @@
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS \`api_keys\` (
 	\`id\` text PRIMARY KEY NOT NULL,
-	\`tenant_id\` text,
+	"space_id" text,
 	\`key_hash\` text NOT NULL,
 	\`label\` text NOT NULL,
 	\`role\` text DEFAULT 'member' NOT NULL,
@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS \`audit_log\` (
 	\`resource_type\` text NOT NULL,
 	\`resource_id\` text,
 	\`details\` text DEFAULT '{}' NOT NULL
-, \`tenant_id\` text);
+, "space_id" text);
 
-CREATE TABLE IF NOT EXISTS \`tenant_quotas\` (
-  \`tenant_id\` text PRIMARY KEY NOT NULL,
+CREATE TABLE IF NOT EXISTS "space_quotas" (
+  "space_id" text PRIMARY KEY NOT NULL,
   \`items_limit\` integer,
   \`webhooks_limit\` integer,
   \`blobs_limit\` integer,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS \`tenant_quotas\` (
 
 CREATE TABLE IF NOT EXISTS "items" (
 	\`id\` text PRIMARY KEY NOT NULL,
-	\`tenant_id\` text,
+	"space_id" text,
 	\`type\` text NOT NULL,
 	\`state\` text DEFAULT 'active' NOT NULL,
 	\`properties\` text NOT NULL,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS "oauth_device_codes" (
 
 CREATE TABLE IF NOT EXISTS "bulk_action_jobs" (
   "id" TEXT PRIMARY KEY NOT NULL,
-  "tenant_id" TEXT,
+  "space_id" TEXT,
   "api_key_id" TEXT,
   "status" TEXT NOT NULL,
   "action" TEXT NOT NULL,
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS "bulk_action_jobs" (
 
 CREATE TABLE IF NOT EXISTS \`inbound_webhooks\` (
   \`id\` text PRIMARY KEY NOT NULL,
-  \`tenant_id\` text,
+  "space_id" text,
   \`connection_id\` text NOT NULL,
   \`external_service_id\` text,
   \`secret_encrypted\` text NOT NULL,
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS \`inbound_webhooks\` (
   \`updated_at\` text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS \`tenants\` (
+CREATE TABLE IF NOT EXISTS "spaces" (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`name\` text,
 	\`created_at\` text NOT NULL
@@ -144,10 +144,10 @@ CREATE TABLE IF NOT EXISTS \`users\` (
 	\`name\` text,
 	\`provider\` text NOT NULL,
 	\`provider_id\` text NOT NULL,
-	\`tenant_id\` text NOT NULL,
+	"space_id" text NOT NULL,
 	\`created_at\` text NOT NULL,
 	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`role\` text NOT NULL DEFAULT 'member',
-	FOREIGN KEY (\`tenant_id\`) REFERENCES \`tenants\`(\`id\`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY ("space_id") REFERENCES "spaces"(\`id\`) ON UPDATE no action ON DELETE no action
 );
 
 CREATE TABLE IF NOT EXISTS \`rate_limit_windows\` (
@@ -187,7 +187,7 @@ CREATE TABLE IF NOT EXISTS "outbound_webhook_deliveries" (
 
 CREATE TABLE IF NOT EXISTS "outbound_webhooks" (
 	\`id\` text PRIMARY KEY NOT NULL,
-	\`tenant_id\` text,
+	"space_id" text,
 	\`url\` text NOT NULL,
 	\`secret\` text NOT NULL,
 	\`events\` text DEFAULT '[]' NOT NULL,
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS "outbound_webhooks" (
 
 CREATE TABLE IF NOT EXISTS \`edges\` (
 	\`id\` text PRIMARY KEY NOT NULL,
-	\`tenant_id\` text,
+	"space_id" text,
 	\`source_id\` text NOT NULL,
 	\`target_id\` text NOT NULL,
 	\`edge_type\` text NOT NULL,
@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS "event_log" (
   \`event_type\` text NOT NULL,
   \`item_id\` text,
   \`edge_id\` text,
-  \`tenant_id\` text,
+  "space_id" text,
   \`payload\` text NOT NULL,
   \`created_at\` text NOT NULL
 , \`originating_connection_id\` text, \`hop_count\` integer NOT NULL DEFAULT 0);
@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS \`inbound_webhook_events\` (
 CREATE TABLE IF NOT EXISTS \`connection_oauth_tokens\` (
   \`id\` text PRIMARY KEY NOT NULL,
   \`connection_id\` text NOT NULL,
-  \`tenant_id\` text,
+  "space_id" text,
   \`access_token_encrypted\` text NOT NULL,
   \`refresh_token_encrypted\` text,
   \`expires_at\` text NOT NULL,
@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS \`connection_oauth_tokens\` (
 CREATE TABLE IF NOT EXISTS \`connection_leased_tokens\` (
   \`id\` text PRIMARY KEY NOT NULL,
   \`connection_id\` text NOT NULL,
-  \`tenant_id\` text,
+  "space_id" text,
   \`capability_id\` text NOT NULL,
   \`lease_token_hash\` text NOT NULL,
   \`scopes\` text DEFAULT '[]' NOT NULL,
@@ -321,12 +321,12 @@ CREATE TABLE IF NOT EXISTS \`connection_leased_tokens\` (
 );
 
 CREATE TABLE IF NOT EXISTS "blobs" (
-  \`tenant_id\` text NOT NULL DEFAULT '',
+  "space_id" text NOT NULL DEFAULT '',
   \`hash\` text NOT NULL,
   \`mime_type\` text NOT NULL,
   \`size\` integer NOT NULL,
   \`storage_path\` text NOT NULL,
-  PRIMARY KEY (\`tenant_id\`, \`hash\`)
+  PRIMARY KEY ("space_id", \`hash\`)
 );
 
 CREATE TABLE IF NOT EXISTS \`auth_oauth_client\` (
@@ -407,21 +407,21 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_consent\` (
 );
 
 CREATE TABLE IF NOT EXISTS "custom_types" (
-  \`tenant_id\` text NOT NULL DEFAULT '',
+  "space_id" text NOT NULL DEFAULT '',
   \`id\` text NOT NULL,
   \`schema\` text NOT NULL,
   \`created_at\` text NOT NULL,
   \`updated_at\` text NOT NULL,
-  PRIMARY KEY (\`tenant_id\`, \`id\`)
+  PRIMARY KEY ("space_id", \`id\`)
 );
 
 CREATE TABLE IF NOT EXISTS "custom_edge_types" (
-  \`tenant_id\` text NOT NULL DEFAULT '',
+  "space_id" text NOT NULL DEFAULT '',
   \`id\` text NOT NULL,
   \`schema\` text NOT NULL,
   \`created_at\` text NOT NULL,
   \`updated_at\` text NOT NULL,
-  PRIMARY KEY (\`tenant_id\`, \`id\`)
+  PRIMARY KEY ("space_id", \`id\`)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
@@ -432,14 +432,13 @@ CREATE INDEX IF NOT EXISTS \`idx_api_keys_runtime_credential\`
   ON \`api_keys\` (\`is_runtime_credential\`)
   WHERE \`is_runtime_credential\`;
 
-CREATE UNIQUE INDEX IF NOT EXISTS \`idx_api_keys_source_per_tenant\`
-  ON \`api_keys\` (\`tenant_id\`, \`source\`) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS \`idx_api_keys_source_per_space\` ON \`api_keys\` (\`space_id\`, \`source\`) WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS \`idx_audit_log_action\` ON \`audit_log\` (\`action\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_audit_log_resource_type\` ON \`audit_log\` (\`resource_type\`);
 
-CREATE INDEX IF NOT EXISTS \`idx_audit_log_tenant_id\` ON \`audit_log\` (\`tenant_id\`);
+CREATE INDEX IF NOT EXISTS \`idx_audit_log_space_id\` ON \`audit_log\` (\`space_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_audit_log_timestamp\` ON \`audit_log\` (\`timestamp\`);
 
@@ -494,14 +493,13 @@ CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_gc"
   ON "bulk_action_jobs" ("status", "finished_at");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "idx_bulk_action_jobs_idempotency"
-  ON "bulk_action_jobs" ("tenant_id", "idempotency_key")
+  ON "bulk_action_jobs" ("space_id", "idempotency_key")
   WHERE "idempotency_key" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS \`idx_bulk_action_jobs_space_id\` ON \`bulk_action_jobs\` (\`space_id\`);
 
 CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_status"
   ON "bulk_action_jobs" ("status");
-
-CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_tenant_id"
-  ON "bulk_action_jobs" ("tenant_id");
 
 CREATE INDEX IF NOT EXISTS \`idx_connection_leased_tokens_connection_id\` ON \`connection_leased_tokens\` (\`connection_id\`, \`expires_at\`);
 
@@ -509,9 +507,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS \`idx_connection_leased_tokens_hash\` ON \`con
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_connection_oauth_tokens_connection_id\` ON \`connection_oauth_tokens\` (\`connection_id\`);
 
-CREATE INDEX IF NOT EXISTS \`idx_edges_source\` ON \`edges\` (\`tenant_id\`,\`source_id\`,\`edge_type\`);
+CREATE INDEX IF NOT EXISTS \`idx_edges_source\` ON \`edges\` ("space_id",\`source_id\`,\`edge_type\`);
 
-CREATE INDEX IF NOT EXISTS \`idx_edges_target\` ON \`edges\` (\`tenant_id\`,\`target_id\`,\`edge_type\`);
+CREATE INDEX IF NOT EXISTS \`idx_edges_target\` ON \`edges\` ("space_id",\`target_id\`,\`edge_type\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_event_log_created_at\` ON \`event_log\` (\`created_at\`);
 

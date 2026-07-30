@@ -10,11 +10,11 @@ import type { TestContext } from "../test-utils.js";
  * Onboarding provisioning + self-serve key tests (T-326).
  *
  * Two guarantees:
- *   1. A Marfa tenant + users row is provisioned for EVERY new account,
+ *   1. A Marfa space + users row is provisioned for EVERY new account,
  *      on both the programmatic `POST /auth/sign-up/email` path and the
  *      server-rendered `POST /auth/sign-up` form — owned by the
  *      `databaseHooks.user.create.after` hook, not the form wrapper.
- *   2. A signed-in tenant owner can mint a working long-lived `marfa_k1_`
+ *   2. A signed-in space owner can mint a working long-lived `marfa_k1_`
  *      key self-serve at `/auth/keys`, with the data plane still
  *      bearer-only.
  */
@@ -44,8 +44,8 @@ async function signIn(
   return res.headers.get("set-cookie")?.split(";")[0] ?? null;
 }
 
-describe("onboarding tenant provisioning (T-326)", () => {
-  it("provisions a tenant + derived handle on the programmatic sign-up path", async () => {
+describe("onboarding space provisioning (T-326)", () => {
+  it("provisions a space + derived handle on the programmatic sign-up path", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
@@ -66,10 +66,10 @@ describe("onboarding tenant provisioning (T-326)", () => {
     const users = ctx.storage.users;
     expect(users).toBeTruthy();
     const row = await users?.getByAuthUserId(authUserId ?? "");
-    // The headline fix: a tenant exists, anchored to the new account.
-    expect(row?.tenant_id).toBeTruthy();
-    const tenant = await ctx.storage.tenants?.get(row?.tenant_id ?? "");
-    expect(tenant).toBeTruthy();
+    // The headline fix: a space exists, anchored to the new account.
+    expect(row?.space_id).toBeTruthy();
+    const space = await ctx.storage.spaces?.get(row?.space_id ?? "");
+    expect(space).toBeTruthy();
     // No username was supplied, so the handle is derived from the email.
     expect(row?.handle).toBe("alice");
   });
@@ -91,10 +91,10 @@ describe("onboarding tenant provisioning (T-326)", () => {
     });
     expect(res.status).toBe(302);
 
-    // The form-chosen handle is claimed, with a tenant anchored to it.
+    // The form-chosen handle is claimed, with a space anchored to it.
     const row = await ctx.storage.users?.getByHandle("bobby");
     expect(row?.handle).toBe("bobby");
-    expect(row?.tenant_id).toBeTruthy();
+    expect(row?.space_id).toBeTruthy();
   });
 
   it("does not double-provision when the same email signs up twice", async () => {
@@ -116,13 +116,13 @@ describe("onboarding tenant provisioning (T-326)", () => {
     const firstId = ((await first.json()) as { user?: { id?: string } }).user
       ?.id;
     const firstRow = await ctx.storage.users?.getByAuthUserId(firstId ?? "");
-    expect(firstRow?.tenant_id).toBeTruthy();
+    expect(firstRow?.space_id).toBeTruthy();
 
-    // A duplicate sign-up must not create a second users row / tenant for
+    // A duplicate sign-up must not create a second users row / space for
     // the same account (Better Auth returns the existing user id).
     await signUp();
     const stillRow = await ctx.storage.users?.getByAuthUserId(firstId ?? "");
-    expect(stillRow?.tenant_id).toBe(firstRow?.tenant_id);
+    expect(stillRow?.space_id).toBe(firstRow?.space_id);
   });
 });
 
@@ -205,7 +205,7 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
 
     const row = await ctx.storage.users?.getByHandle("erin");
     const keys = (await ctx.storage.keys.list()).filter(
-      (k) => k.tenant_id === row?.tenant_id,
+      (k) => k.space_id === row?.space_id,
     );
     expect(keys.length).toBe(1);
     const keyId = keys[0]?.id ?? "";
@@ -233,7 +233,7 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
  * writing an edge got `403 edge_permission_denied`. Edges are the substance of
  * the data model, so that key could not seed, migrate or restore a space, and
  * every seeding job had to be done for the owner by an operator holding a
- * platform credential — the exact dependency the tenant_admin role exists to
+ * platform credential — the exact dependency the space_admin role exists to
  * remove.
  *
  * The ceiling is the other half and is not optional: a self-serve credential
@@ -314,11 +314,11 @@ describe("self-serve keys can fill their own space", () => {
     );
     expect(minted).toBeTruthy();
 
-    // Sideways, never up. A sign-up owns their space as tenant_admin, so full
+    // Sideways, never up. A sign-up owns their space as space_admin, so full
     // access lands exactly there — and `admin` (platform authority, bounded by
-    // no tenant at all) stays unreachable from a self-serve form whatever the
+    // no space at all) stays unreachable from a self-serve form whatever the
     // form says.
-    expect(minted?.role).toBe("tenant_admin");
+    expect(minted?.role).toBe("space_admin");
     expect(minted?.is_platform).toBe(false);
 
     // And it can actually do the job it exists for.

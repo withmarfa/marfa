@@ -181,7 +181,7 @@ Outbound writes to Drive are explicitly out of scope. The manifest's
 to address:
 
 - Destination folder picking (where do new Marfa `google.drive.file`
-  items land — root? a designated folder? a per-tenant folder
+  items land — root? a designated folder? a per-space folder
   configured at install?).
 - MIME conversion (Google Docs / Sheets / Slides have native types
   that don't accept raw byte uploads; need export-format mapping).

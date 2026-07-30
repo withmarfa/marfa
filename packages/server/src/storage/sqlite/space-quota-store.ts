@@ -1,30 +1,38 @@
 import { eq, sql } from "drizzle-orm";
-import type { TenantQuota, QuotaResource } from "@withmarfa/shared";
-import type { TenantQuotaStore } from "../interface.js";
+import type { SpaceQuota, QuotaResource } from "@withmarfa/shared";
+import type { SpaceQuotaStore } from "../interface.js";
 import {
-  tenantQuotas,
-  tenants,
+  spaceQuotas,
+  spaces,
   items,
   outboundWebhooks,
   blobs,
 } from "./schema.js";
-import type { PgDb } from "./connection.js";
+import type { DrizzleDb } from "./connection.js";
 
 /**
- * Per-tenant quota store (Postgres). Counts via COUNT(*)::int.
- * See sqlite/tenant-quota-store.ts for design notes.
+ * Per-space quota store (SQLite). Stores ceilings in `space_quotas`;
+ * counts are computed on-demand via COUNT(*) on the underlying tables,
+ * scoped by space_id.
+ *
+ * The blobs table uses an empty-string sentinel for instance-wide rows;
+ * count() for `blobs` filters by exact space_id, so platform-admin
+ * uploads (under '') don't count against any specific space — the
+ * empty-string sentinel acts as a separate "space" for quota purposes,
+ * which is the correct behavior for hosted multi-space.
  */
-export class PgTenantQuotaStore implements TenantQuotaStore {
-  constructor(private db: PgDb) {}
+export class SqliteSpaceQuotaStore implements SpaceQuotaStore {
+  constructor(private db: DrizzleDb) {}
 
-  async get(tenantId: string): Promise<TenantQuota | null> {
-    const [row] = await this.db
+  async get(spaceId: string): Promise<SpaceQuota | null> {
+    const row = await this.db
       .select()
-      .from(tenantQuotas)
-      .where(eq(tenantQuotas.tenant_id, tenantId));
+      .from(spaceQuotas)
+      .where(eq(spaceQuotas.space_id, spaceId))
+      .get();
     if (!row) return null;
     return {
-      tenant_id: row.tenant_id,
+      space_id: row.space_id,
       items_limit: row.items_limit,
       webhooks_limit: row.webhooks_limit,
       blobs_limit: row.blobs_limit,
@@ -34,31 +42,32 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
     };
   }
 
-  async getForExistingTenant(
-    tenantId: string,
+  async getForExistingSpace(
+    spaceId: string,
   ): Promise<
-    { exists: true; quota: TenantQuota | null } | { exists: false; quota: null }
+    { exists: true; quota: SpaceQuota | null } | { exists: false; quota: null }
   > {
     return this.db.transaction(async (tx) => {
-      // Account deletion takes the same row lock. Whichever transaction wins
-      // determines whether this read observes a live tenant or a 404.
-      const [tenant] = await tx
-        .select({ id: tenants.id })
-        .from(tenants)
-        .where(eq(tenants.id, tenantId))
-        .for("update");
-      if (!tenant) return { exists: false, quota: null };
+      // libsql write transactions use BEGIN IMMEDIATE, so this existence read
+      // and the optional quota read cannot interleave with account deletion.
+      const space = await tx
+        .select({ id: spaces.id })
+        .from(spaces)
+        .where(eq(spaces.id, spaceId))
+        .get();
+      if (!space) return { exists: false, quota: null };
 
-      const [row] = await tx
+      const row = await tx
         .select()
-        .from(tenantQuotas)
-        .where(eq(tenantQuotas.tenant_id, tenantId));
-      return { exists: true, quota: row ? toTenantQuota(row) : null };
+        .from(spaceQuotas)
+        .where(eq(spaceQuotas.space_id, spaceId))
+        .get();
+      return { exists: true, quota: row ? toSpaceQuota(row) : null };
     });
   }
 
   async set(
-    tenantId: string,
+    spaceId: string,
     input: {
       items_limit?: number | null;
       webhooks_limit?: number | null;
@@ -66,12 +75,12 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
       storage_bytes_limit?: number | null;
       rate_per_minute_limit?: number | null;
     },
-  ): Promise<TenantQuota> {
+  ): Promise<SpaceQuota> {
     const now = new Date().toISOString();
     await this.db
-      .insert(tenantQuotas)
+      .insert(spaceQuotas)
       .values({
-        tenant_id: tenantId,
+        space_id: spaceId,
         items_limit: input.items_limit ?? null,
         webhooks_limit: input.webhooks_limit ?? null,
         blobs_limit: input.blobs_limit ?? null,
@@ -80,7 +89,7 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
         updated_at: now,
       })
       .onConflictDoUpdate({
-        target: tenantQuotas.tenant_id,
+        target: spaceQuotas.space_id,
         set: {
           items_limit: input.items_limit ?? null,
           webhooks_limit: input.webhooks_limit ?? null,
@@ -89,9 +98,10 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
           rate_per_minute_limit: input.rate_per_minute_limit ?? null,
           updated_at: now,
         },
-      });
+      })
+      .run();
     return {
-      tenant_id: tenantId,
+      space_id: spaceId,
       items_limit: input.items_limit ?? null,
       webhooks_limit: input.webhooks_limit ?? null,
       blobs_limit: input.blobs_limit ?? null,
@@ -101,8 +111,8 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
     };
   }
 
-  async setForExistingTenant(
-    tenantId: string,
+  async setForExistingSpace(
+    spaceId: string,
     input: {
       items_limit?: number | null;
       webhooks_limit?: number | null;
@@ -110,24 +120,22 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
       storage_bytes_limit?: number | null;
       rate_per_minute_limit?: number | null;
     },
-  ): Promise<TenantQuota | null> {
+  ): Promise<SpaceQuota | null> {
     return this.db.transaction(async (tx) => {
-      // Account deletion takes the same row lock before removing quota data.
-      // Whichever transaction wins becomes the linearization point: a delete
-      // that wins makes this lookup return no row, while a quota update that
-      // wins commits before the cascade removes both rows.
-      const [tenant] = await tx
-        .select({ id: tenants.id })
-        .from(tenants)
-        .where(eq(tenants.id, tenantId))
-        .for("update");
-      if (!tenant) return null;
+      // libsql opens write transactions with BEGIN IMMEDIATE, so account
+      // deletion and this existence-check-plus-upsert cannot interleave.
+      const space = await tx
+        .select({ id: spaces.id })
+        .from(spaces)
+        .where(eq(spaces.id, spaceId))
+        .get();
+      if (!space) return null;
 
       const now = new Date().toISOString();
       await tx
-        .insert(tenantQuotas)
+        .insert(spaceQuotas)
         .values({
-          tenant_id: tenantId,
+          space_id: spaceId,
           items_limit: input.items_limit ?? null,
           webhooks_limit: input.webhooks_limit ?? null,
           blobs_limit: input.blobs_limit ?? null,
@@ -136,7 +144,7 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
           updated_at: now,
         })
         .onConflictDoUpdate({
-          target: tenantQuotas.tenant_id,
+          target: spaceQuotas.space_id,
           set: {
             items_limit: input.items_limit ?? null,
             webhooks_limit: input.webhooks_limit ?? null,
@@ -145,10 +153,11 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
             rate_per_minute_limit: input.rate_per_minute_limit ?? null,
             updated_at: now,
           },
-        });
+        })
+        .run();
 
       return {
-        tenant_id: tenantId,
+        space_id: spaceId,
         items_limit: input.items_limit ?? null,
         webhooks_limit: input.webhooks_limit ?? null,
         blobs_limit: input.blobs_limit ?? null,
@@ -159,48 +168,51 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
     });
   }
 
-  async count(tenantId: string, resource: QuotaResource): Promise<number> {
+  async count(spaceId: string, resource: QuotaResource): Promise<number> {
     if (resource === "items") {
-      const [row] = await this.db
-        .select({ c: sql<number>`count(*)::int` })
+      const row = await this.db
+        .select({ c: sql<number>`count(*)` })
         .from(items)
-        .where(eq(items.tenant_id, tenantId));
+        .where(eq(items.space_id, spaceId))
+        .get();
       return row?.c ?? 0;
     }
     if (resource === "webhooks") {
-      const [row] = await this.db
-        .select({ c: sql<number>`count(*)::int` })
+      const row = await this.db
+        .select({ c: sql<number>`count(*)` })
         .from(outboundWebhooks)
-        .where(eq(outboundWebhooks.tenant_id, tenantId));
+        .where(eq(outboundWebhooks.space_id, spaceId))
+        .get();
       return row?.c ?? 0;
     }
     if (resource === "blobs") {
-      const [row] = await this.db
-        .select({ c: sql<number>`count(*)::int` })
+      const row = await this.db
+        .select({ c: sql<number>`count(*)` })
         .from(blobs)
-        .where(eq(blobs.tenant_id, tenantId));
+        .where(eq(blobs.space_id, spaceId))
+        .get();
       return row?.c ?? 0;
     }
     if (resource === "storage_bytes") {
-      // SUM(size) across the tenant's blob metadata rows. Aggregate
-      // bytes can exceed INT_MAX, so the cast stays ::bigint;
-      // node-postgres serializes bigint as a string — reflect in
-      // sql<> and coerce on the way out. Mirrors pg/blob-store.ts.
-      const [row] = await this.db
-        .select({
-          s: sql<string>`coalesce(sum(${blobs.size}), 0)::bigint`,
-        })
+      // Counts every blob row for this space. The storage backend dedupes
+      // physical files by hash, but each space owns their own row so the
+      // same hash uploaded by two spaces counts against both.
+      const row = await this.db
+        .select({ s: sql<number>`coalesce(sum(${blobs.size}), 0)` })
         .from(blobs)
-        .where(eq(blobs.tenant_id, tenantId));
-      return Number(row?.s ?? 0);
+        .where(eq(blobs.space_id, spaceId))
+        .get();
+      return row?.s ?? 0;
     }
+    // rate_per_minute is enforced by the rate-limit middleware, not via a
+    // count query — no DB row to sum here.
     return 0;
   }
 }
 
-function toTenantQuota(row: typeof tenantQuotas.$inferSelect): TenantQuota {
+function toSpaceQuota(row: typeof spaceQuotas.$inferSelect): SpaceQuota {
   return {
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     items_limit: row.items_limit,
     webhooks_limit: row.webhooks_limit,
     blobs_limit: row.blobs_limit,

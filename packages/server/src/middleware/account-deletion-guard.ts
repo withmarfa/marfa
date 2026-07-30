@@ -1,7 +1,7 @@
 /**
  * Sign-in pre-check for accounts in `pending_deletion`.
  *
- * Sits AFTER `tenantSuspensionMiddleware` and BEFORE the better-auth
+ * Sits AFTER `spaceSuspensionMiddleware` and BEFORE the better-auth
  * catch-all in `app.ts`. Triggers only on the sign-in endpoints
  * better-auth exposes:
  *

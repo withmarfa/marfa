@@ -24,7 +24,7 @@ const CYCLE_HOP_HEADER = "x-marfa-cycle-hop";
 
 /**
  * Maximum hop count we accept off the wire. The hop budget is enforced
- * downstream in `passesHopBudget` (defaults to 5; tenants can configure
+ * downstream in `passesHopBudget` (defaults to 5; spaces can configure
  * up to a small number), so a header carrying a larger value just
  * signals "this chain has exceeded the budget" — `passesHopBudget` will
  * drop the resulting publish. We still parse the value rather than
@@ -46,7 +46,7 @@ const MAX_PARSED_HOP_COUNT = Number.MAX_SAFE_INTEGER;
  *      with `source: "oauth:<connection_item_id>"`. The connection_id
  *      is encoded in the source prefix; we parse it back out here.
  *
- * Anything else — bootstrap admin, ordinary tenant api keys with no
+ * Anything else — bootstrap admin, ordinary space api keys with no
  * connection binding — has no implicit origin. Returns `null` so the
  * resulting cycle is the human sentinel.
  */

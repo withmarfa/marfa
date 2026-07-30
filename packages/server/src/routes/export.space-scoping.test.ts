@@ -1,25 +1,25 @@
 /**
- * Tenant-scoped data export coverage:
+ * Space-scoped data export coverage:
  *
- *   - tenant_admin's self-export returns only the calling tenant's
- *     rows. Other tenants' items, even when present in the same DB,
+ *   - space_admin's self-export returns only the calling space's
+ *     rows. Other spaces' items, even when present in the same DB,
  *     are filtered out at the storage layer.
  *
- *   - tenant_admin with `target_tenant_id` matching own succeeds.
+ *   - space_admin with `target_space_id` matching own succeeds.
  *
- *   - tenant_admin with mismatching `target_tenant_id` is rejected
- *     with 403 (cross-tenant authority not granted).
+ *   - space_admin with mismatching `target_space_id` is rejected
+ *     with 403 (cross-space authority not granted).
  *
- *   - platform admin with explicit `target_tenant_id` scopes to that
- *     tenant.
+ *   - platform admin with explicit `target_space_id` scopes to that
+ *     space.
  *
- *   - platform admin without target_tenant_id falls through to the
+ *   - platform admin without target_space_id falls through to the
  *     unscoped path (self-host compat) and is audited as
  *     `details.scope: "platform_unscoped"` so operators can alert.
  *
- *   - Archive export stamps `manifest.tenant_id` with the resolved
+ *   - Archive export stamps `manifest.space_id` with the resolved
  *     scope, and `/admin/restore-archive` rejects an archive whose
- *     manifest tenant_id doesn't match the caller's restore target.
+ *     manifest space_id doesn't match the caller's restore target.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -32,9 +32,9 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
-async function mintTenantAdmin(
+async function mintSpaceAdmin(
   ctx: TestContext,
-  tenantId: string,
+  spaceId: string,
   label: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -43,12 +43,12 @@ async function mintTenantAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -65,30 +65,30 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
     });
 }
 
-describe("tenant-scoped export — tenant_admin self-export", () => {
+describe("space-scoped export — space_admin self-export", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("returns only the calling tenant's items", async () => {
+  it("returns only the calling space's items", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-export-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `t-export-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintTenantAdmin(ctx, tenantA, "ws-export-a");
-    await mintTenantAdmin(ctx, tenantB, "ws-export-b");
+    const spaceA = `t-export-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `t-export-b-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-export-a");
+    await mintSpaceAdmin(ctx, spaceB, "ws-export-b");
 
-    // Items in both tenants.
+    // Items in both spaces.
     const itemA = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant A" } },
-      tenantA,
+      { type: "core.note", properties: { body: "space A" } },
+      spaceA,
     );
     const itemB = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "tenant B" } },
-      tenantB,
+      { type: "core.note", properties: { body: "space B" } },
+      spaceB,
     );
 
-    // Tenant A's admin exports — should see ONLY itemA.
+    // Space A's admin exports — should see ONLY itemA.
     const res = await request(ctx.app, "GET", "/export", { key: wsAdminA });
     expect(res.status).toBe(200);
     const ids = await readNdjsonItems(res);
@@ -96,63 +96,63 @@ describe("tenant-scoped export — tenant_admin self-export", () => {
     expect(ids).not.toContain(itemB.id);
   });
 
-  it("accepts target_tenant_id matching own", async () => {
+  it("accepts target_space_id matching own", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-target-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdmin = await mintTenantAdmin(ctx, tenantA, "ws-target");
+    const spaceA = `t-target-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-target");
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "scoped" } },
-      tenantA,
+      spaceA,
     );
 
     const res = await request(
       ctx.app,
       "GET",
-      `/export?target_tenant_id=${tenantA}`,
+      `/export?target_space_id=${spaceA}`,
       { key: wsAdmin },
     );
     expect(res.status).toBe(200);
   });
 
-  it("rejects mismatching target_tenant_id with 403", async () => {
+  it("rejects mismatching target_space_id with 403", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-mismatch-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `t-mismatch-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintTenantAdmin(ctx, tenantA, "ws-mismatch");
+    const spaceA = `t-mismatch-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `t-mismatch-b-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-mismatch");
 
     const res = await request(
       ctx.app,
       "GET",
-      `/export?target_tenant_id=${tenantB}`,
+      `/export?target_space_id=${spaceB}`,
       { key: wsAdminA },
     );
     expect(res.status).toBe(403);
   });
 });
 
-describe("tenant-scoped export — platform admin", () => {
+describe("space-scoped export — platform admin", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("scopes to target_tenant_id when supplied", async () => {
+  it("scopes to target_space_id when supplied", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-platform-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `t-platform-b-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `t-platform-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `t-platform-b-${Math.random().toString(36).slice(2, 10)}`;
     const itemA = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "A" } },
-      tenantA,
+      spaceA,
     );
     const itemB = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "B" } },
-      tenantB,
+      spaceB,
     );
 
     const res = await request(
       ctx.app,
       "GET",
-      `/export?target_tenant_id=${tenantA}`,
+      `/export?target_space_id=${spaceA}`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
@@ -161,7 +161,7 @@ describe("tenant-scoped export — platform admin", () => {
     expect(ids).not.toContain(itemB.id);
   });
 
-  it("falls through to unscoped (self-host compat) without target_tenant_id and audits as platform_unscoped", async () => {
+  it("falls through to unscoped (self-host compat) without target_space_id and audits as platform_unscoped", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/export", {
       key: ctx.adminKey,
@@ -169,7 +169,7 @@ describe("tenant-scoped export — platform admin", () => {
     expect(res.status).toBe(200);
 
     const audit = await waitForAudit(
-      () => ctx.storage.audit.list({ action: "export.tenant" }),
+      () => ctx.storage.audit.list({ action: "export.space" }),
       (result) => result.data.length > 0,
     );
     const row = audit.data[0];
@@ -179,19 +179,19 @@ describe("tenant-scoped export — platform admin", () => {
   });
 });
 
-describe("archive — manifest tenant_id round-trip", () => {
+describe("archive — manifest space_id round-trip", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("stamps tenant_id on the manifest at export time", async () => {
+  it("stamps space_id on the manifest at export time", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-archive-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdmin = await mintTenantAdmin(ctx, tenantA, "ws-archive");
+    const spaceA = `t-archive-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-archive");
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "archive me" } },
-      tenantA,
+      spaceA,
     );
 
     const res = await request(ctx.app, "GET", "/export?format=archive", {
@@ -203,14 +203,14 @@ describe("archive — manifest tenant_id round-trip", () => {
     expect(buf.length).toBeGreaterThan(0);
   });
 
-  it("admin-archive rejects mismatching manifest.tenant_id", async () => {
+  it("admin-archive rejects mismatching manifest.space_id", async () => {
     ctx = await createTestContext();
-    const tenantA = `t-restore-a-${Math.random().toString(36).slice(2, 10)}`;
-    const tenantB = `t-restore-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintTenantAdmin(ctx, tenantA, "ws-restore-a");
+    const spaceA = `t-restore-a-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceB = `t-restore-b-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-restore-a");
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "from A" } },
-      tenantA,
+      spaceA,
     );
 
     const exportRes = await request(ctx.app, "GET", "/export?format=archive", {
@@ -220,7 +220,7 @@ describe("archive — manifest tenant_id round-trip", () => {
     const archive = await exportRes.arrayBuffer();
 
     const restoreRes = await ctx.app.request(
-      `/admin/restore-archive?target_tenant_id=${tenantB}`,
+      `/admin/restore-archive?target_space_id=${spaceB}`,
       {
         method: "POST",
         headers: {
@@ -235,6 +235,6 @@ describe("archive — manifest tenant_id round-trip", () => {
       error: { code: string; message?: string };
     };
     expect(body.error.code).toBe("forbidden");
-    expect(body.error.message).toContain("manifest.tenant_id");
+    expect(body.error.message).toContain("manifest.space_id");
   });
 });

@@ -135,7 +135,7 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres", () => {
 
   it("emits the expected role + grant baseline", async () => {
     // Sanity check: SCHEMA_SQL grew the marfa_app role and granted CRUD on
-    // the tenant-scoped tables. The freshness check covers drift; this is
+    // the space-scoped tables. The freshness check covers drift; this is
     // a sanity bound so a future generator regression that silently drops
     // grants would fail loud.
     const sql = postgres(clone!.url, {

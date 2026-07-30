@@ -16,20 +16,20 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
 
-  list(tenantId?: string): Promise<TypeSchema[]> {
-    return Promise.resolve(listTypes(tenantId));
+  list(spaceId?: string): Promise<TypeSchema[]> {
+    return Promise.resolve(listTypes(spaceId));
   }
 
-  get(id: string, tenantId?: string): Promise<TypeSchema | undefined> {
-    return Promise.resolve(getTypeSchema(id, tenantId));
+  get(id: string, spaceId?: string): Promise<TypeSchema | undefined> {
+    return Promise.resolve(getTypeSchema(id, spaceId));
   }
 
-  async create(schema: TypeSchema, tenantId?: string): Promise<TypeSchema> {
+  async create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema> {
     const now = new Date().toISOString();
     try {
       await this.db.run(sql`
-        INSERT INTO custom_types (id, tenant_id, schema, created_at, updated_at)
-        VALUES (${schema.id}, ${tenantId ?? ""}, ${JSON.stringify(schema)}, ${now}, ${now})
+        INSERT INTO custom_types (id, space_id, schema, created_at, updated_at)
+        VALUES (${schema.id}, ${spaceId ?? ""}, ${JSON.stringify(schema)}, ${now}, ${now})
       `);
     } catch (err: unknown) {
       if (
@@ -43,29 +43,29 @@ export class SqliteTypeStore implements TypeStore {
       }
       throw err;
     }
-    registerTypeSchema(schema, tenantId);
+    registerTypeSchema(schema, spaceId);
     return schema;
   }
 
   async update(
     id: string,
     schema: TypeSchema,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.run(sql`
       UPDATE custom_types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
-      WHERE id = ${id} AND tenant_id = ${tenantId ?? ""}
+      WHERE id = ${id} AND space_id = ${spaceId ?? ""}
     `);
-    registerTypeSchema(schema, tenantId);
+    registerTypeSchema(schema, spaceId);
     return schema;
   }
 
-  async delete(id: string, tenantId?: string): Promise<void> {
+  async delete(id: string, spaceId?: string): Promise<void> {
     await this.db.run(
-      sql`DELETE FROM custom_types WHERE id = ${id} AND tenant_id = ${tenantId ?? ""}`,
+      sql`DELETE FROM custom_types WHERE id = ${id} AND space_id = ${spaceId ?? ""}`,
     );
-    unregisterTypeSchema(id, tenantId);
+    unregisterTypeSchema(id, spaceId);
   }
 
   async loadCustomTypes(): Promise<LoadedType[]> {
@@ -78,7 +78,7 @@ export class SqliteTypeStore implements TypeStore {
         `custom_types.schema[${row.id}]`,
       );
       if (parsed) {
-        results.push({ tenant_id: row.tenant_id, schema: parsed });
+        results.push({ space_id: row.space_id, schema: parsed });
       }
     }
     return results;

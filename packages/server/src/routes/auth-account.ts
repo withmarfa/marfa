@@ -10,8 +10,8 @@
  *   - POST /auth/account/delete/cancel    — session-cookie cancel.
  *   - GET  /auth/account/cancel           — email-cancel-by-link.
  *
- * Dual auth on the JSON endpoints: bearer (tenant_admin / admin in
- * the same tenant as the auth_user) OR better-auth session cookie.
+ * Dual auth on the JSON endpoints: bearer (space_admin / admin in
+ * the same space as the auth_user) OR better-auth session cookie.
  * Email recipients click the GET endpoints, which are token-gated
  * directly — no caller credential needed.
  */
@@ -43,8 +43,8 @@ function newToken(): string {
 /**
  * Resolve the caller into an `auth_user.id`. Two paths:
  *
- *   1. Bearer auth (api key) — tenant_admin or admin in a tenant.
- *      We resolve the tenant's `users.auth_user_id` (canonical bridge).
+ *   1. Bearer auth (api key) — space_admin or admin in a space.
+ *      We resolve the space's `users.auth_user_id` (canonical bridge).
  *   2. Better-auth session cookie — `auth.getSession()` returns the
  *      user directly.
  *
@@ -58,8 +58,8 @@ async function resolveAuthUserId(
 ): Promise<string | null> {
   // Bearer first.
   const apiKey = c.get("apiKey");
-  if (apiKey?.tenant_id && storage.users) {
-    const userRow = await storage.users.getByTenantId(apiKey.tenant_id);
+  if (apiKey?.space_id && storage.users) {
+    const userRow = await storage.users.getBySpaceId(apiKey.space_id);
     if (userRow?.auth_user_id) return userRow.auth_user_id;
   }
   // Session cookie.

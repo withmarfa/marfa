@@ -11,14 +11,14 @@ export class SqliteBlobStore implements BlobStore {
     mimeType: string,
     size: number,
     storagePath: string,
-    tenantId: string,
+    spaceId: string,
   ): Promise<void> {
-    // Idempotent — ignore if (tenant_id, hash) row already exists.
-    // Different tenants uploading the same bytes get separate rows.
+    // Idempotent — ignore if (space_id, hash) row already exists.
+    // Different spaces uploading the same bytes get separate rows.
     await this.db
       .insert(blobs)
       .values({
-        tenant_id: tenantId,
+        space_id: spaceId,
         hash,
         mime_type: mimeType,
         size,
@@ -30,12 +30,12 @@ export class SqliteBlobStore implements BlobStore {
 
   async get(
     hash: string,
-    tenantId: string,
+    spaceId: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
     const row = await this.db
       .select()
       .from(blobs)
-      .where(and(eq(blobs.tenant_id, tenantId), eq(blobs.hash, hash)))
+      .where(and(eq(blobs.space_id, spaceId), eq(blobs.hash, hash)))
       .get();
     if (!row) return null;
     return {
@@ -46,8 +46,8 @@ export class SqliteBlobStore implements BlobStore {
   }
 
   async listAll(): Promise<string[]> {
-    // Distinct hashes across every tenant — used by the admin reconcile
-    // route to find orphan files on disk. Tenant-scoped reads use `get`.
+    // Distinct hashes across every space — used by the admin reconcile
+    // route to find orphan files on disk. Space-scoped reads use `get`.
     const rows = await this.db
       .selectDistinct({ hash: blobs.hash })
       .from(blobs)
@@ -55,10 +55,10 @@ export class SqliteBlobStore implements BlobStore {
     return rows.map((r) => r.hash);
   }
 
-  async remove(hash: string, tenantId: string): Promise<void> {
+  async remove(hash: string, spaceId: string): Promise<void> {
     await this.db
       .delete(blobs)
-      .where(and(eq(blobs.tenant_id, tenantId), eq(blobs.hash, hash)))
+      .where(and(eq(blobs.space_id, spaceId), eq(blobs.hash, hash)))
       .run();
   }
 

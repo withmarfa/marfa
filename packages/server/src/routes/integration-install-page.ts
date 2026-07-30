@@ -30,7 +30,7 @@ interface ConsentParams {
   direction: "read" | "write" | "both";
   manifest: Record<string, unknown>;
   /**
-   * Optional pre-arm: id of a same-tenant `system.credential` of
+   * Optional pre-arm: id of a same-space `system.credential` of
    * `kind: oauth_token` the caller wants the install to reuse. When
    * set the form renders a hidden `credential_ref` input so the POST
    * carries it through to the install pipeline. The Marfa side
@@ -40,7 +40,7 @@ interface ConsentParams {
    * absent the form omits the field and the install pipeline behaves
    * as today (per-Connection credential, no reuse).
    *
-   * The GET route validates the id resolves to a same-tenant
+   * The GET route validates the id resolves to a same-space
    * `system.credential` of `kind: oauth_token` before passing it
    * here; the renderer trusts that gate and just emits the value.
    */
@@ -57,9 +57,9 @@ interface ConsentParams {
 function describeDirection(direction: "read" | "write" | "both"): string {
   switch (direction) {
     case "read":
-      return "Read-only — the connector will read from the external service into your Marfa tenant.";
+      return "Read-only — the connector will read from the external service into your Marfa space.";
     case "write":
-      return "Write-only — the connector will write from your Marfa tenant out to the external service.";
+      return "Write-only — the connector will write from your Marfa space out to the external service.";
     case "both":
       return "Two-way — the connector will read from and write to the external service.";
   }

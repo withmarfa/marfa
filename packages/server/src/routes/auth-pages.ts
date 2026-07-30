@@ -85,7 +85,7 @@ async function revokeProjectedGrant(
   opts: {
     itemId: string;
     properties: Record<string, unknown>;
-    tenantId: string | undefined;
+    spaceId: string | undefined;
     clientId: string | undefined;
     authUserId: string | undefined;
   },
@@ -110,7 +110,7 @@ async function revokeProjectedGrant(
           revoked_at: new Date().toISOString(),
         },
       },
-      opts.tenantId,
+      opts.spaceId,
     );
   };
   // Without both ids there is no consent row and nothing to race over,
@@ -161,7 +161,7 @@ function sha256(input: string): string {
 /**
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
  * through `ItemStore.create` on first consent and `ItemStore.update` on
- * re-consent so the row gets full ItemStore treatment: `tenant_id`
+ * re-consent so the row gets full ItemStore treatment: `space_id`
  * stamping, search indexing, metadata-row insertion, versions snapshot on
  * re-consent, the `created`/`updated` event emission, and `source` /
  * `origin` stamping. Returns the connection-item id + whether the call
@@ -172,11 +172,11 @@ function sha256(input: string): string {
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections.
  *
- * `tenantId` resolves from the consenting Better Auth user's marfa `users`
- * row in hosted mode; in single-tenant mode (no `users` store) the grant
- * is stamped tenant-less. Hosted mode without a provisioned tenant for the
+ * `spaceId` resolves from the consenting Better Auth user's marfa `users`
+ * row in hosted mode; in single-space mode (no `users` store) the grant
+ * is stamped space-less. Hosted mode without a provisioned space for the
  * authenticated user refuses outright — the OAuth flow can't honor a
- * grant without a tenant to scope it to.
+ * grant without a space to scope it to.
  */
 async function createUserAppGrant(
   storage: Storage,
@@ -187,16 +187,16 @@ async function createUserAppGrant(
 ): Promise<{ id: string; created: boolean }> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
-  let tenantId: string | undefined;
+  let spaceId: string | undefined;
   if (storage.users) {
     // Lookup by Better Auth user id (the canonical bridge); the
     // `users` table keys on auth user id, not email.
     const user = await storage.users.getByAuthUserId(consentingUser.id);
-    tenantId = user?.tenant_id;
-    if (!tenantId) {
+    spaceId = user?.space_id;
+    if (!spaceId) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
-        "No Marfa tenant is provisioned for this account; complete onboarding first",
+        "No Marfa space is provisioned for this account; complete onboarding first",
       );
     }
   }
@@ -206,7 +206,7 @@ async function createUserAppGrant(
   let existingItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     existingItemId = await storage.oauthProvider.findGrantItemId({
-      tenantId: tenantId ?? null,
+      spaceId: spaceId ?? null,
       clientId,
       authUserId: consentingUser.id,
     });
@@ -215,7 +215,7 @@ async function createUserAppGrant(
   if (existingItemId) {
     // Re-consent: flip status back to "active" + clear revoked_at; same
     // rationale as projectGrantOnConsent in auth-consent.ts.
-    const existing = await storage.items.get(existingItemId, tenantId);
+    const existing = await storage.items.get(existingItemId, spaceId);
     if (!existing) {
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
@@ -230,7 +230,7 @@ async function createUserAppGrant(
             revoked_at: undefined,
           },
         },
-        tenantId,
+        spaceId,
       );
       if (!("error" in updated)) {
         const metadata = await storage.metadata.get(updated.id);
@@ -238,7 +238,7 @@ async function createUserAppGrant(
           type: "updated",
           item: updated,
           metadata,
-          tenantId,
+          spaceId,
         });
         return { id: updated.id, created: false };
       }
@@ -265,10 +265,10 @@ async function createUserAppGrant(
       },
       source,
     },
-    tenantId,
+    spaceId,
   );
   const metadata = await storage.metadata.get(item.id);
-  await publish({ type: "created", item, metadata, tenantId });
+  await publish({ type: "created", item, metadata, spaceId });
   return { id: item.id, created: true };
 }
 
@@ -387,21 +387,21 @@ export function authRoutes(
 
   router.get("/grants", async (c) => {
     const key = requireAuth(c);
-    // Tenant-scope the listing. A credential carrying a tenant_id is
-    // fenced by the `tenantId` argument below whatever its rank; one
-    // without a tenant would fall through to every tenant's grants, so
+    // Space-scope the listing. A credential carrying a space_id is
+    // fenced by the `spaceId` argument below whatever its rank; one
+    // without a space would fall through to every space's grants, so
     // that shape needs platform authority (or an explicit platform
     // credential) to reach here.
-    if (!key.tenant_id && !hasPlatformAuthority(key) && !key.is_platform) {
+    if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        "Tenant scope required for this credential",
+        "Space scope required for this credential",
       );
     }
     const items = await storage.items.list({
       type: "system.connection",
       state: "active",
-      tenantId: key.tenant_id ?? undefined,
+      spaceId: key.space_id ?? undefined,
     });
     const grants: {
       id: string;
@@ -434,17 +434,17 @@ export function authRoutes(
   router.delete("/grants/:id", async (c) => {
     const key = requireAuth(c);
     // Same fence as `GET /grants`: only an unbound credential with
-    // platform authority may resolve `tenantId` to undefined and address
-    // a grant in any tenant.
-    if (!key.tenant_id && !hasPlatformAuthority(key) && !key.is_platform) {
+    // platform authority may resolve `spaceId` to undefined and address
+    // a grant in any space.
+    if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        "Tenant scope required for this credential",
+        "Space scope required for this credential",
       );
     }
-    const tenantId = key.tenant_id ?? undefined;
+    const spaceId = key.space_id ?? undefined;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, tenantId);
+    const item = await storage.items.get(id, spaceId);
     if (item?.type !== "system.connection") {
       throw new MarfaError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
@@ -463,7 +463,7 @@ export function authRoutes(
     await revokeProjectedGrant(storage, {
       itemId: id,
       properties: props,
-      tenantId,
+      spaceId,
       clientId,
       authUserId,
     });
@@ -471,7 +471,7 @@ export function authRoutes(
     // break the user-facing revoke flow. Emitted here rather than from
     // the plugin hook, which fires without `client_id`.
     void storage.audit.log({
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "auth.grant.revoked",
       resource_type: "oauth_grant",
       resource_id: clientId ?? id,
@@ -853,7 +853,7 @@ export function authRoutes(
       return errorRedirect("handle_invalid");
     }
     // Hosted-mode is the only path where username makes sense — keys
-    // mode has no per-user tenant. The signup form is gated behind
+    // mode has no per-user space. The signup form is gated behind
     // `allowSignup`, which itself is hosted-mode-only in practice.
     if (storage.users) {
       const collision = await storage.users.getByHandle(usernameLower);
@@ -888,12 +888,12 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // Tenant + users-row provisioning is owned by the
+      // Space + users-row provisioning is owned by the
       // `databaseHooks.user.create.after` hook on the auth instance, so
       // it runs identically for this form path and the programmatic
       // `POST /auth/sign-up/email` path. A provisioning failure rejects
       // the upstream sign-up (the hook rethrows after auditing), so
-      // `response.ok` here already implies the tenant exists. This
+      // `response.ok` here already implies the space exists. This
       // wrapper only translates the result into the no-JS redirect flow.
       void storage.audit.log({
         action: "auth.sign_up",
@@ -971,28 +971,28 @@ export function authRoutes(
   // Self-serve API keys (HTML console)
   // -----------------------------------------------------------------------
   //
-  // Cookie-authenticated key management for a tenant owner. The data plane
+  // Cookie-authenticated key management for a space owner. The data plane
   // (`/items`, `/keys`, …) stays strictly bearer-only; this surface lives
   // in the `/auth/*` zone where the Better Auth session cookie is the
   // authenticator. It's the self-serve path a freshly-onboarded hosted
   // user takes to mint their first long-lived `marfa_k1_` key after
   // sign-up + verification, with no pre-existing bearer token to bootstrap
-  // from. Keys minted here are `tenant_admin` (the space owner) scoped to
-  // the user's own tenant.
+  // from. Keys minted here are `space_admin` (the space owner) scoped to
+  // the user's own space.
 
-  // Resolve the signed-in user's marfa profile (carrying tenant_id) from
-  // their Better Auth session. Null when the account has no Marfa tenant
+  // Resolve the signed-in user's marfa profile (carrying space_id) from
+  // their Better Auth session. Null when the account has no Marfa space
   // (keys-mode self-host, or an unprovisioned edge case).
   async function resolveSessionUser(session: MarfaAuthSession) {
     if (!storage.users) return null;
     return storage.users.getByAuthUserId(session.user.id);
   }
 
-  // The tenant's keys, mapped to the console's view shape.
-  async function listTenantKeys(tenantId: string): Promise<KeysPageKey[]> {
+  // The space's keys, mapped to the console's view shape.
+  async function listSpaceKeys(spaceId: string): Promise<KeysPageKey[]> {
     const all = await storage.keys.list();
     return all
-      .filter((k) => k.tenant_id === tenantId)
+      .filter((k) => k.space_id === spaceId)
       .map((k) => ({
         id: k.id,
         label: k.label,
@@ -1002,7 +1002,7 @@ export function authRoutes(
       }));
   }
 
-  const noTenantPage = (session: MarfaAuthSession): string =>
+  const noSpacePage = (session: MarfaAuthSession): string =>
     renderKeysPage({
       email: session.user.email,
       keys: [],
@@ -1017,10 +1017,10 @@ export function authRoutes(
     if (gated instanceof Response) return gated;
     setNoStore(c);
     const userRow = await resolveSessionUser(gated.session);
-    if (!userRow?.tenant_id) {
-      return c.html(noTenantPage(gated.session));
+    if (!userRow?.space_id) {
+      return c.html(noSpacePage(gated.session));
     }
-    const keys = await listTenantKeys(userRow.tenant_id);
+    const keys = await listSpaceKeys(userRow.space_id);
     return c.html(renderKeysPage({ email: gated.session.user.email, keys }));
   });
 
@@ -1029,16 +1029,16 @@ export function authRoutes(
     if (gated instanceof Response) return gated;
     setNoStore(c);
     const userRow = await resolveSessionUser(gated.session);
-    if (!userRow?.tenant_id) {
-      return c.html(noTenantPage(gated.session));
+    if (!userRow?.space_id) {
+      return c.html(noSpacePage(gated.session));
     }
-    const tenantId = userRow.tenant_id;
+    const spaceId = userRow.space_id;
 
     const formData = await c.req.formData();
     const labelRaw = formData.get("label");
     const label = typeof labelRaw === "string" ? labelRaw.trim() : "";
     if (!label) {
-      const keys = await listTenantKeys(tenantId);
+      const keys = await listSpaceKeys(spaceId);
       return c.html(
         renderKeysPage({
           email: gated.session.user.email,
@@ -1058,7 +1058,7 @@ export function authRoutes(
     // resolved before the "pick at least one" guard rather than after it.
     const wantsFullAccess = formData.get("full_access") === "on";
     if (scopes.length === 0 && !wantsFullAccess) {
-      const keys = await listTenantKeys(tenantId);
+      const keys = await listSpaceKeys(spaceId);
       return c.html(
         renderKeysPage({
           email: gated.session.user.email,
@@ -1074,7 +1074,7 @@ export function authRoutes(
     // space — seeding it, migrating into it, restoring a backup. That case had
     // no self-serve route at all before, so it had to be handed a
     // platform-minted key by an operator, which is the dependency the
-    // tenant-admin role exists to remove. It asks at the owner's OWN role;
+    // space-admin role exists to remove. It asks at the owner's OWN role;
     // `canGrantRole` at the mint is what stops it exceeding them.
     const fullAccess = wantsFullAccess;
     const requestedRole: MarfaRole = fullAccess ? userRow.role : "member";
@@ -1088,7 +1088,7 @@ export function authRoutes(
 
     // Edge permissions mirror the level the owner picked. The wildcard rather
     // than an enumerated set is deliberate: a space's edge types include any
-    // the tenant registers at runtime, so a set fixed at mint time would
+    // the space registers at runtime, so a set fixed at mint time would
     // silently omit every edge type created after it. This is narrower than it
     // reads — an edge mutation dual-gates on the source item's type too.
     const edgeLevel: "read" | "write" | null = hasWrite
@@ -1132,10 +1132,10 @@ export function authRoutes(
         edge_permissions: edgePermissions,
       },
       hashApiKey(rawKey, salt),
-      tenantId,
+      spaceId,
     );
     void storage.audit.log({
-      tenant_id: tenantId,
+      space_id: spaceId,
       action: "key.create",
       resource_type: "key",
       resource_id: stored.id,
@@ -1143,7 +1143,7 @@ export function authRoutes(
       details: { source: "auth_console" },
     });
 
-    const keys = await listTenantKeys(tenantId);
+    const keys = await listSpaceKeys(spaceId);
     return c.html(
       renderKeysPage({
         email: gated.session.user.email,
@@ -1161,21 +1161,21 @@ export function authRoutes(
     if (gated instanceof Response) return gated;
     setNoStore(c);
     const userRow = await resolveSessionUser(gated.session);
-    if (!userRow?.tenant_id) {
-      return c.html(noTenantPage(gated.session));
+    if (!userRow?.space_id) {
+      return c.html(noSpacePage(gated.session));
     }
-    const tenantId = userRow.tenant_id;
+    const spaceId = userRow.space_id;
     const id = c.req.param("id");
 
-    // Tenant-scope the revoke: only act on a key in the caller's own
-    // tenant. A miss is silently treated as already-gone so cross-tenant
+    // Space-scope the revoke: only act on a key in the caller's own
+    // space. A miss is silently treated as already-gone so cross-space
     // probes can't enumerate key ids.
     const target = await storage.keys.get(id);
-    const matched = target?.tenant_id === tenantId;
+    const matched = target?.space_id === spaceId;
     if (matched) {
       await storage.keys.revoke(id);
       void storage.audit.log({
-        tenant_id: tenantId,
+        space_id: spaceId,
         action: "key.revoke",
         resource_type: "key",
         resource_id: id,
@@ -1184,7 +1184,7 @@ export function authRoutes(
       });
     }
 
-    const keys = await listTenantKeys(tenantId);
+    const keys = await listSpaceKeys(spaceId);
     return c.html(
       renderKeysPage({
         email: gated.session.user.email,
@@ -1655,20 +1655,20 @@ export function authRoutes(
       // outage.
     }
 
-    // 2. List grants for this user's tenant. In keys mode (no
-    //    storage.users), grants are tenant-less and we list them
+    // 2. List grants for this user's space. In keys mode (no
+    //    storage.users), grants are space-less and we list them
     //    that way; this matches the pattern in /auth/grants and the
     //    existing DELETE handler.
-    let tenantId: string | undefined;
+    let spaceId: string | undefined;
     if (storage.users) {
       // Lookup by Better Auth user id (the canonical bridge).
       const userRow = await storage.users.getByAuthUserId(sessionUser.id);
-      tenantId = userRow?.tenant_id;
+      spaceId = userRow?.space_id;
     }
     const grantItems = await storage.items.list({
       type: "system.connection",
       state: "active",
-      tenantId,
+      spaceId,
     });
     // Per-grant client-name lookup from the plugin's auth_oauth_client
     // table. Worst-case N small queries; for the page-load scale this
@@ -1719,14 +1719,14 @@ export function authRoutes(
     if (gated instanceof Response) return gated;
     const sessionUser = gated.session.user;
 
-    let tenantId: string | undefined;
+    let spaceId: string | undefined;
     if (storage.users) {
       // Lookup by Better Auth user id (the canonical bridge).
       const userRow = await storage.users.getByAuthUserId(sessionUser.id);
-      tenantId = userRow?.tenant_id;
+      spaceId = userRow?.space_id;
     }
     const id = c.req.param("id");
-    const item = await storage.items.get(id, tenantId);
+    const item = await storage.items.get(id, spaceId);
     if (item?.type !== "system.connection") {
       return c.redirect("/auth/security?notice=grant_not_found", 302);
     }
@@ -1743,7 +1743,7 @@ export function authRoutes(
       await revokeProjectedGrant(storage, {
         itemId: id,
         properties: props,
-        tenantId,
+        spaceId,
         clientId,
         authUserId,
       });
@@ -1760,7 +1760,7 @@ export function authRoutes(
     }
     // Emit the audit row (same shape as DELETE /grants/:id).
     void storage.audit.log({
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       action: "auth.grant.revoked",
       resource_type: "oauth_grant",
       resource_id: clientId ?? id,
@@ -2190,18 +2190,18 @@ export function authRoutes(
         302,
       );
     }
-    // Resolve tenant_id for the audit row. Duplicates the users-table
+    // Resolve space_id for the audit row. Duplicates the users-table
     // lookup createUserAppGrant already did — kept to avoid changing the
     // helper's signature.
-    let auditTenantId: string | null = null;
+    let auditSpaceId: string | null = null;
     if (storage.users) {
       const userRow = await storage.users.getByAuthUserId(
         sessionResult.session.user.id,
       );
-      auditTenantId = userRow?.tenant_id ?? null;
+      auditSpaceId = userRow?.space_id ?? null;
     }
     void storage.audit.log({
-      tenant_id: auditTenantId,
+      space_id: auditSpaceId,
       action: "auth.grant.created",
       resource_type: "oauth_grant",
       resource_id: row.client_id,
@@ -2326,7 +2326,7 @@ export function authRoutes(
     const accessHash = hashApiKey(accessBare, salt);
     const refreshHash = hashApiKey(refreshBare, salt);
 
-    // Resolve the grant to extract tenant_id + approved scopes.
+    // Resolve the grant to extract space_id + approved scopes.
     // Type check is defense-in-depth: connection_item_id comes from a
     // server-controlled row, but a future approve-handler change could
     // stamp a wrong id and silently mint an orphan token without it.
@@ -2361,7 +2361,7 @@ export function authRoutes(
       refreshTokenHash: refreshHash,
       clientId: grantClientId,
       authUserId: grantUserId,
-      referenceId: deviceGrant.tenant_id ?? null,
+      referenceId: deviceGrant.space_id ?? null,
       scopes: grantScopes,
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
@@ -2370,7 +2370,7 @@ export function authRoutes(
     await stampOAuthGrantLastUsed(
       storage,
       row.connection_item_id,
-      deviceGrant.tenant_id ?? undefined,
+      deviceGrant.space_id ?? undefined,
     );
 
     return c.json({

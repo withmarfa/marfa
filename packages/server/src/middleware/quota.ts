@@ -6,13 +6,13 @@ import type { AppConfig } from "../config.js";
 import type { AppEnv } from "./auth.js";
 
 /**
- * Per-tenant quota enforcement.
+ * Per-space quota enforcement.
  *
  * Reserve this write's quota. **Call it as the first statement inside the
  * transaction the write commits in**, and hold that transaction until the
  * write is done.
  *
- * A `(tenant, resource)` lock is taken on that transaction, then the count is
+ * A `(space, resource)` lock is taken on that transaction, then the count is
  * read under it, so the number already includes every write admitted ahead of
  * this one and no other writer of the same resource in the same space can
  * read a count that omits this write. A check that returned before the write
@@ -42,11 +42,11 @@ import type { AppEnv } from "./auth.js";
  * orders would deadlock against each other; a deterministic order is what
  * makes the second reservation safe to add.
  *
- * No-op for a caller with no tenant: platform-admin keys, single-tenant
+ * No-op for a caller with no space: platform-admin keys, single-space
  * self-hosts and the bootstrap admin have no space to constrain. Also a no-op
  * when nothing is limited, so an unlimited space is never serialised against
  * a ceiling that does not exist — a NULL `<resource>_limit` on the
- * tenant_quotas row with no env default means unlimited.
+ * space_quotas row with no env default means unlimited.
  *
  * Counts stay computed on demand rather than eagerly incremented. The lock is
  * what makes an on-demand count correct, which is what an eager counter would
@@ -57,8 +57,8 @@ export async function reserveQuota(
   storage: Storage,
   reservations: readonly { resource: QuotaResource; increment: number }[],
 ): Promise<void> {
-  const tenantId = c.get("apiKey")?.tenant_id;
-  if (!tenantId || reservations.length === 0) return;
+  const spaceId = c.get("apiKey")?.space_id;
+  if (!spaceId || reservations.length === 0) return;
 
   const config = c.get("config");
 
@@ -68,7 +68,7 @@ export async function reserveQuota(
     limit: number;
   }[] = [];
   for (const r of reservations) {
-    const limit = await effectiveLimit(storage, tenantId, r.resource, config);
+    const limit = await effectiveLimit(storage, spaceId, r.resource, config);
     if (limit !== null) limits.push({ ...r, limit });
   }
   if (limits.length === 0) return;
@@ -79,17 +79,17 @@ export async function reserveQuota(
 
   for (const r of ordered) {
     await storage.coordination.lockInTransaction(
-      `quota:${tenantId}:${r.resource}`,
+      `quota:${spaceId}:${r.resource}`,
     );
   }
   // Every lock is held for the rest of the caller's transaction. Count now,
   // so the number includes every write already committed under the same lock.
   for (const r of ordered) {
-    const current = await storage.tenantQuotas.count(tenantId, r.resource);
+    const current = await storage.spaceQuotas.count(spaceId, r.resource);
     if (current + r.increment > r.limit) {
       throw new MarfaError(
         ErrorCode.QUOTA_EXCEEDED,
-        `Tenant quota for ${r.resource} exceeded`,
+        `Space quota for ${r.resource} exceeded`,
         { resource: r.resource, limit: r.limit, current },
       );
     }
@@ -99,13 +99,13 @@ export async function reserveQuota(
 /** Returns null when no limit applies (unlimited). */
 async function effectiveLimit(
   storage: Storage,
-  tenantId: string,
+  spaceId: string,
   resource: QuotaResource,
   config: AppConfig,
 ): Promise<number | null> {
-  const quota = await storage.tenantQuotas.get(tenantId);
+  const quota = await storage.spaceQuotas.get(spaceId);
   if (quota) {
-    const tenantLimit = (() => {
+    const spaceLimit = (() => {
       switch (resource) {
         case "items":
           return quota.items_limit;
@@ -119,7 +119,7 @@ async function effectiveLimit(
           return quota.rate_per_minute_limit;
       }
     })();
-    if (tenantLimit !== null && tenantLimit !== undefined) return tenantLimit;
+    if (spaceLimit !== null && spaceLimit !== undefined) return spaceLimit;
   }
   // Instance default — the env vars (`MARFA_DEFAULT_QUOTA_*`) are parsed
   // once in config.ts; consume those values rather than re-reading

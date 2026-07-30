@@ -7,9 +7,9 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "./auth.js";
 
-async function mintTenantAdmin(
+async function mintSpaceAdmin(
   ctx: TestContext,
-  tenantId: string,
+  spaceId: string,
   label: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -19,18 +19,18 @@ async function mintTenantAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "tenant_admin",
+      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
 
-describe("per-tenant quota enforcement", () => {
+describe("per-space quota enforcement", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
@@ -38,12 +38,12 @@ describe("per-tenant quota enforcement", () => {
 
   it("webhook quota = 2 → third POST returns 429 with quota_exceeded shape", async () => {
     ctx = await createTestContext();
-    const tenantId = `tenant-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintTenantAdmin(ctx, tenantId, "wh-quota-admin");
+    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
+    const adminKey = await mintSpaceAdmin(ctx, spaceId, "wh-quota-admin");
 
     // Set the cap via the storage layer directly (admin route is also
     // exercised below).
-    await ctx.storage.tenantQuotas.set(tenantId, { webhooks_limit: 2 });
+    await ctx.storage.spaceQuotas.set(spaceId, { webhooks_limit: 2 });
 
     for (let i = 0; i < 2; i++) {
       const ok = await request(ctx.app, "POST", "/webhooks", {
@@ -75,10 +75,10 @@ describe("per-tenant quota enforcement", () => {
 
   it("items quota = 3 → fourth POST returns 429", async () => {
     ctx = await createTestContext();
-    const tenantId = `tenant-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintTenantAdmin(ctx, tenantId, "items-quota-admin");
+    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
+    const adminKey = await mintSpaceAdmin(ctx, spaceId, "items-quota-admin");
 
-    await ctx.storage.tenantQuotas.set(tenantId, { items_limit: 3 });
+    await ctx.storage.spaceQuotas.set(spaceId, { items_limit: 3 });
 
     for (let i = 0; i < 3; i++) {
       const ok = await request(ctx.app, "POST", "/items", {
@@ -104,14 +104,14 @@ describe("per-tenant quota enforcement", () => {
     expect(body.error.details.limit).toBe(3);
   });
 
-  it("tenant-less platform admin bypasses quota enforcement entirely", async () => {
+  it("space-less platform admin bypasses quota enforcement entirely", async () => {
     ctx = await createTestContext();
-    // Set a quota for an arbitrary tenant — irrelevant here because the
-    // bootstrap admin (ctx.adminKey) has no tenant_id.
-    await ctx.storage.tenantQuotas.set("phantom-tenant", { webhooks_limit: 0 });
+    // Set a quota for an arbitrary space — irrelevant here because the
+    // bootstrap admin (ctx.adminKey) has no space_id.
+    await ctx.storage.spaceQuotas.set("phantom-space", { webhooks_limit: 0 });
 
     // Platform admin can create webhooks freely; they don't have a
-    // tenant_id, so enforceQuota is a no-op.
+    // space_id, so enforceQuota is a no-op.
     for (let i = 0; i < 3; i++) {
       const res = await request(ctx.app, "POST", "/webhooks", {
         key: ctx.adminKey,
@@ -126,7 +126,7 @@ describe("per-tenant quota enforcement", () => {
 
   /**
    * Regression for the PG bigint string-concat bug. Before the fix,
-   * `tenant-quota-store.count(tenantId, "storage_bytes")` returned the
+   * `space-quota-store.count(spaceId, "storage_bytes")` returned the
    * raw node-postgres bigint as a JS string under PG. The arithmetic
    * `current + increment > limit` then did string concatenation —
    * `"50000" + 1024` became `"500001024"`, which numeric-coerced past
@@ -139,17 +139,13 @@ describe("per-tenant quota enforcement", () => {
    */
   it("storage_bytes quota arithmetic — second small upload under cap succeeds (PG bigint regression)", async () => {
     ctx = await createTestContext();
-    const tenantId = `tenant-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintTenantAdmin(
-      ctx,
-      tenantId,
-      "storage-bytes-admin",
-    );
+    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
+    const adminKey = await mintSpaceAdmin(ctx, spaceId, "storage-bytes-admin");
 
     // Cap = 100_000 bytes (100 KB). First upload ~50 KB; second upload
     // ~1 KB. Sum is ~51 KB, well under the cap. Pre-fix the second
     // upload 429s under PG because "50000" + 1024 = "500001024".
-    await ctx.storage.tenantQuotas.set(tenantId, {
+    await ctx.storage.spaceQuotas.set(spaceId, {
       storage_bytes_limit: 100_000,
     });
 
@@ -198,15 +194,15 @@ describe("per-tenant quota enforcement", () => {
     expect(typeof body.error.details.current).toBe("number");
   });
 
-  it("GET / PUT /tenants/:id/quotas — admin round-trip", async () => {
+  it("GET / PUT /spaces/:id/quotas — admin round-trip", async () => {
     ctx = await createTestContext();
-    const tenant = await ctx.storage.tenants!.create();
+    const space = await ctx.storage.spaces!.create();
 
     // Initial GET returns null fields
     const initial = await request(
       ctx.app,
       "GET",
-      `/tenants/${tenant.id}/quotas`,
+      `/spaces/${space.id}/quotas`,
       {
         key: ctx.adminKey,
       },
@@ -218,7 +214,7 @@ describe("per-tenant quota enforcement", () => {
     expect(initialBody.items_limit).toBeNull();
 
     // PUT a quota
-    const put = await request(ctx.app, "PUT", `/tenants/${tenant.id}/quotas`, {
+    const put = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
       key: ctx.adminKey,
       body: { items_limit: 100, webhooks_limit: 5 },
     });
@@ -231,14 +227,9 @@ describe("per-tenant quota enforcement", () => {
     expect(putBody.webhooks_limit).toBe(5);
 
     // GET reflects
-    const after = await request(
-      ctx.app,
-      "GET",
-      `/tenants/${tenant.id}/quotas`,
-      {
-        key: ctx.adminKey,
-      },
-    );
+    const after = await request(ctx.app, "GET", `/spaces/${space.id}/quotas`, {
+      key: ctx.adminKey,
+    });
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as { items_limit: number };
     expect(afterBody.items_limit).toBe(100);

@@ -24,7 +24,7 @@ export interface EdgeProposal {
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
- * 2. Source and target items exist and belong to the same tenant.
+ * 2. Source and target items exist and belong to the same space.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
@@ -42,7 +42,7 @@ export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   proposals: EdgeProposal[],
-  opts: { tenant_id?: string } = {},
+  opts: { space_id?: string } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
 
@@ -54,10 +54,10 @@ export async function assertEdgesCanBeCreated(
   }
   const resolved: ResolvedProposal[] = [];
   for (const p of proposals) {
-    // Resolve the edge-type schema within the caller's tenant: core types are
-    // global, custom types resolve only for their owning tenant. A tenant that
-    // references another tenant's custom edge type sees "unknown edge type".
-    const schema = getEdgeTypeSchema(p.edge_type, opts.tenant_id);
+    // Resolve the edge-type schema within the caller's space: core types are
+    // global, custom types resolve only for their owning space. A space that
+    // references another space's custom edge type sees "unknown edge type".
+    const schema = getEdgeTypeSchema(p.edge_type, opts.space_id);
     if (!schema) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
@@ -80,7 +80,7 @@ export async function assertEdgesCanBeCreated(
     itemIds.add(p.source_id);
     itemIds.add(p.target_id);
   }
-  const itemMap = await itemStore.getMany(Array.from(itemIds), opts.tenant_id);
+  const itemMap = await itemStore.getMany(Array.from(itemIds), opts.space_id);
   for (const { p, schema } of resolved) {
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);
@@ -121,9 +121,9 @@ export async function assertEdgesCanBeCreated(
   }
 
   // Step 4 + 5: pre-fetch existence + cardinality counts in grouped queries.
-  // Fence every store read to the caller's tenant so duplicate/cardinality
-  // checks never fold in another tenant's edges.
-  const existsSet = await edgeStore.existsExactBatch(proposals, opts.tenant_id);
+  // Fence every store read to the caller's space so duplicate/cardinality
+  // checks never fold in another space's edges.
+  const existsSet = await edgeStore.existsExactBatch(proposals, opts.space_id);
 
   const needSourceCount = new Map<
     string,
@@ -162,11 +162,11 @@ export async function assertEdgesCanBeCreated(
   const [sourceCounts, targetCounts] = await Promise.all([
     edgeStore.countsBySourceBatch(
       Array.from(needSourceCount.values()),
-      opts.tenant_id,
+      opts.space_id,
     ),
     edgeStore.countsByTargetBatch(
       Array.from(needTargetCount.values()),
-      opts.tenant_id,
+      opts.space_id,
     ),
   ]);
 
@@ -265,7 +265,7 @@ export async function assertEdgesCanBeCreated(
           p.target_id,
           outboundCache,
           pending,
-          opts.tenant_id,
+          opts.space_id,
         )
       ) {
         throw new MarfaError(
@@ -302,7 +302,7 @@ export async function assertEdgeCanBeCreated(
     source_id: string;
     target_id: string;
     edge_type: string;
-    tenant_id?: string;
+    space_id?: string;
   },
 ): Promise<EdgeTypeSchema> {
   const schemas = await assertEdgesCanBeCreated(
@@ -315,7 +315,7 @@ export async function assertEdgeCanBeCreated(
         edge_type: input.edge_type,
       },
     ],
-    { tenant_id: input.tenant_id },
+    { space_id: input.space_id },
   );
   const [only] = schemas;
   if (!only) {
@@ -349,7 +349,7 @@ async function wouldCreateCycle(
   proposedTarget: string,
   outboundCache: Map<string, Edge[]>,
   pendingEdges: { source_id: string; target_id: string }[],
-  tenantId?: string,
+  spaceId?: string,
 ): Promise<boolean> {
   const visited = new Set<string>();
   const frontier: string[] = [proposedTarget];
@@ -364,7 +364,7 @@ async function wouldCreateCycle(
     if (next === proposedSource) return true;
     let outbound = outboundCache.get(next);
     if (!outbound) {
-      outbound = await edgeStore.listOutboundOfType(next, edgeType, tenantId);
+      outbound = await edgeStore.listOutboundOfType(next, edgeType, spaceId);
       outboundCache.set(next, outbound);
     }
     for (const e of outbound) {
@@ -384,7 +384,7 @@ async function wouldCreateCycle(
 /** Lightweight row-shape → Edge helper, dialect-agnostic. */
 export function rowToEdge(row: {
   id: string;
-  tenant_id: string | null;
+  space_id: string | null;
   source_id: string;
   target_id: string;
   edge_type: string;
@@ -403,7 +403,7 @@ export function rowToEdge(row: {
   }
   return {
     id: row.id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     source_id: row.source_id,
     target_id: row.target_id,
     edge_type: row.edge_type,

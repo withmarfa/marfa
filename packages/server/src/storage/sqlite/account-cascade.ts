@@ -28,8 +28,8 @@ import {
   inboundWebhookEvents,
   items,
   outboundWebhooks,
-  tenantQuotas,
-  tenants,
+  spaceQuotas,
+  spaces,
   users,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -59,55 +59,55 @@ export async function sqliteDeleteAccountCascade(
     }
 
     const userRow = await tx
-      .select({ tenant_id: users.tenant_id })
+      .select({ space_id: users.space_id })
       .from(users)
       .where(eq(users.auth_user_id, authUserId))
       .get();
-    const tenantId = userRow?.tenant_id ?? null;
+    const spaceId = userRow?.space_id ?? null;
 
-    if (tenantId) {
+    if (spaceId) {
       await tx
         .delete(connectionOauthTokens)
-        .where(eq(connectionOauthTokens.tenant_id, tenantId))
+        .where(eq(connectionOauthTokens.space_id, spaceId))
         .run();
       await tx
         .delete(connectionLeasedTokens)
-        .where(eq(connectionLeasedTokens.tenant_id, tenantId))
+        .where(eq(connectionLeasedTokens.space_id, spaceId))
         .run();
       await tx
         .delete(inboundWebhookEvents)
         .where(
           sql`${inboundWebhookEvents.inbound_webhook_id} IN (
             SELECT ${inboundWebhooks.id} FROM ${inboundWebhooks}
-            WHERE ${inboundWebhooks.tenant_id} = ${tenantId}
+            WHERE ${inboundWebhooks.space_id} = ${spaceId}
           )`,
         )
         .run();
       await tx
         .delete(inboundWebhooks)
-        .where(eq(inboundWebhooks.tenant_id, tenantId))
+        .where(eq(inboundWebhooks.space_id, spaceId))
         .run();
-      await tx.delete(edges).where(eq(edges.tenant_id, tenantId)).run();
+      await tx.delete(edges).where(eq(edges.space_id, spaceId)).run();
 
-      const tenantItems = await tx
+      const spaceItems = await tx
         .select({ id: items.id })
         .from(items)
-        .where(eq(items.tenant_id, tenantId))
+        .where(eq(items.space_id, spaceId))
         .all();
-      const ids = tenantItems.map((r) => r.id);
+      const ids = spaceItems.map((r) => r.id);
       if (ids.length > 0) {
-        await storage.items.bulkPurge(ids, tenantId);
+        await storage.items.bulkPurge(ids, spaceId);
       }
 
-      await tx.delete(blobs).where(eq(blobs.tenant_id, tenantId)).run();
-      await tx.delete(apiKeys).where(eq(apiKeys.tenant_id, tenantId)).run();
+      await tx.delete(blobs).where(eq(blobs.space_id, spaceId)).run();
+      await tx.delete(apiKeys).where(eq(apiKeys.space_id, spaceId)).run();
       await tx
         .delete(outboundWebhooks)
-        .where(eq(outboundWebhooks.tenant_id, tenantId))
+        .where(eq(outboundWebhooks.space_id, spaceId))
         .run();
       await tx
-        .delete(tenantQuotas)
-        .where(eq(tenantQuotas.tenant_id, tenantId))
+        .delete(spaceQuotas)
+        .where(eq(spaceQuotas.space_id, spaceId))
         .run();
     }
 
@@ -116,18 +116,18 @@ export async function sqliteDeleteAccountCascade(
       .where(eq(auth_verification.value, authUserId))
       .run();
 
-    if (tenantId) {
+    if (spaceId) {
       await tx.delete(users).where(eq(users.auth_user_id, authUserId)).run();
-      // Drop the tenant only when no other users reference it (the
+      // Drop the space only when no other users reference it (the
       // deleted row is already gone, so this counts genuinely-other
       // users). Mirrors pg/account-cascade.ts.
       const remaining = await tx
         .select({ id: users.id })
         .from(users)
-        .where(eq(users.tenant_id, tenantId))
+        .where(eq(users.space_id, spaceId))
         .all();
       if (remaining.length === 0) {
-        await tx.delete(tenants).where(eq(tenants.id, tenantId)).run();
+        await tx.delete(spaces).where(eq(spaces.id, spaceId)).run();
       }
     }
 
@@ -135,7 +135,7 @@ export async function sqliteDeleteAccountCascade(
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,
-      details: { tenant_id: tenantId, redacted: false },
+      details: { space_id: spaceId, redacted: false },
     });
 
     await storage.audit.redactForUser(authUserId);

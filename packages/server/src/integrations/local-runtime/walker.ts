@@ -93,7 +93,7 @@ function isLocalIntegrationConnection(connection: {
 
 async function resolveManifestName(
   storage: Storage,
-  connection: { id: string; properties: unknown; tenant_id?: string | null },
+  connection: { id: string; properties: unknown; space_id?: string | null },
 ): Promise<{ integrationName: string } | null> {
   const props = connection.properties as ConnectionProperties;
   if (!props.integration_ref) return null;
@@ -111,7 +111,7 @@ async function resolveManifestName(
 }
 
 function buildScheduleMessage(
-  connection: { id: string; tenant_id?: string | null },
+  connection: { id: string; space_id?: string | null },
   integrationName: string,
   scheduledForMs: number,
 ): ScheduleMessage {
@@ -119,7 +119,7 @@ function buildScheduleMessage(
     kind: "schedule",
     integration_name: integrationName,
     connection_id: connection.id,
-    ...(connection.tenant_id ? { tenant_id: connection.tenant_id } : {}),
+    ...(connection.space_id ? { space_id: connection.space_id } : {}),
     scheduled_for_ms: scheduledForMs,
   };
 }

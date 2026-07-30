@@ -77,14 +77,14 @@ export interface ConsumerEnvironment {
   /** Integration name from the manifest (envelope filter). */
   integrationName: string;
   /**
-   * Tenant id this Worker instance is scoped to. Configured at deploy
+   * Space id this Worker instance is scoped to. Configured at deploy
    * time. When set, the consumer cross-checks every incoming
-   * `message.tenant_id` against it and acks-and-skips any mismatched
-   * message — defense in depth against a misrouted cross-tenant message
+   * `message.space_id` against it and acks-and-skips any mismatched
+   * message — defense in depth against a misrouted cross-space message
    * that already passed the `connection_id` gate. Optional only to keep
-   * self-host setups where the tenant column is null wire-compatible.
+   * self-host setups where the space column is null wire-compatible.
    */
-  tenantId?: string;
+  spaceId?: string;
   /**
    * Defensive ceiling for cycle hop count. When set, the consumer
    * refuses to dispatch a reactive `item-event` whose `cycle.hop_count`
@@ -138,7 +138,7 @@ export async function buildConnectionContext(
   return {
     connection_id: message.connection_id,
     integration_name: message.integration_name,
-    tenant_id: message.tenant_id,
+    space_id: message.space_id,
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, message.connection_id),
@@ -196,7 +196,7 @@ function backoffSecondsFor(attempts: number): number {
  *     persistent programming error — Cloudflare's max-attempts ceiling
  *     would otherwise route the message to the DLQ after a long delay
  *     of repeating the same bad path.
- *   - Envelope-filter / tenant-mismatch / hop-budget overflow →
+ *   - Envelope-filter / space-mismatch / hop-budget overflow →
  *     `msg.ack()` (acked counter). These messages aren't ours to
  *     process; acking lets Cloudflare drop them from the queue.
  *   - **`ConnectionGoneError`** → `msg.ack()`, plus `disarmSchedule()`
@@ -229,14 +229,14 @@ export async function consumeBatch(
       outcome.acked++;
       continue;
     }
-    // Defense-in-depth tenant check. The connection_id gate is the
+    // Defense-in-depth space check. The connection_id gate is the
     // primary line of defense; this is the secondary one. A misrouted
-    // message that targets the wrong tenant gets acked and skipped
+    // message that targets the wrong space gets acked and skipped
     // without ever invoking the handler.
     if (
-      env.tenantId !== undefined &&
-      message.tenant_id !== undefined &&
-      message.tenant_id !== env.tenantId
+      env.spaceId !== undefined &&
+      message.space_id !== undefined &&
+      message.space_id !== env.spaceId
     ) {
       msg.ack();
       outcome.acked++;

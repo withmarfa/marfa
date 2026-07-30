@@ -19,11 +19,11 @@
  * cascade actually ran.
  *
  * Step ordering (after the step-0 re-check):
- *   1. Resolve `users.tenant_id`. If no row, only the auth_user
- *      cleanup runs (the user never had a tenant — a single-tenant
- *      self-host shape, or a sign-up that bailed before tenant
+ *   1. Resolve `users.space_id`. If no row, only the auth_user
+ *      cleanup runs (the user never had a space — a single-space
+ *      self-host shape, or a sign-up that bailed before space
  *      provisioning).
- *   2. Per-tenant teardown of connection-related artifacts. The full
+ *   2. Per-space teardown of connection-related artifacts. The full
  *      `performUninstall` pipeline isn't reachable from storage
  *      (route-layer concern), so we do the minimal subset of its
  *      effects directly: revoke `connection_oauth_tokens`, revoke
@@ -31,16 +31,16 @@
  *      `inbound_webhook_events`. The user's items themselves are
  *      bulk-purged in step 4 so the `system.connection` rows go too.
  *   3. Teardown of edges (`deleteBySource` / `deleteByTarget` would
- *      be N queries; do a single `DELETE FROM edges WHERE tenant_id`).
- *   4. Bulk-purge every item under the tenant (cascades metadata +
+ *      be N queries; do a single `DELETE FROM edges WHERE space_id`).
+ *   4. Bulk-purge every item under the space (cascades metadata +
  *      versions via FK; search index needs explicit cleanup which
  *      `ItemStore.bulkPurge` already wires).
- *   5. Tenant-scoped blob rows.
- *   6. `api_keys` + outbound/inbound webhooks + `tenant_quotas`.
+ *   5. Space-scoped blob rows.
+ *   6. `api_keys` + outbound/inbound webhooks + `space_quotas`.
  *   7. `auth_verification` rows referencing this user (the cancel
  *      token + any in-flight reset/verify tokens — all keyed by
  *      `value = authUserId`).
- *   8. `users` row, `tenants` row.
+ *   8. `users` row, `spaces` row.
  *   9. `auth.account.hard_deleted` audit row (BEFORE redactForUser
  *      so it survives the sweep).
  *   10. `audit.redactForUser(authUserId)` to scrub PII.
@@ -51,7 +51,7 @@
  * flow through the store layer (search-index cleanup; audit log
  * insertion; sub-store delete methods). Cross-table raw SQL is used
  * only where bulk efficiency matters (edges, blobs, api_keys,
- * webhooks, tenant_quotas, auth_verification).
+ * webhooks, space_quotas, auth_verification).
  */
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
@@ -67,8 +67,8 @@ import {
   inboundWebhookEvents,
   items,
   outboundWebhooks,
-  tenantQuotas,
-  tenants,
+  spaceQuotas,
+  spaces,
   users,
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -79,8 +79,8 @@ export async function pgDeleteAccountCascade(
   authUserId: string,
   cutoffIso: string,
 ): Promise<boolean> {
-  // Runs as the connection owner (no ALS tenant context installed by the purger),
-  // bypassing per-tenant RLS. Search-index cleanup inside bulkPurge is best-effort
+  // Runs as the connection owner (no ALS space context installed by the purger),
+  // bypassing per-space RLS. Search-index cleanup inside bulkPurge is best-effort
   // with respect to this transaction — residual FTS rows are self-healing.
   return db.transaction(async (tx) => {
     // ---- 0. Race-safety re-check. ----------------------------------------
@@ -105,22 +105,22 @@ export async function pgDeleteAccountCascade(
       return false;
     }
 
-    // ---- 1. Tenant resolution. -------------------------------------------
+    // ---- 1. Space resolution. -------------------------------------------
     const [userRow] = await tx
-      .select({ tenant_id: users.tenant_id })
+      .select({ space_id: users.space_id })
       .from(users)
       .where(eq(users.auth_user_id, authUserId));
-    const tenantId = userRow?.tenant_id ?? null;
+    const spaceId = userRow?.space_id ?? null;
 
-    if (tenantId) {
-      // Serialize tenant-scoped teardown against quota updates that require
-      // the tenant to exist. This lock must come before deleting the quota
-      // row; taking it only at the final tenant DELETE would allow an update
+    if (spaceId) {
+      // Serialize space-scoped teardown against quota updates that require
+      // the space to exist. This lock must come before deleting the quota
+      // row; taking it only at the final space DELETE would allow an update
       // to reinsert quotas after step 6 and strand an orphan row.
       await tx
-        .select({ id: tenants.id })
-        .from(tenants)
-        .where(eq(tenants.id, tenantId))
+        .select({ id: spaces.id })
+        .from(spaces)
+        .where(eq(spaces.id, spaceId))
         .for("update");
 
       // ---- 2. Connection-tied artifacts. --------------------------------
@@ -128,42 +128,42 @@ export async function pgDeleteAccountCascade(
       // minimal subset. system.connection items themselves drop in step 4.
       await tx
         .delete(connectionOauthTokens)
-        .where(eq(connectionOauthTokens.tenant_id, tenantId));
+        .where(eq(connectionOauthTokens.space_id, spaceId));
       await tx
         .delete(connectionLeasedTokens)
-        .where(eq(connectionLeasedTokens.tenant_id, tenantId));
+        .where(eq(connectionLeasedTokens.space_id, spaceId));
       await tx.delete(inboundWebhookEvents).where(
         sql`${inboundWebhookEvents.inbound_webhook_id} IN (
             SELECT ${inboundWebhooks.id} FROM ${inboundWebhooks}
-            WHERE ${inboundWebhooks.tenant_id} = ${tenantId}
+            WHERE ${inboundWebhooks.space_id} = ${spaceId}
           )`,
       );
       await tx
         .delete(inboundWebhooks)
-        .where(eq(inboundWebhooks.tenant_id, tenantId));
+        .where(eq(inboundWebhooks.space_id, spaceId));
 
       // ---- 3. Edges teardown. -------------------------------------------
-      await tx.delete(edges).where(eq(edges.tenant_id, tenantId));
+      await tx.delete(edges).where(eq(edges.space_id, spaceId));
 
       // ---- 4. Items bulk-purge (cascades metadata + versions). ----------
-      const tenantItems = await tx
+      const spaceItems = await tx
         .select({ id: items.id })
         .from(items)
-        .where(eq(items.tenant_id, tenantId));
-      const ids = tenantItems.map((r) => r.id);
+        .where(eq(items.space_id, spaceId));
+      const ids = spaceItems.map((r) => r.id);
       if (ids.length > 0) {
-        await storage.items.bulkPurge(ids, tenantId);
+        await storage.items.bulkPurge(ids, spaceId);
       }
 
-      // ---- 5. Tenant blobs. ---------------------------------------------
-      await tx.delete(blobs).where(eq(blobs.tenant_id, tenantId));
+      // ---- 5. Space blobs. ---------------------------------------------
+      await tx.delete(blobs).where(eq(blobs.space_id, spaceId));
 
       // ---- 6. api_keys, webhooks, quotas. -------------------------------
-      await tx.delete(apiKeys).where(eq(apiKeys.tenant_id, tenantId));
+      await tx.delete(apiKeys).where(eq(apiKeys.space_id, spaceId));
       await tx
         .delete(outboundWebhooks)
-        .where(eq(outboundWebhooks.tenant_id, tenantId));
-      await tx.delete(tenantQuotas).where(eq(tenantQuotas.tenant_id, tenantId));
+        .where(eq(outboundWebhooks.space_id, spaceId));
+      await tx.delete(spaceQuotas).where(eq(spaceQuotas.space_id, spaceId));
     }
 
     // ---- 7. auth_verification rows (cancel token + any in-flight reset/verify tokens). --
@@ -171,20 +171,20 @@ export async function pgDeleteAccountCascade(
       .delete(auth_verification)
       .where(eq(auth_verification.value, authUserId));
 
-    // ---- 8. users row + tenants row. --------------------------------------
-    if (tenantId) {
+    // ---- 8. users row + spaces row. --------------------------------------
+    if (spaceId) {
       await tx.delete(users).where(eq(users.auth_user_id, authUserId));
-      // Belt + braces — guard against tenant rows shared by another
-      // user (multi-user-per-tenant is not the deployed shape today,
-      // but the schema permits it). Only drop the tenant when no other
+      // Belt + braces — guard against space rows shared by another
+      // user (multi-user-per-space is not the deployed shape today,
+      // but the schema permits it). Only drop the space when no other
       // user rows reference it. The deleted row is already gone by
       // this point, so this counts genuinely-other users.
       const remaining = await tx
         .select({ id: users.id })
         .from(users)
-        .where(eq(users.tenant_id, tenantId));
+        .where(eq(users.space_id, spaceId));
       if (remaining.length === 0) {
-        await tx.delete(tenants).where(eq(tenants.id, tenantId));
+        await tx.delete(spaces).where(eq(spaces.id, spaceId));
       }
     }
 
@@ -193,7 +193,7 @@ export async function pgDeleteAccountCascade(
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,
-      details: { tenant_id: tenantId, redacted: false },
+      details: { space_id: spaceId, redacted: false },
     });
 
     // ---- 10. Redact remaining audit trail. -------------------------------

@@ -101,7 +101,7 @@ describe("grandfatherProfilesT074", () => {
     await ctx.cleanup();
   });
 
-  it("provisions tenant + users + admin key for an orphan auth_user row", async () => {
+  it("provisions space + users + admin key for an orphan auth_user row", async () => {
     const id = `auth_${randomBytes(4).toString("hex")}`;
     await insertAuthUser(ctx.storage, {
       id,
@@ -119,17 +119,17 @@ describe("grandfatherProfilesT074", () => {
     const after = await ctx.storage.users!.getByAuthUserId(id);
     expect(after).not.toBeNull();
     expect(after?.handle).toBe("alice-smith");
-    expect(after?.tenant_id).toBeTruthy();
+    expect(after?.space_id).toBeTruthy();
   });
 
   it("appends a numeric suffix on handle collisions", async () => {
     // Pre-claim "popular" by an existing user.
-    const tenant = await ctx.storage.tenants!.create("Pre-Claim Tenant");
+    const space = await ctx.storage.spaces!.create("Pre-Claim Space");
     await ctx.storage.users!.create({
       name: "Pre-claim",
       provider: "test",
       provider_id: "preclaim",
-      tenant_id: tenant.id,
+      space_id: space.id,
       handle: "popular",
     });
 
@@ -174,12 +174,12 @@ describe("grandfatherProfilesT074", () => {
       email: "kate@example.com",
       name: "Kate",
     });
-    const tenant = await ctx.storage.tenants!.create("Kate's Tenant");
+    const space = await ctx.storage.spaces!.create("Kate's Space");
     const user = await ctx.storage.users!.create({
       name: "Kate",
       provider: "legacy",
       provider_id: id,
-      tenant_id: tenant.id,
+      space_id: space.id,
       auth_user_id: id,
       // handle deliberately omitted
     });

@@ -20,7 +20,7 @@ import type { Item, ItemState, Metadata } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireTenantAdmin,
+  requireSpaceAdmin,
   requireTypeAccess,
   isOwnConnectionRead,
   itemProvenanceSource,
@@ -148,7 +148,7 @@ const createItemRoute = createRoute({
       description:
         "Item updated via natural-key upsert. Returned when both `source` " +
         "(stamped from the credential) and request `source_id` resolve a " +
-        "non-trashed item in the caller's tenant — the request is treated " +
+        "non-trashed item in the caller's space — the request is treated " +
         "as an idempotent re-sync of the upstream entry.",
     },
     201: {
@@ -204,7 +204,7 @@ const getItemStatsRoute = createRoute({
   tags: ["Items"],
   summary: "Get item counts by state",
   description:
-    "Returns a count of items per lifecycle state for the tenant. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+    "Returns a count of items per lifecycle state for the space. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -233,7 +233,7 @@ const listItemsRoute = createRoute({
   tags: ["Items"],
   summary: "List items",
   description:
-    "Returns a paginated list of items in the tenant, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
+    "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -410,7 +410,7 @@ const updateItemRoute = createRoute({
             /** Repoint at a new natural-key identifier under the item's
              *  `source` (the server-stamped value, not the caller's). The
              *  `(source, source_id)` tuple is
-             *  unique per tenant — server returns 409 `source_id_conflict`
+             *  unique per space — server returns 409 `source_id_conflict`
              *  if another item already holds the target value. Idempotent
              *  no-op when the value matches the row's current source_id.
              *  Repointing the natural key is how renames preserve item
@@ -871,12 +871,12 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, type, "write");
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
 
     // The items quota is reserved around the write itself, further down,
     // rather than checked here. A count taken at this point is a check
     // against a number the write is about to change, so N concurrent
-    // creates each see room and the tenant lands at limit + N - 1.
+    // creates each see room and the space lands at limit + N - 1.
 
     if (Array.isArray(body.tags) && body.tags.length > 100) {
       throw new MarfaError(
@@ -886,13 +886,13 @@ export function itemRoutes(storage: Storage) {
     }
 
     // Schema-enforcement levers: source allow-list, strict-mode, and
-    // custom sources. Off by default; enabled per type via tenant config
+    // custom sources. Off by default; enabled per type via space config
     // or per-credential override.
-    const tenantConfig =
-      tenantId && storage.tenants
-        ? await storage.tenants.getConfig(tenantId)
+    const spaceConfig =
+      spaceId && storage.spaces
+        ? await storage.spaces.getConfig(spaceId)
         : null;
-    const enforcement = resolveEnforcement(tenantConfig, c.get("apiKey"));
+    const enforcement = resolveEnforcement(spaceConfig, c.get("apiKey"));
 
     // source is non-forgeable: always stamped from the credential.
     // tier falls back to the credential default when absent.
@@ -921,11 +921,11 @@ export function itemRoutes(storage: Storage) {
     // persistence work.
     if (
       isTypeInStrictMode(enforcement, type) &&
-      getTypeSchema(type, tenantId) !== undefined
+      getTypeSchema(type, spaceId) !== undefined
     ) {
       const strictResult = validateProperties(type, properties, {
         strict: true,
-        tenantId,
+        spaceId,
       });
       if (!strictResult.success) {
         throw new MarfaError(
@@ -971,7 +971,7 @@ export function itemRoutes(storage: Storage) {
       // connector decide where another's activity surfaces.
       requireActivityAttribution(credential, type, properties);
       if (connectionId) {
-        const connection = await storage.items.get(connectionId, tenantId);
+        const connection = await storage.items.get(connectionId, spaceId);
         if (
           connection?.type === "system.connection" &&
           connection.properties.feed_activity === true
@@ -1015,7 +1015,7 @@ export function itemRoutes(storage: Storage) {
 
     // Natural-key upsert. When both `source` (stamped from the credential)
     // and request `source_id` are present, look up an existing non-trashed
-    // row by (source, source_id) within the caller's tenant. If one matches,
+    // row by (source, source_id) within the caller's space. If one matches,
     // short-circuit to update so `POST /items` is idempotent on re-sync —
     // the contract that lets inbound integration handlers recover from
     // whole-batch retries (createItem-success / cursor-write-fail) without
@@ -1030,7 +1030,7 @@ export function itemRoutes(storage: Storage) {
       const existing = await storage.items.findBySourceId(
         stampedSource,
         body.source_id,
-        tenantId,
+        spaceId,
       );
       if (existing) {
         // Authorize the update against the row it lands on, not the body
@@ -1095,7 +1095,7 @@ export function itemRoutes(storage: Storage) {
                   timestamp: body.timestamp,
                 }),
               },
-              tenantId,
+              spaceId,
             );
             if ("error" in updated) {
               // No version was supplied on a POST — `ItemStore.update` only
@@ -1118,7 +1118,7 @@ export function itemRoutes(storage: Storage) {
                 storage,
                 updated.id,
                 body.edges,
-                tenantId,
+                spaceId,
                 (edgeType) => {
                   requireEdgePermission(c, edgeType, "write");
                 },
@@ -1139,11 +1139,11 @@ export function itemRoutes(storage: Storage) {
           type: "updated",
           item: updatedItem,
           metadata: updatedMetadata,
-          tenantId,
+          spaceId,
         });
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          tenant_id: c.get("apiKey")?.tenant_id ?? null,
+          space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "item.update",
           resource_type: "item",
@@ -1185,7 +1185,7 @@ export function itemRoutes(storage: Storage) {
           capture_longitude: body.capture_longitude,
           tags: body.tags,
         },
-        tenantId,
+        spaceId,
       );
 
       // Atomic edges: for each entry, this item is the source; listed ids
@@ -1206,7 +1206,7 @@ export function itemRoutes(storage: Storage) {
             storage.edges,
             storage.items,
             proposals,
-            { tenant_id: tenantId },
+            { space_id: spaceId },
           );
           for (const p of proposals) {
             await storage.edges.createRaw(
@@ -1215,7 +1215,7 @@ export function itemRoutes(storage: Storage) {
                 target_id: p.target_id,
                 edge_type: p.edge_type,
               },
-              tenantId,
+              spaceId,
             );
           }
         }
@@ -1232,11 +1232,11 @@ export function itemRoutes(storage: Storage) {
       type: "created",
       item,
       metadata,
-      tenantId,
+      spaceId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.create",
       resource_type: "item",
@@ -1255,16 +1255,16 @@ export function itemRoutes(storage: Storage) {
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
     const callerKey = c.get("apiKey");
-    const tenantId = callerKey?.tenant_id;
+    const spaceId = callerKey?.space_id;
     const allowedTypes = getTypeFilter(c);
     // These counts summarize the listing, so they narrow with it.
-    const tenantConfig =
-      tenantId && storage.tenants
-        ? await storage.tenants.getConfig(tenantId)
+    const spaceConfig =
+      spaceId && storage.spaces
+        ? await storage.spaces.getConfig(spaceId)
         : null;
-    const enforcement = resolveEnforcement(tenantConfig, callerKey);
+    const enforcement = resolveEnforcement(spaceConfig, callerKey);
     const stats = await storage.items.stats(
-      tenantId,
+      spaceId,
       allowedTypes,
       enforcement.source_filter,
     );
@@ -1344,17 +1344,17 @@ export function itemRoutes(storage: Storage) {
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
     const callerKeyForRead = c.get("apiKey");
-    const callerTenantIdForRead = callerKeyForRead?.tenant_id;
-    const tenantConfigForRead =
-      callerTenantIdForRead && storage.tenants
-        ? await storage.tenants.getConfig(callerTenantIdForRead)
+    const callerSpaceIdForRead = callerKeyForRead?.space_id;
+    const spaceConfigForRead =
+      callerSpaceIdForRead && storage.spaces
+        ? await storage.spaces.getConfig(callerSpaceIdForRead)
         : null;
     const enforcementForRead = resolveEnforcement(
-      tenantConfigForRead,
+      spaceConfigForRead,
       callerKeyForRead,
     );
     const result = await storage.items.list({
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
       type,
       state,
       source: query.source,
@@ -1436,14 +1436,14 @@ export function itemRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const tid = apiKey?.tenant_id;
+    const tid = apiKey?.space_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     // A runtime credential reads its own Connection to resolve its
-    // configuration; that one row is admitted without a tenant-wide
+    // configuration; that one row is admitted without a space-wide
     // `system.connection` grant. See `isOwnConnectionRead`.
     if (!isOwnConnectionRead(apiKey, item)) {
       requireTypeAccess(c, item.type, "read");
@@ -1483,7 +1483,7 @@ export function itemRoutes(storage: Storage) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
       // `backrefs` was also requested. Each neighbor is re-authorised through
-      // the same tenant fence + per-type read gate the bulk-get path uses, so a
+      // the same space fence + per-type read gate the bulk-get path uses, so a
       // neighbor the caller cannot read is silently omitted, never leaked.
       const neighborIds = new Set<string>();
       for (const block of Object.values(edges)) {
@@ -1594,7 +1594,7 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const tid = c.get("apiKey")?.tenant_id;
+    const tid = c.get("apiKey")?.space_id;
 
     const item = await storage.items.get(id, tid);
     if (!item) {
@@ -1624,7 +1624,7 @@ export function itemRoutes(storage: Storage) {
     );
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
-    // unique per tenant — the same constraint enforced at create time.
+    // unique per space — the same constraint enforced at create time.
     // Reject before the write so no partial state lands. PATCHing the value
     // the item already carries is a no-op success. Cross-source isolation is
     // automatic: `findBySourceId` scopes by `item.source`, so the same
@@ -1679,7 +1679,7 @@ export function itemRoutes(storage: Storage) {
       };
       if (getTypeSchema(item.type, tid)) {
         const validation = validateProperties(item.type, merged, {
-          tenantId: tid,
+          spaceId: tid,
         });
         if (!validation.success) {
           throw new MarfaError(
@@ -1777,7 +1777,7 @@ export function itemRoutes(storage: Storage) {
             storage.edges,
             storage.items,
             proposals,
-            { tenant_id: tid },
+            { space_id: tid },
           );
           for (const p of proposals) {
             await storage.edges.createRaw(
@@ -1804,11 +1804,11 @@ export function itemRoutes(storage: Storage) {
       type: "updated",
       item: txResult,
       metadata,
-      tenantId: tid,
+      spaceId: tid,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.update",
       resource_type: "item",
@@ -1831,7 +1831,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireAuth(c);
-    const tid = c.get("apiKey")?.tenant_id;
+    const tid = c.get("apiKey")?.space_id;
 
     const targetItem = await storage.items.get(id, tid);
     if (!targetItem) {
@@ -1856,13 +1856,13 @@ export function itemRoutes(storage: Storage) {
         await publish({
           type: "deleted",
           item: { ...snapshot, state: "trashed" },
-          tenantId: tid,
+          spaceId: tid,
         });
       }
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.delete",
       resource_type: "item",
@@ -1885,7 +1885,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -1904,7 +1904,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -1929,7 +1929,7 @@ export function itemRoutes(storage: Storage) {
       type: "metadata_changed",
       item,
       metadata,
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -1943,7 +1943,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -1977,7 +1977,7 @@ export function itemRoutes(storage: Storage) {
       type: "metadata_changed",
       item,
       metadata,
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -1991,7 +1991,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2016,7 +2016,7 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.tag",
       resource_type: "item",
@@ -2027,7 +2027,7 @@ export function itemRoutes(storage: Storage) {
       type: "metadata_changed",
       item,
       metadata,
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -2041,17 +2041,17 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireTenantAdmin(c);
-    const tenantId = c.get("apiKey")?.tenant_id;
+    requireSpaceAdmin(c);
+    const spaceId = c.get("apiKey")?.space_id;
     // Edges have no FK to items — explicit cleanup required before purge.
-    // Fence the edge cleanup to the caller's tenant so a tenant-scoped purge
-    // never drops another tenant's edges.
-    await storage.edges.deleteBySource(id, undefined, tenantId);
-    await storage.edges.deleteByTarget(id, undefined, tenantId);
-    await storage.items.purge(id, tenantId);
+    // Fence the edge cleanup to the caller's space so a space-scoped purge
+    // never drops another space's edges.
+    await storage.edges.deleteBySource(id, undefined, spaceId);
+    await storage.edges.deleteByTarget(id, undefined, spaceId);
+    await storage.items.purge(id, spaceId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.purge",
       resource_type: "item",
@@ -2066,7 +2066,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    const item = await storage.items.get(id, c.get("apiKey")?.space_id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -2079,7 +2079,7 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.untag",
       resource_type: "item",
@@ -2090,7 +2090,7 @@ export function itemRoutes(storage: Storage) {
       type: "metadata_changed",
       item,
       metadata,
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },

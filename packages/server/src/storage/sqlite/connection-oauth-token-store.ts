@@ -14,7 +14,7 @@ function rowToToken(
   return {
     id: row.id,
     connection_id: row.connection_id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     access_token_encrypted: row.access_token_encrypted,
     refresh_token_encrypted: row.refresh_token_encrypted,
     expires_at: row.expires_at,
@@ -30,7 +30,7 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
 
   async upsert(input: {
     connection_id: string;
-    tenant_id?: string;
+    space_id?: string;
     access_token_encrypted: string;
     refresh_token_encrypted: string | null;
     expires_at: string;
@@ -47,7 +47,7 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
     if (existing) {
       const updated = {
         ...existing,
-        tenant_id: input.tenant_id ?? existing.tenant_id,
+        space_id: input.space_id ?? existing.space_id,
         access_token_encrypted: input.access_token_encrypted,
         refresh_token_encrypted: input.refresh_token_encrypted,
         expires_at: input.expires_at,
@@ -69,7 +69,7 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
     const row = {
       id: randomUUID(),
       connection_id: input.connection_id,
-      tenant_id: input.tenant_id ?? null,
+      space_id: input.space_id ?? null,
       access_token_encrypted: input.access_token_encrypted,
       refresh_token_encrypted: input.refresh_token_encrypted,
       expires_at: input.expires_at,
@@ -84,11 +84,11 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
 
   async get(
     connectionId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ConnectionOAuthTokenRow | null> {
     const conditions = [eq(connectionOauthTokens.connection_id, connectionId)];
-    if (tenantId !== undefined) {
-      conditions.push(eq(connectionOauthTokens.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(connectionOauthTokens.space_id, spaceId));
     }
     const row = await this.db
       .select()

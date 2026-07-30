@@ -9,9 +9,9 @@
  * shared HMAC key. Full per-delivery pipeline documented in
  * `email-worker/src/index.ts`.
  *
- * Tenant routing (v1): single capture address. Multi-tenant routing
- * (e.g. `capture-<tenant_slug>@inbox.marfa.so`) is deferred until
- * Marfa onboards a second tenant.
+ * Space routing (v1): single capture address. Multi-space routing
+ * (e.g. `capture-<space_slug>@inbox.marfa.so`) is deferred until
+ * Marfa onboards a second space.
  *
  * Attachment blob upload is not yet wired; v1 captures attachment
  * metadata only.

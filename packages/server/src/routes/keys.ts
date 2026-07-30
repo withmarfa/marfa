@@ -8,7 +8,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireTenantAdmin,
+  requireSpaceAdmin,
   hashApiKey,
   isReservedCredentialSource,
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
@@ -36,7 +36,7 @@ function generateRawKey(): string {
  * the runtime broker, never through an HTTP mint route, so nothing
  * legitimate is turned away here.
  *
- * Shared by `POST /keys` and `POST /admin/tenants/{id}/keys`: both write
+ * Shared by `POST /keys` and `POST /admin/spaces/{id}/keys`: both write
  * `source` straight from the body, so a check on only one of them is no
  * check at all.
  */
@@ -61,7 +61,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "tenant_admin", "member"]),
+  role: z.enum(["admin", "space_admin", "member"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -120,7 +120,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's tenant. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's tenant is always the caller's: a `tenant_id` in the body is rejected, and a caller that has no tenant cannot mint `role: \"tenant_admin\"` (the key would inherit no tenant, so its authority would not stop at the boundary its role names). Use `POST /admin/tenants/{id}/keys` to mint into a specific tenant. `role` may not exceed the caller's own role (admin > tenant_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or tenant_admin token.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,18 +132,18 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            role: z.enum(["admin", "tenant_admin", "member"]).optional(),
+            role: z.enum(["admin", "space_admin", "member"]).optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_platform: z.boolean().optional(),
             // Passthrough so the handler can reject it explicitly. The
-            // new key's tenant is always the caller's; accepting the
+            // new key's space is always the caller's; accepting the
             // field and stripping it left callers believing they had
-            // minted into the tenant they named.
-            tenant_id: z
+            // minted into the space they named.
+            space_id: z
               .unknown()
               .optional()
               .describe(
-                "Rejected with 400. The key is always minted into the caller's tenant; use POST /admin/tenants/{id}/keys to target another tenant.",
+                "Rejected with 400. The key is always minted into the caller's space; use POST /admin/spaces/{id}/keys to target another space.",
               ),
             type_permissions: z
               .record(z.string(), z.enum(["read", "write", "none"]))
@@ -178,7 +178,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Body carried a `tenant_id`, or the mint would produce a `tenant_admin` key with no tenant",
+        "Body carried a `space_id`, or the mint would produce a `space_admin` key with no space",
     },
     401: {
       content: {
@@ -195,7 +195,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller is not an admin or tenant_admin, is an OAuth access token, or requested a role above its own.",
+        "Caller is not an admin or space_admin, is an OAuth access token, or requested a role above its own.",
     },
   },
 });
@@ -207,7 +207,7 @@ const listKeysRoute = createRoute({
   tags: ["Keys"],
   summary: "List API keys",
   description:
-    "Returns every API key in the caller's tenant without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or tenant_admin only.",
+    "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or space_admin only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -238,7 +238,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or tenant_admin only.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or space_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -288,7 +288,7 @@ const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "tenant_admin", "member"]),
+  role: z.enum(["admin", "space_admin", "member"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -317,7 +317,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or tenant_admin only.",
+    "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or space_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -384,12 +384,12 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      requireTenantAdmin(c);
+      requireSpaceAdmin(c);
       // OAuth principals carry the user's projected role but are scope-limited
       // grants, not the user acting directly. Minting an API key produces a
       // durable credential that bypasses the permission maps the OAuth token is
       // held to — so an app granted a narrow scope could escalate it into full
-      // tenant access. Block key creation for OAuth callers; they keep
+      // space access. Block key creation for OAuth callers; they keep
       // read/manage reach via the role projection but cannot forge a
       // non-scope-enforced key. (`authType` is set by the bearer middleware.)
       if (c.get("authType") === "oauth") {
@@ -402,19 +402,19 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    // The new key always inherits the caller's tenant. Naming a different
+    // The new key always inherits the caller's space. Naming a different
     // one used to be accepted and dropped, so an operator aiming a key at
-    // one tenant got a key scoped somewhere else with no signal that it
-    // had happened. Tenant-scoped minting lives on its own route.
+    // one space got a key scoped somewhere else with no signal that it
+    // had happened. Space-scoped minting lives on its own route.
     //
     // Checked ahead of the bootstrap claim below: that claim is one-shot
     // and irreversible, so a request that can never mint must not consume
     // it. A stray field would otherwise lock a fresh instance out of
     // bootstrap for good.
-    if ("tenant_id" in body) {
+    if ("space_id" in body) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "`tenant_id` is not accepted here. A key minted through this route is always bound to the caller's tenant; use `POST /admin/tenants/{id}/keys` to mint into a specific tenant.",
+        "`space_id` is not accepted here. A key minted through this route is always bound to the caller's space; use `POST /admin/spaces/{id}/keys` to mint into a specific space.",
       );
     }
 
@@ -464,26 +464,26 @@ export function keyRoutes(storage: Storage, salt: string) {
       isPlatform = callerIsPlatform && body.is_platform === true;
     }
 
-    const newKeyTenantId = c.get("apiKey")?.tenant_id;
+    const newKeySpaceId = c.get("apiKey")?.space_id;
 
-    // `tenant_admin` means "admin inside a tenant", but the new key inherits
-    // the caller's tenant and a tenant-less caller hands it none. NULL tenant
+    // `space_admin` means "admin inside a space", but the new key inherits
+    // the caller's space and a space-less caller hands it none. NULL space
     // is the platform-tier signal everywhere below: the RLS middleware skips
     // its role-switch wrapper and the storage layer drops its
-    // `WHERE tenant_id = ?` predicate, while the role itself bypasses the
-    // permission maps. The result reads and writes across every tenant behind
+    // `WHERE space_id = ?` predicate, while the role itself bypasses the
+    // permission maps. The result reads and writes across every space behind
     // a label that promises a boundary, so the mint refuses.
     //
-    // Unconditional rather than scoped to multi-tenant deployments. Gating on
+    // Unconditional rather than scoped to multi-space deployments. Gating on
     // the auth mode would put a security rule behind an env var that fails
     // open when unset or misspelled, and there is no independent signal to
     // lean on: the hosted-only wiring (`storage.users`) is built from that
-    // same variable, and asking whether tenant rows exist costs an unbounded
+    // same variable, and asking whether space rows exist costs an unbounded
     // scan on the mint path. Refusing outright needs no signal and buys an
-    // invariant worth stating plainly: every `tenant_admin` key has a tenant.
+    // invariant worth stating plainly: every `space_admin` key has a space.
     //
     // `member` is deliberately not caught, despite inheriting the same NULL
-    // tenant. It is this route's default role and the only shape expressing
+    // space. It is this route's default role and the only shape expressing
     // "platform reach, narrowed by `type_permissions`" (`admin` ignores those
     // outright), and a caller refused it can ask for `role: "admin"` here
     // instead, for strictly more authority. Blocking it would move callers to
@@ -493,11 +493,11 @@ export function keyRoutes(storage: Storage, salt: string) {
     // Safe under bootstrap only because `role` is hard-forced to "admin"
     // above. Were bootstrap ever to honor `body.role`, the first
     // unauthenticated request to a fresh instance could ask for
-    // `tenant_admin`, and this check would be all that stood in front of it.
-    if (!newKeyTenantId && role === "tenant_admin") {
+    // `space_admin`, and this check would be all that stood in front of it.
+    if (!newKeySpaceId && role === "space_admin") {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        'Cannot mint a `tenant_admin` key from a credential that has no tenant: the new key would inherit no tenant either, so its authority would not stop at the boundary its role names. Use `POST /admin/tenants/{id}/keys` to bind the key to a specific tenant, or ask for `role: "admin"` if a platform-tier key is what you want.',
+        'Cannot mint a `space_admin` key from a credential that has no space: the new key would inherit no space either, so its authority would not stop at the boundary its role names. Use `POST /admin/spaces/{id}/keys` to bind the key to a specific space, or ask for `role: "admin"` if a platform-tier key is what you want.',
       );
     }
 
@@ -514,21 +514,21 @@ export function keyRoutes(storage: Storage, salt: string) {
         metadata_permissions: body.metadata_permissions,
       },
       keyHash,
-      newKeyTenantId,
+      newKeySpaceId,
     );
 
-    // A key with no tenant is platform tier: the RLS middleware skips its
-    // wrapper for it and the storage layer drops its tenant predicate. That
+    // A key with no space is platform tier: the RLS middleware skips its
+    // wrapper for it and the storage layer drops its space predicate. That
     // is a legitimate thing to mint, but it is not what `role: "member"`
     // looks like at a glance, so the audit row records the tier and an
     // operator can enumerate every such credential later. Derived from the
-    // stored tenant alone rather than from how the instance is configured,
+    // stored space alone rather than from how the instance is configured,
     // so the trail stays accurate whatever the deployment shape.
-    const platformTierMint = !newKeyTenantId;
+    const platformTierMint = !newKeySpaceId;
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: isBootstrap ? "key.bootstrap" : "key.create",
       resource_type: "key",
@@ -557,33 +557,33 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    // A tenant-bound caller sees only its own tenant's keys; only an
-    // unbound credential sees all. The fence keys on the tenant binding,
-    // not on the role: `POST /admin/tenants/{id}/keys` mints a
-    // tenant-bound `admin`, and a role-keyed fence would hand that
-    // credential every other tenant's key inventory.
-    const key = requireTenantAdmin(c);
+    // A space-bound caller sees only its own space's keys; only an
+    // unbound credential sees all. The fence keys on the space binding,
+    // not on the role: `POST /admin/spaces/{id}/keys` mints a
+    // space-bound `admin`, and a role-keyed fence would hand that
+    // credential every other space's key inventory.
+    const key = requireSpaceAdmin(c);
     const all = await storage.keys.list();
-    const visible = key.tenant_id
-      ? all.filter((k) => k.tenant_id === key.tenant_id)
+    const visible = key.space_id
+      ? all.filter((k) => k.space_id === key.space_id)
       : all;
     return c.json({ keys: visible }, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
-    // 404 not 403 — cross-tenant probes must not enumerate key ids.
-    // Keyed on the tenant binding rather than the role, so a tenant-bound
-    // `admin` is fenced to its own tenant exactly like a tenant_admin.
-    if (key.tenant_id) {
+    // 404 not 403 — cross-space probes must not enumerate key ids.
+    // Keyed on the space binding rather than the role, so a space-bound
+    // `admin` is fenced to its own space exactly like a space_admin.
+    if (key.space_id) {
       const target = await storage.keys.get(id);
-      if (target?.tenant_id !== key.tenant_id) {
+      if (target?.space_id !== key.space_id) {
         throw new MarfaError(
           ErrorCode.API_KEY_NOT_FOUND,
           `Key ${id} not found`,
@@ -594,7 +594,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     await storage.keys.revoke(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.revoke",
       resource_type: "key",
@@ -605,7 +605,7 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(updateKeyRoute, async (c) => {
-    const key = requireTenantAdmin(c);
+    const key = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -630,9 +630,9 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (!existing) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
-    // Same tenant-binding fence as `revokeKeyRoute` — a bound credential
-    // of any rank may only address keys inside its own tenant.
-    if (key.tenant_id && existing.tenant_id !== key.tenant_id) {
+    // Same space-binding fence as `revokeKeyRoute` — a bound credential
+    // of any rank may only address keys inside its own space.
+    if (key.space_id && existing.space_id !== key.space_id) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
 
@@ -647,7 +647,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.update",
       resource_type: "key",

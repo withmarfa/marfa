@@ -4,7 +4,7 @@
 // shape is defined in @withmarfa/shared (`Profile`, `UpdateProfileInput`)
 // and validated by the Zod schemas below.
 //
-// The one exception is `account_holder_item_id`, the id of the tenant's
+// The one exception is `account_holder_item_id`, the id of the space's
 // `system.account_holder` row. That row is a graph handle and nothing else:
 // it exists so an edge has something to point at when it means "the person
 // who owns this space", and it carries none of the fields above.
@@ -12,7 +12,7 @@
 // Apps consume profile data through `/oauth/userinfo` gated on the
 // standard OIDC `profile` and `email` scopes; first-party callers
 // (CLI, MCP, the user themselves) hit the endpoints in this file
-// directly with a bearer token resolving to a tenant.
+// directly with a bearer token resolving to a space.
 //
 // Avatar storage is content-addressed: `users.avatar_blob_hash` references
 // a row in the existing `blobs` table (R2 / filesystem backend). The wire
@@ -99,7 +99,7 @@ const getProfileRoute = createRoute({
   tags: ["Profile"],
   summary: "Get the calling user's profile",
   description:
-    "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
+    "Returns the profile for the user who owns the caller's space. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead. `account_holder_item_id` names the `system.account_holder` item that represents the account holder in the item graph, so an edge such as `authored-by` can target them directly.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -190,7 +190,7 @@ const setAvatarRoute = createRoute({
   tags: ["Profile"],
   summary: "Upload an avatar",
   description:
-    "Uploads an image as the user's avatar, stored as a content-addressed blob. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — an over-size payload returns `413`.",
+    "Uploads an image as the user's avatar, stored as a content-addressed blob. Subject to the standard blob size cap and the space's `blobs` and `storage_bytes` quotas — an over-size payload returns `413`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -406,14 +406,14 @@ export function profileRoutes(
         "Profile is unavailable on instances running in keys mode",
       );
     }
-    const tenantId = apiKey.tenant_id;
-    if (!tenantId) {
+    const spaceId = apiKey.space_id;
+    if (!spaceId) {
       throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "No profile bound to this credential",
       );
     }
-    const user = await storage.users.getByTenantId(tenantId);
+    const user = await storage.users.getBySpaceId(spaceId);
     if (!user) {
       throw new MarfaError(
         ErrorCode.NOT_FOUND,
@@ -423,7 +423,7 @@ export function profileRoutes(
     const authEmail = user.auth_user_id
       ? await storage.users.getAuthUserEmail(user.auth_user_id)
       : null;
-    const accountHolder = await findAccountHolderItem(storage, tenantId);
+    const accountHolder = await findAccountHolderItem(storage, spaceId);
     return { user, authEmail, accountHolderItemId: accountHolder?.id ?? null };
   }
 
@@ -502,7 +502,7 @@ export function profileRoutes(
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "profile.update",
       resource_type: "profile",
@@ -579,7 +579,7 @@ export function profileRoutes(
     // left on disk unregistered.
     const hex = createHash("sha256").update(data).digest("hex");
     const hash = `sha256:${hex}`;
-    const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
+    const blobSpaceId = c.get("apiKey")?.space_id ?? "";
     // Content addressing makes `existed` decide two things at once: whether
     // these bytes need writing, and whether a later refusal has anything to
     // undo. Bytes already on disk belong to whoever registered them.
@@ -598,7 +598,7 @@ export function profileRoutes(
           mimeType,
           data.length,
           hash,
-          blobTenantId,
+          blobSpaceId,
         );
       });
     } catch (err) {
@@ -629,7 +629,7 @@ export function profileRoutes(
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "profile.avatar.set",
       resource_type: "profile",
@@ -657,7 +657,7 @@ export function profileRoutes(
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "profile.avatar.clear",
       resource_type: "profile",

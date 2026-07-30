@@ -257,7 +257,7 @@ export class BulkActionWorker {
       try {
         outcome = await runChunk({
           storage: this.storage,
-          tenantId: job.tenant_id,
+          spaceId: job.space_id,
           input,
           ids: slice,
         });

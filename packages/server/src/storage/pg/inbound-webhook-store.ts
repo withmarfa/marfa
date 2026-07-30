@@ -9,7 +9,7 @@ function rowToInboundWebhook(
 ): InboundWebhookRow {
   return {
     id: row.id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     connection_id: row.connection_id,
     external_service_id: row.external_service_id,
     secret_encrypted: row.secret_encrypted,
@@ -27,7 +27,7 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
 
   async create(input: {
     id: string;
-    tenant_id?: string;
+    space_id?: string;
     connection_id: string;
     external_service_id?: string;
     secret_encrypted: string;
@@ -38,7 +38,7 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
     const now = new Date().toISOString();
     const row = {
       id: input.id,
-      tenant_id: input.tenant_id ?? null,
+      space_id: input.space_id ?? null,
       connection_id: input.connection_id,
       external_service_id: input.external_service_id ?? null,
       secret_encrypted: input.secret_encrypted,
@@ -53,10 +53,10 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
     return rowToInboundWebhook(row);
   }
 
-  async get(id: string, tenantId?: string): Promise<InboundWebhookRow | null> {
+  async get(id: string, spaceId?: string): Promise<InboundWebhookRow | null> {
     const conditions = [eq(inboundWebhooks.id, id)];
-    if (tenantId !== undefined) {
-      conditions.push(eq(inboundWebhooks.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(inboundWebhooks.space_id, spaceId));
     }
     const [row] = await this.db
       .select()
@@ -75,11 +75,11 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
 
   async listByConnection(
     connectionId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<InboundWebhookRow[]> {
     const conditions = [eq(inboundWebhooks.connection_id, connectionId)];
-    if (tenantId !== undefined) {
-      conditions.push(eq(inboundWebhooks.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(inboundWebhooks.space_id, spaceId));
     }
     const rows = await this.db
       .select()

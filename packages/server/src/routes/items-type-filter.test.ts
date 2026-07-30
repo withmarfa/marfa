@@ -172,7 +172,7 @@ describe("allowed_types — underscore handling across read surfaces", () => {
   it("returns no tags to a credential with no readable types", async () => {
     // An empty allow-list means "nothing is readable", and every other read
     // surface says so. The tag aggregate guarded on a non-empty list, so the
-    // empty case skipped the type clause and handed back the tenant's whole
+    // empty case skipped the type clause and handed back the space's whole
     // vocabulary with counts — which names what exists even though no item
     // behind it is readable.
     const key = await mintScopedKey({});
@@ -229,7 +229,7 @@ describe("GET /items/stats — counts what the caller can actually read", () => 
 
   it("counts nothing for a credential with no readable types", async () => {
     // The list path already forces zero rows on an empty filter; stats used to
-    // skip the clause entirely and report the whole tenant.
+    // skip the clause entirely and report the whole space.
     const key = await mintScopedKey({});
     expect(await statsTotal(key)).toBe(0);
   });

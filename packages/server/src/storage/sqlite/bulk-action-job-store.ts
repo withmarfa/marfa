@@ -29,7 +29,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         .insert(bulkActionJobs)
         .values({
           id: input.id,
-          tenant_id: input.tenant_id,
+          space_id: input.space_id,
           api_key_id: input.api_key_id,
           status: "queued",
           action: input.action,
@@ -40,7 +40,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
           created_at: input.created_at,
         })
         .onConflictDoUpdate({
-          target: [bulkActionJobs.tenant_id, bulkActionJobs.idempotency_key],
+          target: [bulkActionJobs.space_id, bulkActionJobs.idempotency_key],
           targetWhere: sql`idempotency_key IS NOT NULL`,
           set: { id: sql`bulk_action_jobs.id` },
         })
@@ -55,7 +55,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
       .insert(bulkActionJobs)
       .values({
         id: input.id,
-        tenant_id: input.tenant_id,
+        space_id: input.space_id,
         api_key_id: input.api_key_id,
         status: "queued",
         action: input.action,
@@ -222,7 +222,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
 function rowToJob(row: typeof bulkActionJobs.$inferSelect): BulkActionJobRow {
   return {
     id: row.id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     api_key_id: row.api_key_id,
     status: row.status as BulkActionJobStatus,
     action: row.action,

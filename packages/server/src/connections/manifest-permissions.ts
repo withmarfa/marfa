@@ -14,7 +14,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 /** Translate manifest.target_types into a `type_permissions` map: `write`
  *  on each declared target type. The narrowing that matters is the set of
  *  types — a credential reaches what its manifest declared instead of the
- *  whole tenant — not the level.
+ *  whole space — not the level.
  *
  *  `direction` deliberately plays no part. It describes flow relative to
  *  the UPSTREAM service, not access to Marfa, and it does not reduce to a
@@ -38,7 +38,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  *  carries the matching carve-out for runtime credentials. A handler also
  *  reads its own Connection to resolve `properties.configuration`; that
  *  is NOT granted here, because `type_permissions` has no per-item axis
- *  and a `system.connection` grant would be tenant-wide read over every
+ *  and a `system.connection` grant would be space-wide read over every
  *  Connection row. `requireOwnConnectionRead` in `middleware/auth.ts`
  *  admits exactly the credential's own Connection instead. */
 export function buildTypePermissions(

@@ -39,7 +39,7 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   // `hosted`: the attribution rule only has anything to bind to on a
-  // deployment where Connections carry a tenant.
+  // deployment where Connections carry a space.
   ctx = await createTestContext({ authMode: "hosted" });
 });
 
@@ -82,7 +82,7 @@ function manifest(name: string): IntegrationManifest {
 }
 
 async function credentialFor(
-  tenantId: string,
+  spaceId: string,
   name: string,
 ): Promise<Credential> {
   const m = manifest(name);
@@ -109,7 +109,7 @@ async function credentialFor(
         integration_ref: integration.id,
       },
     },
-    tenantId,
+    spaceId,
   );
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
@@ -247,7 +247,7 @@ const DOORS: Door[] = [
     refuses: "narrowing",
     write: async ({ key, properties }) => {
       // Filter-in rather than id-in, so one call reaches every activity
-      // row in the tenant without knowing a single id — the widest of
+      // row in the space without knowing a single id — the widest of
       // the doors. `runBulkActionAsync` drains the worker, so the write
       // really lands or really does not rather than stopping at a
       // queued job that nothing in-process would ever pick up.
@@ -289,23 +289,23 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 describe.each(DOORS)("$name", (door) => {
-  let tenantId: string;
+  let spaceId: string;
   let mine: Credential;
   let sibling: Credential;
   let seq = 0;
 
   beforeAll(async () => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
-    const tenant = await ctx.storage.tenants!.create(slug);
-    tenantId = tenant.id;
-    mine = await credentialFor(tenantId, `acme.${slug}-mine`);
-    sibling = await credentialFor(tenantId, `acme.${slug}-sibling`);
+    const space = await ctx.storage.spaces!.create(slug);
+    spaceId = space.id;
+    mine = await credentialFor(spaceId, `acme.${slug}-mine`);
+    sibling = await credentialFor(spaceId, `acme.${slug}-sibling`);
   });
 
   async function activityRows(): Promise<Item[]> {
     const page = await ctx.storage.items.list({
       type: "system.activity",
-      tenantId,
+      spaceId,
     });
     return page.data;
   }
@@ -337,7 +337,7 @@ describe.each(DOORS)("$name", (door) => {
     );
     expect(stolen).toHaveLength(0);
 
-    const after = await ctx.storage.items.get(target.id, tenantId);
+    const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(mine.connectionId);
     expect(after?.properties.severity).toBe("info");
     expect(after?.properties.summary).toBe("sync complete");
@@ -355,7 +355,7 @@ describe.each(DOORS)("$name", (door) => {
       properties: { severity: "action_required", summary: "hijacked" },
     });
 
-    const after = await ctx.storage.items.get(target.id, tenantId);
+    const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
     expect(after?.properties.severity).toBe("info");
     expect(after?.properties.summary).toBe("sync complete");
@@ -381,7 +381,7 @@ describe.each(DOORS)("$name", (door) => {
       },
     });
 
-    const after = await ctx.storage.items.get(target.id, tenantId);
+    const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
     expect(after?.properties.severity).toBe("info");
     expect(after?.properties.summary).toBe("sync complete");
@@ -462,7 +462,7 @@ describe("every route that can write an item is accounted for", () => {
  * by id and change something else about it: its lifecycle state, its tags
  * and metadata, its extension namespaces.
  *
- * They were open to a credential the properties doors refuse. Same tenant,
+ * They were open to a credential the properties doors refuse. Same space,
  * same type filter, different axis, and `system.activity` sits in every
  * runtime credential's type filter because that grant is what lets a
  * connector report its own progress. So a type check alone admits every
@@ -524,16 +524,16 @@ const ROW_DOORS: RowDoor[] = [
 ];
 
 describe.each(ROW_DOORS)("$name", (door) => {
-  let tenantId: string;
+  let spaceId: string;
   let mine: Credential;
   let sibling: Credential;
 
   beforeAll(async () => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
-    const tenant = await ctx.storage.tenants!.create(slug);
-    tenantId = tenant.id;
-    mine = await credentialFor(tenantId, `acme.${slug}-mine`);
-    sibling = await credentialFor(tenantId, `acme.${slug}-sib`);
+    const space = await ctx.storage.spaces!.create(slug);
+    spaceId = space.id;
+    mine = await credentialFor(spaceId, `acme.${slug}-mine`);
+    sibling = await credentialFor(spaceId, `acme.${slug}-sib`);
   });
 
   it("refuses to reach a sibling Connection's row", async () => {
@@ -567,13 +567,13 @@ describe.each(ROW_DOORS)("$name", (door) => {
  * so it is one rule reached from all of them.
  */
 describe("tier on a system.* row", () => {
-  let tenantId: string;
+  let spaceId: string;
   let mine: Credential;
 
   beforeAll(async () => {
-    const tenant = await ctx.storage.tenants!.create("tier-rules");
-    tenantId = tenant.id;
-    mine = await credentialFor(tenantId, "acme.tier-rules");
+    const space = await ctx.storage.spaces!.create("tier-rules");
+    spaceId = space.id;
+    mine = await credentialFor(spaceId, "acme.tier-rules");
   });
 
   it("is refused on create, and on every door that updates", async () => {

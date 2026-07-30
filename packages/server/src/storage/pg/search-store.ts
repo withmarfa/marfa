@@ -75,9 +75,9 @@ export class PgSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<void> {
-    const text = extractSearchableText(properties, typeId, tenantId);
+    const text = extractSearchableText(properties, typeId, spaceId);
     // Concatenate with single-space separators — same shape as the
     // backfill migration so existing rows match write-time semantics.
     const combined = [
@@ -128,9 +128,9 @@ export class PgSearchStore implements SearchStore {
       conditions.push("AND i.state != 'trashed'");
     }
 
-    if (filters.tenantId) {
-      params.push(filters.tenantId);
-      conditions.push(`AND i.tenant_id = $${String(paramIdx++)}`);
+    if (filters.spaceId) {
+      params.push(filters.spaceId);
+      conditions.push(`AND i.space_id = $${String(paramIdx++)}`);
     }
 
     if (filters.type) {
@@ -141,7 +141,7 @@ export class PgSearchStore implements SearchStore {
       // listing gets the same set.
       const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
-        filters.tenantId ?? null,
+        filters.spaceId ?? null,
       );
       if (!global && exact && descendantPattern) {
         params.push(exact, descendantPattern);
@@ -200,7 +200,7 @@ export class PgSearchStore implements SearchStore {
       "pg",
       "i",
       paramIdx,
-      filters.tenantId ?? null,
+      filters.spaceId ?? null,
     );
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);
@@ -214,7 +214,7 @@ export class PgSearchStore implements SearchStore {
         clause,
         params: filterParams,
         nextParamIdx,
-      } = filterToRawSql(expr, "pg", "i", paramIdx, filters.tenantId);
+      } = filterToRawSql(expr, "pg", "i", paramIdx, filters.spaceId);
       conditions.push(`AND ${clause}`);
       params.push(...(filterParams as (string | number)[]));
       paramIdx = nextParamIdx;
@@ -229,7 +229,7 @@ export class PgSearchStore implements SearchStore {
       SELECT
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.version,
-        i.schema_version, i.device, i.tier, i.tenant_id,
+        i.schema_version, i.device, i.tier, i.space_id,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions,
         ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,

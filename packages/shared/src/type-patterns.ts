@@ -25,7 +25,7 @@
 // into disagreement in the fail-open direction.
 //
 // Resolving the declared half needs the registry, and the registry is
-// tenant-scoped because custom types are. Hence the optional `tenantId` on
+// space-scoped because custom types are. Hence the optional `spaceId` on
 // `typeSubtreeToSql`: omit it and it behaves exactly as before.
 
 import { declaredDescendantsOutsideNamespace } from "./type-registry.js";
@@ -104,7 +104,7 @@ export interface TypePatternSql {
   descendantPattern: string | null;
   /**
    * Declared descendants the name-based clauses above cannot reach, for an
-   * `IN (...)` term. Empty unless a tenant scope was supplied, so a caller that
+   * `IN (...)` term. Empty unless a space scope was supplied, so a caller that
    * resolves names alone emits exactly the predicate it always did.
    */
   extraTypes: string[];
@@ -112,12 +112,12 @@ export interface TypePatternSql {
 
 /**
  * `undefined` means the caller resolves names only, so the registry is never
- * consulted and the result is empty. `null` is a real scope — the null-tenant
- * bucket a single-tenant self-host registers into — and does resolve.
+ * consulted and the result is empty. `null` is a real scope — the null-space
+ * bucket a single-space self-host registers into — and does resolve.
  */
-function declaredExtras(root: string, tenantId?: string | null): string[] {
-  if (tenantId === undefined) return [];
-  return declaredDescendantsOutsideNamespace(root, tenantId);
+function declaredExtras(root: string, spaceId?: string | null): string[] {
+  if (spaceId === undefined) return [];
+  return declaredDescendantsOutsideNamespace(root, spaceId);
 }
 
 function escapeLikeLiteral(value: string): string {
@@ -172,7 +172,7 @@ export function typePatternToSql(pattern: string): TypePatternSql {
  */
 export function typeSubtreeToSql(
   type: string,
-  tenantId?: string | null,
+  spaceId?: string | null,
 ): TypePatternSql {
   if (type === GLOBAL_TYPE_WILDCARD) {
     return {
@@ -187,6 +187,6 @@ export function typeSubtreeToSql(
     global: false,
     exact: root,
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
-    extraTypes: declaredExtras(root, tenantId),
+    extraTypes: declaredExtras(root, spaceId),
   };
 }

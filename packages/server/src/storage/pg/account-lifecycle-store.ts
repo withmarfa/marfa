@@ -4,7 +4,7 @@
  * Surfaces `auth_user.deletion_state` + `pending_deletion_at` and the
  * accompanying credential-revocation cascade that fires the moment a user
  * confirms an account-deletion email. `markPendingDeletion` runs a Drizzle
- * transaction that also revokes the user's tenant's `api_keys` rows and
+ * transaction that also revokes the user's space's `api_keys` rows and
  * drops every `auth_session` for the user atomically — so the moment the
  * state flips, authenticated callers stop seeing the account on every
  * credential path.
@@ -29,11 +29,11 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
           pending_deletion_at: nowIso,
         })
         .where(eq(auth_user.id, authUserId));
-      // 2. Revoke every active api_keys row for the user's tenant.
+      // 2. Revoke every active api_keys row for the user's space.
       //    The join is intentionally written via a sub-select so the
       //    cross-table mutation stays in one transaction. The user is
-      //    looked up via `users.auth_user_id`; null-tenant rows on
-      //    `users` (single-tenant self-host) are skipped by the
+      //    looked up via `users.auth_user_id`; null-space rows on
+      //    `users` (single-space self-host) are skipped by the
       //    IS NOT NULL guard.
       await tx
         .update(apiKeys)
@@ -41,8 +41,8 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
         .where(
           and(
             isNull(apiKeys.revoked_at),
-            sql`${apiKeys.tenant_id} IN (
-              SELECT ${users.tenant_id} FROM ${users}
+            sql`${apiKeys.space_id} IN (
+              SELECT ${users.space_id} FROM ${users}
               WHERE ${users.auth_user_id} = ${authUserId}
             )`,
           ),

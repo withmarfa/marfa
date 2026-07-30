@@ -1,14 +1,14 @@
 /**
- * Postgres RLS enforcement for the four previously-ungated tenant tables:
- * `users`, `tenant_quotas`, `outbound_webhook_deliveries`, and
+ * Postgres RLS enforcement for the four previously-ungated space tables:
+ * `users`, `space_quotas`, `outbound_webhook_deliveries`, and
  * `inbound_webhook_events` (migration 0067).
  *
- * For each table: seed two tenants on the owner connection (RLS-exempt),
+ * For each table: seed two spaces on the owner connection (RLS-exempt),
  * then run an unscoped `SELECT` under `SET LOCAL ROLE marfa_app` +
- * `marfa.tenant_id = tenantA`. The policy must expose tenant A's rows and
- * hide tenant B's — proving RLS bites at the DB layer independent of any
+ * `marfa.space_id = spaceA`. The policy must expose space A's rows and
+ * hide space B's — proving RLS bites at the DB layer independent of any
  * application-layer WHERE clause. The two child tables (deliveries /
- * events) carry no `tenant_id` column; their policies join to the parent
+ * events) carry no `space_id` column; their policies join to the parent
  * webhook, so the test also proves the join predicate filters correctly.
  *
  * Plus the load-bearing NO-FORCE invariant: with RLS enabled on `users`,
@@ -39,7 +39,7 @@ function rand(): string {
 }
 
 describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
-  describe("cross-tenant isolation under SET LOCAL ROLE marfa_app", () => {
+  describe("cross-space isolation under SET LOCAL ROLE marfa_app", () => {
     let ctx: TestContext;
     let owner: (q: string, p?: unknown[]) => Promise<unknown>;
     let pgDb: PgDb;
@@ -59,16 +59,16 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
     });
 
     /**
-     * Run an unscoped SELECT as marfa_app with the tenant GUC pinned to
-     * `tenant`, returning the set of `id`s the policy lets through.
+     * Run an unscoped SELECT as marfa_app with the space GUC pinned to
+     * `space`, returning the set of `id`s the policy lets through.
      */
-    async function visibleIdsForTenant(
-      tenant: string,
+    async function visibleIdsForSpace(
+      space: string,
       query: ReturnType<typeof sql>,
     ): Promise<Set<string>> {
       return pgDb.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT set_config('marfa.tenant_id', ${tenant}, true)`,
+          sql`SELECT set_config('marfa.space_id', ${space}, true)`,
         );
         await tx.execute(sql`SET LOCAL ROLE marfa_app`);
         const rows = await tx.execute<{ id: string }>(query);
@@ -76,78 +76,78 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       });
     }
 
-    it("filters users cross-tenant", async () => {
-      const tenantA = `users-a-${rand()}`;
-      const tenantB = `users-b-${rand()}`;
+    it("filters users cross-space", async () => {
+      const spaceA = `users-a-${rand()}`;
+      const spaceB = `users-b-${rand()}`;
       const now = new Date().toISOString();
-      for (const t of [tenantA, tenantB]) {
+      for (const t of [spaceA, spaceB]) {
         await owner(
-          `INSERT INTO tenants (id, name, created_at) VALUES ($1, $2, $3)`,
-          [t, `Tenant ${t}`, now],
+          `INSERT INTO spaces (id, name, created_at) VALUES ($1, $2, $3)`,
+          [t, `Space ${t}`, now],
         );
       }
       const userA = `u-a-${rand()}`;
       const userB = `u-b-${rand()}`;
       await owner(
-        `INSERT INTO users (id, name, provider, provider_id, tenant_id, created_at, updated_at)
+        `INSERT INTO users (id, name, provider, provider_id, space_id, created_at, updated_at)
            VALUES ($1, 'A', 'test', $1, $2, $3, $3)`,
-        [userA, tenantA, now],
+        [userA, spaceA, now],
       );
       await owner(
-        `INSERT INTO users (id, name, provider, provider_id, tenant_id, created_at, updated_at)
+        `INSERT INTO users (id, name, provider, provider_id, space_id, created_at, updated_at)
            VALUES ($1, 'B', 'test', $1, $2, $3, $3)`,
-        [userB, tenantB, now],
+        [userB, spaceB, now],
       );
 
       const usersQuery = sql`SELECT id FROM users WHERE id IN (${userA}, ${userB})`;
-      const seenA = await visibleIdsForTenant(tenantA, usersQuery);
+      const seenA = await visibleIdsForSpace(spaceA, usersQuery);
       expect(seenA.has(userA)).toBe(true);
       expect(seenA.has(userB)).toBe(false);
 
-      const seenB = await visibleIdsForTenant(tenantB, usersQuery);
+      const seenB = await visibleIdsForSpace(spaceB, usersQuery);
       expect(seenB.has(userB)).toBe(true);
       expect(seenB.has(userA)).toBe(false);
     });
 
-    it("filters tenant_quotas cross-tenant", async () => {
-      const tenantA = `quota-a-${rand()}`;
-      const tenantB = `quota-b-${rand()}`;
+    it("filters space_quotas cross-space", async () => {
+      const spaceA = `quota-a-${rand()}`;
+      const spaceB = `quota-b-${rand()}`;
       const now = new Date().toISOString();
       await owner(
-        `INSERT INTO tenant_quotas (tenant_id, items_limit, updated_at) VALUES ($1, 10, $2)`,
-        [tenantA, now],
+        `INSERT INTO space_quotas (space_id, items_limit, updated_at) VALUES ($1, 10, $2)`,
+        [spaceA, now],
       );
       await owner(
-        `INSERT INTO tenant_quotas (tenant_id, items_limit, updated_at) VALUES ($1, 20, $2)`,
-        [tenantB, now],
+        `INSERT INTO space_quotas (space_id, items_limit, updated_at) VALUES ($1, 20, $2)`,
+        [spaceB, now],
       );
 
-      // PK is tenant_id, so the visible "id" is the tenant_id itself.
-      const quotaQuery = sql`SELECT tenant_id AS id FROM tenant_quotas WHERE tenant_id IN (${tenantA}, ${tenantB})`;
-      const seenA = await visibleIdsForTenant(tenantA, quotaQuery);
-      expect(seenA.has(tenantA)).toBe(true);
-      expect(seenA.has(tenantB)).toBe(false);
+      // PK is space_id, so the visible "id" is the space_id itself.
+      const quotaQuery = sql`SELECT space_id AS id FROM space_quotas WHERE space_id IN (${spaceA}, ${spaceB})`;
+      const seenA = await visibleIdsForSpace(spaceA, quotaQuery);
+      expect(seenA.has(spaceA)).toBe(true);
+      expect(seenA.has(spaceB)).toBe(false);
 
-      const seenB = await visibleIdsForTenant(tenantB, quotaQuery);
-      expect(seenB.has(tenantB)).toBe(true);
-      expect(seenB.has(tenantA)).toBe(false);
+      const seenB = await visibleIdsForSpace(spaceB, quotaQuery);
+      expect(seenB.has(spaceB)).toBe(true);
+      expect(seenB.has(spaceA)).toBe(false);
     });
 
-    it("filters outbound_webhook_deliveries cross-tenant via the parent join", async () => {
-      const tenantA = `owd-a-${rand()}`;
-      const tenantB = `owd-b-${rand()}`;
+    it("filters outbound_webhook_deliveries cross-space via the parent join", async () => {
+      const spaceA = `owd-a-${rand()}`;
+      const spaceB = `owd-b-${rand()}`;
       const now = new Date().toISOString();
       const hookA = `hook-a-${rand()}`;
       const hookB = `hook-b-${rand()}`;
       await owner(
-        `INSERT INTO outbound_webhooks (id, tenant_id, url, secret, created_at, updated_at)
+        `INSERT INTO outbound_webhooks (id, space_id, url, secret, created_at, updated_at)
            VALUES ($1, $2, 'https://a.example/hook', 's', $3, $3)`,
-        [hookA, tenantA, now],
+        [hookA, spaceA, now],
       );
       await owner(
-        `INSERT INTO outbound_webhooks (id, tenant_id, url, secret, created_at, updated_at)
+        `INSERT INTO outbound_webhooks (id, space_id, url, secret, created_at, updated_at)
            VALUES ($1, $2, 'https://b.example/hook', 's', $3, $3)`,
-        [hookB, tenantB, now],
+        [hookB, spaceB, now],
       );
       const delA = `del-a-${rand()}`;
       const delB = `del-b-${rand()}`;
@@ -163,32 +163,32 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       );
 
       const delQuery = sql`SELECT id FROM outbound_webhook_deliveries WHERE id IN (${delA}, ${delB})`;
-      const seenA = await visibleIdsForTenant(tenantA, delQuery);
+      const seenA = await visibleIdsForSpace(spaceA, delQuery);
       expect(seenA.has(delA)).toBe(true);
       expect(seenA.has(delB)).toBe(false);
 
-      const seenB = await visibleIdsForTenant(tenantB, delQuery);
+      const seenB = await visibleIdsForSpace(spaceB, delQuery);
       expect(seenB.has(delB)).toBe(true);
       expect(seenB.has(delA)).toBe(false);
     });
 
-    it("filters inbound_webhook_events cross-tenant via the parent join", async () => {
-      const tenantA = `iwe-a-${rand()}`;
-      const tenantB = `iwe-b-${rand()}`;
+    it("filters inbound_webhook_events cross-space via the parent join", async () => {
+      const spaceA = `iwe-a-${rand()}`;
+      const spaceB = `iwe-b-${rand()}`;
       const now = new Date().toISOString();
       const hookA = `inhook-a-${rand()}`;
       const hookB = `inhook-b-${rand()}`;
       await owner(
         `INSERT INTO inbound_webhooks
-           (id, tenant_id, connection_id, secret_encrypted, verification_method, created_at, updated_at)
+           (id, space_id, connection_id, secret_encrypted, verification_method, created_at, updated_at)
            VALUES ($1, $2, 'conn-a', 'enc', 'hmac-sha256', $3, $3)`,
-        [hookA, tenantA, now],
+        [hookA, spaceA, now],
       );
       await owner(
         `INSERT INTO inbound_webhooks
-           (id, tenant_id, connection_id, secret_encrypted, verification_method, created_at, updated_at)
+           (id, space_id, connection_id, secret_encrypted, verification_method, created_at, updated_at)
            VALUES ($1, $2, 'conn-b', 'enc', 'hmac-sha256', $3, $3)`,
-        [hookB, tenantB, now],
+        [hookB, spaceB, now],
       );
       const evtA = `evt-a-${rand()}`;
       const evtB = `evt-b-${rand()}`;
@@ -206,18 +206,18 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       );
 
       const evtQuery = sql`SELECT id FROM inbound_webhook_events WHERE id IN (${evtA}, ${evtB})`;
-      const seenA = await visibleIdsForTenant(tenantA, evtQuery);
+      const seenA = await visibleIdsForSpace(spaceA, evtQuery);
       expect(seenA.has(evtA)).toBe(true);
       expect(seenA.has(evtB)).toBe(false);
 
-      const seenB = await visibleIdsForTenant(tenantB, evtQuery);
+      const seenB = await visibleIdsForSpace(spaceB, evtQuery);
       expect(seenB.has(evtB)).toBe(true);
       expect(seenB.has(evtA)).toBe(false);
     });
   });
 
   // The whole reason the migration uses plain ENABLE and never FORCE: the
-  // owner-connection paths that touch `users` carry no `marfa.tenant_id`
+  // owner-connection paths that touch `users` carry no `marfa.space_id`
   // GUC. A FORCE would policy-check them against an empty GUC and fail.
   describe("NO-FORCE invariant on users (owner-connection paths)", () => {
     const ORIGIN = "http://localhost:0";
@@ -246,7 +246,7 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
         // (no GUC). If `users` carried FORCE RLS, this INSERT would have
         // failed and the sign-up would have 500'd above.
         const row = await ctx.storage.users?.getByAuthUserId(authUserId ?? "");
-        expect(row?.tenant_id).toBeTruthy();
+        expect(row?.space_id).toBeTruthy();
       } finally {
         await ctx.cleanup();
       }
@@ -258,10 +258,10 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
         authMode: "hosted",
       });
       try {
-        if (!ctx.storage.tenants) throw new Error("hosted storage expected");
-        const tenant = await ctx.storage.tenants.create("proj-tenant");
+        if (!ctx.storage.spaces) throw new Error("hosted storage expected");
+        const space = await ctx.storage.spaces.create("proj-space");
         const { token } = await seedOauthBearer(ctx.storage, [], {
-          tenantId: tenant.id,
+          spaceId: space.id,
           userRole: "admin",
         });
 

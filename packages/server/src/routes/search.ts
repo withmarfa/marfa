@@ -42,7 +42,7 @@ const searchRoute = createRoute({
   tags: ["Search"],
   summary: "Search items",
   description:
-    "Full-text search across the tenant's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
+    "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -167,17 +167,17 @@ export function searchRoutes(storage: Storage) {
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
     const callerKeyForSearch = c.get("apiKey");
-    const callerTenantIdForSearch = callerKeyForSearch?.tenant_id;
-    const tenantConfigForSearch =
-      callerTenantIdForSearch && storage.tenants
-        ? await storage.tenants.getConfig(callerTenantIdForSearch)
+    const callerSpaceIdForSearch = callerKeyForSearch?.space_id;
+    const spaceConfigForSearch =
+      callerSpaceIdForSearch && storage.spaces
+        ? await storage.spaces.getConfig(callerSpaceIdForSearch)
         : null;
     const enforcementForSearch = resolveEnforcement(
-      tenantConfigForSearch,
+      spaceConfigForSearch,
       callerKeyForSearch,
     );
     const results = await storage.search.search(q.trim(), {
-      tenantId: c.get("apiKey")?.tenant_id,
+      spaceId: c.get("apiKey")?.space_id,
       type,
       state: state as ItemState | undefined,
       tier: tierFilter,

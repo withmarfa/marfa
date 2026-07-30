@@ -108,7 +108,7 @@ const getBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Download blob binary",
   description:
-    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Tenant-scoped — a hash uploaded in one tenant is invisible to another, so cross-tenant probes return 404.",
+    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Space-scoped — a hash uploaded in one space is invisible to another, so cross-space probes return 404.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -364,7 +364,7 @@ export function blobRoutes(
     // on disk that the registration then refuses would leak them, since
     // nothing sweeps an unregistered blob — and content addressing means a
     // later legitimate upload of the same bytes finds them already there.
-    const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
+    const blobSpaceId = c.get("apiKey")?.space_id ?? "";
     // Content addressing makes `existed` decide two things at once: whether
     // these bytes need writing, and whether a later refusal has anything to
     // undo. Bytes already on disk belong to whoever registered them.
@@ -379,7 +379,7 @@ export function blobRoutes(
           { resource: "storage_bytes", increment: data.length },
         ]);
         // Register the metadata row scoped to the caller's space. Empty-
-        // string sentinel for instance-wide / single-tenant / platform-admin
+        // string sentinel for instance-wide / single-space / platform-admin
         // uploads. Different spaces uploading the same hash bytes get
         // separate rows; the storage backend dedupes the physical file.
         await storage.blobs.register(
@@ -387,7 +387,7 @@ export function blobRoutes(
           mimeType,
           data.length,
           hash,
-          blobTenantId,
+          blobSpaceId,
         );
       });
     } catch (err) {
@@ -415,7 +415,7 @@ export function blobRoutes(
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.upload",
       resource_type: "blob",
@@ -439,8 +439,8 @@ export function blobRoutes(
       return new Response(null, { status: 400 });
     }
 
-    // Tenant-scoped lookup. Cross-tenant probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
+    // Space-scoped lookup. Cross-space probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
     if (!record) {
       return new Response(null, { status: 404 });
     }
@@ -466,8 +466,8 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // Tenant-scoped lookup. Cross-tenant probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
+    // Space-scoped lookup. Cross-space probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -505,8 +505,8 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // Tenant-scoped lookup. Cross-tenant probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
+    // Space-scoped lookup. Cross-space probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -521,7 +521,7 @@ export function blobRoutes(
     requireAdmin(c);
 
     const dryRun = c.req.valid("query").dry_run === "true";
-    const tenantId = c.get("apiKey")?.tenant_id;
+    const spaceId = c.get("apiKey")?.space_id;
 
     // Collect all blob hashes registered in the store
     const allHashes = await storage.blobs.listAll();
@@ -534,7 +534,7 @@ export function blobRoutes(
       let hasMore = true;
       while (hasMore) {
         const page = await storage.items.list({
-          tenantId,
+          spaceId,
           state: state as import("@withmarfa/shared").ItemState | undefined,
           limit: 200,
           cursor,
@@ -563,7 +563,7 @@ export function blobRoutes(
     if (!dryRun) {
       for (const hash of orphaned) {
         await blobBackend.delete(hash);
-        // Platform-admin orphan cleanup nukes the row in every tenant
+        // Platform-admin orphan cleanup nukes the row in every space
         // — this hash is unreferenced everywhere as far as the admin's
         // visible items go.
         await storage.blobs.removeAllForHash(hash);
@@ -634,7 +634,7 @@ export function blobRoutes(
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.reconcile",
       resource_type: "blob",

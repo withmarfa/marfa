@@ -68,7 +68,7 @@ interface FetchHarnessOpts {
     kind: string;
     state: string;
     integration_name: string | null;
-    tenant_id: string | null;
+    space_id: string | null;
   };
   /** Returned by `GET /accounts/:id/queues`. Maps queue_name → queue_id. */
   queues?: { queue_id: string; queue_name: string }[];
@@ -110,7 +110,7 @@ function buildFetchHarness(opts: FetchHarnessOpts): typeof fetch {
         kind: "integration",
         state: "active",
         integration_name: "withmarfa.rss-watcher",
-        tenant_id: null,
+        space_id: null,
       };
       return Promise.resolve(
         new Response(JSON.stringify(ctx), {

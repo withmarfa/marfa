@@ -273,7 +273,7 @@ async function seedGoogleCalendarConnection(
   if (opts.withOauthTokens) {
     await ctx.storage.connectionOauthTokens.upsert({
       connection_id: connection.id,
-      tenant_id: undefined,
+      space_id: undefined,
       access_token_encrypted: encryptSecret(
         "test-access",
         SECRET_INFO.connectionOauthToken,
@@ -503,7 +503,7 @@ describe("GET /connections/:id/configure", () => {
     // The test request helper sets `apiKey` on `c.var` via the
     // bearer-token middleware on the main app. Here we propagate it by
     // reading the same context env shim and stamping a fixed apiKey for
-    // the route's `requireTenantAdmin` to consume.
+    // the route's `requireSpaceAdmin` to consume.
     miniApp.use("*", async (c, next) => {
       c.set("apiKey", {
         id: "test-admin",

@@ -112,7 +112,7 @@ describe("publish — persistence", () => {
     await publish({
       type: "created",
       item,
-      tenantId: undefined,
+      spaceId: undefined,
       originatingConnectionId: "conn-X",
       hopCount: 1,
     });
@@ -322,17 +322,17 @@ describe("defaultCycleDetectionWiring — overflow emits system.activity", () =>
 });
 
 // ---------------------------------------------------------------------------
-// §3.9 — getHopBudget caches per-tenant lookups
+// §3.9 — getHopBudget caches per-space lookups
 // ---------------------------------------------------------------------------
 
-describe("defaultCycleDetectionWiring — per-tenant hop-budget cache", () => {
-  it("does not hit storage.tenants.getConfig twice for the same tenant within the TTL window", async () => {
+describe("defaultCycleDetectionWiring — per-space hop-budget cache", () => {
+  it("does not hit storage.spaces.getConfig twice for the same space within the TTL window", async () => {
     let getConfigCalls = 0;
     // Fake a storage shape with just enough surface for the wiring.
     // The cache lives inside `defaultCycleDetectionWiring`'s closure,
     // so a fresh wiring instance is what's under test.
     const fakeStorage = {
-      tenants: {
+      spaces: {
         getConfig: () => {
           getConfigCalls += 1;
           return Promise.resolve({ max_event_hop_budget: 7 });
@@ -344,16 +344,16 @@ describe("defaultCycleDetectionWiring — per-tenant hop-budget cache", () => {
     expect(wiring.getHopBudget).toBeDefined();
     const getHop = wiring.getHopBudget!;
 
-    expect(await getHop("tenant-a")).toBe(7);
-    expect(await getHop("tenant-a")).toBe(7);
-    expect(await getHop("tenant-a")).toBe(7);
+    expect(await getHop("space-a")).toBe(7);
+    expect(await getHop("space-a")).toBe(7);
+    expect(await getHop("space-a")).toBe(7);
     expect(getConfigCalls).toBe(1);
 
-    // Different tenant id → fresh storage hit.
-    expect(await getHop("tenant-b")).toBe(7);
+    // Different space id → fresh storage hit.
+    expect(await getHop("space-b")).toBe(7);
     expect(getConfigCalls).toBe(2);
 
-    // Undefined tenantId → constant default, no storage hit.
+    // Undefined spaceId → constant default, no storage hit.
     expect(await getHop(undefined)).toBe(DEFAULT_HOP_BUDGET);
     expect(getConfigCalls).toBe(2);
   });

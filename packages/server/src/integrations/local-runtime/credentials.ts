@@ -37,7 +37,7 @@ import {
   buildTypePermissions,
 } from "../../connections/manifest-permissions.js";
 import {
-  assertMintableTenantScope,
+  assertMintableSpaceScope,
   resolveRuntimeCredentialManifest,
   revokeSupersededRuntimeCredentials,
 } from "../../connections/runtime-credential-lifecycle.js";
@@ -130,7 +130,7 @@ export async function mintLocalRuntimeCredential(
       );
     }
 
-    // A tenant-less credential is the platform tier, not a narrow one. The
+    // A space-less credential is the platform tier, not a narrow one. The
     // rule is the substrate's, not the transport's, so it applies to the
     // in-process mint exactly as it does to the HTTP one.
     //
@@ -139,13 +139,13 @@ export async function mintLocalRuntimeCredential(
     // exists because an integration Worker is a separate principal that
     // states which integration it is; this mint is called by the
     // supervisor in the same process, from a dispatch it routed itself.
-    assertMintableTenantScope(connection, authMode);
+    assertMintableSpaceScope(connection, authMode);
 
     // Resolve the manifest so the credential carries exactly the reach the
     // Integration declared at registration — the same translation the
     // hosted install pipeline applies. No manifest means no reach beyond
     // the credential's own `connection.runtime` subtree: minting wide on a
-    // resolution failure would silently hand out the whole tenant.
+    // resolution failure would silently hand out the whole space.
     const manifest = await resolveRuntimeCredentialManifest(
       storage,
       connection,
@@ -154,10 +154,10 @@ export async function mintLocalRuntimeCredential(
     const rawKey = KEY_PREFIX + randomBytes(32).toString("hex");
     const keyHash = hashApiKey(rawKey, salt);
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-    // source is unique-checked per tenant; the random suffix prevents
+    // source is unique-checked per space; the random suffix prevents
     // collisions within the credential's short TTL window.
     const suffix = randomBytes(4).toString("hex");
-    const tenantId = connection.tenant_id ?? undefined;
+    const spaceId = connection.space_id ?? undefined;
 
     const minted = await storage.keys.createRuntimeCredential(
       {
@@ -176,7 +176,7 @@ export async function mintLocalRuntimeCredential(
         item_source: runtimeCredentialItemSource(connectionId),
       },
       keyHash,
-      tenantId,
+      spaceId,
     );
 
     // Retire this connection's runtime credentials that are already past
@@ -197,7 +197,7 @@ export async function mintLocalRuntimeCredential(
     await revokeSupersededRuntimeCredentials(
       storage,
       connectionId,
-      tenantId,
+      spaceId,
       minted.id,
     );
 

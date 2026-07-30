@@ -2,7 +2,7 @@
  * Tests for `POST /credentials/oauth-provider`.
  *
  * Coverage:
- *   - Auth gate: unauthenticated → 401; member key → 403; tenant_admin OK.
+ *   - Auth gate: unauthenticated → 401; member key → 403; space_admin OK.
  *   - Happy path: 201 + credential_id; the resulting `system.credential` row
  *     has the right shape; the encrypted secret round-trips back to the
  *     original via `decryptSecret`.
@@ -51,24 +51,24 @@ async function mintMemberKey(): Promise<string> {
 }
 
 // Built through the storage layer rather than `POST /keys`, which refuses
-// to mint a `tenant_admin` key from a caller that has no tenant to pass on
+// to mint a `space_admin` key from a caller that has no space to pass on
 // (the resulting credential would not stop at the boundary its role names).
 // These tests only need a credential that carries the role, so the fixture
-// stamps a tenant directly instead of routing around the rule.
-async function mintTenantAdminKey(): Promise<string> {
+// stamps a space directly instead of routing around the rule.
+async function mintSpaceAdminKey(): Promise<string> {
   const suffix = uniqueSuffix();
-  const raw = `marfa_k1_tenant_admin_${suffix}`;
+  const raw = `marfa_k1_space_admin_${suffix}`;
   await ctx.storage.keys.create(
     {
-      label: `tenant-admin-test-${suffix}`,
-      source: `tenant-admin-test-${suffix}`,
-      role: "tenant_admin",
+      label: `space-admin-test-${suffix}`,
+      source: `space-admin-test-${suffix}`,
+      role: "space_admin",
       type_permissions: {},
       default_tier: "library",
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    `tenant-credentials-${suffix}`,
+    `space-credentials-${suffix}`,
   );
   return raw;
 }
@@ -144,11 +144,11 @@ describe("POST /credentials/oauth-provider — happy path", () => {
     expect(plaintext).toBe(VALID_BODY.oauth_client_secret);
   });
 
-  it("tenant_admin keys can create credentials too", async () => {
-    const tenantAdminKey = await mintTenantAdminKey();
+  it("space_admin keys can create credentials too", async () => {
+    const spaceAdminKey = await mintSpaceAdminKey();
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: tenantAdminKey,
-      body: { ...VALID_BODY, label: "Google (tenant_admin)" },
+      key: spaceAdminKey,
+      body: { ...VALID_BODY, label: "Google (space_admin)" },
     });
     expect(res.status).toBe(201);
   });
@@ -288,11 +288,11 @@ describe("POST /credentials/api-token — happy path", () => {
     expect(plaintext).toBe(VALID_API_TOKEN_BODY.api_token);
   });
 
-  it("tenant_admin keys can create api_token credentials too", async () => {
-    const tenantAdminKey = await mintTenantAdminKey();
+  it("space_admin keys can create api_token credentials too", async () => {
+    const spaceAdminKey = await mintSpaceAdminKey();
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: tenantAdminKey,
-      body: { ...VALID_API_TOKEN_BODY, label: "Todoist (tenant_admin)" },
+      key: spaceAdminKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "Todoist (space_admin)" },
     });
     expect(res.status).toBe(201);
   });

@@ -11,7 +11,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  hasTenantAdminAuthority,
+  hasSpaceAdminAuthority,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import type {
@@ -85,7 +85,7 @@ function rowToWire(
   const base: ConnectionLeasedToken = {
     id: row.id,
     connection_id: row.connection_id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     capability_id: row.capability_id,
     scopes: row.scopes,
     expires_at: row.expires_at,
@@ -100,36 +100,36 @@ async function requireConnectionAccess(
   c: import("hono").Context<AppEnv>,
   storage: Storage,
   connectionId: string,
-): Promise<{ tenantId: string | undefined }> {
+): Promise<{ spaceId: string | undefined }> {
   const key = requireAuth(c);
-  // Tenant-bounded admin authority, matching the sibling connection
+  // Space-bounded admin authority, matching the sibling connection
   // routes: leased tokens belong to a connection, and a connection
-  // belongs to a tenant.
-  const isAdmin = hasTenantAdminAuthority(key) || key.is_platform;
+  // belongs to a space.
+  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
   const isConnector = isConnectionScopedSource(key.source, connectionId);
   // Defense-in-depth: any credential that would resolve to an undefined
-  // tenantId below must be entitled to cross-tenant reach, because the
-  // storage call sites treat `undefined` as "any tenant". The test is
+  // spaceId below must be entitled to cross-space reach, because the
+  // storage call sites treat `undefined` as "any space". The test is
   // platform authority (unbound admin) or an explicit platform
-  // credential — NOT tenant-admin rank, which says nothing about
+  // credential — NOT space-admin rank, which says nothing about
   // whether the credential is confined. Runtime credentials and OAuth
   // bearers issued for this connection are exempt: their
   // `connection_id` / source-prefix binding is its own scope, and
-  // self-hosted (single-tenant) deploys legitimately leave `tenant_id`
+  // self-hosted (single-space) deploys legitimately leave `space_id`
   // unset on those.
   if (
-    !key.tenant_id &&
+    !key.space_id &&
     !isConnector &&
     !hasPlatformAuthority(key) &&
     !key.is_platform
   ) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
-      "Tenant scope required for this credential",
+      "Space scope required for this credential",
     );
   }
-  const tenantId = key.tenant_id ?? undefined;
-  const connection = await storage.items.get(connectionId, tenantId);
+  const spaceId = key.space_id ?? undefined;
+  const connection = await storage.items.get(connectionId, spaceId);
   if (connection?.type !== "system.connection") {
     throw new MarfaError(ErrorCode.NOT_FOUND, "Connection not found");
   }
@@ -139,7 +139,7 @@ async function requireConnectionAccess(
       "Caller cannot manage leased tokens on this connection",
     );
   }
-  return { tenantId };
+  return { spaceId };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ async function requireConnectionAccess(
 const LeaseSchema = z.object({
   id: z.string(),
   connection_id: z.string(),
-  tenant_id: z.string().nullable(),
+  space_id: z.string().nullable(),
   capability_id: z.string(),
   scopes: z.array(z.string()),
   expires_at: z.string(),
@@ -395,17 +395,13 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
   r.openapi(issueLeaseRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
-      tenantId,
+      spaceId,
     );
     const declared = manifest.oauth_requirements[body.capability_id];
     if (declared !== "leased") {
@@ -432,7 +428,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     const row = await storage.connectionLeasedTokens.create({
       id,
       connection_id: connectionId,
-      tenant_id: tenantId,
+      space_id: spaceId,
       capability_id: body.capability_id,
       lease_token_hash: hashLease(rawLease),
       scopes: body.scopes ?? [],
@@ -442,7 +438,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "lease.issue",
       resource_type: "connection_leased_token",
@@ -460,15 +456,11 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
   r.openapi(listLeasesRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const rows = await storage.connectionLeasedTokens.listActiveByConnection(
       connectionId,
       new Date().toISOString(),
-      tenantId,
+      spaceId,
     );
     return c.json(
       {
@@ -480,12 +472,8 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
   r.openapi(revokeLeaseRoute, async (c) => {
     const { id: connectionId, lease_id } = c.req.valid("param");
-    const { tenantId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
-    const lease = await storage.connectionLeasedTokens.get(lease_id, tenantId);
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
+    const lease = await storage.connectionLeasedTokens.get(lease_id, spaceId);
     if (lease?.connection_id !== connectionId) {
       throw new MarfaError(ErrorCode.LEASE_TOKEN_NOT_FOUND, "Lease not found");
     }
@@ -495,7 +483,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "lease.revoke",
       resource_type: "connection_leased_token",
@@ -540,7 +528,7 @@ export function leaseTokenValidationRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      tenant_id: c.get("apiKey")?.tenant_id ?? null,
+      space_id: c.get("apiKey")?.space_id ?? null,
       action: "lease.validate",
       resource_type: "connection_leased_token",
       resource_id: lease?.id,

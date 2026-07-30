@@ -13,7 +13,7 @@ function rowToLease(
   return {
     id: row.id,
     connection_id: row.connection_id,
-    tenant_id: row.tenant_id,
+    space_id: row.space_id,
     capability_id: row.capability_id,
     lease_token_hash: row.lease_token_hash,
     scopes: safeJsonParse<string[]>(row.scopes, [], "lease scopes"),
@@ -30,7 +30,7 @@ export class PgConnectionLeasedTokenStore implements ConnectionLeasedTokenStore 
   async create(input: {
     id: string;
     connection_id: string;
-    tenant_id?: string;
+    space_id?: string;
     capability_id: string;
     lease_token_hash: string;
     scopes: string[];
@@ -41,7 +41,7 @@ export class PgConnectionLeasedTokenStore implements ConnectionLeasedTokenStore 
     const row = {
       id: input.id,
       connection_id: input.connection_id,
-      tenant_id: input.tenant_id ?? null,
+      space_id: input.space_id ?? null,
       capability_id: input.capability_id,
       lease_token_hash: input.lease_token_hash,
       scopes: JSON.stringify(input.scopes),
@@ -64,11 +64,11 @@ export class PgConnectionLeasedTokenStore implements ConnectionLeasedTokenStore 
 
   async get(
     id: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ConnectionLeasedTokenRow | null> {
     const conditions = [eq(connectionLeasedTokens.id, id)];
-    if (tenantId !== undefined) {
-      conditions.push(eq(connectionLeasedTokens.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(connectionLeasedTokens.space_id, spaceId));
     }
     const [row] = await this.db
       .select()
@@ -80,15 +80,15 @@ export class PgConnectionLeasedTokenStore implements ConnectionLeasedTokenStore 
   async listActiveByConnection(
     connectionId: string,
     nowIso: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<ConnectionLeasedTokenRow[]> {
     const conditions = [
       eq(connectionLeasedTokens.connection_id, connectionId),
       isNull(connectionLeasedTokens.revoked_at),
       gt(connectionLeasedTokens.expires_at, nowIso),
     ];
-    if (tenantId !== undefined) {
-      conditions.push(eq(connectionLeasedTokens.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(connectionLeasedTokens.space_id, spaceId));
     }
     const rows = await this.db
       .select()

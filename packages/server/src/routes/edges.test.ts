@@ -720,7 +720,7 @@ describe("event_log accepts item_id=null for edge rows", () => {
       event_type: "edge_created",
       item_id: null,
       edge_id: "019d0000-0000-7000-a000-000000000abc",
-      tenant_id: undefined,
+      space_id: undefined,
       payload: JSON.stringify({ type: "edge.created", edge: { id: "x" } }),
     });
     expect(id > 0n).toBe(true);
@@ -873,7 +873,7 @@ describe("Edge permission matrix (admin / type-only / edge-only / both / neither
   async function mkKey(
     typePerms: Record<string, "read" | "write" | "none"> | undefined,
     edgePerms: Record<string, "read" | "write"> | undefined,
-    role: "admin" | "tenant_admin" | "member" = "member",
+    role: "admin" | "space_admin" | "member" = "member",
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
@@ -1000,7 +1000,7 @@ describe("GET /edges", () => {
     expect(res.status).toBe(401);
   });
 
-  it("lists edges of a given type across the tenant", async () => {
+  it("lists edges of a given type across the space", async () => {
     const tag = `globlist-${String(Math.random()).slice(2, 8)}`;
     const root = await createItem();
     const a = await createItem();
@@ -1240,53 +1240,53 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
 });
 
 // On SQLite / RLS-off deployments the application-layer fence is the only
-// thing standing between tenant A and tenant B's edges on the single-edge
-// PATCH/DELETE path. These tests run in hosted mode with two tenants and a
-// tenant-scoped key for tenant A, then attempt to mutate/delete an edge that
-// lives entirely in tenant B by its id.
-describe("Single-edge mutate/delete — cross-tenant fence", () => {
+// thing standing between space A and space B's edges on the single-edge
+// PATCH/DELETE path. These tests run in hosted mode with two spaces and a
+// space-scoped key for space A, then attempt to mutate/delete an edge that
+// lives entirely in space B by its id.
+describe("Single-edge mutate/delete — cross-space fence", () => {
   let hostedCtx: TestContext;
-  let tenantA: string;
-  let tenantB: string;
-  // Tenant A's caller (tenant_admin API key) — the would-be attacker.
+  let spaceA: string;
+  let spaceB: string;
+  // Space A's caller (space_admin API key) — the would-be attacker.
   let keyA: string;
-  // An edge that lives entirely in tenant B.
-  let tenantBEdgeId: string;
-  // Source + target items in tenant A, for the same-tenant success cases.
+  // An edge that lives entirely in space B.
+  let spaceBEdgeId: string;
+  // Source + target items in space A, for the same-space success cases.
   let aSource: string;
   let aTarget: string;
 
   beforeAll(async () => {
     hostedCtx = await createTestContext({ authMode: "hosted" });
-    const a = await hostedCtx.storage.tenants!.create("tenant-a");
-    const b = await hostedCtx.storage.tenants!.create("tenant-b");
-    tenantA = a.id;
-    tenantB = b.id;
+    const a = await hostedCtx.storage.spaces!.create("space-a");
+    const b = await hostedCtx.storage.spaces!.create("space-b");
+    spaceA = a.id;
+    spaceB = b.id;
 
-    // Mint a tenant_admin API key bound to tenant A.
+    // Mint a space_admin API key bound to space A.
     const rawA = "marfa_k1_a_" + Math.random().toString(36).slice(2);
     await hostedCtx.storage.keys.create(
       {
-        label: "tenant-a-admin",
-        source: "tenant-a-admin",
-        role: "tenant_admin",
+        label: "space-a-admin",
+        source: "space-a-admin",
+        role: "space_admin",
         type_permissions: {},
         default_tier: "library",
         is_platform: false,
       },
       hashApiKey(rawA, TEST_API_KEY_SALT),
-      tenantA,
+      spaceA,
     );
     keyA = rawA;
 
-    // Seed tenant B's items + an edge between them — entirely outside A.
+    // Seed space B's items + an edge between them — entirely outside A.
     const bSource = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "b-source" } },
-      tenantB,
+      spaceB,
     );
     const bTarget = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "b-target" } },
-      tenantB,
+      spaceB,
     );
     const bEdge = await hostedCtx.storage.edges.createRaw(
       {
@@ -1294,18 +1294,18 @@ describe("Single-edge mutate/delete — cross-tenant fence", () => {
         target_id: bTarget.id,
         edge_type: "about",
       },
-      tenantB,
+      spaceB,
     );
-    tenantBEdgeId = bEdge.id;
+    spaceBEdgeId = bEdge.id;
 
-    // Seed tenant A's own items for the same-tenant success cases.
+    // Seed space A's own items for the same-space success cases.
     const aSrc = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "a-source" } },
-      tenantA,
+      spaceA,
     );
     const aTgt = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "a-target" } },
-      tenantA,
+      spaceA,
     );
     aSource = aSrc.id;
     aTarget = aTgt.id;
@@ -1315,11 +1315,11 @@ describe("Single-edge mutate/delete — cross-tenant fence", () => {
     await hostedCtx.cleanup();
   });
 
-  it("PATCH /edges/:id on another tenant's edge returns 404 (cloaked)", async () => {
+  it("PATCH /edges/:id on another space's edge returns 404 (cloaked)", async () => {
     const res = await request(
       hostedCtx.app,
       "PATCH",
-      `/edges/${tenantBEdgeId}`,
+      `/edges/${spaceBEdgeId}`,
       {
         key: keyA,
         body: { properties: { tampered: true } },
@@ -1329,29 +1329,29 @@ describe("Single-edge mutate/delete — cross-tenant fence", () => {
     const data = (await res.json()) as { error: { code: string } };
     expect(data.error.code).toBe("edge_not_found");
 
-    // The edge must be untouched — read it back from tenant B's scope.
-    const stillThere = await hostedCtx.storage.edges.get(tenantBEdgeId);
+    // The edge must be untouched — read it back from space B's scope.
+    const stillThere = await hostedCtx.storage.edges.get(spaceBEdgeId);
     expect(stillThere).not.toBeNull();
     expect(stillThere?.properties).not.toHaveProperty("tampered");
   });
 
-  it("DELETE /edges/:id on another tenant's edge returns 404 (cloaked) and does not delete", async () => {
+  it("DELETE /edges/:id on another space's edge returns 404 (cloaked) and does not delete", async () => {
     const res = await request(
       hostedCtx.app,
       "DELETE",
-      `/edges/${tenantBEdgeId}`,
+      `/edges/${spaceBEdgeId}`,
       { key: keyA },
     );
     expect(res.status).toBe(404);
     const data = (await res.json()) as { error: { code: string } };
     expect(data.error.code).toBe("edge_not_found");
 
-    // The edge must still exist in tenant B.
-    const stillThere = await hostedCtx.storage.edges.get(tenantBEdgeId);
+    // The edge must still exist in space B.
+    const stillThere = await hostedCtx.storage.edges.get(spaceBEdgeId);
     expect(stillThere).not.toBeNull();
   });
 
-  it("same-tenant PATCH /edges/:id still succeeds", async () => {
+  it("same-space PATCH /edges/:id still succeeds", async () => {
     const created = await request(hostedCtx.app, "POST", "/edges", {
       key: keyA,
       body: { source_id: aSource, target_id: aTarget, edge_type: "about" },
@@ -1370,15 +1370,15 @@ describe("Single-edge mutate/delete — cross-tenant fence", () => {
     expect(data.edge.properties.note).toBe("mine");
   });
 
-  it("same-tenant DELETE /edges/:id still succeeds", async () => {
+  it("same-space DELETE /edges/:id still succeeds", async () => {
     // Fresh source/target so we don't collide with the one-to-... edge above.
     const src = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "a-del-source" } },
-      tenantA,
+      spaceA,
     );
     const tgt = await hostedCtx.storage.items.create(
       { type: "core.note", properties: { body: "a-del-target" } },
-      tenantA,
+      spaceA,
     );
     const created = await request(hostedCtx.app, "POST", "/edges", {
       key: keyA,

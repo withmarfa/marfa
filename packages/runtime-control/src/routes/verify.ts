@@ -32,7 +32,7 @@ import { workerDispatchAuthorization } from "../worker-identity.js";
  * which gates on `is_platform: true`.
  *
  * Dispatch path:
- *   1. Look up the connection's integration_name + tenant_id via the
+ *   1. Look up the connection's integration_name + space_id via the
  *      verify-context endpoint (also validates kind + active).
  *   2. Synthesize the queue-message envelope. The shape mirrors
  *      `packages/server/src/connections/envelope.ts:buildQueueMessageBody`
@@ -56,7 +56,7 @@ interface VerifyEnvelope {
   kind: "item-event";
   integration_name: string;
   connection_id: string;
-  tenant_id?: string;
+  space_id?: string;
   event_type: string;
   item_id: string;
   cycle: {
@@ -98,7 +98,7 @@ interface ActivityRow {
 function buildVerifyEnvelope(args: {
   integrationName: string;
   connectionId: string;
-  tenantId: string | null;
+  spaceId: string | null;
   eventType: string;
   itemId: string;
   payload: unknown;
@@ -108,7 +108,7 @@ function buildVerifyEnvelope(args: {
     kind: "item-event",
     integration_name: args.integrationName,
     connection_id: args.connectionId,
-    ...(args.tenantId !== null && { tenant_id: args.tenantId }),
+    ...(args.spaceId !== null && { space_id: args.spaceId }),
     event_type: args.eventType,
     item_id: args.itemId,
     cycle: args.cycle,
@@ -220,7 +220,7 @@ export function registerVerifyRoute(
     const envelope = buildVerifyEnvelope({
       integrationName: ctxResult.integration_name,
       connectionId: ctxResult.connection_id,
-      tenantId: ctxResult.tenant_id,
+      spaceId: ctxResult.space_id,
       eventType: event.event_type,
       itemId: event.item_id,
       payload: event.payload ?? null,

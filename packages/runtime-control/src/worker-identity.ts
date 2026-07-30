@@ -12,7 +12,7 @@ import type { ControlPlaneEnv } from "./env.js";
  * control plane is.
  *
  * The platform broker key is the credential that can mint against any
- * Connection in any tenant, so it stays on this side of the boundary and
+ * Connection in any space, so it stays on this side of the boundary and
  * is never presented to a Worker or accepted from one. What crosses is a
  * key derived per integration (see `deriveWorkerIdentityKey` in
  * `@withmarfa/shared`), which authenticates one Worker and no other.

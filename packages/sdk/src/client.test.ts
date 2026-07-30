@@ -927,7 +927,7 @@ describe("error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Extended SDK surface: library filter, purge, tenants, full keys.create.
+// Extended SDK surface: library filter, purge, spaces, full keys.create.
 // ---------------------------------------------------------------------------
 
 describe("Extended SDK surface", () => {
@@ -966,19 +966,19 @@ describe("Extended SDK surface", () => {
     await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
   });
 
-  it("tenants.getConfig returns the empty config in non-tenant mode", async () => {
-    const config = await client.tenants.getConfig();
+  it("spaces.getConfig returns the empty config in non-space mode", async () => {
+    const config = await client.spaces.getConfig();
     expect(typeof config).toBe("object");
   });
 
-  it("tenants.setConfig calls PUT /tenants/me/config", async () => {
-    // The test fixture runs in single-tenant SQLite mode (no tenant_id on
+  it("spaces.setConfig calls PUT /spaces/me/config", async () => {
+    // The test fixture runs in single-space SQLite mode (no space_id on
     // the bootstrap key); the server route rejects PUT under that
     // configuration with a clear validation error. Conformance against a
-    // real tenant-scoped credential is exercised by the conformance suite. Here we
+    // real space-scoped credential is exercised by the conformance suite. Here we
     // just confirm the SDK invokes the endpoint and surfaces the
     // server's response shape.
-    await expect(client.tenants.setConfig({})).rejects.toThrow(ValidationError);
+    await expect(client.spaces.setConfig({})).rejects.toThrow(ValidationError);
   });
 
   it("keys.create returns the full ApiKey shape including credential defaults", async () => {
@@ -1016,7 +1016,7 @@ describe("SDK round additions", () => {
     expect(lookup.get("beta") ?? 0).toBeGreaterThanOrEqual(1);
   });
 
-  it("edges.list returns global tenant-scoped edges of a given type", async () => {
+  it("edges.list returns global space-scoped edges of a given type", async () => {
     const root = await client.items.create({
       type: "core.note",
       properties: { body: "root" },

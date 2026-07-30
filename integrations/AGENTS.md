@@ -55,7 +55,7 @@ Manifests whose upstream uses a static API token rather than an OAuth flow decla
 The substrate seam mirrors the OAuth one: the bearer lives on a `system.credential` row, referenced from the connection via `credential_ref`. Both kinds share the encryption domain (`connectionOauthToken`), the install path (`POST /connections/install`), and the proxy entry point (`POST /connections/:id/proxy/*`). Differences:
 
 - **Credential kind** — `kind: "api_token"` instead of `kind: "oauth_token"`. Non-secret config lives under `api_token_config: { upstream_base_url }` (parallel to `oauth_provider_config`); the bearer lives under `secret_encrypted`.
-- **Install path** — `POST /credentials/api-token` (body `{ label, upstream_base_url, api_token }`) instead of `/credentials/oauth-provider`. Same `requireTenantAdmin` gate. Returns `{ credential_id }` for use as `credential_ref` on `POST /connections/install`.
+- **Install path** — `POST /credentials/api-token` (body `{ label, upstream_base_url, api_token }`) instead of `/credentials/oauth-provider`. Same `requireSpaceAdmin` gate. Returns `{ credential_id }` for use as `credential_ref` on `POST /connections/install`.
 - **No OAuth dance** — no authorize URL, no callback. The user supplies the bearer at install time; the connection is immediately usable.
 - **Bearer stamped verbatim** — `ctx.marfa.proxyRequest(...)` reads the credential, decrypts the bearer, and sets `Authorization: Bearer <token>` on every upstream call. No proactive or reactive refresh.
 - **401 to `action_required`** — when the upstream rejects the bearer, the proxy flips `runtime_status` to `reauth_required` and emits a `system.activity` of `severity: action_required` reading "Static API token rejected — reinstall connection with a fresh token". Static tokens have no refresh primitive; operator recovery is to mint a fresh credential via `POST /credentials/api-token` and reinstall.
@@ -82,7 +82,7 @@ Canonical example: the withmarfa-inbox Email Worker. `integrations/withmarfa-inb
 
 A Worker's credential is `MARFA_WORKER_IDENTITY_KEY`, derived by the control plane as `HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, <integration name>)`. It authenticates the hop in both directions: the Worker presents it when leasing a runtime credential, and the control plane derives the same value when it dispatches in.
 
-It replaces the platform broker key, which every Worker used to hold. That key carries `is_platform: true` and mints a runtime credential for any Connection in any tenant, so one copy per Worker meant thirteen platform principals per environment and a compromise of any one of them reached every customer's data. A derived key authenticates one integration; HMAC is one-way, so holding one does not let a Worker compute a sibling's.
+It replaces the platform broker key, which every Worker used to hold. That key carries `is_platform: true` and mints a runtime credential for any Connection in any space, so one copy per Worker meant thirteen platform principals per environment and a compromise of any one of them reached every customer's data. A derived key authenticates one integration; HMAC is one-way, so holding one does not let a Worker compute a sibling's.
 
 The lease broker forwards the integration name a Worker proves to the Marfa server, which checks it against the manifest persisted on the requested Connection. A Worker that learns another integration's Connection id still cannot lease it.
 

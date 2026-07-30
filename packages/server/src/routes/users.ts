@@ -23,14 +23,14 @@ const UserSchema = z.object({
   avatar_blob_hash: z.string().nullable(),
   provider: z.string(),
   provider_id: z.string(),
-  tenant_id: z.string(),
+  space_id: z.string(),
   handle: z.string().nullable(),
   auth_user_id: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
 
-const TenantSchema = z.object({
+const SpaceSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
   created_at: z.string(),
@@ -103,7 +103,7 @@ const meRoute = createRoute({
   tags: ["Auth"],
   summary: "Get the current user",
   description:
-    "Returns the user record and the tenant the calling API key belongs to. Use to render account state (handle, name, tenant id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/guides/identity/profile).",
+    "Returns the user record and the space the calling API key belongs to. Use to render account state (handle, name, space id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/guides/identity/profile).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -111,11 +111,11 @@ const meRoute = createRoute({
         "application/json": {
           schema: z.object({
             user: UserSchema.nullable(),
-            tenant: TenantSchema,
+            space: SpaceSchema,
           }),
         },
       },
-      description: "User profile and tenant info",
+      description: "User profile and space info",
     },
     401: {
       content: {
@@ -131,7 +131,7 @@ const meRoute = createRoute({
           schema: makeErrorResponseSchema(["not_found"]),
         },
       },
-      description: "Tenant not found",
+      description: "Space not found",
     },
   },
 });
@@ -143,7 +143,7 @@ const meRoute = createRoute({
 /**
  * User auth routes — only mounted when AUTH_MODE=hosted.
  *
- * GET  /auth/me          — return current user profile + tenant info
+ * GET  /auth/me          — return current user profile + space info
  * PUT  /auth/me/handle   — claim or change the user's handle
  *
  * Sign-up + sign-in flow through the Better Auth surface mounted under
@@ -153,48 +153,48 @@ const meRoute = createRoute({
 export function userAuthRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  if (!storage.users || !storage.tenants) {
-    throw new Error("User and tenant stores required for hosted mode");
+  if (!storage.users || !storage.spaces) {
+    throw new Error("User and space stores required for hosted mode");
   }
 
   const userStore = storage.users;
-  const tenantStore = storage.tenants;
+  const spaceStore = storage.spaces;
 
-  // GET /auth/me — return current user profile + tenant info
+  // GET /auth/me — return current user profile + space info
   router.openapi(meRoute, async (c) => {
     const apiKey = requireAuth(c);
-    const tenantId = apiKey.tenant_id;
+    const spaceId = apiKey.space_id;
 
-    if (!tenantId) {
+    if (!spaceId) {
       throw new MarfaError(
         ErrorCode.NOT_FOUND,
-        "No tenant associated with this key",
+        "No space associated with this key",
       );
     }
 
-    const [tenant, user] = await Promise.all([
-      tenantStore.get(tenantId),
-      userStore.getByTenantId(tenantId),
+    const [space, user] = await Promise.all([
+      spaceStore.get(spaceId),
+      userStore.getBySpaceId(spaceId),
     ]);
 
-    if (!tenant) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant not found");
+    if (!space) {
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Space not found");
     }
 
-    return c.json({ user, tenant }, 200);
+    return c.json({ user, space }, 200);
   });
 
   // PUT /auth/me/handle — claim or change handle
   router.openapi(setHandleRoute, async (c) => {
     const apiKey = requireAuth(c);
-    const tenantId = apiKey.tenant_id;
-    if (!tenantId) {
+    const spaceId = apiKey.space_id;
+    if (!spaceId) {
       throw new MarfaError(
         ErrorCode.NOT_FOUND,
-        "No tenant associated with this key",
+        "No space associated with this key",
       );
     }
-    const user = await userStore.getByTenantId(tenantId);
+    const user = await userStore.getBySpaceId(spaceId);
     if (!user) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "User not found");
     }

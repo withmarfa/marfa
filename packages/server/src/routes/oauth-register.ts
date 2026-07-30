@@ -58,7 +58,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
 import {
   buildAllowedScopes,
-  resolveTenantIdForAuthUser,
+  resolveSpaceIdForAuthUser,
 } from "../auth/oauth-provider.js";
 import { log } from "../middleware/logger.js";
 
@@ -348,22 +348,22 @@ export function oauthRegisterRoutes(
     }
 
     // Mirrors the plugin's `clientReference` callback. Unauthenticated DCR
-    // binds null; tenant accountability lands later at the consent step.
+    // binds null; space accountability lands later at the consent step.
     let referenceId: string | null = null;
     if (auth) {
       try {
         const session = await auth.getSession(c.req.raw.headers);
         if (session?.user.id) {
-          const tenantId = await resolveTenantIdForAuthUser(
+          const spaceId = await resolveSpaceIdForAuthUser(
             storage,
             session.user.id,
           );
-          referenceId = tenantId ?? null;
+          referenceId = spaceId ?? null;
         }
       } catch (err) {
         // Failure here is non-fatal — the client still registers,
         // just unbound. Log and continue.
-        log("warn", "oauth dcr: tenant resolution failed", {
+        log("warn", "oauth dcr: space resolution failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }

@@ -4,10 +4,10 @@
  * Four properties, each of which was violated in a way that produced no
  * error, no log line and no failing test:
  *
- *   1. A credential is fenced by a tenant. A Connection installed
- *      without one produced a credential with no `tenant_id`, which is
+ *   1. A credential is fenced by a space. A Connection installed
+ *      without one produced a credential with no `space_id`, which is
  *      not a narrow credential but the platform tier: the RLS wrapper
- *      skips it and the storage layer drops its tenant predicate, so
+ *      skips it and the storage layer drops its space predicate, so
  *      reading `core.note` returned other customers' rows.
  *   2. A credential's item provenance survives its own rotation. The
  *      stamped `source` used to be the credential's, which changes on
@@ -21,7 +21,7 @@
  *      about whose activity a row claimed to be.
  *
  * Boots in `hosted` mode because three of the four are only wrong on a
- * deployment that has tenants.
+ * deployment that has spaces.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { IntegrationManifest } from "@withmarfa/shared";
@@ -91,7 +91,7 @@ async function makeIntegration(name = INTEGRATION): Promise<string> {
 }
 
 async function makeConnection(
-  tenantId: string | undefined,
+  spaceId: string | undefined,
   name = INTEGRATION,
 ): Promise<string> {
   const integrationId = await makeIntegration(name);
@@ -105,7 +105,7 @@ async function makeConnection(
         integration_ref: integrationId,
       },
     },
-    tenantId,
+    spaceId,
   );
   return connection.id;
 }
@@ -126,20 +126,20 @@ async function mint(
   });
 }
 
-describe("a runtime credential is fenced by a tenant", () => {
-  it("refuses to mint for a Connection with no tenant", async () => {
-    const tenantA = await ctx.storage.tenants!.create("A");
-    const tenantB = await ctx.storage.tenants!.create("B");
+describe("a runtime credential is fenced by a space", () => {
+  it("refuses to mint for a Connection with no space", async () => {
+    const spaceA = await ctx.storage.spaces!.create("A");
+    const spaceB = await ctx.storage.spaces!.create("B");
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "a-note" } },
-      tenantA.id,
+      spaceA.id,
     );
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "b-note" } },
-      tenantB.id,
+      spaceB.id,
     );
 
-    // A platform admin can install a Connection without naming a tenant.
+    // A platform admin can install a Connection without naming a space.
     // Nothing downstream notices until the credential minted for it
     // starts reading, at which point it reads everything.
     const connectionId = await makeConnection(undefined);
@@ -148,12 +148,12 @@ describe("a runtime credential is fenced by a tenant", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as ErrorResponse;
     expect(body.error.code).toBe("forbidden");
-    expect(body.error.message).toMatch(/no tenant/i);
+    expect(body.error.message).toMatch(/no space/i);
   });
 
-  it("refuses the install pipeline's mint for a tenant-less Connection", async () => {
+  it("refuses the install pipeline's mint for a space-less Connection", async () => {
     // The third mint path. A platform admin's credential carries no
-    // tenant, so `POST /connections/install` stamps none on the
+    // space, so `POST /connections/install` stamps none on the
     // Connection it creates and the credential minted for it comes out
     // at the platform tier. The refusal has to reach this door too, or
     // the rule is enforced on two of three.
@@ -165,7 +165,7 @@ describe("a runtime credential is fenced by a tenant", () => {
 
     expect(res.status).toBe(403);
     const body = (await res.json()) as ErrorResponse;
-    expect(body.error.message).toMatch(/no tenant/i);
+    expect(body.error.message).toMatch(/no space/i);
 
     // The compensating writes ran: nothing is left installed, and no
     // credential outlives the refusal.
@@ -181,19 +181,19 @@ describe("a runtime credential is fenced by a tenant", () => {
   });
 
   it("keeps minting for a Connection that has one", async () => {
-    // The guard must refuse the tenant-less case and nothing else, or it
+    // The guard must refuse the space-less case and nothing else, or it
     // would take every integration offline rather than one broken
     // install.
-    const tenant = await ctx.storage.tenants!.create("scoped");
-    const connectionId = await makeConnection(tenant.id);
+    const space = await ctx.storage.spaces!.create("scoped");
+    const connectionId = await makeConnection(space.id);
     expect((await mint(connectionId)).status).toBe(201);
   });
 });
 
 describe("item provenance survives a credential rotation", () => {
   it("upserts under the same source across two mints", async () => {
-    const tenant = await ctx.storage.tenants!.create("provenance");
-    const connectionId = await makeConnection(tenant.id);
+    const space = await ctx.storage.spaces!.create("provenance");
+    const connectionId = await makeConnection(space.id);
 
     const first = (await (await mint(connectionId)).json()) as MintResponse;
     const created = await request(ctx.app, "POST", "/items", {
@@ -237,8 +237,8 @@ describe("item provenance survives a credential rotation", () => {
 
 describe("a mint cannot outlive the uninstall it raced", () => {
   it("blocks on the Connection lifecycle lock and re-reads state under it", async () => {
-    const tenant = await ctx.storage.tenants!.create("race");
-    const connectionId = await makeConnection(tenant.id);
+    const space = await ctx.storage.spaces!.create("race");
+    const connectionId = await makeConnection(space.id);
 
     let settled = false;
     let result: Response | null = null;
@@ -260,7 +260,7 @@ describe("a mint cannot outlive the uninstall it raced", () => {
         // pinned is that the mint is still waiting, not merely that it
         // ends up refused.
         expect(settled).toBe(false);
-        await ctx.storage.items.transition(connectionId, "revoked", tenant.id);
+        await ctx.storage.items.transition(connectionId, "revoked", space.id);
       },
     );
 
@@ -275,10 +275,10 @@ describe("a mint cannot outlive the uninstall it raced", () => {
 
 describe("a runtime credential speaks only for its own Connection", () => {
   async function credentialFor(
-    tenantId: string,
+    spaceId: string,
     name: string,
   ): Promise<{ key: string; connectionId: string }> {
-    const connectionId = await makeConnection(tenantId, name);
+    const connectionId = await makeConnection(spaceId, name);
     const res = await mint(connectionId, name);
     expect(res.status).toBe(201);
     return {
@@ -288,9 +288,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
   }
 
   it("refuses to create activity attributed to a sibling", async () => {
-    const tenant = await ctx.storage.tenants!.create("activity-create");
-    const mine = await credentialFor(tenant.id, "acme.mine");
-    const sibling = await credentialFor(tenant.id, "acme.sibling");
+    const space = await ctx.storage.spaces!.create("activity-create");
+    const mine = await credentialFor(space.id, "acme.mine");
+    const sibling = await credentialFor(space.id, "acme.sibling");
 
     const res = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -310,9 +310,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // Bulk runs the same type gate, so the carve-out that admits
     // `system.activity` admits it here too. Without the attribution
     // check the door is simply wider.
-    const tenant = await ctx.storage.tenants!.create("activity-bulk");
-    const mine = await credentialFor(tenant.id, "acme.bulk-mine");
-    const sibling = await credentialFor(tenant.id, "acme.bulk-sibling");
+    const space = await ctx.storage.spaces!.create("activity-bulk");
+    const mine = await credentialFor(space.id, "acme.bulk-mine");
+    const sibling = await credentialFor(space.id, "acme.bulk-sibling");
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
@@ -334,7 +334,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
     const rows = await ctx.storage.items.list({
       type: "system.activity",
-      tenantId: tenant.id,
+      spaceId: space.id,
     });
     expect(rows.data).toHaveLength(0);
   });
@@ -342,13 +342,13 @@ describe("a runtime credential speaks only for its own Connection", () => {
   it("refuses to edit a sibling's activity row through the bulk door", async () => {
     // `POST /items/bulk` in upsert mode reaches an existing row two
     // ways, and only one of them is fenced by the credential's own
-    // source. Supplying `id` addresses any row in the tenant directly,
+    // source. Supplying `id` addresses any row in the space directly,
     // so authorizing the body's claims leaves the update judged on what
     // the caller says rather than on what it is about to overwrite —
     // the same intent `PATCH` refuses, through a door that admitted it.
-    const tenant = await ctx.storage.tenants!.create("activity-bulk-patch");
-    const mine = await credentialFor(tenant.id, "acme.bulk-patch-mine");
-    const sibling = await credentialFor(tenant.id, "acme.bulk-patch-sibling");
+    const space = await ctx.storage.spaces!.create("activity-bulk-patch");
+    const mine = await credentialFor(space.id, "acme.bulk-patch-mine");
+    const sibling = await credentialFor(space.id, "acme.bulk-patch-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -382,7 +382,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
 
-    const after = await ctx.storage.items.get(row.id, tenant.id);
+    const after = await ctx.storage.items.get(row.id, space.id);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
     expect(after?.properties.severity).toBe("info");
     expect(after?.properties.summary).toBe("sync complete");
@@ -395,9 +395,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // checks a type nothing is about to be written to, and every gate
     // keyed on the real type is skipped: the attribution check never
     // runs because the claimed type is not `system.activity`.
-    const tenant = await ctx.storage.tenants!.create("activity-bulk-type");
-    const mine = await credentialFor(tenant.id, "acme.bulk-type-mine");
-    const sibling = await credentialFor(tenant.id, "acme.bulk-type-sibling");
+    const space = await ctx.storage.spaces!.create("activity-bulk-type");
+    const mine = await credentialFor(space.id, "acme.bulk-type-mine");
+    const sibling = await credentialFor(space.id, "acme.bulk-type-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -429,7 +429,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
 
-    const after = await ctx.storage.items.get(row.id, tenant.id);
+    const after = await ctx.storage.items.get(row.id, space.id);
     expect(after?.properties.summary).toBe("sync complete");
     expect(after?.properties.body).toBeUndefined();
   });
@@ -439,9 +439,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // credential could never write directly. `system.connection` needs a
     // platform credential; naming `core.note` in the batch entry is what
     // used to get past that.
-    const tenant = await ctx.storage.tenants!.create("connection-bulk-type");
-    const mine = await credentialFor(tenant.id, "acme.conn-type-mine");
-    const sibling = await credentialFor(tenant.id, "acme.conn-type-sibling");
+    const space = await ctx.storage.spaces!.create("connection-bulk-type");
+    const mine = await credentialFor(space.id, "acme.conn-type-mine");
+    const sibling = await credentialFor(space.id, "acme.conn-type-sibling");
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
@@ -457,7 +457,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
 
-    const after = await ctx.storage.items.get(sibling.connectionId, tenant.id);
+    const after = await ctx.storage.items.get(sibling.connectionId, space.id);
     expect(after?.properties.status).toBe("active");
   });
 
@@ -468,9 +468,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // not `system.activity`, so the check on the entry never looks at
     // the `connection_id` it carries. Only judging the merged result
     // against the row's real type refuses it.
-    const tenant = await ctx.storage.tenants!.create("activity-bulk-reattr");
-    const mine = await credentialFor(tenant.id, "acme.bulk-reattr-mine");
-    const sibling = await credentialFor(tenant.id, "acme.bulk-reattr-sibling");
+    const space = await ctx.storage.spaces!.create("activity-bulk-reattr");
+    const mine = await credentialFor(space.id, "acme.bulk-reattr-mine");
+    const sibling = await credentialFor(space.id, "acme.bulk-reattr-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -500,7 +500,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
 
-    const after = await ctx.storage.items.get(row.id, tenant.id);
+    const after = await ctx.storage.items.get(row.id, space.id);
     expect(after?.properties.connection_id).toBe(mine.connectionId);
   });
 
@@ -508,8 +508,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // The fix authorizes against the target row, so the legitimate
     // upsert-by-id path a client takes when it already holds the row's
     // id has to keep working.
-    const tenant = await ctx.storage.tenants!.create("activity-bulk-own");
-    const mine = await credentialFor(tenant.id, "acme.bulk-own");
+    const space = await ctx.storage.spaces!.create("activity-bulk-own");
+    const mine = await credentialFor(space.id, "acme.bulk-own");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -549,14 +549,14 @@ describe("a runtime credential speaks only for its own Connection", () => {
     expect(body.counts.updated).toBe(1);
     expect(body.results[0]?.outcome).toBe("updated");
 
-    const after = await ctx.storage.items.get(row.id, tenant.id);
+    const after = await ctx.storage.items.get(row.id, space.id);
     expect(after?.properties.summary).toBe("sync complete");
   });
 
   it("refuses to edit a sibling's activity row", async () => {
-    const tenant = await ctx.storage.tenants!.create("activity-patch");
-    const mine = await credentialFor(tenant.id, "acme.patch-mine");
-    const sibling = await credentialFor(tenant.id, "acme.patch-sibling");
+    const space = await ctx.storage.spaces!.create("activity-patch");
+    const mine = await credentialFor(space.id, "acme.patch-mine");
+    const sibling = await credentialFor(space.id, "acme.patch-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -587,9 +587,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // credential's own connection. Judged on the merged result, that
     // reads as a credential writing its own activity; judged on the row
     // as it stands, it is one connector taking another's.
-    const tenant = await ctx.storage.tenants!.create("activity-claim");
-    const mine = await credentialFor(tenant.id, "acme.claim-mine");
-    const sibling = await credentialFor(tenant.id, "acme.claim-sibling");
+    const space = await ctx.storage.spaces!.create("activity-claim");
+    const mine = await credentialFor(space.id, "acme.claim-mine");
+    const sibling = await credentialFor(space.id, "acme.claim-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -618,9 +618,9 @@ describe("a runtime credential speaks only for its own Connection", () => {
   });
 
   it("refuses to re-attribute its own activity row to a sibling", async () => {
-    const tenant = await ctx.storage.tenants!.create("activity-reattribute");
-    const mine = await credentialFor(tenant.id, "acme.reattr-mine");
-    const sibling = await credentialFor(tenant.id, "acme.reattr-sibling");
+    const space = await ctx.storage.spaces!.create("activity-reattribute");
+    const mine = await credentialFor(space.id, "acme.reattr-mine");
+    const sibling = await credentialFor(space.id, "acme.reattr-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -658,8 +658,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // in for a row an earlier generation wrote under a manifest that has
     // since been narrowed — same provenance, a type this credential no
     // longer reaches.
-    const tenant = await ctx.storage.tenants!.create("upsert-target-type");
-    const mine = await credentialFor(tenant.id, "acme.upsert-target-type");
+    const space = await ctx.storage.spaces!.create("upsert-target-type");
+    const mine = await credentialFor(space.id, "acme.upsert-target-type");
 
     const legacy = await ctx.storage.items.create(
       {
@@ -668,7 +668,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
         source: `integration:${mine.connectionId}`,
         source_id: "narrowed",
       },
-      tenant.id,
+      space.id,
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -681,7 +681,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     });
     expect(res.status).toBe(403);
 
-    const after = await ctx.storage.items.get(legacy.id, tenant.id);
+    const after = await ctx.storage.items.get(legacy.id, space.id);
     expect(after?.properties.title).toBe("left by an earlier generation");
     expect(after?.properties.body).toBeUndefined();
   });
@@ -690,8 +690,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // The gate has to admit the only thing a connector legitimately does
     // with this type, or the runtime SDK's activity sink stops working
     // on every run and the failure is invisible until nothing reports.
-    const tenant = await ctx.storage.tenants!.create("activity-own");
-    const mine = await credentialFor(tenant.id, "acme.own");
+    const space = await ctx.storage.spaces!.create("activity-own");
+    const mine = await credentialFor(space.id, "acme.own");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,

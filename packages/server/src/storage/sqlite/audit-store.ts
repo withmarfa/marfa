@@ -25,7 +25,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     id: row.id,
     timestamp: row.timestamp,
     key_id: row.key_id ?? null,
-    tenant_id: row.tenant_id ?? null,
+    space_id: row.space_id ?? null,
     action: row.action,
     resource_type: row.resource_type,
     resource_id: row.resource_id ?? null,
@@ -41,7 +41,7 @@ export class SqliteAuditStore implements AuditStore {
 
   async log(entry: {
     key_id?: string;
-    tenant_id?: string | null;
+    space_id?: string | null;
     action: string;
     resource_type: string;
     resource_id?: string;
@@ -66,7 +66,7 @@ export class SqliteAuditStore implements AuditStore {
           id: generateId(),
           timestamp: new Date().toISOString(),
           key_id: entry.key_id ?? null,
-          tenant_id: entry.tenant_id ?? null,
+          space_id: entry.space_id ?? null,
           action: entry.action,
           resource_type: entry.resource_type,
           resource_id: entry.resource_id ?? null,
@@ -91,7 +91,7 @@ export class SqliteAuditStore implements AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
-    tenant_id?: string | null;
+    space_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>> {
     const limit = Math.max(1, Math.min(filters.limit ?? 50, 200));
     const conditions = [];
@@ -111,12 +111,12 @@ export class SqliteAuditStore implements AuditStore {
     if (filters.until) {
       conditions.push(lte(auditLog.timestamp, filters.until));
     }
-    // Tenant scope: when the caller is tenant-scoped (filter explicitly
-    // set), restrict to rows with matching `tenant_id`. When omitted,
-    // no tenant filter is applied — bootstrap-admin reads on self-hosted,
+    // Space scope: when the caller is space-scoped (filter explicitly
+    // set), restrict to rows with matching `space_id`. When omitted,
+    // no space filter is applied — bootstrap-admin reads on self-hosted,
     // plus the cleanup job which is currently global.
-    if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
-      conditions.push(eq(auditLog.tenant_id, filters.tenant_id));
+    if (filters.space_id !== undefined && filters.space_id !== null) {
+      conditions.push(eq(auditLog.space_id, filters.space_id));
     }
 
     if (filters.cursor) {
@@ -154,22 +154,22 @@ export class SqliteAuditStore implements AuditStore {
 
   async cleanup(
     retentionDays: number,
-    tenantId?: string | null,
+    spaceId?: string | null,
   ): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
     // Three filter shapes (see PgAuditStore.cleanup).
-    const tenantClause =
-      tenantId === undefined
+    const spaceClause =
+      spaceId === undefined
         ? undefined
-        : tenantId === null
-          ? isNull(auditLog.tenant_id)
-          : eq(auditLog.tenant_id, tenantId);
+        : spaceId === null
+          ? isNull(auditLog.space_id)
+          : eq(auditLog.space_id, spaceId);
     const where =
-      tenantClause === undefined
+      spaceClause === undefined
         ? lt(auditLog.timestamp, cutoff)
-        : and(lt(auditLog.timestamp, cutoff), tenantClause);
+        : and(lt(auditLog.timestamp, cutoff), spaceClause);
     const result = await this.db.delete(auditLog).where(where).run();
     return result.rowsAffected;
   }

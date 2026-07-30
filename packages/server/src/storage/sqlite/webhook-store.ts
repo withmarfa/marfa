@@ -14,7 +14,7 @@ import type { DrizzleDb } from "./connection.js";
 function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
   return {
     id: row.id,
-    tenant_id: row.tenant_id ?? undefined,
+    space_id: row.space_id ?? undefined,
     url: row.url,
     secret: row.secret,
     events: safeJsonParse<string[]>(row.events, [], "webhook events"),
@@ -28,11 +28,11 @@ function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
 export class SqliteWebhookStore implements WebhookStore {
   constructor(private db: DrizzleDb) {}
 
-  async create(input: CreateWebhookInput, tenantId?: string): Promise<Webhook> {
+  async create(input: CreateWebhookInput, spaceId?: string): Promise<Webhook> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      tenant_id: tenantId ?? null,
+      space_id: spaceId ?? null,
       url: input.url,
       secret: input.secret ?? randomBytes(32).toString("hex"),
       events: JSON.stringify(input.events),
@@ -45,22 +45,22 @@ export class SqliteWebhookStore implements WebhookStore {
     return rowToWebhook(row);
   }
 
-  async list(tenantId?: string): Promise<Webhook[]> {
+  async list(spaceId?: string): Promise<Webhook[]> {
     const rows =
-      tenantId !== undefined
+      spaceId !== undefined
         ? await this.db
             .select()
             .from(outboundWebhooks)
-            .where(eq(outboundWebhooks.tenant_id, tenantId))
+            .where(eq(outboundWebhooks.space_id, spaceId))
             .all()
         : await this.db.select().from(outboundWebhooks).all();
     return rows.map(rowToWebhook);
   }
 
-  async get(id: string, tenantId?: string): Promise<Webhook | null> {
+  async get(id: string, spaceId?: string): Promise<Webhook | null> {
     const conditions = [eq(outboundWebhooks.id, id)];
-    if (tenantId !== undefined) {
-      conditions.push(eq(outboundWebhooks.tenant_id, tenantId));
+    if (spaceId !== undefined) {
+      conditions.push(eq(outboundWebhooks.space_id, spaceId));
     }
     const row = await this.db
       .select()

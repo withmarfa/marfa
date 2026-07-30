@@ -291,15 +291,15 @@ describe("consumeBatch", () => {
     expect(line).toContain("lease broker returned 500");
   });
 
-  it("acks-and-skips messages whose tenant_id mismatches env.tenantId", async () => {
+  it("acks-and-skips messages whose space_id mismatches env.spaceId", async () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
       return Promise.resolve({ ok: true });
     });
-    const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
-    const matchA = makeMsg(SCHED({ tenant_id: "tenant-A" }));
-    const mismatchB = makeMsg(SCHED({ tenant_id: "tenant-B" }));
+    const env: ConsumerEnvironment = { ...makeEnv(), spaceId: "space-A" };
+    const matchA = makeMsg(SCHED({ space_id: "space-A" }));
+    const mismatchB = makeMsg(SCHED({ space_id: "space-B" }));
     const outcome = await consumeBatch(env, [matchA, mismatchB]);
     expect(outcome.acked).toBe(2);
     expect(outcome.retried).toBe(0);
@@ -308,13 +308,13 @@ describe("consumeBatch", () => {
     expect(mismatchB.acked).toBe(true);
   });
 
-  it("dispatches messages with no tenant_id when env.tenantId is set (single-tenant compat)", async () => {
+  it("dispatches messages with no space_id when env.spaceId is set (single-space compat)", async () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
       return Promise.resolve({ ok: true });
     });
-    const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
+    const env: ConsumerEnvironment = { ...makeEnv(), spaceId: "space-A" };
     const m = makeMsg(SCHED());
     const outcome = await consumeBatch(env, [m]);
     expect(outcome.acked).toBe(1);

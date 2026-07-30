@@ -64,7 +64,7 @@ export interface MarfaAuthOptions {
    *  Default `false` per the orchestrator-confirmed sign-up policy
    *  (`MARFA_AUTH_ALLOW_SIGNUP=false`). Existing users can still sign in. */
   allowSignup: boolean;
-  /** When `true`, a fresh tenant is seeded with a few starter items on
+  /** When `true`, a fresh space is seeded with a few starter items on
    *  sign-up so the space isn't empty on first open. Default off; hosted
    *  deployments enable it. Best-effort — a seed failure never blocks
    *  sign-up. */
@@ -116,7 +116,7 @@ export interface MarfaAuthOptions {
   /** Storage handle threaded into the OAuth Provider plugin's
    *  `clientReference`, `customAccessTokenClaims`, and `hooks.after`
    *  matchers. Needed for the `system.connection` projection of the
-   *  plugin's grant lifecycle and the tenant_id binding on issued tokens. */
+   *  plugin's grant lifecycle and the space_id binding on issued tokens. */
   storage?: Storage;
   /** Per-process API key salt — shared with the bearer middleware so the
    *  plugin's `storeTokens.hash` and the middleware's hash output match,
@@ -471,21 +471,21 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     databaseHooks: {
       user: {
         create: {
-          // Provision the Marfa tenant + users row for every new Better
+          // Provision the Marfa space + users row for every new Better
           // Auth account, regardless of how the account was created: the
           // programmatic `POST /auth/sign-up/email`, the server-rendered
           // `POST /auth/sign-up` form (which forwards to the same
           // endpoint), and federated OIDC first sign-in all converge
-          // here. A tenant is the anchor for every credential and OAuth
+          // here. A space is the anchor for every credential and OAuth
           // grant — it must exist before the user can authenticate, so a
           // single hook on the create lifecycle is the one correct place
-          // for it. Keys-mode self-hosts have no per-user tenant model
-          // (no users/tenants store) and skip this entirely.
+          // for it. Keys-mode self-hosts have no per-user space model
+          // (no users/spaces store) and skip this entirely.
           after: async (user, ctx) => {
             const storage = options.storage;
             const users = storage?.users;
-            const tenants = storage?.tenants;
-            if (!storage || !users || !tenants) return;
+            const spaces = storage?.spaces;
+            if (!storage || !users || !spaces) return;
 
             try {
               // Idempotent: Better Auth's no-enumeration sign-up returns
@@ -511,45 +511,45 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                 !isReservedHandle(submitted)
                   ? submitted
                   : deriveHandleFromEmail(user.email);
-              // Provision the handle claim + tenant + user as the database
-              // owner. These touch RLS-bearing auth/tenant tables and depend
+              // Provision the handle claim + space + user as the database
+              // owner. These touch RLS-bearing auth/space tables and depend
               // on owner-bypass; forcing the owner role for the transaction
               // (transaction-scoped via SET LOCAL ROLE NONE, pooler-safe)
               // guarantees they never run as a stranded `marfa_app` and hit
               // RLS — the failure mode that took hosted sign-up down. On PG
-              // the writes are also atomic (tenant + user commit together).
+              // the writes are also atomic (space + user commit together).
               const provision = async () => {
                 const handle = await claimFreeHandle(users, desired);
-                const tenant = await tenants.create(user.name);
+                const space = await spaces.create(user.name);
                 await users.create({
                   name: user.name,
                   provider: "better-auth",
                   provider_id: user.id,
-                  tenant_id: tenant.id,
+                  space_id: space.id,
                   handle,
                   auth_user_id: user.id,
-                  // Every sign-up provisions a fresh tenant the user solely
+                  // Every sign-up provisions a fresh space the user solely
                   // owns (line above), so the user IS that space's admin —
-                  // stamp tenant_admin rather than the `member` default. This
+                  // stamp space_admin rather than the `member` default. This
                   // lets the owner administer their own space (register types /
                   // edge types, manage keys + connections). Data access for
                   // apps they sign into is still gated by the granted OAuth
                   // scopes (OAuth tokens are `scope_enforced`), so the role is
-                  // the ceiling, not a full-access pass. If a shared-tenant
+                  // the ceiling, not a full-access pass. If a shared-space
                   // membership model lands later, gate this on "first/owning
-                  // user of the tenant".
-                  role: "tenant_admin",
+                  // user of the space".
+                  role: "space_admin",
                 });
-                // The account holder's graph handle rides with the tenant
+                // The account holder's graph handle rides with the space
                 // and the users row rather than following as a separate
                 // step, so a space can never exist without an addressable
                 // owner for an edge to point at. Not best-effort like the
                 // starter content below: a missing handle is a hole in the
                 // data model, not a missing decoration.
-                await ensureAccountHolderItem(storage, tenant.id);
-                return tenant;
+                await ensureAccountHolderItem(storage, space.id);
+                return space;
               };
-              const tenant =
+              const space =
                 storage.betterAuthDialect === "pg" && storage.pgDb
                   ? await withOwnerRole(storage.pgDb as PgDb, provision)
                   : await provision();
@@ -561,12 +561,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               // rather than stranding account creation.
               if (options.seedStarterContent && options.storage) {
                 try {
-                  await seedStarterContent(options.storage, tenant.id);
+                  await seedStarterContent(options.storage, space.id);
                 } catch (seedErr) {
                   void options.storage.audit.log({
                     action: "auth.sign_up.seed_failed",
-                    resource_type: "tenant",
-                    resource_id: tenant.id,
+                    resource_type: "space",
+                    resource_id: space.id,
                     details: {
                       error:
                         seedErr instanceof Error
@@ -578,7 +578,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               }
             } catch (err) {
               // Surface the failure loudly — a signed-up user with no
-              // tenant is the exact stranded state this hook exists to
+              // space is the exact stranded state this hook exists to
               // prevent. Audit the orphan for operator cleanup, then
               // rethrow so the sign-up request fails visibly rather than
               // appearing to succeed.

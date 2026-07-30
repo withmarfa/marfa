@@ -49,7 +49,7 @@ import { isValidTypeIdentifier } from "./validation.js";
  *                      means the UI does not offer manual invocation.
  *
  * Bidirectional handling — declared per-Integration in the manifest, not
- * per-tenant or platform-wide. Defaults match the design's stated defaults.
+ * per-space or platform-wide. Defaults match the design's stated defaults.
  */
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 

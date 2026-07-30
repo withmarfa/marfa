@@ -10,7 +10,7 @@
  *  - `neighbors` hydrates the far-end items of the requested edge blocks, each
  *    with its metadata;
  *  - neighbor hydration is NOT an access-control bypass: a neighbor the
- *    caller cannot read by type, or that lives in another tenant, is silently
+ *    caller cannot read by type, or that lives in another space, is silently
  *    omitted, never leaked;
  *  - `versions` is opt-in.
  */
@@ -27,8 +27,8 @@ import { HYDRATE_PER_TYPE_CAP } from "./_edges-hydrate.js";
 
 let ctx: TestContext;
 
-const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 10)}`;
-const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 10)}`;
+const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
 let adminA: string;
 let adminB: string;
 // Reads core.note only — used to prove a neighbor of an unreadable type is
@@ -37,9 +37,9 @@ let noteReaderA: string;
 
 async function mintKey(
   label: string,
-  tenantId: string,
+  spaceId: string,
   opts: {
-    role?: "tenant_admin" | "member";
+    role?: "space_admin" | "member";
     type_permissions?: Record<string, "read" | "write">;
     edge_permissions?: Record<string, "read" | "write">;
   } = {},
@@ -50,14 +50,14 @@ async function mintKey(
     {
       label,
       source: `${label}-${suffix}`,
-      role: opts.role ?? "tenant_admin",
+      role: opts.role ?? "space_admin",
       default_tier: "library",
       type_permissions: opts.type_permissions ?? { "*": "write" },
       edge_permissions: opts.edge_permissions ?? { "*": "write" },
       is_platform: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -133,9 +133,9 @@ async function detail(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintKey("detail-admin-a", tenantA);
-  adminB = await mintKey("detail-admin-b", tenantB);
-  noteReaderA = await mintKey("detail-note-reader-a", tenantA, {
+  adminA = await mintKey("detail-admin-a", spaceA);
+  adminB = await mintKey("detail-admin-b", spaceB);
+  noteReaderA = await mintKey("detail-note-reader-a", spaceA, {
     role: "member",
     type_permissions: { "core.note": "read" },
     edge_permissions: { "*": "read" },
@@ -234,25 +234,25 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     expect(ids).toEqual([]);
   });
 
-  it("omits a cross-tenant neighbor even when an edge references it", async () => {
+  it("omits a cross-space neighbor even when an edge references it", async () => {
     const parentA = await create(adminA, "core.note", {
-      body: "tenant A root",
+      body: "space A root",
     });
     const itemB = await create(adminB, "core.note", {
-      body: "tenant B secret",
+      body: "space B secret",
     });
-    // Forge an edge in tenant A whose target is a tenant-B item — the raw edge
+    // Forge an edge in space A whose target is a space-B item — the raw edge
     // store bypasses constraint enforcement, simulating a stale / hostile edge.
     await ctx.storage.edges.createRaw(
       { source_id: parentA, target_id: itemB, edge_type: "parent-of" },
-      tenantA,
+      spaceA,
     );
 
     const d = await detail(adminA, parentA, "neighbors");
     const ids = (d.neighbors ?? []).map((n) => n.item.id);
     // The edge is real and shows up in the outbound block...
     expect(d.item.edges?.["parent-of"]?.edges[0]?.target_id).toBe(itemB);
-    // ...but the cross-tenant item is never hydrated into a neighbor.
+    // ...but the cross-space item is never hydrated into a neighbor.
     expect(ids).not.toContain(itemB);
     expect(ids).toEqual([]);
   });

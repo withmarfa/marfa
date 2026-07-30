@@ -303,20 +303,20 @@ describe("log payload serialization", () => {
    * Cycle detection scoped to the whole traversal instead of the current path
    * renders the second and every later appearance of a shared object as
    * `"[circular]"`. Sharing is the normal case in a log payload — the same
-   * tenant on every row, one config object referenced twice — so that failure
+   * space on every row, one config object referenced twice — so that failure
    * mode silently deletes evidence at the log layer, which is the exact way the
    * original root cause stayed hidden.
    */
   describe("repeated but acyclic values", () => {
     it("renders a shared object in full at every position", () => {
-      const tenant = { id: "t_1", name: "Acme" };
+      const space = { id: "t_1", name: "Acme" };
       const entry = captureLog("info", "rows", {
-        rows: [{ tenant }, { tenant }, { tenant }],
+        rows: [{ space }, { space }, { space }],
       });
-      const rows = entry.rows as { tenant: Record<string, unknown> }[];
+      const rows = entry.rows as { space: Record<string, unknown> }[];
       expect(rows).toHaveLength(3);
       for (const row of rows) {
-        expect(row.tenant).toEqual({ id: "t_1", name: "Acme" });
+        expect(row.space).toEqual({ id: "t_1", name: "Acme" });
       }
     });
 

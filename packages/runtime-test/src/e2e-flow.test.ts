@@ -115,7 +115,7 @@ describe("e2e — primary webhook → reactive event → secondary item-event", 
     // bridge: the handler would call into Marfa, the server would
     // publish, the bridge would fan out, and the per-Integration Worker
     // for the secondary would consume the item-event. The e2e test
-    // simulates the bridge — bridge mechanics (parallel fanout, tenant
+    // simulates the bridge — bridge mechanics (parallel fanout, space
     // gate, hop budget) are pinned separately in
     // reactive-run-bridge.test.ts / reactive-run-bridge-registry.test.ts.
     registerWebhookHandler((ctx, input) => {

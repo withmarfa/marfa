@@ -74,7 +74,7 @@ async function installFresh(): Promise<{
 
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
-    tenantId: undefined,
+    spaceId: undefined,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: {
@@ -106,7 +106,7 @@ describe("performUninstall — happy path", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
     });
 
@@ -173,7 +173,7 @@ describe("performUninstall — error paths", () => {
     await expect(
       performUninstall(ctx.storage, {
         apiKeyId: "anything",
-        tenantId: undefined,
+        spaceId: undefined,
         connectionId: "00000000-0000-7000-8000-000000000000",
       }),
     ).rejects.toMatchObject({
@@ -201,7 +201,7 @@ describe("performUninstall — error paths", () => {
     await expect(
       performUninstall(ctx.storage, {
         apiKeyId: "anything",
-        tenantId: undefined,
+        spaceId: undefined,
         connectionId: grant.id,
       }),
     ).rejects.toMatchObject({
@@ -215,14 +215,14 @@ describe("performUninstall — error paths", () => {
 
     await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
     });
 
     await expect(
       performUninstall(ctx.storage, {
         apiKeyId: installed.apiKeyId,
-        tenantId: undefined,
+        spaceId: undefined,
         connectionId: installed.connectionId,
       }),
     ).rejects.toMatchObject({
@@ -270,7 +270,7 @@ describe("performUninstall — partial-state semantics", () => {
 
     const result = await performUninstall(ctx.storage, {
       apiKeyId: installed.apiKeyId,
-      tenantId: undefined,
+      spaceId: undefined,
       connectionId: installed.connectionId,
     });
 

@@ -8,7 +8,7 @@
  *
  *   1. Sets an ordered, described top-level `tags` list (resources first).
  *   2. Strips platform-internal operations (admin, lease-broker plumbing,
- *      server metrics, blob maintenance, by-id tenant quotas). They still
+ *      server metrics, blob maintenance, by-id space quotas). They still
  *      serve — they are simply not part of the public reference.
  *   3. Injects the two consumer routes defined as plain Hono handlers
  *      (the SSE stream and OAuth dynamic client registration), which the
@@ -35,7 +35,7 @@ interface OpenAPIDoc {
  * `/openapi.json`), distinct from the deployed-build `version` reported on
  * `GET /` — bump it on contract changes, not on every deploy. It reached 5.1.0
  * in the docs API-surface rework: the path renames (bulk-actions,
- * tenants/me/config, edge-types, lease-tokens) are breaking, but the API is
+ * spaces/me/config, edge-types, lease-tokens) are breaking, but the API is
  * pre-release and nothing pins the contract version yet, so the change
  * deliberately rode a minor rather than a major.
  *
@@ -57,7 +57,7 @@ const PUBLIC_TAGS = [
   },
   {
     name: "Metadata",
-    description: "An item's metadata document and the tenant's tag vocabulary.",
+    description: "An item's metadata document and the space's tag vocabulary.",
   },
   {
     name: "Edges",
@@ -86,8 +86,8 @@ const PUBLIC_TAGS = [
   { name: "Keys", description: "API key management." },
   { name: "Profile", description: "The calling user's profile." },
   {
-    name: "Tenants",
-    description: "Configuration and quotas for the calling tenant.",
+    name: "Spaces",
+    description: "Configuration and quotas for the calling space.",
   },
   {
     name: "Connections",
@@ -112,8 +112,8 @@ const PUBLIC_TAGS = [
     description:
       "Connection credentials — static API tokens and OAuth providers.",
   },
-  { name: "Export", description: "Bulk export of a tenant's data." },
-  { name: "Audit", description: "The tenant's audit log." },
+  { name: "Export", description: "Bulk export of a space's data." },
+  { name: "Audit", description: "The space's audit log." },
   {
     name: "Events",
     description: "The server-sent events stream of item and edge changes.",
@@ -131,13 +131,13 @@ const PUBLIC_TAGS = [
  * A new internal route adds its operationId here.
  */
 const INTERNAL_OPERATION_IDS = new Set<string>([
-  // admin.ts — platform-admin tenant operations
-  "adminListTenants",
-  "adminGetTenant",
-  "adminSuspendTenant",
-  "adminUnsuspendTenant",
-  "adminGetTenantMetrics",
-  "adminListTenantKeys",
+  // admin.ts — platform-admin space operations
+  "adminListSpaces",
+  "adminGetSpace",
+  "adminSuspendSpace",
+  "adminUnsuspendSpace",
+  "adminGetSpaceMetrics",
+  "adminListSpaceKeys",
   "adminPurgePendingDeletions",
   // admin-archive.ts
   "adminRestoreArchive",
@@ -151,9 +151,9 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
   // blobs.ts — operator maintenance
   "cleanupBlobs",
   "reconcileBlobs",
-  // tenants.ts — platform-admin, by tenant id (self-service /me/quotas stays public)
-  "getTenantQuotas",
-  "updateTenantQuotas",
+  // spaces.ts — platform-admin, by space id (self-service /me/quotas stays public)
+  "getSpaceQuotas",
+  "updateSpaceQuotas",
 ]);
 
 /**
@@ -167,7 +167,7 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Events"],
       summary: "Stream change events",
       description:
-        "Opens a Server-Sent Events stream of item and edge changes for the caller's tenant. Send `Last-Event-ID` to replay events missed across a reconnect.",
+        "Opens a Server-Sent Events stream of item and edge changes for the caller's space. Send `Last-Event-ID` to replay events missed across a reconnect.",
       security: [{ bearerAuth: [] }],
       parameters: [
         {

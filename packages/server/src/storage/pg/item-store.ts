@@ -77,9 +77,9 @@ function isSourceDedupViolation(err: unknown): boolean {
 
 /**
  * Detect a primary-key collision on `items.id`. Happens when a caller
- * supplies an explicit `id` that already exists in ANOTHER tenant — the
- * tenant-scoped pre-checks miss it because the PK is `id` alone, not
- * `(tenant_id, id)`. Surface it as a clean `CONFLICT` (409) instead of an
+ * supplies an explicit `id` that already exists in ANOTHER space — the
+ * space-scoped pre-checks miss it because the PK is `id` alone, not
+ * `(space_id, id)`. Surface it as a clean `CONFLICT` (409) instead of an
  * opaque 500. PG raises `23505` against the items pkey constraint
  * (`items_pkey`); the source-dedup index has its own trap above.
  */
@@ -128,9 +128,9 @@ import { rowToItem } from "./helpers.js";
  * credential can see. Both directions of disagreement have bitten: comparing
  * the patterns as literal identifiers reports zero rows for every
  * wildcard-scoped credential, and ignoring an empty list reports the whole
- * tenant to a credential that may read nothing.
+ * space to a credential that may read nothing.
  *
- * `undefined` in means "no filter" — an admin or tenant_admin, whose tenant
+ * `undefined` in means "no filter" — an admin or space_admin, whose space
  * isolation is enforced separately. An empty array is the opposite: a member
  * credential or an OAuth token whose scopes project into no type permission at
  * all, which must see nothing rather than everything. `undefined` out means "no
@@ -162,12 +162,12 @@ export class PgItemStore implements ItemStore {
     private versionSnapshotIntervalMs = 600_000,
   ) {}
 
-  private tenantWhere(
+  private spaceWhere(
     id: string,
-    tenantId?: string,
+    spaceId?: string,
     includePlatformScoped?: boolean,
   ) {
-    if (!tenantId) return eq(items.id, id);
+    if (!spaceId) return eq(items.id, id);
     if (includePlatformScoped) {
       // Catalog widening — see `ItemGetOptions.includePlatformScoped`.
       // Only the public `get` path threads `true` here; every other
@@ -175,13 +175,13 @@ export class PgItemStore implements ItemStore {
       // fence in place.
       return and(
         eq(items.id, id),
-        or(eq(items.tenant_id, tenantId), isNull(items.tenant_id)),
+        or(eq(items.space_id, spaceId), isNull(items.space_id)),
       );
     }
-    return and(eq(items.id, id), eq(items.tenant_id, tenantId));
+    return and(eq(items.id, id), eq(items.space_id, spaceId));
   }
 
-  async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
+  async create(input: CreateItemInput, spaceId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -192,10 +192,10 @@ export class PgItemStore implements ItemStore {
     // ad-hoc types persist with zero conformance checking — the opposite of a
     // typed data layer's promise. Reject before any write. Custom types are
     // loaded into the registry at startup and on `POST /types`, so a legitimate
-    // custom type resolves here. The registry is tenant-scoped: a custom type
-    // resolves only for its owning tenant, so a tenant cannot create items of
-    // another tenant's custom type — the create gate sees `unknown_type`.
-    const typeSchema = getTypeSchema(input.type, tenantId);
+    // custom type resolves here. The registry is space-scoped: a custom type
+    // resolves only for its owning space, so a space cannot create items of
+    // another space's custom type — the create gate sees `unknown_type`.
+    const typeSchema = getTypeSchema(input.type, spaceId);
     if (!typeSchema) {
       throw new MarfaError(
         ErrorCode.UNKNOWN_TYPE,
@@ -210,7 +210,7 @@ export class PgItemStore implements ItemStore {
     // field — which validation treats as "unset" — drops out before the write
     // rather than landing as a stored null.
     const validation = validateProperties(input.type, input.properties, {
-      tenantId,
+      spaceId,
     });
     if (!validation.success) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
@@ -232,7 +232,7 @@ export class PgItemStore implements ItemStore {
             eq(items.source, input.source),
             eq(items.source_id, input.source_id),
           ];
-          if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
+          if (spaceId) dedupConditions.push(eq(items.space_id, spaceId));
           const [existing] = await tx
             .select({ id: items.id })
             .from(items)
@@ -246,12 +246,12 @@ export class PgItemStore implements ItemStore {
           }
         }
 
-        const schemaVersion = getTypeSchema(input.type, tenantId)?.version ?? 1;
+        const schemaVersion = getTypeSchema(input.type, spaceId)?.version ?? 1;
 
         try {
           await tx.insert(items).values({
             id,
-            tenant_id: tenantId,
+            space_id: spaceId,
             type: input.type,
             state,
             tier: input.tier ?? "library",
@@ -283,7 +283,7 @@ export class PgItemStore implements ItemStore {
           tags: JSON.stringify(input.tags ?? []),
         });
 
-        await this.searchStore.index(id, properties, input.type, tenantId);
+        await this.searchStore.index(id, properties, input.type, spaceId);
 
         return {
           id,
@@ -312,41 +312,41 @@ export class PgItemStore implements ItemStore {
 
   async get(
     id: string,
-    tenantId?: string,
+    spaceId?: string,
     options?: ItemGetOptions,
   ): Promise<Item | null> {
     const [row] = await this.db
       .select()
       .from(items)
-      .where(this.tenantWhere(id, tenantId, options?.includePlatformScoped));
+      .where(this.spaceWhere(id, spaceId, options?.includePlatformScoped));
     if (!row) return null;
     if (row.state === "trashed") return null;
     return rowToItem(row);
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
-  private async getRaw(id: string, tenantId?: string): Promise<Item | null> {
+  private async getRaw(id: string, spaceId?: string): Promise<Item | null> {
     const [row] = await this.db
       .select()
       .from(items)
-      .where(this.tenantWhere(id, tenantId));
+      .where(this.spaceWhere(id, spaceId));
     if (!row) return null;
     return rowToItem(row);
   }
 
-  getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null> {
-    return this.getRaw(id, tenantId);
+  getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null> {
+    return this.getRaw(id, spaceId);
   }
 
   async findBySourceId(
     source: string,
     sourceId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | null> {
     const item = await this.findBySourceIdIncludingTrashed(
       source,
       sourceId,
-      tenantId,
+      spaceId,
     );
     if (item?.state === "trashed") return null;
     return item;
@@ -355,13 +355,13 @@ export class PgItemStore implements ItemStore {
   async findBySourceIdIncludingTrashed(
     source: string,
     sourceId: string,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | null> {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),
     ];
-    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    if (spaceId) conditions.push(eq(items.space_id, spaceId));
     const [row] = await this.db
       .select()
       .from(items)
@@ -370,12 +370,12 @@ export class PgItemStore implements ItemStore {
     return rowToItem(row);
   }
 
-  async getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>> {
+  async getMany(ids: string[], spaceId?: string): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
     const unique = Array.from(new Set(ids));
-    const where = tenantId
-      ? and(inArray(items.id, unique), eq(items.tenant_id, tenantId))
+    const where = spaceId
+      ? and(inArray(items.id, unique), eq(items.space_id, spaceId))
       : inArray(items.id, unique);
     const rows = await this.db.select().from(items).where(where);
     for (const row of rows) {
@@ -400,7 +400,7 @@ export class PgItemStore implements ItemStore {
             sort.field,
             "pg",
             filters.type,
-            filters.tenantId,
+            filters.spaceId,
           )
         : null;
 
@@ -418,7 +418,7 @@ export class PgItemStore implements ItemStore {
       // subtypes here, so the explicit wildcard must too.
       const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
-        filters.tenantId ?? null,
+        filters.spaceId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const typeClause = or(
@@ -430,19 +430,19 @@ export class PgItemStore implements ItemStore {
       }
     }
 
-    if (filters.tenantId) {
+    if (filters.spaceId) {
       // Opt-in widening for catalog list endpoints — see
       // `ItemFilters.includePlatformScoped` for why platform-scoped
-      // (tenant_id IS NULL) rows surface to tenant callers in this
+      // (space_id IS NULL) rows surface to space callers in this
       // narrow case. Default keeps the strict equality fence.
       if (filters.includePlatformScoped) {
-        const tenantClause = or(
-          eq(items.tenant_id, filters.tenantId),
-          isNull(items.tenant_id),
+        const spaceClause = or(
+          eq(items.space_id, filters.spaceId),
+          isNull(items.space_id),
         );
-        if (tenantClause) conditions.push(tenantClause);
+        if (spaceClause) conditions.push(spaceClause);
       } else {
-        conditions.push(eq(items.tenant_id, filters.tenantId));
+        conditions.push(eq(items.space_id, filters.spaceId));
       }
     }
     if (filters.source) conditions.push(eq(items.source, filters.source));
@@ -487,7 +487,7 @@ export class PgItemStore implements ItemStore {
       filters.source_filter,
       items.type,
       items.source,
-      filters.tenantId ?? null,
+      filters.spaceId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 
@@ -497,7 +497,7 @@ export class PgItemStore implements ItemStore {
         expr,
         "pg",
         items,
-        filters.tenantId,
+        filters.spaceId,
       );
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
@@ -606,7 +606,7 @@ export class PgItemStore implements ItemStore {
   async update(
     id: string,
     input: UpdateItemInput,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item | ConflictResponse> {
     return await this.db.transaction(async (tx) => {
       // Same tx-context propagation as create() — searchStore.{index,remove}
@@ -615,7 +615,7 @@ export class PgItemStore implements ItemStore {
         const [row] = await tx
           .select()
           .from(items)
-          .where(this.tenantWhere(id, tenantId));
+          .where(this.spaceWhere(id, spaceId));
         if (!row) {
           throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
         }
@@ -637,7 +637,7 @@ export class PgItemStore implements ItemStore {
         // values with null. Required-field nulls are preserved.
         const incomingProps =
           input.properties !== undefined
-            ? coerceNullProperties(row.type, input.properties, tenantId)
+            ? coerceNullProperties(row.type, input.properties, spaceId)
             : undefined;
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
@@ -684,7 +684,7 @@ export class PgItemStore implements ItemStore {
             await tx
               .update(items)
               .set(setClause)
-              .where(this.tenantWhere(id, tenantId));
+              .where(this.spaceWhere(id, spaceId));
           } catch (err) {
             if (isSourceDedupViolation(err)) {
               throw new MarfaError(
@@ -697,7 +697,7 @@ export class PgItemStore implements ItemStore {
           }
 
           await this.searchStore.remove(id);
-          await this.searchStore.index(id, merged, row.type, tenantId);
+          await this.searchStore.index(id, merged, row.type, spaceId);
 
           return rowToItem({
             ...row,
@@ -724,7 +724,7 @@ export class PgItemStore implements ItemStore {
             ancestor: { version: input.version, properties: {} },
             conflicting_fields: Object.keys(incomingProps ?? {}),
             merge_policy: resolveMergePolicy(row.type, (id) =>
-              getTypeSchema(id, tenantId),
+              getTypeSchema(id, spaceId),
             ),
           } satisfies ConflictResponse;
         }
@@ -745,7 +745,7 @@ export class PgItemStore implements ItemStore {
             },
             conflicting_fields: result.conflicting_fields,
             merge_policy: resolveMergePolicy(row.type, (id) =>
-              getTypeSchema(id, tenantId),
+              getTypeSchema(id, spaceId),
             ),
           } satisfies ConflictResponse;
         }
@@ -788,7 +788,7 @@ export class PgItemStore implements ItemStore {
           await tx
             .update(items)
             .set(mergeSet)
-            .where(this.tenantWhere(id, tenantId));
+            .where(this.spaceWhere(id, spaceId));
         } catch (err) {
           if (isSourceDedupViolation(err)) {
             throw new MarfaError(
@@ -801,7 +801,7 @@ export class PgItemStore implements ItemStore {
         }
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(id, result.merged, row.type, tenantId);
+        await this.searchStore.index(id, result.merged, row.type, spaceId);
 
         return rowToItem({
           ...row,
@@ -817,8 +817,8 @@ export class PgItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string, tenantId?: string): Promise<void> {
-    const row = await this.getRaw(id, tenantId);
+  async delete(id: string, spaceId?: string): Promise<void> {
+    const row = await this.getRaw(id, spaceId);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -842,13 +842,13 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state: target, updated_at: new Date().toISOString() })
-      .where(this.tenantWhere(id, tenantId));
+      .where(this.spaceWhere(id, spaceId));
 
     await this.searchStore.remove(id);
   }
 
-  async purge(id: string, tenantId?: string): Promise<void> {
-    const row = await this.getRaw(id, tenantId);
+  async purge(id: string, spaceId?: string): Promise<void> {
+    const row = await this.getRaw(id, spaceId);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -865,15 +865,15 @@ export class PgItemStore implements ItemStore {
     }
 
     // metadata and versions cascade; search index must be removed explicitly.
-    await this.db.delete(items).where(this.tenantWhere(id, tenantId));
+    await this.db.delete(items).where(this.spaceWhere(id, spaceId));
     await this.searchStore.remove(id);
   }
 
-  async bulkPurge(ids: string[], tenantId?: string): Promise<number> {
+  async bulkPurge(ids: string[], spaceId?: string): Promise<number> {
     if (ids.length === 0) return 0;
     const unique = Array.from(new Set(ids));
     const conditions = [inArray(items.id, unique)];
-    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    if (spaceId) conditions.push(eq(items.space_id, spaceId));
     const scopedWhere = and(...conditions);
 
     return await this.db.transaction(async (tx) => {
@@ -892,17 +892,17 @@ export class PgItemStore implements ItemStore {
 
   async purgeTrashedOlderThan(
     beforeDate: string,
-    tenantId?: string | null,
+    spaceId?: string | null,
   ): Promise<number> {
     const baseConditions = [
       eq(items.state, "trashed"),
       lt(items.updated_at, beforeDate),
     ];
-    // tenantId === null filters to rows where tenant_id IS NULL.
-    if (tenantId === null) {
-      baseConditions.push(isNull(items.tenant_id));
-    } else if (tenantId !== undefined) {
-      baseConditions.push(eq(items.tenant_id, tenantId));
+    // spaceId === null filters to rows where space_id IS NULL.
+    if (spaceId === null) {
+      baseConditions.push(isNull(items.space_id));
+    } else if (spaceId !== undefined) {
+      baseConditions.push(eq(items.space_id, spaceId));
     }
     const where = and(...baseConditions);
 
@@ -914,8 +914,8 @@ export class PgItemStore implements ItemStore {
       // Edges carry no FK to items, so nothing else ever collects them —
       // without this the background sweep leaves a dangling edge row for
       // every relationship a purged item had. Deleted by id membership
-      // rather than by tenant: `ids` is already tenant-resolved above, and
-      // an edge pointing at a purged item is garbage whatever its tenant
+      // rather than by space: `ids` is already space-resolved above, and
+      // an edge pointing at a purged item is garbage whatever its space
       // stamp. Same statement shape as the bulk-action purge worker.
       await tx.delete(edges).where(inArray(edges.source_id, ids));
       await tx.delete(edges).where(inArray(edges.target_id, ids));
@@ -925,8 +925,8 @@ export class PgItemStore implements ItemStore {
     });
   }
 
-  async restore(id: string, tenantId?: string): Promise<Item> {
-    const row = await this.getRaw(id, tenantId);
+  async restore(id: string, spaceId?: string): Promise<Item> {
+    const row = await this.getRaw(id, spaceId);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -938,9 +938,9 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state: "active", updated_at: now })
-      .where(this.tenantWhere(id, tenantId));
+      .where(this.spaceWhere(id, spaceId));
 
-    await this.searchStore.index(id, row.properties, row.type, tenantId);
+    await this.searchStore.index(id, row.properties, row.type, spaceId);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -948,9 +948,9 @@ export class PgItemStore implements ItemStore {
   async transition(
     id: string,
     state: ItemState,
-    tenantId?: string,
+    spaceId?: string,
   ): Promise<Item> {
-    const row = await this.getRaw(id, tenantId);
+    const row = await this.getRaw(id, spaceId);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -972,25 +972,25 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state, updated_at: now })
-      .where(this.tenantWhere(id, tenantId));
+      .where(this.spaceWhere(id, spaceId));
 
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      await this.searchStore.index(id, row.properties, row.type, tenantId);
+      await this.searchStore.index(id, row.properties, row.type, spaceId);
     }
 
     return { ...row, state, updated_at: now };
   }
 
   async stats(
-    tenantId?: string,
+    spaceId?: string,
     allowedTypes?: string[],
     sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>> {
     const conditions = [];
-    if (tenantId) {
-      conditions.push(eq(items.tenant_id, tenantId));
+    if (spaceId) {
+      conditions.push(eq(items.space_id, spaceId));
     }
     const typeClause = allowedTypesCondition(allowedTypes);
     if (typeClause) conditions.push(typeClause);
@@ -1000,7 +1000,7 @@ export class PgItemStore implements ItemStore {
       sourceFilter,
       items.type,
       items.source,
-      tenantId ?? null,
+      spaceId ?? null,
     );
     if (sourceLever) conditions.push(sourceLever);
 

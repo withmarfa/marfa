@@ -3,7 +3,7 @@
  *
  * They could not. Pause was built as a direct `items.transition`, so it hit
  * the reserved-namespace rule and returned `403 type_not_permitted` naming
- * a namespace the user never asked to write. The rule is right — tenant
+ * a namespace the user never asked to write. The rule is right — space
  * credentials must not write `system.*` directly — and the mistake was
  * building pause as a direct write when uninstall already did the same
  * class of write through a mediated route and worked.
@@ -17,7 +17,7 @@
  * does not exist for the type. Pause lives on `runtime_status`, which has a
  * `paused` member for the purpose.
  *
- * These tests prove it by permission, with a real non-platform tenant key,
+ * These tests prove it by permission, with a real non-platform space key,
  * rather than by mocking the gate — the gate is the thing under test.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -58,24 +58,19 @@ function manifest(name: string): IntegrationManifest {
   };
 }
 
-/** A tenant-admin key with no platform flag: the shape a space owner holds. */
-async function ownerKey(tenantId: string): Promise<string> {
+/** A space-admin key with no platform flag: the shape a space owner holds. */
+async function ownerKey(spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
-  const res = await request(
-    ctx.app,
-    "POST",
-    `/admin/tenants/${tenantId}/keys`,
-    {
-      key: ctx.adminKey,
-      body: {
-        label: `owner-${suffix}`,
-        source: `owner-${suffix}`,
-        role: "tenant_admin",
-        default_tier: "library",
-        type_permissions: { "*": "write" },
-      },
+  const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
+    key: ctx.adminKey,
+    body: {
+      label: `owner-${suffix}`,
+      source: `owner-${suffix}`,
+      role: "space_admin",
+      default_tier: "library",
+      type_permissions: { "*": "write" },
     },
-  );
+  });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { key: string; is_platform?: boolean };
   // The premise of the test: this key must NOT be a platform credential,
@@ -85,7 +80,7 @@ async function ownerKey(tenantId: string): Promise<string> {
 }
 
 /** An installed, active integration connection in the given space. */
-async function connectionIn(tenantId: string): Promise<string> {
+async function connectionIn(spaceId: string): Promise<string> {
   const name = `acme.pause-${Math.random().toString(36).slice(2, 10)}`;
   const integration = await ctx.storage.items.create(
     {
@@ -111,23 +106,23 @@ async function connectionIn(tenantId: string): Promise<string> {
         integration_ref: integration.id,
       },
     },
-    tenantId,
+    spaceId,
   );
   return connection.id;
 }
 
 describe("pause and resume are reachable by the connection's owner", () => {
-  let tenantId: string;
+  let spaceId: string;
   let key: string;
 
   beforeAll(async () => {
-    const tenant = await ctx.storage.tenants!.create("pause-owner");
-    tenantId = tenant.id;
-    key = await ownerKey(tenantId);
+    const space = await ctx.storage.spaces!.create("pause-owner");
+    spaceId = space.id;
+    key = await ownerKey(spaceId);
   });
 
-  it("REGRESSION: an ordinary tenant key pauses, then resumes, its own connection", async () => {
-    const id = await connectionIn(tenantId);
+  it("REGRESSION: an ordinary space key pauses, then resumes, its own connection", async () => {
+    const id = await connectionIn(spaceId);
 
     const paused = await request(ctx.app, "POST", `/connections/${id}/pause`, {
       key,
@@ -137,7 +132,7 @@ describe("pause and resume are reachable by the connection's owner", () => {
       ((await paused.json()) as { runtime_status: string }).runtime_status,
     ).toBe("paused");
 
-    const afterPause = await ctx.storage.items.get(id, tenantId);
+    const afterPause = await ctx.storage.items.get(id, spaceId);
     expect(afterPause?.properties.runtime_status).toBe("paused");
     // The lifecycle is untouched: pause is not a soft uninstall, and the
     // credentials and grant survive so resume needs no re-consent.
@@ -152,7 +147,7 @@ describe("pause and resume are reachable by the connection's owner", () => {
       },
     );
     expect(resumed.status).toBe(200);
-    const afterResume = await ctx.storage.items.get(id, tenantId);
+    const afterResume = await ctx.storage.items.get(id, spaceId);
     expect(afterResume?.properties.runtime_status).toBe("healthy");
   });
 
@@ -171,7 +166,7 @@ describe("pause and resume are reachable by the connection's owner", () => {
   });
 
   it("refuses to pause a connection in another space", async () => {
-    const other = await ctx.storage.tenants!.create("pause-other");
+    const other = await ctx.storage.spaces!.create("pause-other");
     const theirs = await connectionIn(other.id);
     const res = await request(ctx.app, "POST", `/connections/${theirs}/pause`, {
       key,
@@ -182,7 +177,7 @@ describe("pause and resume are reachable by the connection's owner", () => {
   });
 
   it("refuses to pause twice, and to resume something running", async () => {
-    const id = await connectionIn(tenantId);
+    const id = await connectionIn(spaceId);
     expect(
       (await request(ctx.app, "POST", `/connections/${id}/pause`, { key }))
         .status,
@@ -202,8 +197,8 @@ describe("pause and resume are reachable by the connection's owner", () => {
   });
 
   it("refuses to pause a revoked connection", async () => {
-    const id = await connectionIn(tenantId);
-    await ctx.storage.items.transition(id, "revoked", tenantId);
+    const id = await connectionIn(spaceId);
+    await ctx.storage.items.transition(id, "revoked", spaceId);
     const res = await request(ctx.app, "POST", `/connections/${id}/pause`, {
       key,
     });
@@ -211,12 +206,12 @@ describe("pause and resume are reachable by the connection's owner", () => {
   });
 
   it("records the pause as activity the owner can see", async () => {
-    const id = await connectionIn(tenantId);
+    const id = await connectionIn(spaceId);
     const res = await request(ctx.app, "POST", `/connections/${id}/pause`, {
       key,
     });
     const body = (await res.json()) as { activity_id: string };
-    const activity = await ctx.storage.items.get(body.activity_id, tenantId);
+    const activity = await ctx.storage.items.get(body.activity_id, spaceId);
     expect(activity?.type).toBe("system.activity");
     expect(activity?.properties.connection_id).toBe(id);
     expect(String(activity?.properties.summary)).toMatch(/^Paused connection /);

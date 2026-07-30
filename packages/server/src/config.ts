@@ -97,10 +97,10 @@ export interface AppConfig {
   rateLimitEnabled: boolean;
   enableHsts: boolean;
   /**
-   * When `true`, wraps each tenant-bounded Postgres request in a
+   * When `true`, wraps each space-bounded Postgres request in a
    * transaction with `SET LOCAL ROLE marfa_app` and
-   * `SET LOCAL marfa.tenant_id = '<id>'` so RLS policies enforce
-   * tenant isolation at the DB layer (defense-in-depth beneath the
+   * `SET LOCAL marfa.space_id = '<id>'` so RLS policies enforce
+   * space isolation at the DB layer (defense-in-depth beneath the
    * application-layer scoping). Defaults to `true`. See
    * `packages/server/CLAUDE.md` under "Postgres RLS".
    *
@@ -216,7 +216,7 @@ export interface AppConfig {
    *  Default `false` — single-user self-hosted instances enable this
    *  only for the initial admin account. */
   authAllowSignup: boolean;
-  /** When `true`, a fresh sign-up's tenant is seeded with a few starter
+  /** When `true`, a fresh sign-up's space is seeded with a few starter
    *  items (a welcome note, a docs bookmark, a first task, one connecting
    *  edge) so the space isn't empty on first open. Default `false`: self-host
    *  and conformance get empty spaces; hosted deployments flip it on. */
@@ -256,9 +256,9 @@ export interface AppConfig {
    *  API-contract version. */
   versionSha?: string;
   /**
-   * Default per-tenant quota ceilings. NULL = unlimited (no enforcement).
+   * Default per-space quota ceilings. NULL = unlimited (no enforcement).
    * Each is read from a corresponding env var (`MARFA_DEFAULT_QUOTA_*`);
-   * per-tenant overrides via `tenant_quotas` rows take precedence.
+   * per-space overrides via `space_quotas` rows take precedence.
    * Optional on the type so existing test contexts continue to compile.
    */
   defaultQuotaItems?: number | null;
@@ -427,7 +427,7 @@ export function parseOtelSampleRatio(raw: string | undefined): number {
 /**
  * Parses the OTLP exporter headers env var (`OTEL_EXPORTER_OTLP_HEADERS`),
  * a comma-separated list of `key=value` pairs per the OTLP exporter spec
- * (e.g. `Authorization=Bearer abc123,X-Tenant=acme`). Whitespace around
+ * (e.g. `Authorization=Bearer abc123,X-Space=acme`). Whitespace around
  * keys/values is trimmed; the value may itself contain `=` (split on the
  * first only). Malformed entries are skipped. Exported for unit testing.
  */
@@ -584,7 +584,7 @@ export function loadConfig(): AppConfig {
     // client when the direct endpoint is missing is a silent downgrade from
     // "isolated" to "leaks across the whole instance", so refuse to start
     // instead. Disabling streaming RLS as the fallback would be no better: that
-    // trades a visible outage for an invisible loss of tenant isolation.
+    // trades a visible outage for an invisible loss of space isolation.
     if (databaseUrlDirect === "") {
       throw new Error(
         "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +

@@ -41,19 +41,19 @@ export enum ErrorCode {
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
   /**
-   * Per-tenant resource cap exceeded. Body details carry the resource
+   * Per-space resource cap exceeded. Body details carry the resource
    * (`items` | `webhooks` | `blobs` | `storage_bytes` | `rate_per_minute`),
    * the configured limit, and the current count before the request was
-   * rejected — operators wire alerts off the shape so a tenant approaching
+   * rejected — operators wire alerts off the shape so a space approaching
    * their cap can be flagged early.
    */
   QUOTA_EXCEEDED = "quota_exceeded",
   /**
-   * Tenant operator has suspended this tenant. The auth middleware rejects
+   * Platform operator has suspended this space. The auth middleware rejects
    * every non-GET request with this code; reads pass through. Platform-admin
-   * keys bypass the gate so operators can inspect a suspended tenant.
+   * keys bypass the gate so operators can inspect a suspended space.
    */
-  TENANT_SUSPENDED = "tenant_suspended",
+  SPACE_SUSPENDED = "space_suspended",
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
@@ -301,7 +301,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.QUOTA_EXCEEDED]: 429,
-  [ErrorCode.TENANT_SUSPENDED]: 403,
+  [ErrorCode.SPACE_SUSPENDED]: 403,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,

@@ -30,8 +30,8 @@ export class SqliteAccountLifecycleStore implements AccountLifecycleStore {
         .where(
           and(
             isNull(apiKeys.revoked_at),
-            sql`${apiKeys.tenant_id} IN (
-              SELECT ${users.tenant_id} FROM ${users}
+            sql`${apiKeys.space_id} IN (
+              SELECT ${users.space_id} FROM ${users}
               WHERE ${users.auth_user_id} = ${authUserId}
             )`,
           ),

@@ -136,15 +136,15 @@ export class PgOAuthStore implements OAuthStore {
    */
   async updateLastUsedAt(
     connectionItemId: string,
-    tenantId: string | null,
+    spaceId: string | null,
     thresholdMs: number,
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
-    const tenantPredicate =
-      tenantId === null
-        ? sql`${items.tenant_id} IS NULL`
-        : sql`${items.tenant_id} = ${tenantId}`;
+    const spacePredicate =
+      spaceId === null
+        ? sql`${items.space_id} IS NULL`
+        : sql`${items.space_id} = ${spaceId}`;
     await this.db
       .update(items)
       .set({
@@ -153,7 +153,7 @@ export class PgOAuthStore implements OAuthStore {
       .where(
         and(
           eq(items.id, connectionItemId),
-          tenantPredicate,
+          spacePredicate,
           sql`(${items.properties}::jsonb->>'last_used_at' IS NULL OR (${items.properties}::jsonb->>'last_used_at') < ${cutoffIso})`,
         ),
       );

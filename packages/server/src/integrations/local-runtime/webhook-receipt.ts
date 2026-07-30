@@ -106,7 +106,7 @@ export function registerWebhookReceiptRoute(
 
     const subscriptions = await storage.inboundWebhooks.listByConnection(
       connectionId,
-      connection.tenant_id ?? undefined,
+      connection.space_id ?? undefined,
     );
     if (subscriptions.length === 0) {
       return c.json(
@@ -186,7 +186,7 @@ export function registerWebhookReceiptRoute(
       kind: "webhook",
       integration_name: integrationName,
       connection_id: connectionId,
-      ...(connection.tenant_id ? { tenant_id: connection.tenant_id } : {}),
+      ...(connection.space_id ? { space_id: connection.space_id } : {}),
       delivery_id: matched.deliveryId,
       headers: headerMap,
       body_base64: bodyBase64,

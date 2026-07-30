@@ -83,7 +83,7 @@ async function installFresh(): Promise<{
 
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
-    tenantId: undefined,
+    spaceId: undefined,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifest(integrationName),
@@ -273,13 +273,13 @@ describe("POST /connections/install — error mapping", () => {
   });
 });
 
-describe("POST /connections/install — platform-scoped manifest, tenant_admin caller", () => {
+describe("POST /connections/install — platform-scoped manifest, space_admin caller", () => {
   // Without `includePlatformScoped`, manifests registered by a platform credential are invisible to
-  // tenant_admin callers (tenant_id IS NULL rows don't match). Pin success + tenant-stamping invariant.
-  it("tenant_admin can install a platform-scoped manifest; resulting connection lands in caller tenant", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenant = await ctx.storage.tenants.create("t234-conn-install");
-    const integration = await createIntegration(); // tenant_id: null
+  // space_admin callers (space_id IS NULL rows don't match). Pin success + space-stamping invariant.
+  it("space_admin can install a platform-scoped manifest; resulting connection lands in caller space", async () => {
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-conn-install");
+    const integration = await createIntegration(); // space_id: null
 
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_test_tadmin_${suffix}`;
@@ -288,12 +288,12 @@ describe("POST /connections/install — platform-scoped manifest, tenant_admin c
       {
         label: `t234-tadmin-${suffix}`,
         source: `t234-tadmin-${suffix}`,
-        role: "tenant_admin",
+        role: "space_admin",
         default_tier: "library",
         is_platform: false,
       },
       hash,
-      tenant.id,
+      space.id,
     );
 
     const res = await request(ctx.app, "POST", "/connections/install", {
@@ -303,9 +303,9 @@ describe("POST /connections/install — platform-scoped manifest, tenant_admin c
     expect(res.status).toBe(201);
     const body = (await res.json()) as InstallResponse;
 
-    const conn = await ctx.storage.items.get(body.connection_id, tenant.id);
+    const conn = await ctx.storage.items.get(body.connection_id, space.id);
     expect(conn?.type).toBe("system.connection");
-    expect(conn?.tenant_id).toBe(tenant.id);
+    expect(conn?.space_id).toBe(space.id);
     const props = conn?.properties as { integration_ref?: string };
     expect(props.integration_ref).toBe(integration.id);
   });
@@ -447,8 +447,8 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
 // `POST /connections/preview-event` — render bridge envelopes for a
 // synthetic event without dispatch. Auth gate, the four `dispatch_reason`s
 // the route surfaces, and the unfiltered walk's silence on non-subscribers.
-// Cross-tenant gating is exercised by the bridge's own tests; the preview
-// route's single-tenant tests don't recreate that fixture.
+// Cross-space gating is exercised by the bridge's own tests; the preview
+// route's single-space tests don't recreate that fixture.
 // ---------------------------------------------------------------------------
 
 interface PreviewBody {
@@ -459,7 +459,7 @@ interface PreviewBody {
     dispatch_reason:
       | "ok"
       | "self_event"
-      | "cross_tenant"
+      | "cross_space"
       | "hop_budget_exceeded"
       | "subscription_inactive";
     envelope?: {
@@ -526,7 +526,7 @@ async function installItemEventConnection(): Promise<{
   );
   const result = await performInstall(ctx.storage, "test-salt", {
     apiKeyId: adminKey.id,
-    tenantId: undefined,
+    spaceId: undefined,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifestWithItemEventTrigger(integrationName),

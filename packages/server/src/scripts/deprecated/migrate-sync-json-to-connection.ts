@@ -91,7 +91,7 @@ export function defaultPaths(): MigrationPaths {
 export async function migrateSyncJsonToConnection(
   storage: Storage,
   paths: MigrationPaths = defaultPaths(),
-  tenantId?: string,
+  spaceId?: string,
 ): Promise<SyncMigrationReport> {
   if (existsSync(paths.sync_connection_path)) {
     return { status: "already_migrated" };
@@ -120,7 +120,7 @@ export async function migrateSyncJsonToConnection(
     };
   }
 
-  const integrationId = await ensureIntegrationItem(storage, tenantId);
+  const integrationId = await ensureIntegrationItem(storage, spaceId);
 
   const secret_encrypted = encryptSecret(
     parsed.key,
@@ -135,7 +135,7 @@ export async function migrateSyncJsonToConnection(
         secret_encrypted,
       },
     },
-    tenantId,
+    spaceId,
   );
 
   const configuration: Record<string, unknown> = {};
@@ -159,7 +159,7 @@ export async function migrateSyncJsonToConnection(
         configuration,
       },
     },
-    tenantId,
+    spaceId,
   );
 
   const pointer: SyncConnectionPointer = {
@@ -180,7 +180,7 @@ export async function migrateSyncJsonToConnection(
 
 async function ensureIntegrationItem(
   storage: Storage,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): Promise<string> {
   // Check existence by manifest_name + manifest_version.
   const filter = `properties.manifest_name eq "${SYNC_MANIFEST.name}" AND properties.manifest_version eq "${SYNC_MANIFEST.version}"`;
@@ -188,7 +188,7 @@ async function ensureIntegrationItem(
     type: "system.integration",
     limit: 1,
     filter,
-    tenantId,
+    spaceId,
   });
   const existing = page.data[0];
   if (existing !== undefined) return existing.id;
@@ -207,7 +207,7 @@ async function ensureIntegrationItem(
         registered_at: new Date().toISOString(),
       },
     },
-    tenantId,
+    spaceId,
   );
   return created.id;
 }

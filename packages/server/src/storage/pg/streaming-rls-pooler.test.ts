@@ -4,7 +4,7 @@
  * not own.
  *
  * `streaming-rls.test.ts` asserts state on the *reserved* connection — that
- * prepared statements survive release, and that the role and tenant GUC are
+ * prepared statements survive release, and that the role and space GUC are
  * cleared on the way out. Both hold on a direct endpoint and neither can see a
  * role stranded on a *sibling* backend, so they pass cleanly while the app pool
  * is being poisoned underneath them.
@@ -41,7 +41,7 @@ const pooledUrl = process.env.MARFA_TEST_PGBOUNCER_URL ?? "";
 const directUrl = process.env.MARFA_TEST_PGBOUNCER_DIRECT_URL ?? "";
 const enabled = pooledUrl !== "" && directUrl !== "";
 
-const TENANT_ID = "streaming-rls-pooler-test";
+const SPACE_ID = "streaming-rls-pooler-test";
 
 /** Single-connection client on the unpooled endpoint, for fixture DDL. */
 const adminClient = (): ReturnType<typeof postgres> =>
@@ -152,7 +152,7 @@ describe.skipIf(!enabled)(
         expect(new Set(await readAuthSessionAsOwner(appPool, 10))).toEqual(
           new Set(["ok"]),
         );
-        const ctx = await acquireStreamRls(streamPool, TENANT_ID);
+        const ctx = await acquireStreamRls(streamPool, SPACE_ID);
         try {
           const during = await readAuthSessionAsOwner(appPool, 20);
           // 42501 is `permission denied`: the owner's read landed on a backend
@@ -180,7 +180,7 @@ describe.skipIf(!enabled)(
         const before = await readAuthSessionAsOwner(conn.client, 10);
         expect(new Set(before)).toEqual(new Set(["ok"]));
 
-        const ctx = await acquireStreamRls(conn.streamClient, TENANT_ID);
+        const ctx = await acquireStreamRls(conn.streamClient, SPACE_ID);
         try {
           // The assertion the reserved-connection tests structurally cannot make:
           // the stream is live, and the app pool is unaffected by it.

@@ -11,7 +11,7 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  *   - `originatingConnectionId` is set when the chain was kicked off by
  *     a connector (not a human). It propagates verbatim down the chain.
  *   - `hopCount` increments on each reactive publish; pubsub.publish()
- *     drops events whose hop_count would exceed the tenant's
+ *     drops events whose hop_count would exceed the space's
  *     `max_event_hop_budget` (default 5).
  *
  * Events originating from a human caller MUST resolve to
@@ -75,13 +75,13 @@ export interface ItemEvent extends CycleMetadata {
     | "metadata_changed";
   item: Item;
   metadata?: Metadata;
-  tenantId?: string;
+  spaceId?: string;
 }
 
 export interface EdgeEvent extends CycleMetadata {
   type: "edge_created" | "edge_deleted";
   edge: Edge;
-  tenantId?: string;
+  spaceId?: string;
 }
 
 export type PubsubEvent = ItemEvent | EdgeEvent;
@@ -118,11 +118,11 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
 
-/** Default hop budget when the tenant has no override configured. */
+/** Default hop budget when the space has no override configured. */
 export const DEFAULT_HOP_BUDGET = 5;
 
 let eventLogStore: EventLogStore | null = null;
-let getHopBudget: (tenantId: string | undefined) => Promise<number> = () =>
+let getHopBudget: (spaceId: string | undefined) => Promise<number> = () =>
   Promise.resolve(DEFAULT_HOP_BUDGET);
 let onHopOverflow:
   | ((event: PubsubEvent, budget: number) => Promise<void>)
@@ -130,10 +130,10 @@ let onHopOverflow:
 
 export interface InitEventLogOptions {
   /**
-   * Resolve the per-tenant hop budget. Defaults to `DEFAULT_HOP_BUDGET`.
-   * Hosted-mode wiring reads `tenants.getConfig(...).max_event_hop_budget`.
+   * Resolve the per-space hop budget. Defaults to `DEFAULT_HOP_BUDGET`.
+   * Hosted-mode wiring reads `spaces.getConfig(...).max_event_hop_budget`.
    */
-  getHopBudget?: (tenantId: string | undefined) => Promise<number>;
+  getHopBudget?: (spaceId: string | undefined) => Promise<number>;
   /**
    * Hook fired when an event is dropped due to hop overflow. The default
    * (when unset) is a no-op; the server's bootstrap installs a hook that
@@ -181,12 +181,12 @@ export function nextHopMetadata(
 }
 
 /**
- * TTL for the per-tenant hop-budget cache. The publish path hits this
+ * TTL for the per-space hop-budget cache. The publish path hits this
  * lookup on every reactive (hopCount > 0) event; without caching, every
- * such publish triggers a `storage.tenants.getConfig` round-trip which
+ * such publish triggers a `storage.spaces.getConfig` round-trip which
  * is a real DB hit on hosted Postgres. 30s is the trade-off: long enough
  * to absorb burst traffic at near-zero cost; short enough that an
- * operator's `PUT /tenants/me/config` change to `max_event_hop_budget`
+ * operator's `PUT /spaces/me/config` change to `max_event_hop_budget`
  * propagates within a window the operator can tolerate.
  */
 const HOP_BUDGET_TTL_MS = 30_000;
@@ -196,39 +196,39 @@ const HOP_BUDGET_TTL_MS = 30_000;
  * server's bootstrap calls this; tests can opt in or pass their own
  * stubs.
  *
- * The `getHopBudget` resolver is wrapped in a per-tenant TTL cache so
+ * The `getHopBudget` resolver is wrapped in a per-space TTL cache so
  * the publish hot path doesn't hit storage on every reactive event.
  */
 export function defaultCycleDetectionWiring(
   storage: Storage,
 ): InitEventLogOptions {
-  // Per-tenant budget cache. Sized by tenant count, expires per-entry on
+  // Per-space budget cache. Sized by space count, expires per-entry on
   // first access past `HOP_BUDGET_TTL_MS`.
   const budgetCache = new Map<string, { value: number; expiresAt: number }>();
 
-  const lookupBudget = async (tenantId: string): Promise<number> => {
+  const lookupBudget = async (spaceId: string): Promise<number> => {
     const now = Date.now();
-    const cached = budgetCache.get(tenantId);
+    const cached = budgetCache.get(spaceId);
     if (cached && cached.expiresAt > now) return cached.value;
-    if (!storage.tenants) return DEFAULT_HOP_BUDGET;
-    const cfg = await storage.tenants.getConfig(tenantId);
+    if (!storage.spaces) return DEFAULT_HOP_BUDGET;
+    const cfg = await storage.spaces.getConfig(spaceId);
     const value = cfg?.max_event_hop_budget ?? DEFAULT_HOP_BUDGET;
-    budgetCache.set(tenantId, { value, expiresAt: now + HOP_BUDGET_TTL_MS });
+    budgetCache.set(spaceId, { value, expiresAt: now + HOP_BUDGET_TTL_MS });
     return value;
   };
 
   return {
-    getHopBudget: async (tenantId) => {
-      // No tenant scope (keys-mode self-host) → constant default; skip
+    getHopBudget: async (spaceId) => {
+      // No space scope (keys-mode self-host) → constant default; skip
       // the cache entirely.
-      if (!tenantId) return DEFAULT_HOP_BUDGET;
-      return lookupBudget(tenantId);
+      if (!spaceId) return DEFAULT_HOP_BUDGET;
+      return lookupBudget(spaceId);
     },
     onHopOverflow: async (event, budget) => {
       // Emit a `system.activity` row directly via storage.items.create —
       // bypassing pubsub.publish so the activity isn't itself fed back
       // into the bus and re-counted toward the budget.
-      const tenantId = event.tenantId;
+      const spaceId = event.spaceId;
       const originatingConnectionId =
         event.originatingConnectionId ??
         ("item" in event ? event.item.id : event.edge.id);
@@ -247,7 +247,7 @@ export function defaultCycleDetectionWiring(
               },
             },
           },
-          tenantId,
+          spaceId,
         );
       } catch {
         // Best-effort — failure to record the overflow doesn't crash the
@@ -282,20 +282,20 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
 }
 
 /**
- * Resolve the per-tenant hop budget without invoking the publish path.
+ * Resolve the per-space hop budget without invoking the publish path.
  * Public counterpart to the module-private `getHopBudget` so debug
  * surfaces (e.g. preview-event) can report what the budget would be
- * for a tenant. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
- * tenant scope) and when the wiring isn't initialized (tests).
+ * for a space. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
+ * space scope) and when the wiring isn't initialized (tests).
  */
 export async function resolveHopBudget(
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): Promise<number> {
-  return getHopBudget(tenantId);
+  return getHopBudget(spaceId);
 }
 
 /**
- * Check whether the event would exceed the tenant's hop budget. When it
+ * Check whether the event would exceed the space's hop budget. When it
  * does, fire the overflow hook and return false so the caller skips
  * persistence + emission. Returns true on the happy path.
  *
@@ -338,7 +338,7 @@ async function passesHopBudget(
   // Human-originated events (no origin, no hops) bypass the budget.
   if (!isConnectorOriginated && cycle.hopCount === 0) return true;
   const effectiveHopCount = computeEffectiveHopCount(cycle);
-  const budget = await getHopBudget(event.tenantId);
+  const budget = await getHopBudget(event.spaceId);
   if (effectiveHopCount <= budget) return true;
   if (onHopOverflow) {
     try {
@@ -373,7 +373,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     eventId = await eventLogStore.append({
       event_type: event.type,
       item_id: event.item.id,
-      tenant_id: event.tenantId,
+      space_id: event.spaceId,
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
@@ -412,7 +412,7 @@ export async function publishEdge(
       event_type: event.type,
       item_id: null,
       edge_id: event.edge.id,
-      tenant_id: event.tenantId,
+      space_id: event.spaceId,
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
@@ -430,7 +430,7 @@ export async function publishEdge(
 
 export interface SubscribeOptions {
   typeFilter?: string;
-  tenantId?: string;
+  spaceId?: string;
 }
 
 /**
@@ -463,8 +463,7 @@ export async function* subscribe(
       const itemEvent = event as ItemEventWithId;
       if (options?.typeFilter && itemEvent.item.type !== options.typeFilter)
         continue;
-      if (options?.tenantId && itemEvent.tenantId !== options.tenantId)
-        continue;
+      if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
       yield itemEvent;
     }
   } finally {
@@ -476,18 +475,17 @@ export async function* subscribe(
   }
 }
 
-/** Subscribe to edge lifecycle events. Filters by tenant only; there is
+/** Subscribe to edge lifecycle events. Filters by space only; there is
  *  no typeFilter since edges don't carry a content type.
  *  Same iterator cleanup contract as `subscribe()` above. */
 export async function* subscribeEdges(options?: {
-  tenantId?: string;
+  spaceId?: string;
 }): AsyncGenerator<EdgeEventWithId> {
   const iter = on(emitter, "EDGE_CHANGED");
   try {
     for await (const [event] of iter) {
       const edgeEvent = event as EdgeEventWithId;
-      if (options?.tenantId && edgeEvent.tenantId !== options.tenantId)
-        continue;
+      if (options?.spaceId && edgeEvent.spaceId !== options.spaceId) continue;
       yield edgeEvent;
     }
   } finally {

@@ -100,7 +100,7 @@ function buildContext(
   return {
     connection_id: message.connection_id,
     integration_name: message.integration_name,
-    ...(message.tenant_id !== undefined && { tenant_id: message.tenant_id }),
+    ...(message.space_id !== undefined && { space_id: message.space_id }),
     marfa: client,
     cursor: createCursorStore(adapter),
     activity: createActivitySink(client, message.connection_id),

@@ -559,22 +559,22 @@ describe("POST /items — platform-credential gate", () => {
     // Only platform credentials may write to `core.*`, `system.*`, or
     // `marfa.*` types, regardless of role or type_permissions. The gate
     // fires before any role bypass; reads are unrestricted.
-    const tenantAdminKey = "marfa_k1_test_non_platform_admin";
+    const spaceAdminKey = "marfa_k1_test_non_platform_admin";
     await ctx.storage.keys.create(
       {
-        label: "tenant-admin-non-platform",
-        source: "tenant-admin-non-platform",
+        label: "space-admin-non-platform",
+        source: "space-admin-non-platform",
         role: "admin",
         type_permissions: { "system.connection": "write" },
         default_tier: "library",
         is_platform: false,
       },
-      hashApiKey(tenantAdminKey, TEST_API_KEY_SALT),
-      "tenant-x",
+      hashApiKey(spaceAdminKey, TEST_API_KEY_SALT),
+      "space-x",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: tenantAdminKey,
+      key: spaceAdminKey,
       body: {
         type: "system.connection",
         properties: {
@@ -631,7 +631,7 @@ describe("POST /items — platform-credential gate", () => {
         item_source: runtimeCredentialItemSource("conn_test_carve_out"),
       },
       hashApiKey(runtimeKey, TEST_API_KEY_SALT),
-      "tenant-x",
+      "space-x",
     );
 
     const activityRes = await request(ctx.app, "POST", "/items", {
@@ -665,25 +665,25 @@ describe("POST /items — platform-credential gate", () => {
     expect(connectionRes.status).toBe(403);
   });
 
-  it("does not gate reads to system.* (tenant admin can list its own system.connection rows)", async () => {
+  it("does not gate reads to system.* (space admin can list its own system.connection rows)", async () => {
     // Reads to reserved-namespace items are unrestricted (filtered by
-    // tenant scoping at the storage layer); only writes need
+    // space scoping at the storage layer); only writes need
     // is_platform.
-    const tenantReaderKey = "marfa_k1_test_tenant_reader";
+    const spaceReaderKey = "marfa_k1_test_space_reader";
     await ctx.storage.keys.create(
       {
-        label: "tenant-reader",
-        source: "tenant-reader",
+        label: "space-reader",
+        source: "space-reader",
         role: "admin",
         type_permissions: { "system.connection": "read" },
         default_tier: "library",
         is_platform: false,
       },
-      hashApiKey(tenantReaderKey, TEST_API_KEY_SALT),
-      "tenant-x",
+      hashApiKey(spaceReaderKey, TEST_API_KEY_SALT),
+      "space-x",
     );
     const res = await request(ctx.app, "GET", "/items?type=system.connection", {
-      key: tenantReaderKey,
+      key: spaceReaderKey,
     });
     expect(res.status).toBe(200);
   });
@@ -998,7 +998,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     expect(data.item.source_id).toBe("path/to/new-name.md");
 
     // findBySourceId now returns this item under the new key. The lookup is
-    // tenant + source scoped — read it back via the GET-by-source path.
+    // space + source scoped — read it back via the GET-by-source path.
     const reread = await request(ctx.app, "GET", `/items/${created.item.id}`, {
       key: ctx.adminKey,
     });

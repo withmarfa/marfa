@@ -7,9 +7,9 @@
  *                          system the same way GET /items does.
  *
  * Read-only counterpart to POST /items/bulk (the upsert path). Every id is
- * resolved through the SAME tenant-scoped store method the single-item GET
- * uses, so a caller can only ever see items in its own tenant. Items the
- * caller cannot read — wrong tenant, type not permitted, soft-deleted — are
+ * resolved through the SAME space-scoped store method the single-item GET
+ * uses, so a caller can only ever see items in its own space. Items the
+ * caller cannot read — wrong space, type not permitted, soft-deleted — are
  * silently omitted, never errored, mirroring the list endpoint's
  * implicit-denial shape: one missing id does not 404 the whole request.
  */
@@ -60,7 +60,7 @@ const BulkGetRequestSchema = z.object({
 const BulkGetResponseSchema = z.object({
   /**
    * The resolved items, in no guaranteed order relative to the request. Items
-   * the caller cannot read (wrong tenant, type not permitted, trashed, or
+   * the caller cannot read (wrong space, type not permitted, trashed, or
    * non-existent) are omitted, so `items.length <= ids.length`.
    */
   items: z.array(ItemSchema),
@@ -82,9 +82,9 @@ const bulkGetRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk get items by id",
   description:
-    "Reads up to 100 items by id in one round-trip. Tenant-scoped and " +
+    "Reads up to 100 items by id in one round-trip. Space-scoped and " +
     "permission-filtered exactly like the single-item GET: ids the caller " +
-    "cannot read (other tenant, type not permitted, trashed, or missing) " +
+    "cannot read (other space, type not permitted, trashed, or missing) " +
     "are silently omitted rather than erroring the whole request. Optional " +
     "`include` hydrates edges, metadata, extensions, or system items inline.",
   security: [{ bearerAuth: [] }],
@@ -163,13 +163,13 @@ export function bulkGetRoutes(storage: Storage) {
       );
     }
 
-    // Tenant fence: `items.getMany` filters by `tenant_id` (the same scope
-    // the single-item GET threads via `items.get(id, tenant_id)`) and drops
-    // trashed rows. A caller with a tenant scope therefore never sees rows
-    // outside it; for tenant-less keys (platform admin / single-tenant
+    // Space fence: `items.getMany` filters by `space_id` (the same scope
+    // the single-item GET threads via `items.get(id, space_id)`) and drops
+    // trashed rows. A caller with a space scope therefore never sees rows
+    // outside it; for space-less keys (platform admin / single-space
     // self-host) the scope is the whole instance, matching the single GET.
-    const tenantId = apiKey.tenant_id;
-    const found = await storage.items.getMany(ids, tenantId);
+    const spaceId = apiKey.space_id;
+    const found = await storage.items.getMany(ids, spaceId);
 
     // Permission filter: same `checkTypeAccess(..., "read")` gate the
     // single-item GET applies, but here a denial omits the item instead of

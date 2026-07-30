@@ -1,9 +1,9 @@
 /**
  * `/admin/*` operator route tests. Covers the auth gate, every
  * happy path, the suspend → write-rejected contract enforced by the
- * tenant-suspension middleware, the audit-trail on suspend/unsuspend,
- * and the cross-tenant platform-admin read path (the core value
- * proposition: a platform admin must be able to read tenant B's
+ * space-suspension middleware, the audit-trail on suspend/unsuspend,
+ * and the cross-space platform-admin read path (the core value
+ * proposition: a platform admin must be able to read space B's
  * resources from any session).
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
@@ -27,13 +27,13 @@ afterAll(async () => {
 });
 
 /**
- * Mint a non-platform member key in the named tenant. The CLI's normal
+ * Mint a non-platform member key in the named space. The CLI's normal
  * `my keys create` flow goes through `POST /keys`, but tests get a
  * direct storage call so they don't have to mint and authenticate a
  * second admin first.
  */
-async function mintTenantKey(
-  tenantId: string,
+async function mintSpaceKey(
+  spaceId: string,
   opts?: { is_platform?: boolean },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -49,7 +49,7 @@ async function mintTenantKey(
       is_platform: opts?.is_platform ?? false,
     },
     hash,
-    tenantId,
+    spaceId,
   );
   return raw;
 }
@@ -59,59 +59,55 @@ async function mintTenantKey(
 // ---------------------------------------------------------------------------
 
 describe("admin auth gate", () => {
-  it("GET /admin/tenants — 401 without credentials", async () => {
-    const res = await request(ctx.app, "GET", "/admin/tenants");
+  it("GET /admin/spaces — 401 without credentials", async () => {
+    const res = await request(ctx.app, "GET", "/admin/spaces");
     expect(res.status).toBe(401);
   });
 
-  it("GET /admin/tenants — 403 with a non-platform key", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("tenant-non-platform");
-    const memberKey = await mintTenantKey(t.id);
-    const res = await request(ctx.app, "GET", "/admin/tenants", {
+  it("GET /admin/spaces — 403 with a non-platform key", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("space-non-platform");
+    const memberKey = await mintSpaceKey(t.id);
+    const res = await request(ctx.app, "GET", "/admin/spaces", {
       key: memberKey,
     });
     expect(res.status).toBe(403);
   });
 
-  it("POST /admin/tenants/:id/suspend — 401 unauthenticated", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("tenant-suspend-401");
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/tenants/${t.id}/suspend`,
-    );
+  it("POST /admin/spaces/:id/suspend — 401 unauthenticated", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("space-suspend-401");
+    const res = await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`);
     expect(res.status).toBe(401);
   });
 
-  it("POST /admin/tenants/:id/suspend — 403 non-platform", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("tenant-suspend-403");
-    const memberKey = await mintTenantKey(t.id);
+  it("POST /admin/spaces/:id/suspend — 403 non-platform", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("space-suspend-403");
+    const memberKey = await mintSpaceKey(t.id);
     const res = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${t.id}/suspend`,
+      `/admin/spaces/${t.id}/suspend`,
       { key: memberKey },
     );
     expect(res.status).toBe(403);
   });
 
-  it("POST /admin/tenants/:id/keys — 401 without credentials", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("tenant-key-401");
-    const res = await request(ctx.app, "POST", `/admin/tenants/${t.id}/keys`, {
+  it("POST /admin/spaces/:id/keys — 401 without credentials", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("space-key-401");
+    const res = await request(ctx.app, "POST", `/admin/spaces/${t.id}/keys`, {
       body: { label: "blocked", source: "test" },
     });
     expect(res.status).toBe(401);
   });
 
-  it("POST /admin/tenants/:id/keys — 403 with a tenant credential", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("tenant-key-403");
-    const memberKey = await mintTenantKey(t.id);
-    const res = await request(ctx.app, "POST", `/admin/tenants/${t.id}/keys`, {
+  it("POST /admin/spaces/:id/keys — 403 with a space credential", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("space-key-403");
+    const memberKey = await mintSpaceKey(t.id);
+    const res = await request(ctx.app, "POST", `/admin/spaces/${t.id}/keys`, {
       key: memberKey,
       body: { label: "blocked", source: "test" },
     });
@@ -120,7 +116,7 @@ describe("admin auth gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Happy paths + cross-tenant platform-admin
+// Happy paths + cross-space platform-admin
 // ---------------------------------------------------------------------------
 
 describe("admin happy paths", () => {
@@ -144,9 +140,9 @@ describe("admin happy paths", () => {
       const owner = await hosted.storage.users?.getByAuthUserId(
         authUserId ?? "",
       );
-      expect(owner?.tenant_id).toBeTruthy();
+      expect(owner?.space_id).toBeTruthy();
 
-      const res = await request(hosted.app, "GET", "/admin/tenants", {
+      const res = await request(hosted.app, "GET", "/admin/spaces", {
         key: hosted.adminKey,
       });
       expect(res.status).toBe(200);
@@ -157,47 +153,47 @@ describe("admin happy paths", () => {
           owner_email_verified: boolean | null;
         }[];
       };
-      const tenant = body.data.find((row) => row.id === owner?.tenant_id);
-      expect(tenant?.owner_email).toBe("owner@example.com");
-      expect(tenant?.owner_email_verified).toBe(false);
+      const space = body.data.find((row) => row.id === owner?.space_id);
+      expect(space?.owner_email).toBe("owner@example.com");
+      expect(space?.owner_email_verified).toBe(false);
     } finally {
       await hosted.cleanup();
     }
   });
 
-  it("POST /admin/tenants creates a tenant a scoped key can then be minted for", async () => {
-    // Every other operator verb on a tenant already existed. Without this one
-    // a tenant could only come into being through a hosted sign-up, which left
+  it("POST /admin/spaces creates a space a scoped key can then be minted for", async () => {
+    // Every other operator verb on a space already existed. Without this one
+    // a space could only come into being through a hosted sign-up, which left
     // an operator unable to provision a space and left anything needing a
-    // tenant-scoped credential — a conformance suite, a test harness, a
+    // space-scoped credential — a conformance suite, a test harness, a
     // self-hoster seeding an instance — with no supported path to one.
-    if (!ctx.storage.tenants) return;
+    if (!ctx.storage.spaces) return;
 
-    const created = await request(ctx.app, "POST", "/admin/tenants", {
+    const created = await request(ctx.app, "POST", "/admin/spaces", {
       key: ctx.adminKey,
       body: { name: "provisioned" },
     });
     expect(created.status).toBe(201);
-    const tenant = (await created.json()) as {
+    const space = (await created.json()) as {
       id: string;
       name: string | null;
       status: string;
     };
-    expect(tenant.name).toBe("provisioned");
-    expect(tenant.status).toBe("active");
+    expect(space.name).toBe("provisioned");
+    expect(space.status).toBe("active");
 
-    // The point of creating one: it can carry a credential. A tenant that
+    // The point of creating one: it can carry a credential. A space that
     // exists but cannot be issued a key would close nothing.
     const keyRes = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${tenant.id}/keys`,
+      `/admin/spaces/${space.id}/keys`,
       {
         key: ctx.adminKey,
         body: {
           label: "provisioned key",
           source: "provisioned",
-          role: "tenant_admin",
+          role: "space_admin",
         },
       },
     );
@@ -205,11 +201,11 @@ describe("admin happy paths", () => {
     const minted = (await keyRes.json()) as { key: string };
 
     // And the credential really is bounded to it, which is the property the
-    // tenant-scoped surfaces depend on.
+    // space-scoped surfaces depend on.
     const stored = (await ctx.storage.keys.list()).find(
       (k) => k.label === "provisioned key",
     );
-    expect(stored?.tenant_id).toBe(tenant.id);
+    expect(stored?.space_id).toBe(space.id);
     expect(stored?.is_platform ?? false).toBe(false);
 
     const write = await request(ctx.app, "POST", "/items", {
@@ -218,12 +214,12 @@ describe("admin happy paths", () => {
     });
     expect(write.status).toBe(201);
     const item = (await write.json()) as { item: { id: string } };
-    expect(await ctx.storage.items.get(item.item.id, tenant.id)).toBeTruthy();
+    expect(await ctx.storage.items.get(item.item.id, space.id)).toBeTruthy();
   });
 
-  it("POST /admin/tenants creates an unnamed tenant when no name is given", async () => {
-    if (!ctx.storage.tenants) return;
-    const res = await request(ctx.app, "POST", "/admin/tenants", {
+  it("POST /admin/spaces creates an unnamed space when no name is given", async () => {
+    if (!ctx.storage.spaces) return;
+    const res = await request(ctx.app, "POST", "/admin/spaces", {
       key: ctx.adminKey,
       body: {},
     });
@@ -231,16 +227,16 @@ describe("admin happy paths", () => {
     expect((await res.json()) as { id: string }).toHaveProperty("id");
   });
 
-  it("POST /admin/tenants refuses a tenant-bound admin", async () => {
-    // Creating a tenant is cross-tenant authority by definition, so the gate
+  it("POST /admin/spaces refuses a space-bound admin", async () => {
+    // Creating a space is cross-space authority by definition, so the gate
     // has to be platform-admin rather than the `admin` role — which
-    // `POST /admin/tenants/{id}/keys` can mint bound to one tenant.
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("bounded-admin");
+    // `POST /admin/spaces/{id}/keys` can mint bound to one space.
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("bounded-admin");
     const keyRes = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${t.id}/keys`,
+      `/admin/spaces/${t.id}/keys`,
       {
         key: ctx.adminKey,
         body: { label: "bound admin", source: "bound-admin", role: "admin" },
@@ -249,17 +245,17 @@ describe("admin happy paths", () => {
     expect(keyRes.status).toBe(201);
     const bound = (await keyRes.json()) as { key: string };
 
-    const res = await request(ctx.app, "POST", "/admin/tenants", {
+    const res = await request(ctx.app, "POST", "/admin/spaces", {
       key: bound.key,
       body: { name: "should not happen" },
     });
     expect(res.status).toBe(403);
   });
 
-  it("GET /admin/tenants lists every tenant with status", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("happy-list");
-    const res = await request(ctx.app, "GET", "/admin/tenants", {
+  it("GET /admin/spaces lists every space with status", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("happy-list");
+    const res = await request(ctx.app, "GET", "/admin/spaces", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
@@ -271,40 +267,40 @@ describe("admin happy paths", () => {
     expect(row!.status).toBe("active");
   });
 
-  it("GET /admin/tenants/:id returns row + quotas + recent activity", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("happy-show");
-    await ctx.storage.tenantQuotas.set(t.id, { items_limit: 1234 });
+  it("GET /admin/spaces/:id returns row + quotas + recent activity", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("happy-show");
+    await ctx.storage.spaceQuotas.set(t.id, { items_limit: 1234 });
 
-    const res = await request(ctx.app, "GET", `/admin/tenants/${t.id}`, {
+    const res = await request(ctx.app, "GET", `/admin/spaces/${t.id}`, {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      tenant: { id: string; status: string };
+      space: { id: string; status: string };
       quotas: { items_limit: number | null } | null;
       recent_activity: unknown[];
     };
-    expect(body.tenant.id).toBe(t.id);
-    expect(body.tenant.status).toBe("active");
+    expect(body.space.id).toBe(t.id);
+    expect(body.space.status).toBe("active");
     expect(body.quotas?.items_limit).toBe(1234);
     expect(Array.isArray(body.recent_activity)).toBe(true);
   });
 
-  it("platform-admin mints a key bound to the requested tenant", async () => {
-    if (!ctx.storage.tenants) return;
-    const target = await ctx.storage.tenants.create("tenant-key-target");
-    const other = await ctx.storage.tenants.create("tenant-key-other");
+  it("platform-admin mints a key bound to the requested space", async () => {
+    if (!ctx.storage.spaces) return;
+    const target = await ctx.storage.spaces.create("space-key-target");
+    const other = await ctx.storage.spaces.create("space-key-other");
     const res = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${target.id}/keys`,
+      `/admin/spaces/${target.id}/keys`,
       {
         key: ctx.adminKey,
         body: {
           label: "Raycast fallback",
           source: "raycast",
-          role: "tenant_admin",
+          role: "space_admin",
           type_permissions: { "core.note": "write" },
           edge_permissions: { "core.related": "read" },
           metadata_permissions: { types: "write" },
@@ -321,20 +317,20 @@ describe("admin happy paths", () => {
     };
     expect(body.key).toMatch(/^marfa_k1_/);
     expect(body.source).toBe("raycast");
-    expect(body.role).toBe("tenant_admin");
+    expect(body.role).toBe("space_admin");
     expect(body.is_platform).toBe(false);
 
     const stored = await ctx.storage.keys.get(body.id);
-    expect(stored?.tenant_id).toBe(target.id);
-    expect(stored?.tenant_id).not.toBe(other.id);
+    expect(stored?.space_id).toBe(target.id);
+    expect(stored?.space_id).not.toBe(other.id);
     expect(stored?.is_platform).toBe(false);
   });
 
-  it("GET /admin/tenants/:id — 404 on unknown tenant", async () => {
+  it("GET /admin/spaces/:id — 404 on unknown space", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/admin/tenants/01999999-9999-7999-8999-999999999999",
+      "/admin/spaces/01999999-9999-7999-8999-999999999999",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);
@@ -342,21 +338,21 @@ describe("admin happy paths", () => {
 
   /**
    * Verification #4 from the orchestrator. The core value proposition of
-   * a platform-admin key is cross-tenant authority — the tests above use
-   * the seeded admin (tenant-less). This one creates a SECOND tenant and
+   * a platform-admin key is cross-space authority — the tests above use
+   * the seeded admin (space-less). This one creates a SECOND space and
    * confirms the platform admin can read its metrics directly without
-   * any session ownership of the target tenant.
+   * any session ownership of the target space.
    */
-  it("platform-admin reads another tenant's metrics + show + keys cross-tenant", async () => {
-    if (!ctx.storage.tenants) return;
-    const tenantB = await ctx.storage.tenants.create("cross-tenant-target");
-    // Mint a non-platform key inside tenantB so listForTenant has a hit.
-    await mintTenantKey(tenantB.id);
+  it("platform-admin reads another space's metrics + show + keys cross-space", async () => {
+    if (!ctx.storage.spaces) return;
+    const spaceB = await ctx.storage.spaces.create("cross-space-target");
+    // Mint a non-platform key inside spaceB so listForSpace has a hit.
+    await mintSpaceKey(spaceB.id);
 
     const showRes = await request(
       ctx.app,
       "GET",
-      `/admin/tenants/${tenantB.id}`,
+      `/admin/spaces/${spaceB.id}`,
       { key: ctx.adminKey },
     );
     expect(showRes.status).toBe(200);
@@ -364,16 +360,16 @@ describe("admin happy paths", () => {
     const metricsRes = await request(
       ctx.app,
       "GET",
-      `/admin/tenants/${tenantB.id}/metrics`,
+      `/admin/spaces/${spaceB.id}/metrics`,
       { key: ctx.adminKey },
     );
     expect(metricsRes.status).toBe(200);
     const metrics = (await metricsRes.json()) as {
-      tenant_id: string;
+      space_id: string;
       items: { total: number };
       blobs: { count: number; total_size: number };
     };
-    expect(metrics.tenant_id).toBe(tenantB.id);
+    expect(metrics.space_id).toBe(spaceB.id);
     // Type-parity check. Both dialects must return a JS number for
     // blobs.total_size, not a JSON string. Pre-fix the PG path
     // returned the raw bigint as a string and the `??` operator
@@ -386,7 +382,7 @@ describe("admin happy paths", () => {
     const keysRes = await request(
       ctx.app,
       "GET",
-      `/admin/tenants/${tenantB.id}/keys`,
+      `/admin/spaces/${spaceB.id}/keys`,
       { key: ctx.adminKey },
     );
     expect(keysRes.status).toBe(200);
@@ -401,11 +397,11 @@ describe("admin happy paths", () => {
 // Suspend / unsuspend + write-rejected contract + audit trail
 // ---------------------------------------------------------------------------
 
-describe("tenant suspension", () => {
+describe("space suspension", () => {
   it("suspend flips status, blocks subsequent writes, and emits an audit row", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("suspend-write-block");
-    const memberKey = await mintTenantKey(t.id);
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("suspend-write-block");
+    const memberKey = await mintSpaceKey(t.id);
 
     // Baseline — member can write before suspension.
     const beforeWrite = await request(ctx.app, "POST", "/items", {
@@ -414,11 +410,11 @@ describe("tenant suspension", () => {
     });
     expect(beforeWrite.status).toBe(201);
 
-    // Suspend via the admin route. Returns the updated tenant row.
+    // Suspend via the admin route. Returns the updated space row.
     const suspendRes = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${t.id}/suspend`,
+      `/admin/spaces/${t.id}/suspend`,
       { key: ctx.adminKey },
     );
     expect(suspendRes.status).toBe(200);
@@ -429,7 +425,7 @@ describe("tenant suspension", () => {
     expect(suspended.status).toBe("suspended");
 
     // Subsequent writes are rejected at the auth middleware. The suspend
-    // route evicts the per-instance status cache for this tenant, so the
+    // route evicts the per-instance status cache for this space, so the
     // next write reads the fresh `suspended` row without waiting out the
     // 5s TTL.
     const afterWrite = await request(ctx.app, "POST", "/items", {
@@ -440,7 +436,7 @@ describe("tenant suspension", () => {
     const afterBody = (await afterWrite.json()) as {
       error: { code: string };
     };
-    expect(afterBody.error.code).toBe("tenant_suspended");
+    expect(afterBody.error.code).toBe("space_suspended");
 
     // Reads still pass through.
     const readRes = await request(ctx.app, "GET", "/items", {
@@ -452,7 +448,7 @@ describe("tenant suspension", () => {
     const audit = await waitForAudit(
       () =>
         ctx.storage.audit.list({
-          action: "tenant.suspend",
+          action: "space.suspend",
           limit: 50,
         }),
       (page) => page.data.some((row) => row.resource_id === t.id),
@@ -461,16 +457,16 @@ describe("tenant suspension", () => {
   });
 
   it("unsuspend reverses status, restores writes, and emits an audit row", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("unsuspend-restore");
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("unsuspend-restore");
 
-    await request(ctx.app, "POST", `/admin/tenants/${t.id}/suspend`, {
+    await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`, {
       key: ctx.adminKey,
     });
     const unsuspendRes = await request(
       ctx.app,
       "POST",
-      `/admin/tenants/${t.id}/unsuspend`,
+      `/admin/spaces/${t.id}/unsuspend`,
       { key: ctx.adminKey },
     );
     expect(unsuspendRes.status).toBe(200);
@@ -479,7 +475,7 @@ describe("tenant suspension", () => {
 
     // Cache was evicted by the unsuspend route — next write reads the
     // restored `active` row.
-    const memberKey = await mintTenantKey(t.id);
+    const memberKey = await mintSpaceKey(t.id);
     const write = await request(ctx.app, "POST", "/items", {
       key: memberKey,
       body: { type: "core.note", properties: { body: "post-unsuspend" } },
@@ -487,33 +483,33 @@ describe("tenant suspension", () => {
     expect(write.status).toBe(201);
 
     const audit = await waitForAudit(
-      () => ctx.storage.audit.list({ action: "tenant.unsuspend", limit: 50 }),
+      () => ctx.storage.audit.list({ action: "space.unsuspend", limit: 50 }),
       (page) => page.data.some((row) => row.resource_id === t.id),
     );
     expect(audit.data.some((row) => row.resource_id === t.id)).toBe(true);
   });
 
-  it("suspend on unknown tenant — 404", async () => {
+  it("suspend on unknown space — 404", async () => {
     const res = await request(
       ctx.app,
       "POST",
-      "/admin/tenants/01999999-9999-7999-8999-999999999999/suspend",
+      "/admin/spaces/01999999-9999-7999-8999-999999999999/suspend",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);
   });
 
-  it("platform-admin can still write to a suspended tenant (bypass)", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("platform-bypass");
-    await request(ctx.app, "POST", `/admin/tenants/${t.id}/suspend`, {
+  it("platform-admin can still write to a suspended space (bypass)", async () => {
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("platform-bypass");
+    await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`, {
       key: ctx.adminKey,
     });
-    // Platform admin operates without a `tenant_id`, but a real
-    // platform write that targets the suspended tenant — e.g. flipping
-    // quotas — must succeed. PUT /tenants/:id/quotas is the canonical
+    // Platform admin operates without a `space_id`, but a real
+    // platform write that targets the suspended space — e.g. flipping
+    // quotas — must succeed. PUT /spaces/:id/quotas is the canonical
     // platform-admin write surface.
-    const quotaRes = await request(ctx.app, "PUT", `/tenants/${t.id}/quotas`, {
+    const quotaRes = await request(ctx.app, "PUT", `/spaces/${t.id}/quotas`, {
       key: ctx.adminKey,
       body: { items_limit: 9999 },
     });
@@ -590,9 +586,9 @@ describe("POST /admin/account-deletion/purge-now", () => {
   });
 
   it("403 with a non-platform key", async () => {
-    if (!ctx.storage.tenants) return;
-    const t = await ctx.storage.tenants.create("purge-now-403");
-    const memberKey = await mintTenantKey(t.id);
+    if (!ctx.storage.spaces) return;
+    const t = await ctx.storage.spaces.create("purge-now-403");
+    const memberKey = await mintSpaceKey(t.id);
     const res = await request(
       ctx.app,
       "POST",
@@ -625,14 +621,14 @@ describe("POST /admin/account-deletion/purge-now", () => {
         page.data.some(
           (row) =>
             row.resource_id === "account-deletion-purger" &&
-            row.tenant_id === null,
+            row.space_id === null,
         ),
     );
     const row = audit.data.find(
       (r) => r.resource_id === "account-deletion-purger",
     );
     expect(row).toBeDefined();
-    expect(row?.tenant_id).toBeNull();
+    expect(row?.space_id).toBeNull();
     const details = row?.details as { purged_count: number; run_at: string };
     expect(details.purged_count).toBe(0);
   });

@@ -660,7 +660,7 @@ describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
       type: "",
       state: "active",
       tier: "library",
-      tenant_id: null,
+      space_id: null,
       properties: {},
       created_at: "",
       updated_at: "",

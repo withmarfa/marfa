@@ -202,69 +202,69 @@ describe("filterToRawSql", () => {
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------
-  // Edge subqueries — tenant scoping (defense-in-depth)
+  // Edge subqueries — space scoping (defense-in-depth)
   // -------------------------------------------------------------------------
 
-  describe("edge subqueries (tenant scoping)", () => {
-    it("outbound eq scopes by tenant_id when provided (sqlite)", () => {
+  describe("edge subqueries (space scoping)", () => {
+    it("outbound eq scopes by space_id when provided (sqlite)", () => {
       const expr = parseFilter('edge[parent-of] eq "item_xyz"');
-      const result = filterToRawSql(expr, "sqlite", "i", 1, "tenant_a");
+      const result = filterToRawSql(expr, "sqlite", "i", 1, "space_a");
       expect(result.clause).toContain("e.source_id = i.id");
       expect(result.clause).toContain("e.target_id = ?");
-      expect(result.clause).toContain("e.tenant_id = ?");
-      expect(result.params).toEqual(["parent-of", "item_xyz", "tenant_a"]);
+      expect(result.clause).toContain("e.space_id = ?");
+      expect(result.params).toEqual(["parent-of", "item_xyz", "space_a"]);
     });
 
-    it("backref eq scopes by tenant_id when provided (sqlite)", () => {
+    it("backref eq scopes by space_id when provided (sqlite)", () => {
       const expr = parseFilter('backref[parent-of] eq "item_parent"');
-      const result = filterToRawSql(expr, "sqlite", "i", 1, "tenant_a");
+      const result = filterToRawSql(expr, "sqlite", "i", 1, "space_a");
       expect(result.clause).toContain("e.target_id = i.id");
       expect(result.clause).toContain("e.source_id = ?");
-      expect(result.clause).toContain("e.tenant_id = ?");
-      expect(result.params).toEqual(["parent-of", "item_parent", "tenant_a"]);
+      expect(result.clause).toContain("e.space_id = ?");
+      expect(result.params).toEqual(["parent-of", "item_parent", "space_a"]);
     });
 
-    it("outbound exists scopes by tenant_id (pg, positional params)", () => {
+    it("outbound exists scopes by space_id (pg, positional params)", () => {
       const expr = parseFilter("edge[in-thread] exists");
-      const result = filterToRawSql(expr, "pg", "i", 1, "tenant_a");
+      const result = filterToRawSql(expr, "pg", "i", 1, "space_a");
       expect(result.clause).toBe(
-        "EXISTS (SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = $1 AND e.tenant_id = $2)",
+        "EXISTS (SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = $1 AND e.space_id = $2)",
       );
-      expect(result.params).toEqual(["in-thread", "tenant_a"]);
+      expect(result.params).toEqual(["in-thread", "space_a"]);
       expect(result.nextParamIdx).toBe(3);
     });
 
-    it("backref not_exists scopes by tenant_id (pg)", () => {
+    it("backref not_exists scopes by space_id (pg)", () => {
       const expr = parseFilter("backref[parent-of] not_exists");
-      const result = filterToRawSql(expr, "pg", "i", 5, "tenant_a");
+      const result = filterToRawSql(expr, "pg", "i", 5, "space_a");
       expect(result.clause).toBe(
-        "NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = i.id AND e.edge_type = $5 AND e.tenant_id = $6)",
+        "NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = i.id AND e.edge_type = $5 AND e.space_id = $6)",
       );
-      expect(result.params).toEqual(["parent-of", "tenant_a"]);
+      expect(result.params).toEqual(["parent-of", "space_a"]);
       expect(result.nextParamIdx).toBe(7);
     });
 
-    it("omits tenant_id constraint when tenantId is undefined (admin path)", () => {
+    it("omits space_id constraint when spaceId is undefined (admin path)", () => {
       const expr = parseFilter('edge[parent-of] eq "item_xyz"');
       const result = filterToRawSql(expr, "sqlite", "i");
-      expect(result.clause).not.toContain("e.tenant_id");
+      expect(result.clause).not.toContain("e.space_id");
       expect(result.params).toEqual(["parent-of", "item_xyz"]);
     });
 
-    it("preserves param ordering when tenant clause is added with other filters", () => {
+    it("preserves param ordering when space clause is added with other filters", () => {
       const expr = parseFilter(
         'state eq "active" AND edge[parent-of] eq "item_xyz"',
       );
-      const result = filterToRawSql(expr, "pg", "i", 1, "tenant_a");
-      // state takes $1; edge subquery takes $2 (type), $3 (target), $4 (tenant)
+      const result = filterToRawSql(expr, "pg", "i", 1, "space_a");
+      // state takes $1; edge subquery takes $2 (type), $3 (target), $4 (space)
       expect(result.clause).toBe(
-        "(i.state = $1 AND EXISTS (SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = $2 AND e.target_id = $3 AND e.tenant_id = $4))",
+        "(i.state = $1 AND EXISTS (SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = $2 AND e.target_id = $3 AND e.space_id = $4))",
       );
       expect(result.params).toEqual([
         "active",
         "parent-of",
         "item_xyz",
-        "tenant_a",
+        "space_a",
       ]);
     });
   });

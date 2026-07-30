@@ -57,7 +57,7 @@ export function propertySortValue(
 function isNumericSortField(
   field: string,
   typeFilter: string | undefined,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): boolean {
   if (!typeFilter) return false;
   // A `core.entity.*` style subtree filter doesn't resolve to one concrete
@@ -66,7 +66,7 @@ function isNumericSortField(
     ? undefined
     : typeFilter.replace(/\.\*$/, "");
   if (!concreteType) return false;
-  const fields = getResolvedFields(concreteType, tenantId);
+  const fields = getResolvedFields(concreteType, spaceId);
   const def = fields?.[field];
   return def?.type === "integer" || def?.type === "number";
 }
@@ -112,9 +112,9 @@ export function buildPropertySortExpr(
   field: string,
   dialect: SqlDialect,
   typeFilter: string | undefined,
-  tenantId: string | undefined,
+  spaceId: string | undefined,
 ): PropertySortExpr {
-  const numeric = isNumericSortField(field, typeFilter, tenantId);
+  const numeric = isNumericSortField(field, typeFilter, spaceId);
   const expr = numeric
     ? numericExtract(propertiesCol, field, dialect)
     : textExtract(propertiesCol, field, dialect);

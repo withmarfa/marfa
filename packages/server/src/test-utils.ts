@@ -19,7 +19,7 @@ import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
 /** Salt used by `createTestContext` for `hashApiKey`. Exposed so tests
- *  that mint additional api keys (e.g. for tenant-scoped admin coverage)
+ *  that mint additional api keys (e.g. for space-scoped admin coverage)
  *  hash with the same value the route auth resolver expects. */
 export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
@@ -141,7 +141,7 @@ export async function createPgTestStorage(options?: {
  *
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.tenantId      tenant for the system.connection item
+ * @param opts.spaceId      space for the system.connection item
  *                           (defaults to undefined — keys-mode self-host)
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
@@ -157,9 +157,9 @@ export async function seedOauthBearer(
   scopes: string[],
   opts: {
     clientName?: string;
-    tenantId?: string;
+    spaceId?: string;
     authUserId?: string;
-    userRole?: "admin" | "tenant_admin" | "member";
+    userRole?: "admin" | "space_admin" | "member";
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -253,7 +253,7 @@ export async function seedOauthBearer(
       },
       source: "test/oauth-bearer",
     },
-    opts.tenantId,
+    opts.spaceId,
   );
 
   // Mint the token pair via the plugin's storage helper. Hash the BARE
@@ -274,7 +274,7 @@ export async function seedOauthBearer(
     ),
     clientId,
     authUserId,
-    referenceId: opts.tenantId ?? null,
+    referenceId: opts.spaceId ?? null,
     scopes,
     accessTtlMs: 3600_000,
   });
@@ -285,15 +285,15 @@ export async function seedOauthBearer(
         "seedOauthBearer({ userRole }) requires hosted-mode storage with a UserStore",
       );
     }
-    if (!opts.tenantId) {
+    if (!opts.spaceId) {
       throw new Error(
-        "seedOauthBearer({ userRole }) requires opts.tenantId (users.tenant_id is FK-bound)",
+        "seedOauthBearer({ userRole }) requires opts.spaceId (users.space_id is FK-bound)",
       );
     }
     await storage.users.create({
       provider: "test",
       provider_id: authUserId,
-      tenant_id: opts.tenantId,
+      space_id: opts.spaceId,
       auth_user_id: authUserId,
       role: opts.userRole,
     });

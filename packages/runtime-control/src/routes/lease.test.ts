@@ -1,7 +1,7 @@
 /**
  * Lease route — pins three things.
  *
- * First, the identity gate. The route mints a real tenant-scoped
+ * First, the identity gate. The route mints a real space-scoped
  * credential, so it must refuse a caller that cannot authenticate. A
  * Connection ID is not a secret, so without the gate anyone who has seen
  * one can mint against it. Authentication is per-Worker: a key derived
@@ -9,7 +9,7 @@
  * does not let you act as another.
  *
  * Second, that the platform broker key is not accepted here. It is the
- * credential that mints against any Connection in any tenant, and the
+ * credential that mints against any Connection in any space, and the
  * whole point of the derived keys is that no integration Worker holds
  * it — including a Worker still deployed with the old secret.
  *
@@ -246,11 +246,11 @@ describe("POST /lease/:connection_id/runtime", () => {
 
   /**
    * The fleet-wide failure mode. `MARFA_RUNTIME_BROKER_KEY` rotated to a
-   * valid but tenant-scoped admin key — exactly what
-   * `POST /admin/tenants/{id}/keys` mints — makes the server refuse every
+   * valid but space-scoped admin key — exactly what
+   * `POST /admin/spaces/{id}/keys` mints — makes the server refuse every
    * mint with 403 `forbidden`. That is a global authorization failure, not
    * a verdict on any connection. Classifying it as terminal deschedules
-   * every scheduled connection in every tenant within one cron period,
+   * every scheduled connection in every space within one cron period,
    * recoverable only one connection at a time; classifying it as transient
    * costs retries until an operator fixes the key.
    */

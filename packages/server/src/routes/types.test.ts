@@ -140,8 +140,8 @@ describe("GET /types", () => {
 });
 
 // The shipped set spans three families and all three are equally immutable:
-// they come from codegen, so a tenant editing one would change what the
-// identifier means for every other tenant and for items already written
+// they come from codegen, so a space editing one would change what the
+// identifier means for every other space and for items already written
 // against it. Naming a representative of each family here is what stops the
 // guard being narrowed back to the core family without a test noticing.
 describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () => {
@@ -261,7 +261,7 @@ describe("first-class field shadow rejection", () => {
     "type",
     "state",
     "tier",
-    "tenant_id",
+    "space_id",
     "created_at",
     "updated_at",
     "timestamp",

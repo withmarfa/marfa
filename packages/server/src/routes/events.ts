@@ -18,8 +18,8 @@ const REPLAY_BATCH_SIZE = 500;
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the lifetime
  * of the SSE stream. Without both set the route runs on the owner
- * connection — used for SQLite, for tenant-less callers (platform
- * admin / single-tenant self-host), and when RLS enforcement is
+ * connection — used for SQLite, for space-less callers (platform
+ * admin / single-space self-host), and when RLS enforcement is
  * disabled instance-wide.
  */
 export interface EventRoutesOptions {
@@ -36,7 +36,7 @@ export function eventRoutes(
   // GET /events — Server-Sent Events stream with replay support
   router.get("/", (c) => {
     const apiKey = requireAuth(c);
-    const tenantId = apiKey.tenant_id;
+    const spaceId = apiKey.space_id;
     const typeParam = c.req.query("type") ?? undefined;
     const lastEventId = c.req.header("Last-Event-ID");
     const allowedTypes = computeTypeFilter(apiKey);
@@ -44,15 +44,15 @@ export function eventRoutes(
     // Acquire a dedicated pool connection and apply session-level RLS for
     // the stream's lifetime. Acquired lazily inside `start` so a setup
     // failure surfaces through the stream (the route still returns 200;
-    // the failure aborts the stream cleanly). Tenant-less callers, SQLite,
+    // the failure aborts the stream cleanly). Space-less callers, SQLite,
     // and the RLS-disabled instance fall back to the owner connection.
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
         let rlsCtx: StreamRlsContext | null = null;
-        if (options.rlsEnforce && options.pgClient !== null && tenantId) {
+        if (options.rlsEnforce && options.pgClient !== null && spaceId) {
           try {
-            rlsCtx = await acquireStreamRls(options.pgClient, tenantId);
+            rlsCtx = await acquireStreamRls(options.pgClient, spaceId);
           } catch (err) {
             // Setup failed before any data was sent; close so the client
             // sees a clean disconnect rather than a hanging connection.
@@ -109,7 +109,7 @@ export function eventRoutes(
         let replaying = !!lastEventId;
 
         // Subscribe BEFORE replay starts to avoid gaps.
-        const events = subscribe({ typeFilter: typeParam, tenantId });
+        const events = subscribe({ typeFilter: typeParam, spaceId });
         const reader = events[Symbol.asyncIterator]();
 
         const sendEvent = (
@@ -139,7 +139,7 @@ export function eventRoutes(
 
         // Edge events don't carry an item type; the type filter (/events?type=)
         // applies to item events only. Edge events flow through unconditionally
-        // for subscribers in the same tenant.
+        // for subscribers in the same space.
         const sendEdgeEvent = (
           eventId: bigint | undefined,
           event: EdgeEventWithId,
@@ -180,7 +180,7 @@ export function eventRoutes(
 
         pump();
 
-        const edgeIter = subscribeEdges({ tenantId })[Symbol.asyncIterator]();
+        const edgeIter = subscribeEdges({ spaceId })[Symbol.asyncIterator]();
         const pumpEdges = () => {
           edgeIter
             .next()
@@ -217,11 +217,11 @@ export function eventRoutes(
                 // up from the event log. Emit a terminal `catchup_too_old`
                 // control event and close the stream; the client is
                 // expected to re-sync state and reconnect without a
-                // Last-Event-ID. Scoped by tenant so a fresh tenant with
+                // Last-Event-ID. Scoped by space so a fresh space with
                 // no events never trips the check.
                 {
                   const minRetained = await storage.eventLog.getMinRetainedId(
-                    tenantId ?? undefined,
+                    spaceId ?? undefined,
                   );
                   if (minRetained !== null && afterIdResolved < minRetained) {
                     const payload = JSON.stringify({
@@ -250,7 +250,7 @@ export function eventRoutes(
                   const batch = await storage.eventLog.getAfter(
                     lastReplayedId,
                     REPLAY_BATCH_SIZE,
-                    tenantId ?? undefined,
+                    spaceId ?? undefined,
                   );
 
                   if (batch.length === 0) break;

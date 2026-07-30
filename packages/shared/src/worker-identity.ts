@@ -2,11 +2,11 @@
  * Per-Worker identity keys for the hosted integrations substrate.
  *
  * The control plane holds one platform credential that can mint a
- * runtime credential for any Connection in any tenant. Handing that
+ * runtime credential for any Connection in any space. Handing that
  * value to the integration Workers so they can authenticate to the
  * lease broker makes every Worker a platform principal: any one of them
  * can present it to the Marfa server directly and mint against a
- * Connection belonging to a different integration, a different tenant,
+ * Connection belonging to a different integration, a different space,
  * or a different customer. One shared secret across a fleet is one
  * identity across a fleet.
  *

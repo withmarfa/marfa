@@ -40,7 +40,7 @@ import { authenticateWorker } from "../worker-identity.js";
  * Both routes authenticate the caller as a specific integration Worker,
  * because a Connection ID is not a secret: it appears in operator
  * surfaces, in logs and in client state, so an unauthenticated mint path
- * hands a tenant-scoped credential to anyone who has seen one. The
+ * hands a space-scoped credential to anyone who has seen one. The
  * integration the caller proves is forwarded to the server, which holds
  * the persisted manifest and refuses a Connection that belongs to
  * another integration.
@@ -114,7 +114,7 @@ export function registerLeaseRoutes(
       // "this credential is not a platform credential", and 404 also
       // answers "no such route". Classifying on status alone means one
       // mis-scoped `MARFA_RUNTIME_BROKER_KEY`, or one wrong
-      // `MARFA_API_URL`, hands every Connection in every tenant a
+      // `MARFA_API_URL`, hands every Connection in every space a
       // terminal verdict on its next tick — and a torn-down schedule
       // only comes back through a per-Connection arm by an operator.
       // The asymmetry has to favor retrying.
