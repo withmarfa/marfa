@@ -261,17 +261,19 @@ Per-target helpers for narrow runs:
 - **`pnpm test`** — full SQLite suite, single run.
 - **`pnpm test:fresh-sqlite`** / **`pnpm test:pg`** — single-dialect runs.
 
-`test:pg` (and `test:full` through it) boots a throw-away `postgres:17` container per invocation. Container name and port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
+`test:pg` (and `test:full` through it) boots a throw-away `postgres:17` container per invocation. Container name and port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon).
+
+CI runs this same script, so the two cannot drift. That is also why the missing-Docker behavior differs by environment: locally the script skips with a `⊘` message, so a contributor without a daemon is not blocked, while under `CI` it fails, because there the container is the only Postgres and a skip would report green having reached no database.
 
 **Why slim by default.** A pre-push hook that runs the full ~1800-test dual-dialect suite invites `--no-verify` bypassing, and a hook that's bypassed isn't a gate. The slim gate gives fast feedback on what you touched; CI's full matrix is the authoritative dual-dialect check.
 
-### A push costs real money — verify locally first
+### A push costs machine time — verify locally first
 
-The Postgres jobs need a service container, so they run on GitHub-hosted runners while everything else runs on self-hosted ones. Past the included allowance those hosted minutes are billed, and **a whole matrix fires on every push to a pull request**. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
+Every job runs on the self-hosted pool, so a push costs no hosted minutes. It is not free: that pool shares one machine with whatever else is running on it, and **a whole matrix fires on every push to a pull request**. Several tests here fail on a fixed time budget when the machine is loaded, so a busy box manufactures failures that look like defects. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
 
 - **Run `pnpm test:full` locally before pushing, not the hook.** It covers both dialects against a throwaway container, so it catches essentially everything CI would. The hook is SQLite-only and scoped to changed files; it has already gone green on a commit whose Postgres job failed.
-- **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the bill by the number of commits for no extra signal.
-- **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — several tests in this repository fail on a fixed budget when the machine is loaded, and re-running until green is both expensive and how a real defect gets waved through.
+- **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the load by the number of commits for no extra signal.
+- **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — re-running until green is how a real defect gets waved through.
 
 `workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the three freshness jobs.
 
