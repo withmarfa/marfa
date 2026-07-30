@@ -165,6 +165,97 @@ describe("admin happy paths", () => {
     }
   });
 
+  it("POST /admin/tenants creates a tenant a scoped key can then be minted for", async () => {
+    // Every other operator verb on a tenant already existed. Without this one
+    // a tenant could only come into being through a hosted sign-up, which left
+    // an operator unable to provision a space and left anything needing a
+    // tenant-scoped credential — a conformance suite, a test harness, a
+    // self-hoster seeding an instance — with no supported path to one.
+    if (!ctx.storage.tenants) return;
+
+    const created = await request(ctx.app, "POST", "/admin/tenants", {
+      key: ctx.adminKey,
+      body: { name: "provisioned" },
+    });
+    expect(created.status).toBe(201);
+    const tenant = (await created.json()) as {
+      id: string;
+      name: string | null;
+      status: string;
+    };
+    expect(tenant.name).toBe("provisioned");
+    expect(tenant.status).toBe("active");
+
+    // The point of creating one: it can carry a credential. A tenant that
+    // exists but cannot be issued a key would close nothing.
+    const keyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/tenants/${tenant.id}/keys`,
+      {
+        key: ctx.adminKey,
+        body: {
+          label: "provisioned key",
+          source: "provisioned",
+          role: "tenant_admin",
+        },
+      },
+    );
+    expect(keyRes.status).toBe(201);
+    const minted = (await keyRes.json()) as { key: string };
+
+    // And the credential really is bounded to it, which is the property the
+    // tenant-scoped surfaces depend on.
+    const stored = (await ctx.storage.keys.list()).find(
+      (k) => k.label === "provisioned key",
+    );
+    expect(stored?.tenant_id).toBe(tenant.id);
+    expect(stored?.is_platform ?? false).toBe(false);
+
+    const write = await request(ctx.app, "POST", "/items", {
+      key: minted.key,
+      body: { type: "core.note", properties: { body: "in my own space" } },
+    });
+    expect(write.status).toBe(201);
+    const item = (await write.json()) as { item: { id: string } };
+    expect(await ctx.storage.items.get(item.item.id, tenant.id)).toBeTruthy();
+  });
+
+  it("POST /admin/tenants creates an unnamed tenant when no name is given", async () => {
+    if (!ctx.storage.tenants) return;
+    const res = await request(ctx.app, "POST", "/admin/tenants", {
+      key: ctx.adminKey,
+      body: {},
+    });
+    expect(res.status).toBe(201);
+    expect((await res.json()) as { id: string }).toHaveProperty("id");
+  });
+
+  it("POST /admin/tenants refuses a tenant-bound admin", async () => {
+    // Creating a tenant is cross-tenant authority by definition, so the gate
+    // has to be platform-admin rather than the `admin` role — which
+    // `POST /admin/tenants/{id}/keys` can mint bound to one tenant.
+    if (!ctx.storage.tenants) return;
+    const t = await ctx.storage.tenants.create("bounded-admin");
+    const keyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/tenants/${t.id}/keys`,
+      {
+        key: ctx.adminKey,
+        body: { label: "bound admin", source: "bound-admin", role: "admin" },
+      },
+    );
+    expect(keyRes.status).toBe(201);
+    const bound = (await keyRes.json()) as { key: string };
+
+    const res = await request(ctx.app, "POST", "/admin/tenants", {
+      key: bound.key,
+      body: { name: "should not happen" },
+    });
+    expect(res.status).toBe(403);
+  });
+
   it("GET /admin/tenants lists every tenant with status", async () => {
     if (!ctx.storage.tenants) return;
     const t = await ctx.storage.tenants.create("happy-list");
