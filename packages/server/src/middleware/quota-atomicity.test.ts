@@ -157,6 +157,68 @@ describe("a refused blob upload leaves nothing on disk", () => {
     expect(await ctx.blobBackend.exists(hash)).toBe(false);
   });
 
+  it("REGRESSION: a refusal cannot delete bytes a concurrent upload committed", async () => {
+    // Deduplication makes two spaces uploading identical bytes ordinary
+    // rather than exotic, and a quota ceiling is the designed failure on
+    // that path. The route decides what it may delete from an `exists()`
+    // read taken before it writes, which answers "were these bytes here a
+    // moment ago" and not "are these bytes mine". Unserialised, both
+    // requests read false, both write, and the refused one deletes a blob
+    // the other has already committed a row against.
+    //
+    // The per-hash lock is what makes that read authoritative, so the
+    // outcome stops depending on the interleaving: whichever request gets
+    // the lock first writes, and the second finds the bytes already there.
+    // Either order leaves A holding a readable blob.
+    //
+    // The delay on the first write is a lower bound on overlap rather than a
+    // deadline, so a loaded machine makes the unserialised failure more
+    // likely to reproduce, never less. Both dialects: the lock is
+    // in-process, and neither request opens a transaction until after it has
+    // written.
+    const shared = "bytes two spaces both want, at the same moment";
+    const hash = `sha256:${createHash("sha256")
+      .update(Buffer.from(shared))
+      .digest("hex")}`;
+
+    const a = await spaceWithBlobLimit(5);
+    const b = await spaceWithBlobLimit(1);
+    expect((await upload(b.key, "b fills its one slot")).status).toBe(201);
+
+    const backend = ctx.blobBackend as unknown as {
+      put: (h: string, d: Uint8Array, m: string) => Promise<unknown>;
+    };
+    const realPut = backend.put.bind(backend);
+    let first = true;
+    backend.put = async (h, d, m) => {
+      if (first) {
+        first = false;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return realPut(h, d, m);
+    };
+
+    let aRes: Response;
+    let bRes: Response;
+    try {
+      [bRes, aRes] = await Promise.all([
+        upload(b.key, shared),
+        upload(a.key, shared),
+      ]);
+    } finally {
+      backend.put = realPut;
+    }
+
+    expect(bRes.status).toBe(429);
+    expect(aRes.status).toBe(201);
+
+    expect(await ctx.blobBackend.exists(hash)).toBe(true);
+    const readBack = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
+      key: a.key,
+    });
+    expect(readBack.status).toBe(200);
+  });
+
   it("leaves bytes alone when they were already registered by someone else", async () => {
     // Deduplication means a refused upload of bytes that already exist must
     // not delete them: they belong to whoever registered them first.

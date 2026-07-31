@@ -34,6 +34,7 @@ import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { findAccountHolderItem } from "../auth/account-holder.js";
 
@@ -582,47 +583,50 @@ export function profileRoutes(
     const blobSpaceId = c.get("apiKey")?.space_id ?? "";
     // Content addressing makes `existed` decide two things at once: whether
     // these bytes need writing, and whether a later refusal has anything to
-    // undo. Bytes already on disk belong to whoever registered them.
-    const existed = await blobBackend.exists(hash);
-    if (!existed) {
-      await blobBackend.put(hash, data, mimeType);
-    }
-    try {
-      await storage.runInTransaction(async () => {
-        await reserveQuota(c, storage, [
-          { resource: "blobs", increment: 1 },
-          { resource: "storage_bytes", increment: data.length },
-        ]);
-        await storage.blobs.register(
-          hash,
-          mimeType,
-          data.length,
-          hash,
-          blobSpaceId,
-        );
-      });
-    } catch (err) {
-      // Refused, or the registration failed. An unregistered blob is
-      // unreachable and nothing sweeps it, so undo this request's own put —
-      // and only its own. A failure to undo leaves bytes behind rather than
-      // failing the request a second time, so it is logged, not thrown: the
-      // caller's error is the one worth surfacing.
+    // undo. The per-hash lock is what makes the second answer true — see the
+    // comment on `POST /blobs`, which this mirrors.
+    await withBlobUploadLock(hash, async () => {
+      const existed = await blobBackend.exists(hash);
       if (!existed) {
-        try {
-          await blobBackend.delete(hash);
-        } catch (cleanupErr) {
-          log("error", "blob.orphaned_after_refused_upload", {
-            hash,
-            size: data.length,
-            error:
-              cleanupErr instanceof Error
-                ? cleanupErr.message
-                : String(cleanupErr),
-          });
-        }
+        await blobBackend.put(hash, data, mimeType);
       }
-      throw err;
-    }
+      try {
+        await storage.runInTransaction(async () => {
+          await reserveQuota(c, storage, [
+            { resource: "blobs", increment: 1 },
+            { resource: "storage_bytes", increment: data.length },
+          ]);
+          await storage.blobs.register(
+            hash,
+            mimeType,
+            data.length,
+            hash,
+            blobSpaceId,
+          );
+        });
+      } catch (err) {
+        // Refused, or the registration failed. An unregistered blob is
+        // unreachable and nothing sweeps it, so undo this request's own put —
+        // and only its own. A failure to undo leaves bytes behind rather than
+        // failing the request a second time, so it is logged, not thrown: the
+        // caller's error is the one worth surfacing.
+        if (!existed) {
+          try {
+            await blobBackend.delete(hash);
+          } catch (cleanupErr) {
+            log("error", "blob.orphaned_after_refused_upload", {
+              hash,
+              size: data.length,
+              error:
+                cleanupErr instanceof Error
+                  ? cleanupErr.message
+                  : String(cleanupErr),
+            });
+          }
+        }
+        throw err;
+      }
+    });
 
     const updatedUser = await userStore.updateProfile(user.id, {
       avatar_blob_hash: hash,
