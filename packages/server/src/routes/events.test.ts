@@ -49,11 +49,25 @@ async function createNote(body = "hello"): Promise<bigint> {
  * than reading to end-of-stream because the SSE endpoint is intended
  * to stay open — we bound the wait explicitly.
  */
+/**
+ * Drain an SSE response.
+ *
+ * Pass `until` whenever the test is waiting for something to arrive: the read
+ * returns the moment the predicate holds, so the ceiling only bounds a stream
+ * that never delivers. Without it the helper waited its full budget every
+ * time, which made the budget a bet on scheduling — a 500ms window that a busy
+ * machine misses, reported as `expected ': connected\n\n' to contain 'id: 3'`.
+ * That reads as a defect in the event pipeline and is not one.
+ *
+ * Omit `until` only when asserting an absence, where a deadline is the whole
+ * mechanism and has to stay short enough to keep the test quick but long
+ * enough that a late arrival still fails it.
+ */
 async function readSse(
   res: Response,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; until?: (text: string) => boolean } = {},
 ): Promise<{ text: string; closed: boolean }> {
-  const timeoutMs = opts.timeoutMs ?? 500;
+  const timeoutMs = opts.timeoutMs ?? (opts.until ? 15_000 : 500);
   expect(res.body).not.toBeNull();
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
@@ -90,6 +104,7 @@ async function readSse(
     }
     if (r.value) {
       text += decoder.decode(r.value, { stream: true });
+      if (opts.until?.(text) === true) break;
     }
   }
   try {
@@ -137,7 +152,9 @@ describe("GET /events — catchup_too_old", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 
-    const { text, closed } = await readSse(res);
+    const { text, closed } = await readSse(res, {
+      until: (t) => findEvent(t, "catchup_too_old") !== null,
+    });
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
     expect(frame!.id).toBe(String(eventId));
@@ -167,7 +184,9 @@ describe("GET /events — catchup_too_old", () => {
     });
     expect(res.status).toBe(200);
 
-    const { text } = await readSse(res);
+    const { text } = await readSse(res, {
+      until: (t) => t.includes(`id: ${String(secondId)}`),
+    });
     expect(findEvent(text, "catchup_too_old")).toBeNull();
     // The second event should show up on replay.
     expect(text).toContain(`id: ${String(secondId)}`);

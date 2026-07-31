@@ -318,16 +318,29 @@ jobs:
   ci-pg:
     name: CI (Postgres)
     needs: changes
-    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      # Gated at step level rather than job level, the same shape `ci-sqlite`
+      # uses and for the same reason: this is a required check now, and a
+      # required check that never reports leaves a documentation-only pull
+      # request pending forever with nothing an agent can do to clear it. The
+      # job always runs and always reports; when the diff is documentation only
+      # it reports green without doing the work.
+      - name: Nothing to test
+        if: needs.changes.outputs.code != 'true'
+        run: echo "Documentation-only change — the suite cannot be affected by it."
+
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
       - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.code == 'true'
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: 22
           # No `cache: pnpm`. On the self-hosted pool the store at
@@ -340,13 +353,18 @@ jobs:
           # store does not survive between jobs and the cache does pay.
 
       - name: Configure registry auth
+        if: needs.changes.outputs.code == 'true'
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.code == 'true'
       - run: pnpm build
+        if: needs.changes.outputs.code == 'true'
       - run: pnpm typecheck
+        if: needs.changes.outputs.code == 'true'
       - run: pnpm lint
+        if: needs.changes.outputs.code == 'true'
       # The same script a contributor runs locally, rather than a second
       # definition of the same environment in YAML. It boots its own
       # `postgres:17`, waits on a real `SELECT 1`, exports both PG URLs the
@@ -358,6 +376,7 @@ jobs:
       # is not that feature and works anywhere Docker does, which is what moves
       # the job onto the pool the project already owns.
       - run: pnpm test:pg
+        if: needs.changes.outputs.code == 'true'
 
   # Exercises the full drizzle migration chain end-to-end against a fresh,
   # empty database — no SCHEMA_SQL bootstrap. The existing ci-sqlite / ci-pg

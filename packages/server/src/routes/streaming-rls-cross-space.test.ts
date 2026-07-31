@@ -52,9 +52,23 @@ async function mintSpaceKey(
   return raw;
 }
 
+/**
+ * Drain an SSE response until `until` holds, or the ceiling is reached.
+ *
+ * The wait is for the item this test expects to see; the ceiling only bounds a
+ * stream that never delivers it. A fixed 750ms window made the test a bet on
+ * scheduling instead, and losing it reported
+ * `expected ': connected\n\n' to contain '<id>'` — which reads as an RLS
+ * failure and is not one.
+ *
+ * The negative half of the assertion is unaffected. Returning as soon as space
+ * A's item arrives can only reduce what has been read, so space B's id being
+ * absent here means it was absent over a shorter window, never a longer one.
+ */
 async function readSse(
   res: Response,
-  timeoutMs = 750,
+  until?: (text: string) => boolean,
+  timeoutMs = 15_000,
 ): Promise<{ text: string }> {
   expect(res.body).not.toBeNull();
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
@@ -86,6 +100,7 @@ async function readSse(
     const { value, done } = await tick;
     if (done) break;
     if (value) text += decoder.decode(value, { stream: true });
+    if (until?.(text) === true) break;
   }
   try {
     await reader.cancel();
@@ -211,7 +226,7 @@ describe.skipIf(!isPg)("streaming RLS cross-space regression (PG only)", () => {
       },
     });
     expect(res.status).toBe(200);
-    const { text } = await readSse(res);
+    const { text } = await readSse(res, (t) => t.includes(itemAId));
     expect(text).toContain(itemAId);
     // The smoking gun: space B's item id must NEVER appear in
     // space A's SSE replay. The event_log row carries the payload
