@@ -8,6 +8,7 @@ import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -367,51 +368,58 @@ export function blobRoutes(
     const blobSpaceId = c.get("apiKey")?.space_id ?? "";
     // Content addressing makes `existed` decide two things at once: whether
     // these bytes need writing, and whether a later refusal has anything to
-    // undo. Bytes already on disk belong to whoever registered them.
-    const existed = await blobBackend.exists(hash);
-    if (!existed) {
-      await blobBackend.put(hash, data, mimeType);
-    }
-    try {
-      await storage.runInTransaction(async () => {
-        await reserveQuota(c, storage, [
-          { resource: "blobs", increment: 1 },
-          { resource: "storage_bytes", increment: data.length },
-        ]);
-        // Register the metadata row scoped to the caller's space. Empty-
-        // string sentinel for instance-wide / single-space / platform-admin
-        // uploads. Different spaces uploading the same hash bytes get
-        // separate rows; the storage backend dedupes the physical file.
-        await storage.blobs.register(
-          hash,
-          mimeType,
-          data.length,
-          hash,
-          blobSpaceId,
-        );
-      });
-    } catch (err) {
-      // Refused, or the registration failed. An unregistered blob is
-      // unreachable and nothing sweeps it, so undo this request's own put —
-      // and only its own. A failure to undo leaves bytes behind rather than
-      // failing the request a second time, so it is logged, not thrown: the
-      // caller's error is the one worth surfacing.
+    // undo. The second answer is only true while no other request can be
+    // writing the same bytes, which is what the per-hash lock buys: taken
+    // across the check, the write and the registration, `existed === false`
+    // means this request wrote them and is the only one that may take them
+    // back. Without it two spaces uploading identical bytes both read false,
+    // and the one that is refused deletes the other's committed blob.
+    await withBlobUploadLock(hash, async () => {
+      const existed = await blobBackend.exists(hash);
       if (!existed) {
-        try {
-          await blobBackend.delete(hash);
-        } catch (cleanupErr) {
-          log("error", "blob.orphaned_after_refused_upload", {
-            hash,
-            size: data.length,
-            error:
-              cleanupErr instanceof Error
-                ? cleanupErr.message
-                : String(cleanupErr),
-          });
-        }
+        await blobBackend.put(hash, data, mimeType);
       }
-      throw err;
-    }
+      try {
+        await storage.runInTransaction(async () => {
+          await reserveQuota(c, storage, [
+            { resource: "blobs", increment: 1 },
+            { resource: "storage_bytes", increment: data.length },
+          ]);
+          // Register the metadata row scoped to the caller's space. Empty-
+          // string sentinel for instance-wide / single-space / platform-admin
+          // uploads. Different spaces uploading the same hash bytes get
+          // separate rows; the storage backend dedupes the physical file.
+          await storage.blobs.register(
+            hash,
+            mimeType,
+            data.length,
+            hash,
+            blobSpaceId,
+          );
+        });
+      } catch (err) {
+        // Refused, or the registration failed. An unregistered blob is
+        // unreachable and nothing sweeps it, so undo this request's own put —
+        // and only its own. A failure to undo leaves bytes behind rather than
+        // failing the request a second time, so it is logged, not thrown: the
+        // caller's error is the one worth surfacing.
+        if (!existed) {
+          try {
+            await blobBackend.delete(hash);
+          } catch (cleanupErr) {
+            log("error", "blob.orphaned_after_refused_upload", {
+              hash,
+              size: data.length,
+              error:
+                cleanupErr instanceof Error
+                  ? cleanupErr.message
+                  : String(cleanupErr),
+            });
+          }
+        }
+        throw err;
+      }
+    });
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
