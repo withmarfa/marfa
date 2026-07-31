@@ -12,13 +12,23 @@ export default defineConfig({
     // Generous default timeouts for PG tests: under parallel file
     // execution, CREATE DATABASE TEMPLATE / DROP DATABASE WITH (FORCE)
     // serialize briefly per template inside PG and can stack to a few
-    // seconds when many workers spin up + tear down at once. 20s is
-    // plenty for any test body + setup; a real hang still surfaces fast.
+    // seconds when many workers spin up + tear down at once.
     // `hookTimeout` is larger because per-file afterAll runs DROP
     // DATABASE which serializes against PG-cluster-wide admin traffic
     // from every other file's per-test clone-and-drop traffic.
-    testTimeout: 20_000,
-    hookTimeout: 60_000,
+    //
+    // 20s was "plenty for any test body + setup" on a quiet machine, and this
+    // one is not: it hosts the self-hosted runner pool, so a suite competes
+    // with whatever else the pool is running plus anything on the desktop.
+    // Four separate tests have now been recorded failing here on elapsed time
+    // rather than on an assertion, one of which let a pull request merge with
+    // this job red. Every one of them waits on a condition and reports it, so
+    // raising the ceiling cannot hide a defect — a test that never settles
+    // still fails, later. The cost of being wrong this way is a slower red;
+    // the other way it is a red that means nothing, which is worse, because it
+    // teaches everyone to wave the next one through.
+    testTimeout: 60_000,
+    hookTimeout: 120_000,
 
     // Forks pool: each test file runs in its own child process, so the
     // process-global pubsub EventEmitter and the cycle-context
