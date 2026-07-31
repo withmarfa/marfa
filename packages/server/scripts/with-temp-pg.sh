@@ -8,8 +8,9 @@
 # container for the server test suite). Both can run concurrently — this
 # wrapper picks a random free port and uses its own container name.
 #
-# Container: postgres:17 — matches CI service containers + the test:pg
-# container + the createTestContext() defaults.
+# Container: postgres:17 — matches the test:pg container and the
+# createTestContext() defaults. CI boots this same script rather than a
+# service container, so there is one definition instead of two that can drift.
 #
 # Usage: bash packages/server/scripts/with-temp-pg.sh <command> [args...]
 #

@@ -13,11 +13,11 @@
  *
  * SQLite: applies migrations to libsql `:memory:` and dumps `sqlite_master`.
  *
- * PG: requires DATABASE_URL (set by with-temp-pg.sh, or by the CI service
- *     container). Applies all migrations, then invokes pg_dump — preferring
+ * PG: requires DATABASE_URL, set by with-temp-pg.sh on every path including
+ *     CI. Applies all migrations, then invokes pg_dump — preferring
  *     `docker exec` into the container named in PG_CONTAINER_NAME (version-
- *     matched dump) and falling back to the host pg_dump binary on the CI
- *     freshness path. Grants are captured separately from information_schema
+ *     matched dump) and falling back to the host pg_dump binary, which no
+ *     automated path reaches now that the wrapper always names a container. Grants are captured separately from information_schema
  *     because pg_dump --no-privileges strips them.
  *
  * The FTS5 virtual table in sqlite/connection.ts is NOT in scope — Drizzle
@@ -190,8 +190,9 @@ async function dumpPg(): Promise<string> {
 /**
  * Invoke pg_dump. Prefer container-side via `docker exec` when
  * PG_CONTAINER_NAME is set (version-matched dump, no host binary required).
- * Otherwise fall back to the host pg_dump — used on the CI freshness path
- * where the runner reaches the postgres service container directly.
+ * Otherwise fall back to the host pg_dump. Nothing automated takes that
+ * branch any more: with-temp-pg.sh always exports PG_CONTAINER_NAME, so it
+ * survives only for a hand-run against an externally managed database.
  */
 function invokePgDump(databaseUrl: string): string {
   const dumpArgs = [
