@@ -25,7 +25,15 @@
  * separate `cycle-attribution.test.ts` already covers the api-key
  * fallback resolution path explicitly.
  */
-import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -48,33 +56,64 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
+// The positive waits have no deadline of their own, so this is the failure
+// bound for the whole file. Generous on purpose: it decides how long a
+// genuinely missing event takes to report, and nothing else.
+vi.setConfig({ testTimeout: 30_000 });
+
 beforeEach(() => {
   __resetCycleDetectionForTests();
 });
 
-/** Listen for the next `created` event matching `predicate`. Mirrors
- *  the helper in `cycle-attribution.test.ts`. */
+/**
+ * Listen for the next `created` event matching `predicate`.
+ *
+ * No internal deadline. This used to race the event against 500 ms and
+ * resolve `null`, which turned "the machine was busy" into
+ * `expected null not to be null` — an assertion failure naming a property
+ * that was never actually tested. That is the worst shape a flake can take:
+ * it reads as a defect in the code under test, and it cost a red merge on a
+ * commit that changed a hostname in a fixture.
+ *
+ * The bound is the suite timeout below instead, so a genuinely missing event
+ * fails as a timeout, which is what it is.
+ */
 async function nextCreatedMatching(
   predicate: (event: ItemEventWithId) => boolean,
-  timeoutMs = 500,
 ): Promise<ItemEventWithId | null> {
   const iter = subscribe()[Symbol.asyncIterator]();
-  const timeout = new Promise<null>((r) => {
-    setTimeout(() => {
-      r(null);
-    }, timeoutMs);
-  });
-  const next = (async (): Promise<ItemEventWithId | null> => {
+  try {
     for (;;) {
       const result = await iter.next();
       if (result.done) return null;
       const value = result.value;
       if (value.type === "created" && predicate(value)) return value;
     }
-  })();
-  return Promise.race([next, timeout]).finally(() => {
+  } finally {
     void iter.return(undefined);
+  }
+}
+
+/**
+ * Wait a bounded time and assert nothing matching arrives.
+ *
+ * A negative assertion needs a deadline — you cannot wait forever for an
+ * absence — but it is the one shape that fails in the *passing* direction: a
+ * loaded machine makes a late event more likely to be missed, so too tight a
+ * bound reports success for the wrong reason. This is deliberately far longer
+ * than the publish path takes, so an event the gate should have dropped has
+ * every chance to show up and fail the test.
+ */
+async function noCreatedMatchingWithin(
+  predicate: (event: ItemEventWithId) => boolean,
+  withinMs: number,
+): Promise<ItemEventWithId | null> {
+  const timeout = new Promise<null>((r) => {
+    setTimeout(() => {
+      r(null);
+    }, withinMs);
   });
+  return Promise.race([nextCreatedMatching(predicate), timeout]);
 }
 
 describe("cycle multi-hop A→B→A→… loop", () => {
@@ -131,9 +170,9 @@ describe("cycle multi-hop A→B→A→… loop", () => {
     // emits a system.activity row in its place.
     const overflowHop = DEFAULT_HOP_BUDGET + 1;
     const overflowTitle = `${baseTitle}-hop-${String(overflowHop)}`;
-    const overflowEventP = nextCreatedMatching(
+    const overflowEventP = noCreatedMatchingWithin(
       (e) => (e.item.properties as { title?: string }).title === overflowTitle,
-      150,
+      2_000,
     );
     const overflowRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
@@ -152,10 +191,12 @@ describe("cycle multi-hop A→B→A→… loop", () => {
     // gate dropped the publish before the EventEmitter emit.
     expect(await overflowEventP).toBeNull();
 
-    // The overflow hook writes a system.activity row. Poll for it —
-    // the write is async (best-effort, fire-and-forget inside the
-    // hook).
-    const deadline = Date.now() + 1000;
+    // The overflow hook writes a system.activity row. Poll for it — the
+    // write is async (best-effort, fire-and-forget inside the hook). The
+    // deadline is a failure bound, not a pause: the happy path returns on the
+    // first pass, and a tight one would only mean a busy machine reports a
+    // missing row that was on its way.
+    const deadline = Date.now() + 10_000;
     let matched:
       | Awaited<ReturnType<typeof ctx.storage.items.list>>["data"][number]
       | undefined;

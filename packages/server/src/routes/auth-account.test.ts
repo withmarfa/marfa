@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import {
   createTestContext,
@@ -7,6 +7,14 @@ import {
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+
+// Each case here drives a whole account lifecycle — sign-up and sign-in are
+// two password hashes apiece, then a delete and its cascade — against a
+// machine that also hosts the CI pool. The project default of 20 s is a
+// duration, not a property, and overrunning it reports a timeout that says
+// nothing about what was being checked. Same reasoning as
+// `auth-grant-revoke.test.ts`.
+vi.setConfig({ testTimeout: 60_000 });
 import { PendingDeletePurger } from "../storage/retention.js";
 
 /**
