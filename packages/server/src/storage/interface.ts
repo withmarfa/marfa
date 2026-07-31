@@ -245,7 +245,21 @@ export interface ItemStore {
    * are simply absent from the map; no errors. Used by the edge-validation
    * batcher to collapse per-pair item fetches into a single IN query.
    */
-  getMany(ids: string[], spaceId?: string): Promise<Map<string, Item>>;
+  /**
+   * Fetch many items by id, space-fenced.
+   *
+   * Trashed rows are excluded by default, because every read surface treats a
+   * soft-deleted item as gone. `includeTrashed` is for the one caller that
+   * must see them: purge, whose whole input is trashed rows. Without it the
+   * purge runner's pre-fetch came back empty, so it reported every id as
+   * "not found in space scope" while the delete underneath it succeeded — a
+   * job that removed four thousand rows and said it had removed none.
+   */
+  getMany(
+    ids: string[],
+    spaceId?: string,
+    opts?: { includeTrashed?: boolean },
+  ): Promise<Map<string, Item>>;
   /**
    * Like `get`, but returns trashed items too. Intended for callers that
    * need to read an item's metadata (e.g. its `type` for a permission

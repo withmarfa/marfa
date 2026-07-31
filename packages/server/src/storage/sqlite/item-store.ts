@@ -360,7 +360,11 @@ export class SqliteItemStore implements ItemStore {
     return rowToItem(row);
   }
 
-  async getMany(ids: string[], spaceId?: string): Promise<Map<string, Item>> {
+  async getMany(
+    ids: string[],
+    spaceId?: string,
+    opts?: { includeTrashed?: boolean },
+  ): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
     const unique = Array.from(new Set(ids));
@@ -369,7 +373,7 @@ export class SqliteItemStore implements ItemStore {
       : inArray(items.id, unique);
     const rows = await this.db.select().from(items).where(where).all();
     for (const row of rows) {
-      if (row.state === "trashed") continue;
+      if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
       out.set(row.id, rowToItem(row));
     }
     return out;
