@@ -19,12 +19,14 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists with the right space.
  */
+import { createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
   markEmailVerified,
   request,
   waitForConsentLockDepth,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -337,6 +339,7 @@ async function seedAuthorizationCode(
   c: TestContext,
   clientId: string,
   authUserId: string,
+  identifier?: string,
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
   const schemaModule =
@@ -355,10 +358,12 @@ async function seedAuthorizationCode(
   const now = new Date();
   const op = db.insert(schemaModule.auth_verification).values({
     id: `ver_${Math.random().toString(36).slice(2)}`,
-    // The store looks codes up by the hashed identifier. The test asserts
-    // on deletion by grant rather than by identifier, so any stable value
-    // works here; using the raw code keeps the row readable when debugging.
-    identifier: code,
+    // The store looks codes up by the hashed identifier. A test asserting
+    // on deletion by grant rather than by identifier can use any stable
+    // value, and the raw code keeps the row readable when debugging; a test
+    // that drives the token endpoint has to seed the hash the guard will
+    // compute, and passes it explicitly.
+    identifier: identifier ?? code,
     value: JSON.stringify({
       type: "authorization_code",
       query: { client_id: clientId, redirect_uri: `${ORIGIN}/callback` },
@@ -459,7 +464,63 @@ describe("revocation reaches outstanding authorization codes", () => {
     expect(afterRevoke).not.toBeNull();
     expect(afterRevoke?.hasConsent).toBe(false);
   });
+
+  it("REGRESSION: the token endpoint refuses a revoked grant's code", async () => {
+    // The sweep and the guard are two mechanisms, and the tests above only
+    // reach the first. They assert on the store, which is the layer the
+    // sweep writes to; the guard is a before-hook on `/oauth2/token` and is
+    // never in their path, so removing it entirely left them all green.
+    //
+    // The guard exists for the window the sweep cannot close — a code minted
+    // between the consent delete and the code delete — and for the next
+    // revocation path that forgets the codes, which is how this defect arose
+    // the first time. A defence against a future mistake with no test is
+    // removed by the first person tidying an unused-looking hook.
+    //
+    // So this one drives the endpoint. The seeded identifier is the hashed
+    // code, because that is what the guard looks up.
+    ctx = await createTestContext({ authMode: "hosted" });
+    const email = `guard-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
+    await signInUser(ctx, email);
+    const authUserId = await authUserIdFor(ctx, email);
+    const clientId = await seedClient(ctx);
+    await seedConsent(ctx, clientId, authUserId);
+
+    const code = `code_${Math.random().toString(36).slice(2, 14)}`;
+    await seedAuthorizationCode(ctx, clientId, authUserId, hashCode(code));
+
+    // Exactly the window the sweep leaves: the consent row is gone and the
+    // code is not.
+    await dropConsent(ctx, clientId, authUserId);
+
+    const res = await ctx.app.request("/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: clientId,
+        redirect_uri: `${ORIGIN}/callback`,
+      }).toString(),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error?: string;
+      error_description?: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    // The guard's own wording, not the plugin's. Without it the request
+    // reaches the plugin, which has its own opinion about a code it can
+    // still resolve, and the two are not the same answer.
+    expect(body.error_description).toContain("revoked");
+  });
 });
+
+/** The identifier the exchange guard looks a code up by. */
+function hashCode(code: string): string {
+  return createHmac("sha256", TEST_API_KEY_SALT).update(code).digest("hex");
+}
 
 /** Count outstanding authorization codes per client id. */
 async function countAuthorizationCodes(
