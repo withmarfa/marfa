@@ -91,7 +91,14 @@ async function runPurgeChunk({
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
   await storage.runInTransaction(async () => {
-    const items = await storage.items.getMany(ids, spaceId ?? undefined);
+    // Trashed included: purge is the terminal step after a soft delete, so
+    // every id it is handed is trashed. Excluding them left this map empty,
+    // which sent every id down the not-found branch below while `bulkPurge`
+    // deleted them anyway — and took the blob-hash collection with it, so the
+    // hashes a purged item referenced were never reported for collection.
+    const items = await storage.items.getMany(ids, spaceId ?? undefined, {
+      includeTrashed: true,
+    });
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
     }
