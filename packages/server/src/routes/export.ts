@@ -93,7 +93,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export space data",
   description:
-    "Streams the space's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
+    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -255,6 +255,11 @@ export function exportRoutes(
             : null;
         try {
           const work = async () => {
+            // Ids of every item this export emits. Edges are filtered
+            // against it below: an export carries the relationships among
+            // the items it contains, so a filtered export never references
+            // an item the output does not hold.
+            const exportedIds = new Set<string>();
             let cursor: string | undefined;
             do {
               const result = await storage.items.list({
@@ -272,6 +277,7 @@ export function exportRoutes(
 
               for (const item of result.data) {
                 const metadata = await storage.metadata.get(item.id);
+                exportedIds.add(item.id);
                 controller.enqueue(
                   encoder.encode(JSON.stringify({ item, metadata }) + "\n"),
                 );
@@ -281,6 +287,28 @@ export function exportRoutes(
                 ? (result.cursor as string | undefined)
                 : undefined;
             } while (cursor);
+
+            let edgeCursor: string | undefined;
+            do {
+              const page = await storage.edges.list({
+                spaceId,
+                limit: 200,
+                cursor: edgeCursor,
+              });
+              for (const edge of page.data) {
+                if (
+                  exportedIds.has(edge.source_id) &&
+                  exportedIds.has(edge.target_id)
+                ) {
+                  controller.enqueue(
+                    encoder.encode(JSON.stringify({ edge }) + "\n"),
+                  );
+                }
+              }
+              edgeCursor = page.has_more
+                ? (page.cursor ?? undefined)
+                : undefined;
+            } while (edgeCursor);
           };
           if (rlsCtx) {
             await rlsCtx.withInstalledContext(work);
@@ -322,6 +350,7 @@ interface ArchiveManifest {
    */
   space_id: string | null;
   item_count: number;
+  edge_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
 }
@@ -359,11 +388,15 @@ async function handleArchiveExport(
       : null;
 
   const lines: string[] = [];
+  const edgeLines: string[] = [];
   const blobHashes = new Set<string>();
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
 
   try {
     const collect = async () => {
+      // Same both-endpoints rule as the NDJSON path: the archive carries
+      // the relationships among the items it contains, nothing beyond.
+      const exportedIds = new Set<string>();
       let cursor: string | undefined;
       do {
         const result = await storage.items.list({
@@ -380,6 +413,7 @@ async function handleArchiveExport(
         });
         for (const item of result.data) {
           const metadata = await storage.metadata.get(item.id);
+          exportedIds.add(item.id);
           lines.push(JSON.stringify({ item, metadata }));
           collectBlobHashes(item.properties, blobHashes);
           collectBlobHashes(metadata.extensions, blobHashes);
@@ -388,6 +422,24 @@ async function handleArchiveExport(
           ? (result.cursor as string | undefined)
           : undefined;
       } while (cursor);
+
+      let edgeCursor: string | undefined;
+      do {
+        const page = await storage.edges.list({
+          spaceId,
+          limit: 200,
+          cursor: edgeCursor,
+        });
+        for (const edge of page.data) {
+          if (
+            exportedIds.has(edge.source_id) &&
+            exportedIds.has(edge.target_id)
+          ) {
+            edgeLines.push(JSON.stringify({ edge }));
+          }
+        }
+        edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+      } while (edgeCursor);
 
       // Blob metadata lookup uses space_id; single-space self-hosts pass "" as the instance-wide sentinel.
       for (const hash of blobHashes) {
@@ -415,6 +467,7 @@ async function handleArchiveExport(
     created_at: new Date().toISOString(),
     space_id: spaceId ?? null,
     item_count: lines.length,
+    edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,
     blobs: blobMeta,
   };
@@ -433,6 +486,13 @@ async function handleArchiveExport(
 
     const ndjsonBuf = Buffer.from(lines.join("\n") + "\n");
     pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
+
+    // Emitted even when empty so a restore can tell "no edges" from
+    // "an archive predating edge support".
+    const edgesBuf = Buffer.from(
+      edgeLines.length > 0 ? edgeLines.join("\n") + "\n" : "",
+    );
+    pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
 
     for (const hash of Object.keys(blobMeta)) {
       const data = await blobBackend.get(hash);

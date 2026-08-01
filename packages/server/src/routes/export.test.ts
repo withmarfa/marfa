@@ -58,7 +58,9 @@ describe("GET /export", () => {
     const text = await res.text();
     const lines = text.trim().split("\n");
     for (const line of lines) {
-      const parsed = JSON.parse(line) as { item: { type: string } };
+      // Edge lines ride behind the items — the type filter applies to items.
+      const parsed = JSON.parse(line) as { item?: { type: string } };
+      if (!parsed.item) continue;
       expect(parsed.item.type).toBe("core.bookmark");
     }
   });
@@ -101,11 +103,15 @@ describe("GET /export", () => {
     expect(res.status).toBe(200);
 
     const text = await res.text();
-    const lines = text.trim().split("\n").filter(Boolean);
-    expect(lines.length).toBe(2);
-    for (const line of lines) {
-      const parsed = JSON.parse(line) as { item: { source: string } };
-      expect(parsed.item.source).toBe(sourceA);
+    const parsedLines = text
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { item?: { source: string } });
+    const itemLines = parsedLines.filter((p) => p.item !== undefined);
+    expect(itemLines.length).toBe(2);
+    for (const parsed of itemLines) {
+      expect(parsed.item?.source).toBe(sourceA);
     }
   });
 
@@ -128,13 +134,18 @@ describe("GET /export", () => {
     });
     const exportText = await exportRes.text();
     const lines = exportText.trim().split("\n");
-    const exported = lines.map(
-      (l) =>
-        JSON.parse(l) as {
-          item: Record<string, unknown>;
-          metadata: Record<string, unknown>;
-        },
-    );
+    const exported = lines
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            item?: Record<string, unknown>;
+            metadata?: Record<string, unknown>;
+          },
+      )
+      .filter(
+        (e): e is { item: Record<string, unknown>; metadata: Record<string, unknown> } =>
+          e.item !== undefined,
+      );
 
     const ours = exported.find(
       (e) => (e.item as { source_id?: string }).source_id === sourceId,
