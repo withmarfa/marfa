@@ -68,6 +68,13 @@ interface ConsentParams {
    */
   priorScopes?: readonly string[];
   /**
+   * For wildcard scopes, the display names of the types the pattern matches
+   * in this space today, keyed by type pattern (e.g. `user.*` → the space's
+   * custom types). Informative only: the checkbox still carries the wildcard
+   * literal, and the copy states that later-defined types are covered too.
+   */
+  wildcardExpansions?: Record<string, string[]>;
+  /**
    * When set, renders an inline error banner above the form (e.g. a
    * zero-scopes accept bounced back as "tick at least one permission").
    */
@@ -176,6 +183,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
   "withmarfa.captured_email": "Captured emails",
+  "user.*": "Your custom types",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",
   "system.device": "Devices",
@@ -252,11 +260,20 @@ export function renderConsentScreen(params: ConsentParams): string {
       )
       .join("");
 
-  /** A single per-type toggle row. */
+  /** A single per-type toggle row. A wildcard row lists the types the
+   *  pattern matches today, since the grant itself names no types. */
   const subRow = (scope: ParsedScope): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
     const label = escapeHtml(labelFor(scope, params.descriptions));
-    return `<div class="subrow"><span>${label}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
+    const matched =
+      scope.kind !== "oidc"
+        ? params.wildcardExpansions?.[scope.typePattern]
+        : undefined;
+    const detail =
+      matched && matched.length > 0
+        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today: ${matched.join(", ")} — and any you define later`)}</span>`
+        : "";
+    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
   };
 
   /** One collapsed soft-tile group: a master toggle in the summary, per-type

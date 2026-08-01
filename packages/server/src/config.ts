@@ -557,6 +557,20 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
     default_on: true,
   },
   {
+    // The one bundle whose scopes are wildcards, and deliberately so:
+    // types a person invents do not exist at request time, so no concrete
+    // list written here can name them. The wildcard is literally requested,
+    // which keeps unticking it a genuine narrowing — but the narrowing is
+    // all-or-nothing across every custom type, and a type defined after
+    // consent is covered by the standing grant without a re-ask. Both
+    // costs are stated in the consent copy.
+    id: "custom",
+    label: "Things with your own custom types",
+    description: "Types you define yourself, including ones you define later.",
+    scopes: ["user.*:read", "user.*:write"],
+    default_on: true,
+  },
+  {
     id: "profile",
     label: "Your profile",
     description: "Your name and email.",

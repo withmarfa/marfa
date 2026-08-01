@@ -493,6 +493,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // and the standard OIDC literals (built-in copy). Metadata scopes are
     // skipped — they're operator-tooling scopes that don't need UI copy.
     const descriptions = buildScopeDescriptions(parsed);
+    const wildcardExpansions = await resolveWildcardExpansions(
+      deps.storage,
+      session.user.id,
+      parsed,
+    );
 
     // Optional error banner (e.g. when redirected back from a zero-scopes
     // accept). Renderer ignores undefined.
@@ -512,6 +517,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       clientId,
       oauthQuery,
       descriptions,
+      wildcardExpansions,
       priorScopes,
       errorMessage,
     });
@@ -1593,6 +1599,34 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "derived-from": "Items derived from other items.",
   supersedes: "Updates and replacements between items.",
 };
+
+/**
+ * For a requested `user.*` wildcard, the display names of the custom types
+ * the consenting user's space holds today. Read from `storage.types` (the
+ * persisted rows) rather than the in-memory registry, so the answer does
+ * not depend on hydration state. Hosted-mode only — in keys mode there is
+ * no per-user space, and the wildcard row renders without the enumeration,
+ * the same degradation as the re-consent diff.
+ */
+export async function resolveWildcardExpansions(
+  storage: Storage,
+  authUserId: string,
+  scopes: ParsedScope[],
+): Promise<Record<string, string[]>> {
+  const wantsUserWildcard = scopes.some(
+    (s) => s.kind !== "oidc" && s.typePattern === "user.*",
+  );
+  if (!wantsUserWildcard || !storage.users) return {};
+  const row = await storage.users.getByAuthUserId(authUserId);
+  const spaceId = row?.space_id;
+  if (!spaceId) return {};
+  const types = await storage.types.list(spaceId);
+  const names = types
+    .filter((t) => t.id.startsWith("user."))
+    .map((t) => t.label ?? t.id)
+    .sort();
+  return names.length > 0 ? { "user.*": names } : {};
+}
 
 /**
  * Build the `{ typePattern: description }` map the renderer uses for

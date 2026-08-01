@@ -80,9 +80,18 @@ describe("DEFAULT_PERMISSION_BUNDLES", () => {
       "read",
       "write",
       "connected",
+      "custom",
       "profile",
     ]);
     expect(DEFAULT_PERMISSION_BUNDLES.every((b) => b.default_on)).toBe(true);
+  });
+
+  it("covers user-defined types through the user.* wildcards, nothing wider", () => {
+    // Runtime types cannot be enumerated at request time, so the custom
+    // bundle carries the narrowest wildcard that reaches them — never the
+    // bare `*`, which would fold system internals into the default grant.
+    const custom = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "custom");
+    expect(custom?.scopes).toEqual(["user.*:read", "user.*:write"]);
   });
 
   it("covers every shipped content type across read, write, and connected", () => {

@@ -170,6 +170,20 @@ describe("renderConsentScreen — soft-tile groups", () => {
     }
   });
 
+  it("lists a wildcard's matched types beneath its toggle, checkbox unchanged", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [...SCOPES, { typePattern: "user.*", operation: "read" }],
+      wildcardExpansions: { "user.*": ["Recipes", "Training log"] },
+    });
+    // Informative line names what the pattern matches today and says the
+    // grant covers later types too; the submitted value stays the wildcard.
+    expect(html).toContain("Today: Recipes, Training log");
+    expect(html).toContain("and any you define later");
+    expect(html).toContain('value="user.*:read"');
+    expect(html).not.toContain('value="user.recipes:read"');
+  });
+
   it("renders per-type toggles with human labels, not raw scope strings", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain('class="subrow"');
