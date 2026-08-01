@@ -298,7 +298,7 @@ export function createApp(
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
-  app.use("*", authMiddleware(storage, config.apiKeySalt));
+  app.use("*", authMiddleware(storage, config.apiKeySalt, config.authMode));
 
   // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
   // credential is resolved when this runs. Rejects every non-GET request

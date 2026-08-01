@@ -267,7 +267,11 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // Auth middleware
 // ---------------------------------------------------------------------------
 
-export function authMiddleware(storage: Storage, salt: string) {
+export function authMiddleware(
+  storage: Storage,
+  salt: string,
+  authMode: "keys" | "hosted" = "keys",
+) {
   // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
   // OAuth grants get their throttle from `oauthLastUsedCache` (module-
   // scoped) so route-handler stampers can share the same window.
@@ -350,6 +354,18 @@ export function authMiddleware(storage: Storage, salt: string) {
       // Space id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's space_id at consent time).
       const oauthSpaceId = oauthToken.referenceId ?? undefined;
+      // A NULL reference binds the token to no space, and in hosted mode
+      // that is never a valid credential shape: the storage layer drops its
+      // space predicate for a space-less caller, so honoring the token
+      // would hand an accidental platform tier to whatever consent gap
+      // produced it. Refuse like any other unresolvable bearer. Keys-mode
+      // deployments are single-space and space-less by design, so they are
+      // untouched.
+      if (authMode === "hosted" && oauthSpaceId === undefined) {
+        c.set("apiKey", undefined);
+        c.set("authType", undefined);
+        return next();
+      }
       // Stable composite label/source. Used in audit rows; doesn't need
       // to be a real foreign-key handle — system.connection projection
       // is maintained separately.
