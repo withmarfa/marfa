@@ -76,6 +76,7 @@ async function buildCtx(): Promise<Ctx> {
     // aggregate window has its own dedicated test context.
     rateLimitAggregateMultiplier: 0,
     oauthRedirectAllowlist: [],
+    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -288,6 +289,7 @@ async function buildAggCtx(): Promise<Ctx> {
     rateLimitWindowMs: 60_000,
     rateLimitAggregateMultiplier: 2,
     oauthRedirectAllowlist: [],
+    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);

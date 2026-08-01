@@ -82,6 +82,7 @@ function specGenerationConfig(authMode: AuthMode): AppConfig {
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
     oauthRedirectAllowlist: [],
+    mcpEnabled: false,
   };
 }
 

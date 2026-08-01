@@ -20,6 +20,7 @@ import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
+import { mcpRoutes } from "./routes/mcp.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -762,6 +763,22 @@ export function createApp(
     }),
   );
   app.get("/openapi.json", (c) => c.json(openapiDocument));
+
+  // The remote agent surface. Mounted last and wired as a closure over the
+  // composed app so tool calls dispatch back through the full middleware
+  // stack in process; a plain Hono route (streaming, protocol-owned wire
+  // shapes) that stays out of the OpenAPI document like SSE and export.
+  if (config.mcpEnabled) {
+    app.route(
+      "/mcp",
+      mcpRoutes({
+        authBaseUrl: config.authBaseUrl,
+        hasAuthServer: Boolean(auth),
+        toolsets: config.mcpToolsets,
+        appFetch: (req) => app.fetch(req),
+      }),
+    );
+  }
 
   return app;
 }

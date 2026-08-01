@@ -421,9 +421,10 @@ export function buildOauthProjectionPlugin(opts: {
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
   const acceptedResources = baseURL
     ? new Set(
-        [stripTrailingSlash(baseURL), `${stripTrailingSlash(baseURL)}/mcp`].filter(
-          (v) => v.length > 0,
-        ),
+        [
+          stripTrailingSlash(baseURL),
+          `${stripTrailingSlash(baseURL)}/mcp`,
+        ].filter((v) => v.length > 0),
       )
     : undefined;
   return {

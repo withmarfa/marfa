@@ -102,7 +102,10 @@ async function tokenRequest(
 describe("resource parameter on the token endpoint", () => {
   it("accepts the MCP endpoint's canonical URI and mints a resolvable token", async () => {
     const base = "http://localhost:0";
-    ctx = await createTestContext({ authAllowSignup: false, authBaseUrl: base });
+    ctx = await createTestContext({
+      authAllowSignup: false,
+      authBaseUrl: base,
+    });
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
@@ -127,6 +130,8 @@ describe("resource parameter on the token endpoint", () => {
 
     const token = await tokenRequest(ctx, clientId, secret, {});
     expect(token.status).toBe(200);
-    expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(true);
+    expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(
+      true,
+    );
   });
 });

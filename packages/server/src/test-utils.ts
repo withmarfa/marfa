@@ -495,6 +495,7 @@ export async function createTestContext(
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode: "keys",
+    mcpEnabled: true,
     versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,

@@ -216,6 +216,13 @@ export interface AppConfig {
    *  Default `false` — single-user self-hosted instances enable this
    *  only for the initial admin account. */
   authAllowSignup: boolean;
+  /** Whether the remote MCP surface is mounted at `/mcp`. Default on:
+   *  every instance gets the agent surface unless the operator opts out. */
+  mcpEnabled: boolean;
+  /** Toolsets the remote MCP surface exposes (comma-list: standard,
+   *  admin, all). Defaults to `standard`; credentials still gate every
+   *  call, so widening this widens offering, not access. */
+  mcpToolsets?: string;
   /** When `true`, a fresh sign-up's space is seeded with a few starter
    *  items (a welcome note, a docs bookmark, a first task, one connecting
    *  edge) so the space isn't empty on first open. Default `false`: self-host
@@ -846,6 +853,8 @@ export function loadConfig(): AppConfig {
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
+    mcpEnabled: process.env.MARFA_MCP_ENABLED !== "false",
+    mcpToolsets: process.env.MARFA_MCP_TOOLSETS,
     seedStarterContent: process.env.MARFA_SEED_STARTER_CONTENT === "true",
     authSecret,
     oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),

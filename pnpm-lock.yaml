@@ -581,6 +581,9 @@ importers:
       '@libsql/client':
         specifier: ^0.17.3
         version: 0.17.3
+      '@modelcontextprotocol/server':
+        specifier: ^2.0.0
+        version: 2.0.0
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -614,9 +617,15 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.41.1
         version: 1.41.1
+      '@withmarfa/mcp':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../runtime-sdk
+      '@withmarfa/sdk':
+        specifier: workspace:*
+        version: link:../sdk
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
@@ -2084,6 +2093,14 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@modelcontextprotocol/core@2.0.0':
+    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/server@2.0.0':
+    resolution: {integrity: sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw==}
+    engines: {node: '>=20'}
+
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
     peerDependencies:
@@ -2655,6 +2672,16 @@ packages:
 
   '@vitest/utils@4.1.8':
     resolution: {integrity: sha512-uOJamYALNhfJ6iolExyQM40yIQwDqYnkKtQ5VCiSe17E33H0aQ/u+1GlRuz4LZBk6Mm3sg90G9hEbmEt37C1Zg==}
+
+  '@withmarfa/mcp@2.1.0':
+    resolution: {integrity: sha512-32crFHd60kL5vZ8yhMztZqNdvWrLEZoCEyT8OMKJ8zl7ZvMHKyXz0XbPe0GIv6MonOD3ZbtP7/V6AP9Dny5yIQ==}
+    hasBin: true
+
+  '@withmarfa/sdk@2.1.0':
+    resolution: {integrity: sha512-flFFxn3IITl29jhYjAj1o4gzYLPm9QEoPzx9nbj3hWAZYTGRCAUVVUD1yiXArjLZuTdtoQ1vp9JerHKUb+Wxgg==}
+
+  '@withmarfa/shared@2.0.0':
+    resolution: {integrity: sha512-orT+hkl9SQNWT7/8YrKf1pfGu6FylXWateQO2XJjRYNAXRT0dSNAgP+rNn4K4WNMJZik/XZicQGBdqcyms+oPg==}
 
   acorn-import-attributes@1.9.5:
     resolution: {integrity: sha512-n02Vykv5uA3eHGM/Z2dQrcD56kL8TyDb2p1+0P83PClMnC/nc+anbQRhIOWnSq4Ke/KvDPrY3C9hDtC/A3eHnQ==}
@@ -5035,6 +5062,15 @@ snapshots:
   '@libsql/win32-x64-msvc@0.5.29':
     optional: true
 
+  '@modelcontextprotocol/core@2.0.0':
+    dependencies:
+      zod: 4.4.3
+
+  '@modelcontextprotocol/server@2.0.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.0.0
+      zod: 4.4.3
+
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)':
     dependencies:
       '@emnapi/core': 1.9.1
@@ -5641,6 +5677,22 @@ snapshots:
       '@vitest/pretty-format': 4.1.8
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
+
+  '@withmarfa/mcp@2.1.0':
+    dependencies:
+      '@modelcontextprotocol/server': 2.0.0
+      '@withmarfa/sdk': 2.1.0
+      '@withmarfa/shared': 2.0.0
+      zod: 4.4.3
+
+  '@withmarfa/sdk@2.1.0':
+    dependencies:
+      '@withmarfa/shared': 2.0.0
+
+  '@withmarfa/shared@2.0.0':
+    dependencies:
+      uuidv7: 1.2.1
+      zod: 4.4.3
 
   acorn-import-attributes@1.9.5(acorn@8.16.0):
     dependencies:

@@ -553,6 +553,7 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
     oauthRedirectAllowlist: [],
+    mcpEnabled: false,
   });
 
   return {

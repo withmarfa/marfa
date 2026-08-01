@@ -220,6 +220,7 @@ describe("bootstrap sentinel", () => {
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
       oauthRedirectAllowlist: [],
+      mcpEnabled: false,
     });
     return { app, storage };
   }

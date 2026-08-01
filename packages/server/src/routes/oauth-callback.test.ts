@@ -373,6 +373,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
     const hostedCtx = await createTestContext({
       authMode: "hosted",
       oauthRedirectAllowlist: [],
+      mcpEnabled: false,
     });
     try {
       if (!hostedCtx.storage.spaces) return; // hosted requires the space store
@@ -398,6 +399,7 @@ describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed",
     const keysCtx = await createTestContext({
       authMode: "keys",
       oauthRedirectAllowlist: [],
+      mcpEnabled: false,
     });
     try {
       if (!keysCtx.storage.spaces) return;
