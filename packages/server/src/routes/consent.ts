@@ -33,7 +33,8 @@
  * `/oauth2/consent`.
  */
 
-import type { ParsedScope } from "@withmarfa/shared";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
+import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
@@ -67,37 +68,86 @@ interface ConsentParams {
    */
   priorScopes?: readonly string[];
   /**
+   * For wildcard scopes, the display names of the types the pattern matches
+   * in this space today, keyed by type pattern (e.g. `user.*` → the space's
+   * custom types). Informative only: the checkbox still carries the wildcard
+   * literal, and the copy states that later-defined types are covered too.
+   */
+  wildcardExpansions?: Record<string, string[]>;
+  /**
    * When set, renders an inline error banner above the form (e.g. a
    * zero-scopes accept bounced back as "tick at least one permission").
    */
   errorMessage?: string;
 }
 
-type GroupId = "read" | "write" | "profile";
+/** A rendered soft-tile group: a bundle's scopes, or a fallback bucket for
+ *  scopes outside every bundle. */
+interface ScopeGroup {
+  label: string;
+  desc: string;
+  scopes: ParsedScope[];
+}
 
-const GROUP_META: Record<GroupId, { label: string; desc: string }> = {
-  read: {
-    label: "Read your content",
-    desc: "Your notes, tasks, bookmarks, and more.",
-  },
-  write: {
-    label: "Write your content",
-    desc: "Add, edit, and organize what's in your space.",
-  },
-  profile: {
-    label: "Your profile",
-    desc: "Your name and email.",
-  },
-};
-
-const GROUP_ORDER: GroupId[] = ["read", "write", "profile"];
+/**
+ * Partition scopes into groups derived from the configured permission
+ * bundles — the same definitions the discovery document advertises, so
+ * the screen and the advertisement cannot drift. A scope belongs to the
+ * first bundle whose `scopes` list carries its literal; scopes outside
+ * every bundle (an app's custom request) fall back to read/write
+ * buckets so nothing renders ungrouped.
+ */
+function buildGroups(
+  scopes: ParsedScope[],
+  bundles: PermissionBundle[],
+): ScopeGroup[] {
+  const literalToBundle = new Map<string, PermissionBundle>();
+  for (const bundle of bundles) {
+    for (const literal of bundle.scopes) {
+      if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
+    }
+  }
+  const byBundle = new Map<string, ScopeGroup>();
+  for (const bundle of bundles) {
+    byBundle.set(bundle.id, {
+      label: bundle.label,
+      desc: bundle.description,
+      scopes: [],
+    });
+  }
+  const otherRead: ScopeGroup = {
+    label: "Other read access",
+    desc: "Additional things this app asked to read.",
+    scopes: [],
+  };
+  const otherWrite: ScopeGroup = {
+    label: "Other write access",
+    desc: "Additional things this app asked to change.",
+    scopes: [],
+  };
+  for (const scope of scopes) {
+    const bundle = literalToBundle.get(scopeLiteralFor(scope));
+    if (bundle) {
+      byBundle.get(bundle.id)?.scopes.push(scope);
+    } else if (scope.kind !== "oidc" && scope.operation === "write") {
+      otherWrite.scopes.push(scope);
+    } else {
+      otherRead.scopes.push(scope);
+    }
+  }
+  return [...byBundle.values(), otherRead, otherWrite].filter(
+    (g) => g.scopes.length > 0,
+  );
+}
 
 /**
  * Short, human toggle labels keyed by type pattern. Curated for the types the
  * default grant requests; anything outside this map falls back to the scope's
- * registry description, then a humanized type name.
+ * registry description, then a humanized type name. A test pins every
+ * default-bundle scope to an entry here, so widening a bundle without a
+ * label fails the suite instead of shipping an auto-generated toggle.
  */
-const SCOPE_LABELS: Record<string, string> = {
+export const SCOPE_LABELS: Record<string, string> = {
   "core.note": "Notes",
   "core.task": "Tasks",
   "core.bookmark": "Bookmarks",
@@ -108,7 +158,32 @@ const SCOPE_LABELS: Record<string, string> = {
   "core.entity.person": "Contacts",
   "core.entity.place": "Places",
   "core.file": "Files",
+  "core.file.audio": "Audio files",
+  "core.file.image": "Images",
+  "core.file.video": "Videos",
   "core.media": "Media",
+  "core.media.album": "Albums",
+  "core.media.article": "Articles",
+  "core.media.book": "Books",
+  "core.media.film": "Films",
+  "core.media.podcast": "Podcasts",
+  "core.media.series": "Series",
+  "core.media.song": "Songs",
+  "core.media.tv_episode": "TV episodes",
+  "google.calendar.event": "Google Calendar events",
+  "google.contacts.contact": "Google Contacts",
+  "google.drive.file": "Google Drive files",
+  "google.tasks.task": "Google Tasks",
+  "google.youtube.channel": "YouTube channels",
+  "google.youtube.playlist": "YouTube playlists",
+  "google.youtube.video": "YouTube videos",
+  "raindrop.collection": "Raindrop collections",
+  "raindrop.raindrop": "Raindrop bookmarks",
+  "readwise.book": "Readwise books",
+  "readwise.highlight": "Readwise highlights",
+  "todoist.task": "Todoist tasks",
+  "withmarfa.captured_email": "Captured emails",
+  "user.*": "Your custom types",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",
   "system.device": "Devices",
@@ -117,7 +192,7 @@ const SCOPE_LABELS: Record<string, string> = {
   metadata: "Type definitions",
 };
 
-const OIDC_LABELS: Record<string, string> = {
+export const OIDC_LABELS: Record<string, string> = {
   profile: "Your name",
   email: "Your email address",
   openid: "Confirm your identity",
@@ -141,12 +216,6 @@ function humanizeType(typePattern: string): string {
   if (!words) return typePattern;
   const titled = words.charAt(0).toUpperCase() + words.slice(1);
   return typePattern.endsWith(".*") ? `${titled} (all)` : titled;
-}
-
-/** The capability group a scope belongs to. */
-function groupFor(scope: ParsedScope): GroupId {
-  if (scope.kind === "oidc") return "profile";
-  return scope.operation === "write" ? "write" : "read";
 }
 
 /** Human toggle label for a scope. */
@@ -191,40 +260,45 @@ export function renderConsentScreen(params: ConsentParams): string {
       )
       .join("");
 
-  /** A single per-type toggle row. */
+  /** A single per-type toggle row. A wildcard row lists the types the
+   *  pattern matches today, since the grant itself names no types. */
   const subRow = (scope: ParsedScope): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
     const label = escapeHtml(labelFor(scope, params.descriptions));
-    return `<div class="subrow"><span>${label}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
+    const matched =
+      scope.kind !== "oidc"
+        ? params.wildcardExpansions?.[scope.typePattern]
+        : undefined;
+    const detail =
+      matched && matched.length > 0
+        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today: ${matched.join(", ")} — and any you define later`)}</span>`
+        : "";
+    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
   };
 
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
-  const group = (groupId: GroupId, scopes: ParsedScope[]): string => {
-    if (scopes.length === 0) return "";
-    const meta = GROUP_META[groupId];
-    const rows = scopes.map(subRow).join("");
+  const group = (g: ScopeGroup): string => {
+    if (g.scopes.length === 0) return "";
+    const rows = g.scopes.map(subRow).join("");
     return `<details class="grp">
       <summary>
         <span class="gmain">
-          <span class="gtop"><span class="glabel">${escapeHtml(meta.label)}</span>${CHEVRON}</span>
-          <span class="gdesc">${escapeHtml(meta.desc)}</span>
+          <span class="gtop"><span class="glabel">${escapeHtml(g.label)}</span>${CHEVRON}</span>
+          <span class="gdesc">${escapeHtml(g.desc)}</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(meta.label)}"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub">${rows}</div>
     </details>`;
   };
 
-  /** Partition a scope set into the three groups and render the non-empty
-   *  ones, in order, inside a soft-tile stack. */
+  const bundles = getPermissionBundles();
+
+  /** Partition a scope set into bundle-derived groups and render the
+   *  non-empty ones, in bundle order, inside a soft-tile stack. */
   const groupedTiles = (scopes: ParsedScope[]): string => {
-    const tiles = GROUP_ORDER.map((g) =>
-      group(
-        g,
-        scopes.filter((s) => groupFor(s) === g),
-      ),
-    ).join("");
+    const tiles = buildGroups(scopes, bundles).map(group).join("");
     return `<div class="t-soft">${tiles}</div>`;
   };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { expandBundlesToScopes } from "@withmarfa/shared";
+import { expandBundlesToScopes, TYPE_REGISTRY } from "@withmarfa/shared";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import {
   DEFAULT_PERMISSION_BUNDLES,
@@ -75,13 +75,45 @@ describe("loadPermissionBundles", () => {
 });
 
 describe("DEFAULT_PERMISSION_BUNDLES", () => {
-  it("ships the three expected bundles, all default-on", () => {
+  it("ships the expected bundles, all default-on", () => {
     expect(DEFAULT_PERMISSION_BUNDLES.map((b) => b.id)).toEqual([
       "read",
       "write",
+      "connected",
+      "custom",
       "profile",
     ]);
     expect(DEFAULT_PERMISSION_BUNDLES.every((b) => b.default_on)).toBe(true);
+  });
+
+  it("covers user-defined types through the user.* wildcards, nothing wider", () => {
+    // Runtime types cannot be enumerated at request time, so the custom
+    // bundle carries the narrowest wildcard that reaches them — never the
+    // bare `*`, which would fold system internals into the default grant.
+    const custom = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "custom");
+    expect(custom?.scopes).toEqual(["user.*:read", "user.*:write"]);
+  });
+
+  it("covers every shipped content type across read, write, and connected", () => {
+    // The consent screen's plain-language options have to cover everything
+    // a person has — a shipped type outside every bundle is unreachable
+    // from the default grant and this is what catches the next one added.
+    const read = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "read");
+    const write = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "write");
+    const connected = DEFAULT_PERMISSION_BUNDLES.find(
+      (b) => b.id === "connected",
+    );
+    for (const [id] of TYPE_REGISTRY) {
+      if (id.startsWith("system.")) continue;
+      if (id.startsWith("core.")) {
+        expect(read?.scopes, `read misses ${id}`).toContain(`${id}:read`);
+        expect(write?.scopes, `write misses ${id}`).toContain(`${id}:write`);
+      } else {
+        expect(connected?.scopes, `connected misses ${id}`).toContain(
+          `${id}:read`,
+        );
+      }
+    }
   });
 
   it("requests concrete per-type content scopes, never a core.* wildcard", () => {

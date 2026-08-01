@@ -381,6 +381,67 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain(clientId);
   });
 
+  it("enumerates the space's custom types under a requested user.* wildcard", async () => {
+    // Hosted mode: the enumeration resolves the consenting user's space
+    // through the `users` store, which only hosted-mode sign-up provisions.
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const clientId = await seedClient(ctx, { name: "Custom Types App" });
+
+    // Sign up capturing the auth user id, so the space the enumeration
+    // reads from is resolvable — the shared signInUser helper discards it.
+    const email = "custom-types@example.com";
+    const password = "correct horse battery";
+    const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: { email, password, name: "Test User" },
+      headers: { origin: ORIGIN },
+    });
+    expect(signUpRes.status).toBe(200);
+    const authUserId = ((await signUpRes.json()) as { user?: { id?: string } })
+      .user?.id;
+    await markEmailVerified(ctx.storage, email);
+    const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: { email, password },
+      headers: { origin: ORIGIN },
+    });
+    expect(signInRes.status).toBe(200);
+    const setCookie = signInRes.headers.get("set-cookie") ?? "";
+    const cookie = setCookie
+      .split(/,\s*(?=[a-zA-Z0-9_-]+=)/)
+      .map((c) => c.split(";")[0])
+      .find((head) => head?.includes("session_token"));
+    expect(cookie).toBeTruthy();
+
+    const userRow = await ctx.storage.users?.getByAuthUserId(authUserId ?? "");
+    const spaceId = userRow?.space_id;
+    expect(spaceId).toBeTruthy();
+    await ctx.storage.types.create(
+      {
+        id: "user.recipe",
+        version: 1,
+        label: "Recipes",
+        fields: { title: { type: "string", required: true } },
+      },
+      spaceId ?? undefined,
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "user.*:read openid")}`,
+      { headers: { cookie: cookie ?? "" } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The wildcard is what the grant carries; the screen has to say what
+    // it matches today, and that later types are covered without a re-ask.
+    expect(html).toContain('value="user.*:read"');
+    expect(html).toContain("Today: Recipes");
+    expect(html).toContain("and any you define later");
+  });
+
   it("flags a public/DCR client as unverified on the consent screen", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     // Default seedClient shape is public (token_endpoint_auth_method: none).

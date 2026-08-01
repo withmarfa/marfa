@@ -526,8 +526,8 @@ export function createApp(
       // exchange happens at `/auth/device/token`).
       payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
       // Marfa extension: advertise the named permission bundles so clients
-      // can render / request the four-checkbox consent without hard-coding
-      // the scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.
+      // can render / request the bundled consent without hard-coding the
+      // scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.
       payload.marfa_permission_bundles =
         config.permissionBundles ?? getPermissionBundles();
       const headers = new Headers(upstream.headers);
