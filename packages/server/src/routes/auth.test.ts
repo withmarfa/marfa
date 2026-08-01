@@ -86,6 +86,7 @@ describe("bootstrap mode", () => {
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
       oauthRedirectAllowlist: [],
+      mcpEnabled: false,
     });
 
     const res = await request(app, "POST", "/keys", {

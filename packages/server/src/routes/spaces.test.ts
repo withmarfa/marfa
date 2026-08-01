@@ -91,6 +91,7 @@ async function createHostedContext(): Promise<HostedContext> {
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
     oauthRedirectAllowlist: [],
+    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 10);

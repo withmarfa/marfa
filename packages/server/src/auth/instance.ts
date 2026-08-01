@@ -624,6 +624,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
             buildOauthProjectionPlugin({
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
+              baseURL: options.baseURL,
             }),
           ]
         : []),

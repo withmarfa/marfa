@@ -413,13 +413,48 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
 export function buildOauthProjectionPlugin(opts: {
   storage: Storage;
   apiKeySalt?: string;
+  /** Issuer base URL; when set, the token endpoint validates and strips the
+   *  RFC 8707 `resource` parameter so mints stay opaque. */
+  baseURL?: string;
 }) {
-  const { storage, apiKeySalt } = opts;
+  const { storage, apiKeySalt, baseURL } = opts;
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
+  const acceptedResources = baseURL
+    ? new Set(
+        [
+          stripTrailingSlash(baseURL),
+          `${stripTrailingSlash(baseURL)}/mcp`,
+        ].filter((v) => v.length > 0),
+      )
+    : undefined;
   return {
     id: "marfa-oauth-projection" as const,
     hooks: {
       before: [
+        ...(acceptedResources
+          ? [
+              {
+                // RFC 8707 `resource` on the token endpoint, made safe for
+                // opaque tokens. MCP clients MUST send the canonical URI of
+                // the endpoint they will use the token against; the plugin
+                // validates it against its audience list and then, whenever
+                // a resource survives, mints a JWT-format access token
+                // instead of the opaque one the bearer middleware resolves —
+                // a token that verifies nowhere. Every audience this
+                // deployment accepts is this same server, so restricting the
+                // token's audience adds nothing the issuer boundary does not
+                // already provide: no other resource server trusts this
+                // authorization server. Validate against the accepted set,
+                // refuse unknown resources up front with the RFC 8707 error,
+                // and strip the parameter so the mint stays opaque.
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+                handler: createAuthMiddleware((ctx: HookCtxLite) => {
+                  normalizeResourceParameter(ctx, acceptedResources);
+                  return Promise.resolve();
+                }),
+              },
+            ]
+          : []),
         ...(refreshHasher
           ? [
               {
@@ -483,6 +518,39 @@ export function buildOauthProjectionPlugin(opts: {
  * lookup itself fails open (logs, returns) so a transient DB blip never
  * turns a legitimate refresh into a hard error.
  */
+function stripTrailingSlash(s: string): string {
+  return s.replace(/\/+$/, "");
+}
+
+function normalizeResourceParameter(
+  ctx: HookCtxLite,
+  accepted: Set<string>,
+): void {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  const resource = body.resource;
+  if (resource === undefined) return;
+  const values =
+    typeof resource === "string"
+      ? [resource]
+      : Array.isArray(resource)
+        ? resource
+        : null;
+  if (
+    !values ||
+    values.some(
+      (v) => typeof v !== "string" || !accepted.has(stripTrailingSlash(v)),
+    )
+  ) {
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_target",
+      error_description:
+        "The requested resource is not served by this authorization server.",
+    });
+  }
+  delete body.resource;
+}
+
 async function guardRefreshTokenGrant(
   ctx: HookCtxLite,
   storage: Storage,
