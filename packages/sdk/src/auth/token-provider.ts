@@ -3,7 +3,14 @@ import { OAuthError, type OAuthErrorCode } from "./errors.js";
 import { discoverEndpoints, type Endpoints } from "./discovery.js";
 import { normalizeIssuer } from "./issuer.js";
 
-interface PersistedTokens {
+/**
+ * The shape `StoredTokenProvider` persists through its `TokenStorage`.
+ * Exported because it is a cross-process contract, not just a cache: the
+ * file-backed store under `auth/node` writes this blob to
+ * `~/.marfa/<instance>.json`, where any tool sharing the store reads it
+ * back. Changing a field here changes what every consumer finds on disk.
+ */
+export interface PersistedTokens {
   access_token: string;
   refresh_token: string;
   /** OIDC ID token from the original authorization-code exchange. */

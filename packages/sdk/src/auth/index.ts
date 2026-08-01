@@ -8,7 +8,11 @@ export {
   generateState,
 } from "./pkce.js";
 export { StoredTokenProvider } from "./token-provider.js";
-export type { TokenProvider, TokenProviderConfig } from "./token-provider.js";
+export type {
+  PersistedTokens,
+  TokenProvider,
+  TokenProviderConfig,
+} from "./token-provider.js";
 export {
   InMemoryTokenStorage,
   LocalStorageTokenStorage,
