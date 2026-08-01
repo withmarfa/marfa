@@ -240,6 +240,23 @@ describe("account-holder edges", () => {
     expect(read.item.edges?.["authored-by"]?.edges[0]?.target_id).toBe(
       holderId,
     );
+
+    // The inbound direction is the one the handle exists for — "what did
+    // this person write" walks the holder's backrefs, and nothing else
+    // asserted it.
+    const backrefsRes = await request(
+      ctx.app,
+      "GET",
+      `/items/${String(holderId)}/backrefs?edge_type=authored-by`,
+      { key },
+    );
+    expect(backrefsRes.status).toBe(200);
+    const backrefs = (await backrefsRes.json()) as {
+      data: { source_id: string; target_id: string }[];
+    };
+    const inbound = backrefs.data.find((e) => e.source_id === noteId);
+    expect(inbound).toBeDefined();
+    expect(inbound?.target_id).toBe(holderId);
   });
 
   it("rejects the same edge when the space has no handle", async () => {
