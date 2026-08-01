@@ -40,7 +40,7 @@ const MAX_ARCHIVE_EDGES = 20000;
 /** Tags off an archived `{item, metadata}` line, defensively parsed. */
 function archiveTags(meta: unknown): string[] | undefined {
   if (typeof meta !== "object" || meta === null) return undefined;
-  const tags = (meta as Record<string, unknown>)["tags"];
+  const tags = (meta as Record<string, unknown>).tags;
   if (!Array.isArray(tags)) return undefined;
   const strings = tags.filter((t): t is string => typeof t === "string");
   return strings.length > 0 ? strings : undefined;
@@ -51,7 +51,7 @@ function archiveExtensions(
   meta: unknown,
 ): Record<string, Record<string, unknown>> {
   if (typeof meta !== "object" || meta === null) return {};
-  const extensions = (meta as Record<string, unknown>)["extensions"];
+  const extensions = (meta as Record<string, unknown>).extensions;
   if (typeof extensions !== "object" || extensions === null) return {};
   const out: Record<string, Record<string, unknown>> = {};
   for (const [namespace, data] of Object.entries(extensions)) {

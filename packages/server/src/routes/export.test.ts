@@ -143,8 +143,12 @@ describe("GET /export", () => {
           },
       )
       .filter(
-        (e): e is { item: Record<string, unknown>; metadata: Record<string, unknown> } =>
-          e.item !== undefined,
+        (
+          e,
+        ): e is {
+          item: Record<string, unknown>;
+          metadata: Record<string, unknown>;
+        } => e.item !== undefined,
       );
 
     const ours = exported.find(

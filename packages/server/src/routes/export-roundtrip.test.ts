@@ -233,7 +233,12 @@ describe("export → restore round trip", () => {
       space,
     );
     const b = await source.storage.items.create(
-      { type: "core.note", properties: { body: "b" }, source: "rt2", source_id: "b" },
+      {
+        type: "core.note",
+        properties: { body: "b" },
+        source: "rt2",
+        source_id: "b",
+      },
       space,
     );
     await source.storage.edges.createRaw(
@@ -342,7 +347,12 @@ describe("export → restore round trip", () => {
     const space = `t-rt4-${Math.random().toString(36).slice(2, 10)}`;
 
     const note = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "in filter" }, source: "rt4", source_id: "n" },
+      {
+        type: "core.note",
+        properties: { body: "in filter" },
+        source: "rt4",
+        source_id: "n",
+      },
       space,
     );
     const bookmark = await ctx.storage.items.create(
