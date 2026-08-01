@@ -19,6 +19,7 @@ import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
+import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -543,6 +544,25 @@ export function createApp(
     app.get("/.well-known/openid-configuration", (c) =>
       augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
     );
+    // RFC 8414 §3.1 forms the metadata URL by inserting the well-known
+    // segment between host and issuer path, and OIDC discovery appends its
+    // segment to the issuer. The issuer here is `<base>/auth`, so a
+    // spec-following client requests the path-aware URLs below — the
+    // bare-root copies above predate that reading and stay for the RPs
+    // already pinned to them. All serve the same augmented document. The
+    // issuer-suffixed OIDC path resolves here because these registrations
+    // run before the `/auth/*` catch-all mounts.
+    app.get("/.well-known/oauth-authorization-server/auth", (c) =>
+      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
+    );
+    app.get("/.well-known/openid-configuration/auth", (c) =>
+      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+    );
+    app.get("/auth/.well-known/openid-configuration", (c) =>
+      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+    );
+    // RFC 9728: the resource-server metadata a bearer challenge points at.
+    app.route("/", oauthProtectedResourceRoutes(config));
   }
 
   // Protected routes
