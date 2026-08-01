@@ -3,8 +3,17 @@
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
- * blobs_imported}`. Enforces the manifest v1 contract, blob-hash
- * verification, and a single item-import transaction boundary.
+ * edges_imported, edges_skipped, blobs_imported}`. Enforces the
+ * manifest v1 contract, blob-hash verification, and a single import
+ * transaction covering items, metadata, and edges.
+ *
+ * Item ids are preserved from the archive so restored edges resolve;
+ * an id or natural-key collision counts as a duplicate and leaves the
+ * existing row untouched. Tags and extensions restore alongside their
+ * items. Edges restore in a second pass, only where both endpoints
+ * resolve in the restore space — a hand-edited archive cannot plant a
+ * reference to an item it does not carry. Version history, created_at
+ * and updated_at are re-stamped, not carried.
  *
  * Paired with GET /export?format=archive.
  */
@@ -15,6 +24,7 @@ import { Readable } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
+import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -23,6 +33,34 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 const MAX_ARCHIVE_ITEMS = 5000;
+// Edges routinely outnumber items; a 4x multiple keeps the cap
+// proportionate without letting a hand-built archive flood the table.
+const MAX_ARCHIVE_EDGES = 20000;
+
+/** Tags off an archived `{item, metadata}` line, defensively parsed. */
+function archiveTags(meta: unknown): string[] | undefined {
+  if (typeof meta !== "object" || meta === null) return undefined;
+  const tags = (meta as Record<string, unknown>).tags;
+  if (!Array.isArray(tags)) return undefined;
+  const strings = tags.filter((t): t is string => typeof t === "string");
+  return strings.length > 0 ? strings : undefined;
+}
+
+/** Extensions off an archived `{item, metadata}` line, defensively parsed. */
+function archiveExtensions(
+  meta: unknown,
+): Record<string, Record<string, unknown>> {
+  if (typeof meta !== "object" || meta === null) return {};
+  const extensions = (meta as Record<string, unknown>).extensions;
+  if (typeof extensions !== "object" || extensions === null) return {};
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [namespace, data] of Object.entries(extensions)) {
+    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+      out[namespace] = data as Record<string, unknown>;
+    }
+  }
+  return out;
+}
 
 interface ArchiveManifest {
   version: number;
@@ -35,6 +73,8 @@ interface ArchiveManifest {
    */
   space_id?: string | null;
   item_count: number;
+  /** Absent on archives predating edge support; those restore with zero edges. */
+  edge_count?: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
 }
@@ -44,7 +84,9 @@ const restoreArchiveRoute = createRoute({
   method: "post",
   path: "/restore-archive",
   tags: ["Admin"],
-  summary: "Restore items and blobs from an archive",
+  summary: "Restore items, edges, metadata, and blobs from an archive",
+  description:
+    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. Version history and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -74,6 +116,8 @@ const restoreArchiveRoute = createRoute({
           schema: z.object({
             imported: z.number(),
             duplicates: z.number(),
+            edges_imported: z.number(),
+            edges_skipped: z.number(),
             blobs_imported: z.number(),
           }),
         },
@@ -121,6 +165,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     let manifest: ArchiveManifest | null = null;
     const itemLines: string[] = [];
+    const edgeLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
     // Resolve the space under which the archive will be restored.
@@ -184,6 +229,11 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
             const text = buf.toString("utf-8").trimEnd();
             if (text) {
               itemLines.push(...text.split("\n"));
+            }
+          } else if (header.name === "edges.ndjson") {
+            const text = buf.toString("utf-8").trimEnd();
+            if (text) {
+              edgeLines.push(...text.split("\n"));
             }
           } else if (header.name.startsWith("blobs/")) {
             const hash = header.name.slice("blobs/".length);
@@ -253,18 +303,36 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     await Promise.all(blobUploads);
 
-    const spaceId = c.get("apiKey")?.space_id;
-    const items: Record<string, unknown>[] = [];
+    // Items and blobs restore into the same resolved space. The
+    // empty-string sentinel is a blobs-table convention only; the items
+    // and edges layers use NULL for the single-space shape.
+    const spaceId = restoreSpaceId || undefined;
+
+    const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];
     for (const line of itemLines) {
       try {
         const parsed = JSON.parse(line) as {
           item: Record<string, unknown>;
           metadata?: unknown;
         };
-        items.push(parsed.item);
+        items.push(parsed);
       } catch {
         // Skip malformed lines; the round-trip export always emits valid
         // JSON so a bad line means the archive was hand-edited.
+      }
+    }
+
+    const edges: Record<string, unknown>[] = [];
+    for (const line of edgeLines) {
+      try {
+        const parsed = JSON.parse(line) as {
+          edge?: Record<string, unknown>;
+        };
+        if (parsed.edge) {
+          edges.push(parsed.edge);
+        }
+      } catch {
+        // Same rule as item lines.
       }
     }
 
@@ -274,50 +342,129 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         `Maximum ${String(MAX_ARCHIVE_ITEMS)} items per archive`,
       );
     }
+    if (edges.length > MAX_ARCHIVE_EDGES) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Maximum ${String(MAX_ARCHIVE_EDGES)} edges per archive`,
+      );
+    }
 
     const result = await storage.runInTransaction(async () => {
       let imported = 0;
       let duplicates = 0;
+      let edgesImported = 0;
+      let edgesSkipped = 0;
 
-      for (const item of items) {
+      // Ids an edge endpoint may resolve against without a storage
+      // lookup: every id this restore just wrote, plus ids that
+      // collided — a collision means the restore space already holds
+      // that exact id, so edges naming it still land correctly.
+      const resolvableIds = new Set<string>();
+
+      for (const { item, metadata: meta } of items) {
+        const archiveId = typeof item.id === "string" ? item.id : undefined;
         try {
-          await storage.items.create(
+          const created = await storage.items.create(
             {
+              ...(archiveId !== undefined && { id: archiveId }),
               type: item.type as string,
               properties: (item.properties ?? {}) as Record<string, unknown>,
+              state: item.state as ItemState | undefined,
+              tier: item.tier as Tier | undefined,
+              timestamp: item.timestamp as string | undefined,
               source: item.source as string | undefined,
               source_id: item.source_id as string | undefined,
-              tags: item.tags as string[] | undefined,
+              device: item.device as string | undefined,
+              capture_latitude: item.capture_latitude as number | undefined,
+              capture_longitude: item.capture_longitude as number | undefined,
+              tags: archiveTags(meta),
             },
             spaceId,
           );
           imported++;
+          resolvableIds.add(created.id);
+
+          for (const [namespace, data] of Object.entries(
+            archiveExtensions(meta),
+          )) {
+            await storage.metadata.setExtension(created.id, namespace, data);
+          }
         } catch (err) {
           if (
             err instanceof MarfaError &&
-            err.code === ErrorCode.DUPLICATE_SOURCE
+            (err.code === ErrorCode.DUPLICATE_SOURCE ||
+              err.code === ErrorCode.CONFLICT)
           ) {
             duplicates++;
+            // A duplicate leaves the existing row untouched — its tags
+            // and extensions are the live state, not the archive's.
+            if (err.code === ErrorCode.CONFLICT && archiveId !== undefined) {
+              resolvableIds.add(archiveId);
+            }
           } else {
             throw err;
           }
         }
       }
 
-      return { imported, duplicates };
+      // Second pass, after every item the archive carries exists: an
+      // edge restores only when both endpoints resolve in the restore
+      // space, so a partial or hand-edited archive cannot plant a
+      // reference to an item that is not there.
+      const endpointResolves = async (id: string): Promise<boolean> =>
+        resolvableIds.has(id) ||
+        (await storage.items.get(id, spaceId)) !== null;
+
+      for (const edge of edges) {
+        const sourceId = edge.source_id;
+        const targetId = edge.target_id;
+        const edgeType = edge.edge_type;
+        if (
+          typeof sourceId !== "string" ||
+          typeof targetId !== "string" ||
+          typeof edgeType !== "string" ||
+          !(await endpointResolves(sourceId)) ||
+          !(await endpointResolves(targetId))
+        ) {
+          edgesSkipped++;
+          continue;
+        }
+        const edgeId = typeof edge.id === "string" ? edge.id : undefined;
+        if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
+          // Already present under the same id — a re-restore, not an error.
+          edgesSkipped++;
+          continue;
+        }
+        await storage.edges.createRaw(
+          {
+            ...(edgeId !== undefined && { id: edgeId }),
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: edgeType,
+            properties: (edge.properties ?? {}) as Record<string, unknown>,
+          },
+          spaceId,
+        );
+        edgesImported++;
+      }
+
+      return { imported, duplicates, edgesImported, edgesSkipped };
     });
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
+      space_id: spaceId ?? null,
       key_id: c.get("apiKey")?.id,
       action: "admin.restore_archive",
       resource_type: "admin.restore_archive",
       details: {
         imported: result.imported,
         duplicates: result.duplicates,
+        edges_imported: result.edgesImported,
+        edges_skipped: result.edgesSkipped,
         blobs_imported: blobCount,
         total_items: items.length,
+        total_edges: edges.length,
       },
     });
 
@@ -325,6 +472,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       {
         imported: result.imported,
         duplicates: result.duplicates,
+        edges_imported: result.edgesImported,
+        edges_skipped: result.edgesSkipped,
         blobs_imported: blobCount,
       },
       200,

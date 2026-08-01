@@ -59,10 +59,9 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
   return text
     .trim()
     .split("\n")
-    .map((line) => {
-      const parsed = JSON.parse(line) as { item: { id: string } };
-      return parsed.item.id;
-    });
+    .map((line) => JSON.parse(line) as { item?: { id: string } })
+    .filter((parsed) => parsed.item !== undefined)
+    .map((parsed) => parsed.item!.id);
 }
 
 describe("space-scoped export — space_admin self-export", () => {
