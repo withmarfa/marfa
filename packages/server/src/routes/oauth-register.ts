@@ -56,6 +56,7 @@ import { z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
+import { dcrDefaultScopes } from "../auth/mint-ceiling.js";
 import {
   buildAllowedScopes,
   resolveSpaceIdForAuthUser,
@@ -313,13 +314,16 @@ export function oauthRegisterRoutes(
       }
     }
 
-    // `scope` must be a subset of the server-allowed set. Omitted → full set
-    // (mirrors plugin behavior at `dist/index.mjs:1205`).
+    // `scope` must be a subset of the server-allowed set. Omitted → the
+    // bundle-expansion default from `auth/mint-ceiling.ts`, matching the
+    // plugin's `clientRegistrationDefaultScopes`. Defaulting to the FULL
+    // allowlist here handed an unauthenticated registration `*:write`;
+    // wider scopes stay requestable, explicitly.
     const requestedScopes = (body.scope?.trim() ?? "")
       .split(/\s+/)
       .filter((s) => s.length > 0);
     if (requestedScopes.length === 0) {
-      for (const sc of allowedScopes) requestedScopes.push(sc);
+      requestedScopes.push(...dcrDefaultScopes());
     }
     for (const sc of requestedScopes) {
       if (!allowedScopes.has(sc)) {

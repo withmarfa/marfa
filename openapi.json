@@ -15425,7 +15425,7 @@
           "Connection Leased Tokens"
         ],
         "summary": "Issue a leased token",
-        "description": "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared as `leased` in the connection manifest's `oauth_requirements`, otherwise the request rejects with 422; the `lease_token` is returned only once, in this response.",
+        "description": "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared as `leased` in the connection manifest's `oauth_requirements`, otherwise the request rejects with 422; the `lease_token` is returned only once, in this response. `scopes` are capability claims in the upstream service's own vocabulary, relayed verbatim on introspection — a lease grants no Marfa data-plane authority of its own.",
         "security": [
           {
             "bearerAuth": []
@@ -15461,8 +15461,11 @@
                   "scopes": {
                     "type": "array",
                     "items": {
-                      "type": "string"
-                    }
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "maxItems": 32
                   }
                 },
                 "required": [

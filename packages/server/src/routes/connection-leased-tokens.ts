@@ -184,7 +184,7 @@ const issueLeaseRoute = createRoute({
   tags: ["Connection Leased Tokens"],
   summary: "Issue a leased token",
   description:
-    "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared as `leased` in the connection manifest's `oauth_requirements`, otherwise the request rejects with 422; the `lease_token` is returned only once, in this response.",
+    "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared as `leased` in the connection manifest's `oauth_requirements`, otherwise the request rejects with 422; the `lease_token` is returned only once, in this response. `scopes` are capability claims in the upstream service's own vocabulary, relayed verbatim on introspection — a lease grants no Marfa data-plane authority of its own.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -199,7 +199,12 @@ const issueLeaseRoute = createRoute({
               .min(1)
               .max(LEASE_TTL_MAX_SEC)
               .optional(),
-            scopes: z.array(z.string()).optional(),
+            // Claims for the introspecting upstream, not Marfa scope
+            // grammar — the manifest declares no per-capability scope
+            // vocabulary, so nothing semantic exists to validate against.
+            // Bounded so introspection cannot be used as a free-form
+            // storage channel.
+            scopes: z.array(z.string().min(1).max(256)).max(32).optional(),
           }),
         },
       },
