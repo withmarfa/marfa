@@ -242,6 +242,40 @@ describe("POST /auth/device — initiate", () => {
     expect(body.interval).toBe(5);
   });
 
+  // `user.*` types are per-space and never enumerate in the static
+  // registry, so expansion-based validation dropped the wildcard to an
+  // empty set and a request carrying only `user.*:read` was refused.
+  // The scope allowlist is the validator — the same set the code flow
+  // accepts — and a wildcard is a first-class literal in it.
+  it("accepts a user.* wildcard scope", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const result = await initiate(ctx, clientId, "user.*:read");
+    expect(result.device_code).toMatch(/^marfa_dc_/);
+  });
+
+  // The stored grant is the requested literal set, so a scope that
+  // slipped through validation would be approved verbatim on consent.
+  // Any disallowed scope therefore refuses the whole request rather
+  // than being quietly dropped or quietly kept.
+  it("rejects a scope outside the allowlist, even beside a valid one", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify({
+          client_id: clientId,
+          scope: "core.note:read madeup.type:read",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_scope");
+  });
+
   it("rejects a form-encoded init with unknown client_id", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await ctx.app.fetch(
@@ -434,6 +468,37 @@ describe("GET /auth/device/consent — gated on session", () => {
     const html = await res.text();
     expect(html).toContain("Approve device sign-in");
     expect(html).toContain("Test CLI");
+  });
+
+  it("renders a wildcard scope as its own row instead of dropping it", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const initResult = await initiate(
+      ctx,
+      clientId,
+      "user.*:read core.note:read",
+    );
+    const cookie = await signInAndCookie(
+      ctx,
+      "carol@example.com",
+      "correct horse",
+    );
+
+    const res = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/device/consent?user_code=${encodeURIComponent(initResult.user_code)}`,
+        { headers: { origin: ORIGIN, cookie } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The wildcard is what the approval grants, so the screen has to
+    // show it — silently omitting it would approve more than was shown.
+    // Expansion against the static registry dropped `user.*` (runtime
+    // types never enumerate there), leaving one row for two scopes.
+    expect(html).toContain("Your custom types, including ones you define");
+    const rowCount = html.split('class="crow"').length - 1;
+    expect(rowCount).toBe(2);
   });
 });
 
