@@ -73,9 +73,15 @@ describe("bearer middleware role projection (OAuth)", () => {
   });
 
   it("falls back to 'member' when no users row exists for the auth_user — /keys CRUD forbidden", async () => {
-    // No userRole opt → no users row is seeded. The bearer middleware's
-    // role-projection lookup misses and falls back to `member`.
-    const { token } = await seedOauthBearer(ctx.storage, []);
+    // Space-bound token whose users row is gone (deleted after issuance):
+    // the role-projection lookup misses and falls back to `member`. The
+    // space binding is what keeps the token resolvable at all — a token
+    // with no space is refused outright in hosted mode before projection
+    // runs (see auth.spaceless-oauth.test.ts).
+    const space = await spaces().create("orphaned-user-space");
+    const { token } = await seedOauthBearer(ctx.storage, [], {
+      spaceId: space.id,
+    });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(403);
