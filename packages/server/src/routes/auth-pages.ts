@@ -6,7 +6,6 @@ import {
   MarfaError,
   ErrorCode,
   parseScope,
-  expandWildcardScopes,
   isValidScope,
   scopesToTypePermissions,
   isValidHandle,
@@ -23,6 +22,7 @@ import {
   stampOAuthGrantLastUsed,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import type { Storage } from "../storage/interface.js";
 import type {
   MarfaAuth,
@@ -148,6 +148,19 @@ const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
   openid: "Confirm your identity",
   profile: "Your username, name, bio, and avatar",
   email: "Your email address",
+};
+
+/**
+ * Plain-English descriptions for wildcard patterns. The registry cannot
+ * describe these — a wildcard matches types at check time rather than
+ * naming one — and the grant covers types that may not exist yet, which
+ * is exactly what the copy has to say.
+ */
+const WILDCARD_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  "*": "Everything in your space",
+  "core.*": "All standard content types, including ones added later",
+  "user.*": "Your custom types, including ones you define later",
+  "app.*": "Types this app defines for itself",
 };
 
 function generateToken(prefix: string): string {
@@ -301,7 +314,12 @@ export function authRoutes(
   // OAuth-protocol delete; kept on the signature for caller stability.
   void oidcSigner;
   const router = new Hono<AppEnv>();
-  const knownTypes = Array.from(TYPE_REGISTRY.keys());
+  // The requestable-scope set, shared with the code flow. A snapshot of
+  // registry keys cannot validate device requests: `user.*` types are
+  // per-space and never enumerate in the static registry, so expanding a
+  // wildcard against it silently dropped the scope. The allowlist carries
+  // wildcards as first-class literals instead.
+  const allowedScopes = new Set(buildAllowedScopes());
 
   // Per-email throttle on `/auth/forgot-password`: 3 requests per email
   // per hour. Sits on top of the per-IP rate limit — per-IP bounds a
@@ -1904,17 +1922,24 @@ export function authRoutes(
     if (!client) {
       throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
-    // Validate every requested scope against the registry. Reject
-    // outright on any unknown scope so we don't store a code that
-    // can't be approved.
+    // Validate every requested literal against the allowlist. The stored
+    // grant is the literal set and consent approves it verbatim, so a
+    // scope that slipped through here would be granted unseen — any
+    // disallowed scope refuses the whole request.
     const requestedScopes = scope.split(" ").filter(Boolean);
-    const expanded = expandWildcardScopes(requestedScopes, knownTypes);
-    const parsed = expanded.map(parseScope).filter((s) => s !== null);
-    if (parsed.length === 0) {
+    if (requestedScopes.length === 0) {
       throw new MarfaError(
         ErrorCode.INVALID_SCOPE,
         "No valid scopes requested",
       );
+    }
+    for (const requested of requestedScopes) {
+      if (!allowedScopes.has(requested)) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCOPE,
+          `Scope not available: ${requested}`,
+        );
+      }
     }
 
     const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
@@ -2090,9 +2115,13 @@ export function authRoutes(
     // Render the same consent template as /auth/authorize. The submit
     // target is /auth/device/consent (not /auth/authorize), and the
     // hidden user_code field replaces the OAuth code-flow params.
-    const requestedScopes = row.scopes;
-    const expanded = expandWildcardScopes(requestedScopes, knownTypes);
-    const parsedScopes = expanded
+    //
+    // The stored literals render as they will be granted: a wildcard is
+    // one row covering its whole pattern, never expanded against the
+    // static registry — expansion showed concrete types the grant does
+    // not enumerate, and dropped `user.*` entirely because runtime
+    // types are not in the registry to expand against.
+    const parsedScopes = row.scopes
       .map(parseScope)
       .filter(
         (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
@@ -2106,7 +2135,8 @@ export function authRoutes(
         const fallback =
           METADATA_SCOPE_DESCRIPTIONS[s.typePattern] ??
           // OIDC literals (openid / profile / email).
-          OIDC_SCOPE_DESCRIPTIONS[s.typePattern];
+          OIDC_SCOPE_DESCRIPTIONS[s.typePattern] ??
+          WILDCARD_SCOPE_DESCRIPTIONS[s.typePattern];
         if (fallback) descriptions[s.typePattern] = fallback;
       }
     }
