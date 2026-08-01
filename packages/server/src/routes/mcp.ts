@@ -29,8 +29,7 @@
 
 import { Hono } from "hono";
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { buildServer, parseToolsets } from "@withmarfa/mcp/server";
-import { MarfaClient } from "@withmarfa/sdk";
+import { buildServerForHost } from "@withmarfa/mcp/server";
 import type { AppEnv } from "../middleware/auth.js";
 
 export interface McpRouteDeps {
@@ -49,7 +48,6 @@ export interface McpRouteDeps {
 export function mcpRoutes(deps: McpRouteDeps): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const base = deps.authBaseUrl.replace(/\/+$/, "");
-  const toolsets = parseToolsets(deps.toolsets);
   const challenge = deps.hasAuthServer
     ? `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`
     : "Bearer";
@@ -80,19 +78,23 @@ export function mcpRoutes(deps: McpRouteDeps): Hono<AppEnv> {
     if (!authHeader?.startsWith("Bearer ")) return unauthorized();
     const bearer = authHeader.slice("Bearer ".length);
 
-    // Per-request construction is deliberate: the client is bound to this
+    // Per-request construction is deliberate: the server is bound to this
     // caller's bearer and nothing outlives the exchange, so no state can
-    // leak between principals. Tool calls dispatch into the app in
-    // process — the same route handlers, middleware and enforcement an
+    // leak between principals. The MCP package owns client construction —
+    // depending on the SDK from here would close a workspace cycle — and
+    // the dispatch override sends every tool call back through this app in
+    // process: the same route handlers, middleware and enforcement an
     // external caller would hit, with zero network.
-    const client = new MarfaClient({
-      url: base,
-      apiKey: bearer,
-      fetch: async (input, init) => deps.appFetch(new Request(input, init)),
-    });
-    const handler = createMcpHandler(() => buildServer(client, toolsets), {
-      legacy: "stateless",
-    });
+    const handler = createMcpHandler(
+      () =>
+        buildServerForHost({
+          url: base,
+          apiKey: bearer,
+          toolsets: deps.toolsets,
+          fetch: async (input, init) => deps.appFetch(new Request(input, init)),
+        }),
+      { legacy: "stateless" },
+    );
     return handler.fetch(c.req.raw);
   });
 

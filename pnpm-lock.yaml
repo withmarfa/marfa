@@ -618,14 +618,11 @@ importers:
         specifier: ^1.41.1
         version: 1.41.1
       '@withmarfa/mcp':
-        specifier: ^2.1.0
-        version: 2.1.0
+        specifier: ^2.2.0
+        version: 2.2.0
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../runtime-sdk
-      '@withmarfa/sdk':
-        specifier: workspace:*
-        version: link:../sdk
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
@@ -2673,8 +2670,8 @@ packages:
   '@vitest/utils@4.1.8':
     resolution: {integrity: sha512-uOJamYALNhfJ6iolExyQM40yIQwDqYnkKtQ5VCiSe17E33H0aQ/u+1GlRuz4LZBk6Mm3sg90G9hEbmEt37C1Zg==}
 
-  '@withmarfa/mcp@2.1.0':
-    resolution: {integrity: sha512-32crFHd60kL5vZ8yhMztZqNdvWrLEZoCEyT8OMKJ8zl7ZvMHKyXz0XbPe0GIv6MonOD3ZbtP7/V6AP9Dny5yIQ==}
+  '@withmarfa/mcp@2.2.0':
+    resolution: {integrity: sha512-PCD4vO2KgqM6fUz26a71bLqDYLkMQcjtHYtIHccL3KB32TAL6G4BLj1kkyCp7/nEo5YhmB7UH2uLC0QRc1c4Ew==}
     hasBin: true
 
   '@withmarfa/sdk@2.1.0':
@@ -5678,7 +5675,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@withmarfa/mcp@2.1.0':
+  '@withmarfa/mcp@2.2.0':
     dependencies:
       '@modelcontextprotocol/server': 2.0.0
       '@withmarfa/sdk': 2.1.0
