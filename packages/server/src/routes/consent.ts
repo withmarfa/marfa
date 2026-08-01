@@ -33,7 +33,8 @@
  * `/oauth2/consent`.
  */
 
-import type { ParsedScope } from "@withmarfa/shared";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
+import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
@@ -73,24 +74,64 @@ interface ConsentParams {
   errorMessage?: string;
 }
 
-type GroupId = "read" | "write" | "profile";
+/** A rendered soft-tile group: a bundle's scopes, or a fallback bucket for
+ *  scopes outside every bundle. */
+interface ScopeGroup {
+  label: string;
+  desc: string;
+  scopes: ParsedScope[];
+}
 
-const GROUP_META: Record<GroupId, { label: string; desc: string }> = {
-  read: {
-    label: "Read your content",
-    desc: "Your notes, tasks, bookmarks, and more.",
-  },
-  write: {
-    label: "Write your content",
-    desc: "Add, edit, and organize what's in your space.",
-  },
-  profile: {
-    label: "Your profile",
-    desc: "Your name and email.",
-  },
-};
-
-const GROUP_ORDER: GroupId[] = ["read", "write", "profile"];
+/**
+ * Partition scopes into groups derived from the configured permission
+ * bundles — the same definitions the discovery document advertises, so
+ * the screen and the advertisement cannot drift. A scope belongs to the
+ * first bundle whose `scopes` list carries its literal; scopes outside
+ * every bundle (an app's custom request) fall back to read/write
+ * buckets so nothing renders ungrouped.
+ */
+function buildGroups(
+  scopes: ParsedScope[],
+  bundles: PermissionBundle[],
+): ScopeGroup[] {
+  const literalToBundle = new Map<string, PermissionBundle>();
+  for (const bundle of bundles) {
+    for (const literal of bundle.scopes) {
+      if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
+    }
+  }
+  const byBundle = new Map<string, ScopeGroup>();
+  for (const bundle of bundles) {
+    byBundle.set(bundle.id, {
+      label: bundle.label,
+      desc: bundle.description,
+      scopes: [],
+    });
+  }
+  const otherRead: ScopeGroup = {
+    label: "Other read access",
+    desc: "Additional things this app asked to read.",
+    scopes: [],
+  };
+  const otherWrite: ScopeGroup = {
+    label: "Other write access",
+    desc: "Additional things this app asked to change.",
+    scopes: [],
+  };
+  for (const scope of scopes) {
+    const bundle = literalToBundle.get(scopeLiteralFor(scope));
+    if (bundle) {
+      byBundle.get(bundle.id)?.scopes.push(scope);
+    } else if (scope.kind !== "oidc" && scope.operation === "write") {
+      otherWrite.scopes.push(scope);
+    } else {
+      otherRead.scopes.push(scope);
+    }
+  }
+  return [...byBundle.values(), otherRead, otherWrite].filter(
+    (g) => g.scopes.length > 0,
+  );
+}
 
 /**
  * Short, human toggle labels keyed by type pattern. Curated for the types the
@@ -141,12 +182,6 @@ function humanizeType(typePattern: string): string {
   if (!words) return typePattern;
   const titled = words.charAt(0).toUpperCase() + words.slice(1);
   return typePattern.endsWith(".*") ? `${titled} (all)` : titled;
-}
-
-/** The capability group a scope belongs to. */
-function groupFor(scope: ParsedScope): GroupId {
-  if (scope.kind === "oidc") return "profile";
-  return scope.operation === "write" ? "write" : "read";
 }
 
 /** Human toggle label for a scope. */
@@ -200,31 +235,27 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
-  const group = (groupId: GroupId, scopes: ParsedScope[]): string => {
-    if (scopes.length === 0) return "";
-    const meta = GROUP_META[groupId];
-    const rows = scopes.map(subRow).join("");
+  const group = (g: ScopeGroup): string => {
+    if (g.scopes.length === 0) return "";
+    const rows = g.scopes.map(subRow).join("");
     return `<details class="grp">
       <summary>
         <span class="gmain">
-          <span class="gtop"><span class="glabel">${escapeHtml(meta.label)}</span>${CHEVRON}</span>
-          <span class="gdesc">${escapeHtml(meta.desc)}</span>
+          <span class="gtop"><span class="glabel">${escapeHtml(g.label)}</span>${CHEVRON}</span>
+          <span class="gdesc">${escapeHtml(g.desc)}</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(meta.label)}"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub">${rows}</div>
     </details>`;
   };
 
-  /** Partition a scope set into the three groups and render the non-empty
-   *  ones, in order, inside a soft-tile stack. */
+  const bundles = getPermissionBundles();
+
+  /** Partition a scope set into bundle-derived groups and render the
+   *  non-empty ones, in bundle order, inside a soft-tile stack. */
   const groupedTiles = (scopes: ParsedScope[]): string => {
-    const tiles = GROUP_ORDER.map((g) =>
-      group(
-        g,
-        scopes.filter((s) => groupFor(s) === g),
-      ),
-    ).join("");
+    const tiles = buildGroups(scopes, bundles).map(group).join("");
     return `<div class="t-soft">${tiles}</div>`;
   };
 

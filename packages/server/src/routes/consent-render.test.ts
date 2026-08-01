@@ -122,6 +122,34 @@ describe("renderConsentScreen — soft-tile groups", () => {
     expect(html).toContain("Write your content");
   });
 
+  it("derives group labels from the configured bundles, not a renderer copy", () => {
+    // The screen and the discovery document must describe the same
+    // bundles, so the renderer reads the same operator-overridable
+    // config instead of carrying its own taxonomy.
+    const prior = process.env.MARFA_PERMISSION_BUNDLES;
+    process.env.MARFA_PERMISSION_BUNDLES = JSON.stringify([
+      {
+        id: "read",
+        label: "Peruse your things",
+        description: "Custom operator copy.",
+        scopes: ["core.note:read", "core.task:read"],
+        default_on: true,
+      },
+    ]);
+    try {
+      const html = renderConsentScreen(PARAMS);
+      expect(html).toContain("Peruse your things");
+      expect(html).not.toContain("Read your content");
+      // core.note:write is outside every configured bundle — it still
+      // renders, in the fallback write bucket.
+      expect(html).toContain('value="core.note:write"');
+      expect(html).toContain("Other write access");
+    } finally {
+      if (prior === undefined) delete process.env.MARFA_PERMISSION_BUNDLES;
+      else process.env.MARFA_PERMISSION_BUNDLES = prior;
+    }
+  });
+
   it("renders per-type toggles with human labels, not raw scope strings", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain('class="subrow"');
