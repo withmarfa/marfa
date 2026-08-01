@@ -325,11 +325,11 @@ Credentials carry three permission maps:
 
 Edge mutations dual-gate: the caller needs **both** write on the source item's type AND write on the edge type. Admin keys bypass both.
 
-OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@withmarfa/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Today only `metadata.types:write` is enforced — it gates `POST /types` for non-admin credentials. Admin keys bypass; OAuth tokens project the scope into a `metadata_permissions: { types: "write" }` map on the synthetic `ApiKey`.
+OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@withmarfa/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Two sub-resource scopes are enforced: `metadata.types:write` gates `POST /types` and `metadata.edge_types:write` gates `POST /edge-types`, both for non-admin credentials. Admin keys bypass; OAuth tokens project the scopes into the `metadata_permissions` map on the synthetic `ApiKey`.
 
 New keys default to `edge_permissions: {}` — edge access is opt-in; callers must grant explicitly.
 
-`metadata_permissions` is the parallel map for metadata-layer mutations, keyed by sub-resource (today: `types`); default `{}` for new keys. `requireMetadataPermission(c, "types", "write")` admits admin keys, member keys with `metadata_permissions.types === "write"`, and OAuth tokens whose grant carries `metadata.types:write`.
+`metadata_permissions` is the parallel map for metadata-layer mutations, keyed by sub-resource (today: `types` and `edge_types`); default `{}` for new keys. `requireMetadataPermission(c, subresource, "write")` admits admin keys, member keys carrying the matching map entry, and OAuth tokens whose grant carries the matching `metadata.<subresource>:write` scope.
 
 ## Webhooks
 
