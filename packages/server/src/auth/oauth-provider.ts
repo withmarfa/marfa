@@ -33,6 +33,10 @@ import {
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
+import {
+  CLIENT_CREDENTIALS_DEFAULT_SCOPES,
+  dcrDefaultScopes,
+} from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -268,6 +272,14 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // registered at runtime require a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
+    // Ceilings for the paths with no consent screen in front of them —
+    // values owned by `auth/mint-ceiling.ts` so the plugin options and
+    // the Marfa-owned DCR mirror cannot drift. Without these, both
+    // defaults fall through to `scopes` (the ENTIRE allowlist, `*:write`
+    // included): a scope-less client_credentials request and a
+    // scope-less registration each inherited everything.
+    clientCredentialGrantDefaultScopes: CLIENT_CREDENTIALS_DEFAULT_SCOPES,
+    clientRegistrationDefaultScopes: dcrDefaultScopes(),
 
     // ----- Silence the OAuth discovery-doc location warning -----
     // The plugin emits a WARN at construct time advising operators to
