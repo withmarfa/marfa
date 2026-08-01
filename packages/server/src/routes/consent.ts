@@ -136,9 +136,11 @@ function buildGroups(
 /**
  * Short, human toggle labels keyed by type pattern. Curated for the types the
  * default grant requests; anything outside this map falls back to the scope's
- * registry description, then a humanized type name.
+ * registry description, then a humanized type name. A test pins every
+ * default-bundle scope to an entry here, so widening a bundle without a
+ * label fails the suite instead of shipping an auto-generated toggle.
  */
-const SCOPE_LABELS: Record<string, string> = {
+export const SCOPE_LABELS: Record<string, string> = {
   "core.note": "Notes",
   "core.task": "Tasks",
   "core.bookmark": "Bookmarks",
@@ -149,7 +151,31 @@ const SCOPE_LABELS: Record<string, string> = {
   "core.entity.person": "Contacts",
   "core.entity.place": "Places",
   "core.file": "Files",
+  "core.file.audio": "Audio files",
+  "core.file.image": "Images",
+  "core.file.video": "Videos",
   "core.media": "Media",
+  "core.media.album": "Albums",
+  "core.media.article": "Articles",
+  "core.media.book": "Books",
+  "core.media.film": "Films",
+  "core.media.podcast": "Podcasts",
+  "core.media.series": "Series",
+  "core.media.song": "Songs",
+  "core.media.tv_episode": "TV episodes",
+  "google.calendar.event": "Google Calendar events",
+  "google.contacts.contact": "Google Contacts",
+  "google.drive.file": "Google Drive files",
+  "google.tasks.task": "Google Tasks",
+  "google.youtube.channel": "YouTube channels",
+  "google.youtube.playlist": "YouTube playlists",
+  "google.youtube.video": "YouTube videos",
+  "raindrop.collection": "Raindrop collections",
+  "raindrop.raindrop": "Raindrop bookmarks",
+  "readwise.book": "Readwise books",
+  "readwise.highlight": "Readwise highlights",
+  "todoist.task": "Todoist tasks",
+  "withmarfa.captured_email": "Captured emails",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",
   "system.device": "Devices",
@@ -158,7 +184,7 @@ const SCOPE_LABELS: Record<string, string> = {
   metadata: "Type definitions",
 };
 
-const OIDC_LABELS: Record<string, string> = {
+export const OIDC_LABELS: Record<string, string> = {
   profile: "Your name",
   email: "Your email address",
   openid: "Confirm your identity",

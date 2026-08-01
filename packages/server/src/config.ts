@@ -460,25 +460,46 @@ export function parseOtelHeaders(
  * a later release is NOT granted to an already-connected app automatically;
  * the user is asked to approve it on the next connect.
  *
- * They deliberately EXCLUDE most of `system.*` so an app reading "your
- * content" can't read your security internals (credentials, devices,
- * webhooks); the one exception is `system.connection:read`, surfaced as the
- * "Connected accounts" toggle. `system.integration` (the marketplace catalog)
- * is no longer in the default grant — an app that needs it requests it.
+ * They deliberately EXCLUDE all of `system.*` except `system.connection:read`
+ * (the "Connected accounts" toggle) so an app reading "your content" can't
+ * read your security internals (credentials, devices, webhooks).
+ * `system.integration` (the marketplace catalog) is not in the default
+ * grant — an app that needs it requests it.
+ *
+ * Connector types (`google.*`, `readwise.*`, …) are the person's own synced
+ * content, so `connected` covers them for READ. Writes stay request-only:
+ * a connector row is a vendor-faithful mirror owned by its integration, and
+ * a third-party write would fork it from upstream with nothing propagating
+ * the change back.
  */
 export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "read",
     label: "Read your content",
-    description: "Your notes, tasks, bookmarks, and more.",
+    description: "Your notes, tasks, bookmarks, files, media, and more.",
     scopes: [
+      "core.bookmark:read",
+      "core.entity:read",
+      "core.entity.person:read",
+      "core.entity.place:read",
+      "core.event:read",
+      "core.file:read",
+      "core.file.audio:read",
+      "core.file.image:read",
+      "core.file.video:read",
+      "core.highlight:read",
+      "core.media:read",
+      "core.media.album:read",
+      "core.media.article:read",
+      "core.media.book:read",
+      "core.media.film:read",
+      "core.media.podcast:read",
+      "core.media.series:read",
+      "core.media.song:read",
+      "core.media.tv_episode:read",
+      "core.message:read",
       "core.note:read",
       "core.task:read",
-      "core.bookmark:read",
-      "core.highlight:read",
-      "core.event:read",
-      "core.entity.person:read",
-      "core.file:read",
       "system.connection:read",
     ],
     default_on: true,
@@ -488,11 +509,50 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Write your content",
     description: "Add, edit, and organize what's in your space.",
     scopes: [
-      "core.note:write",
-      "core.task:write",
       "core.bookmark:write",
+      "core.entity:write",
+      "core.entity.person:write",
+      "core.entity.place:write",
       "core.event:write",
       "core.file:write",
+      "core.file.audio:write",
+      "core.file.image:write",
+      "core.file.video:write",
+      "core.highlight:write",
+      "core.media:write",
+      "core.media.album:write",
+      "core.media.article:write",
+      "core.media.book:write",
+      "core.media.film:write",
+      "core.media.podcast:write",
+      "core.media.series:write",
+      "core.media.song:write",
+      "core.media.tv_episode:write",
+      "core.message:write",
+      "core.note:write",
+      "core.task:write",
+    ],
+    default_on: true,
+  },
+  {
+    id: "connected",
+    label: "Content from your connected services",
+    description:
+      "What your integrations have synced, like Google and Readwise.",
+    scopes: [
+      "google.calendar.event:read",
+      "google.contacts.contact:read",
+      "google.drive.file:read",
+      "google.tasks.task:read",
+      "google.youtube.channel:read",
+      "google.youtube.playlist:read",
+      "google.youtube.video:read",
+      "raindrop.collection:read",
+      "raindrop.raindrop:read",
+      "readwise.book:read",
+      "readwise.highlight:read",
+      "todoist.task:read",
+      "withmarfa.captured_email:read",
     ],
     default_on: true,
   },

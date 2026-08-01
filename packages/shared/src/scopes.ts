@@ -327,20 +327,21 @@ export function edgePermissionCovers(
 // ---------------------------------------------------------------------------
 
 /**
- * A named, human-facing grouping of scopes rendered on the consent screen as a
- * single checkbox ("Read your stuff", "Write your stuff", …). Bundles are
- * defined in server config and advertised on the discovery document so clients
- * can request them without hard-coding the scope grammar. They are a
- * presentation + request convenience: the issued token still carries the
- * concrete scopes a bundle expands to, enforced through the usual permission
- * maps. The generous default bundle expands to the `*` wildcard so an app
- * works against a space's runtime `user.*` types without those types ever
- * appearing in the static scope allowlist.
+ * A named, human-facing grouping of scopes rendered on the consent screen as
+ * a single toggle group ("Read your content", "Write your content", …).
+ * Bundles are defined in server config and advertised on the discovery
+ * document so clients can request them without hard-coding the scope grammar.
+ * They are a presentation + request convenience: the issued token still
+ * carries the concrete scopes a bundle expands to, enforced through the usual
+ * permission maps. The shipped defaults enumerate concrete per-type scopes —
+ * a consent grant can only narrow to scopes literally requested, so per-type
+ * unticking requires naming each type up front. A wildcard scope inside a
+ * bundle (e.g. `user.*:read`) narrows as a unit rather than per type.
  */
 export interface PermissionBundle {
   /** Stable identifier, e.g. "read", "write", "profile", "connected". */
   id: string;
-  /** Plain-language label for the consent checkbox, e.g. "Read your stuff". */
+  /** Plain-language label for the consent toggle, e.g. "Read your content". */
   label: string;
   /** One-line description of what granting the bundle allows. */
   description: string;

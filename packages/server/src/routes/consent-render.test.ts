@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
-import { renderConsentScreen } from "./consent.js";
+import { parseScope } from "@withmarfa/shared";
+import { renderConsentScreen, SCOPE_LABELS, OIDC_LABELS } from "./consent.js";
+import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
@@ -147,6 +149,24 @@ describe("renderConsentScreen — soft-tile groups", () => {
     } finally {
       if (prior === undefined) delete process.env.MARFA_PERMISSION_BUNDLES;
       else process.env.MARFA_PERMISSION_BUNDLES = prior;
+    }
+  });
+
+  it("every default-bundle scope has a curated toggle label", () => {
+    // Registry descriptions are sentences, not labels — a bundle scope
+    // without a curated entry ships an auto-humanized toggle. Widening a
+    // bundle therefore has to widen the label map with it.
+    for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
+      for (const literal of bundle.scopes) {
+        const parsed = parseScope(literal);
+        expect(parsed, `unparseable bundle scope: ${literal}`).not.toBeNull();
+        if (!parsed) continue;
+        const label =
+          parsed.kind === "oidc"
+            ? OIDC_LABELS[parsed.oidcScope ?? parsed.typePattern]
+            : SCOPE_LABELS[parsed.typePattern];
+        expect(label, `no curated label for ${literal}`).toBeTruthy();
+      }
     }
   });
 
