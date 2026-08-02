@@ -22,7 +22,7 @@ import type { Context } from "hono";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
@@ -373,6 +373,20 @@ export function integrationRoutes(
   ): Promise<InstallCaller | Response> {
     const apiKey = c.get("apiKey");
     if (apiKey) {
+      // An install mints a runtime credential from the target manifest,
+      // so it hands out authority the caller may not itself hold —
+      // `auth/mint-ceiling.ts` bounds every mint by the authority of the
+      // principal that authorized it. Every sibling agrees: install via
+      // `/connections/install`, configure and uninstall are all
+      // space-admin. The session branch below is a different principal
+      // (the account holder approving a connection for their own space)
+      // and keeps its own rules.
+      if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "Space admin authority required to install an integration",
+        );
+      }
       return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
     }
     if (auth) {

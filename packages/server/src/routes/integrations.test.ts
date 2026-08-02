@@ -744,8 +744,16 @@ describe("GET /integrations — catalog visibility", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /integrations/:id + /:id/install — platform-scope", () => {
-  async function mintSpaceMember(
+  // Two ranks, because the routes here sit at two tiers. Reading the
+  // catalog is member work: a platform-scoped manifest must resolve for
+  // any space-bound credential. Installing is not — it mints a runtime
+  // credential from the manifest, so it takes space-admin authority
+  // (`routes/integrations-install-authority.test.ts` holds that line).
+  // The install tests below therefore mint an admin: their subject is
+  // space stamping and error shape, never who may install.
+  async function mintKeyAtRank(
     spaceId: string,
+    role: "member" | "space_admin",
     typePermissions: Record<string, "read" | "write" | "none"> = {
       "system.integration": "read",
     },
@@ -755,9 +763,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     const hash = hashApiKey(raw, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
-        label: `t234-member-${suffix}`,
-        source: `t234-member-${suffix}`,
-        role: "member",
+        label: `t234-${role}-${suffix}`,
+        source: `t234-${role}-${suffix}`,
+        role,
         type_permissions: typePermissions,
         default_tier: "library",
         is_platform: false,
@@ -781,7 +789,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-get");
-    const memberKey = await mintSpaceMember(space.id);
+    const memberKey = await mintKeyAtRank(space.id, "member");
 
     const res = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
       key: memberKey,
@@ -792,7 +800,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(body.manifest_name).toBe("acme.t234-get-by-id");
   });
 
-  it("GET /integrations/:id/install renders consent HTML for a space member with a Bearer token", async () => {
+  it("GET /integrations/:id/install renders consent HTML for a space-bound Bearer token", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.t234-install-html" }) },
@@ -801,13 +809,13 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-html");
-    const memberKey = await mintSpaceMember(space.id);
+    const installerKey = await mintKeyAtRank(space.id, "space_admin");
 
     const res = await request(
       ctx.app,
       "GET",
       `/integrations/${regBody.id}/install`,
-      { key: memberKey },
+      { key: installerKey },
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
@@ -816,7 +824,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(html).toContain('name="decision"');
   });
 
-  it("POST /integrations/:id/install completes for a space member and stamps the connection with the caller's space_id", async () => {
+  it("POST /integrations/:id/install stamps the connection with the caller's space_id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme.t234-install-post" }) },
@@ -825,17 +833,17 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-post");
-    const memberKey = await mintSpaceMember(space.id);
+    const installerKey = await mintKeyAtRank(space.id, "space_admin");
 
     const formBody = new URLSearchParams({
       decision: "approve",
-      label: "member-install",
+      label: "authority-install",
     }).toString();
 
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${memberKey}`,
+        Authorization: `Bearer ${installerKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: formBody,
@@ -869,14 +877,14 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // items pass.
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-missing");
-    const memberKey = await mintSpaceMember(space.id);
+    const installerKey = await mintKeyAtRank(space.id, "space_admin");
 
     const res = await ctx.app.request(
       "/integrations/01999999-9999-7999-9999-999999999999/install",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${memberKey}`,
+          Authorization: `Bearer ${installerKey}`,
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: "decision=approve",
@@ -911,7 +919,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
       },
       spaceA.id,
     );
-    const memberB = await mintSpaceMember(spaceB.id);
+    const memberB = await mintKeyAtRank(spaceB.id, "member");
 
     const res = await request(
       ctx.app,
