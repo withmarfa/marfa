@@ -243,3 +243,79 @@ describe("?type= resolves the same subtree on every read surface", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage: a fourth type-filtered read surface cannot appear quietly
+//
+// The three surfaces above agree today because someone noticed they had
+// drifted and wrote this file. Nothing stopped a fourth from appearing and
+// disagreeing the same way — the list was hand-written, so a new read route
+// taking `?type=` would simply not be compared against anything. This walks
+// the app's own spec instead: every spec-visible read that accepts a `type`
+// query parameter must either be one of the surfaces compared above, or
+// carry a stated reason it resolves types differently.
+//
+// The same shape the write-door tests use, for the same reason: the value
+// of an agreement test is not the agreement it asserts, it is that the
+// agreement cannot be quietly left behind.
+// ---------------------------------------------------------------------------
+
+/** Reads that take a `type` parameter but deliberately do not resolve the
+ *  type subtree the way the read surfaces do, each with the reason. */
+const NOT_A_TYPE_FILTERED_READ: Record<string, string> = {
+  "get /events":
+    "resolves the same subtree, but over a live stream rather than a query — held by pubsub-type-filter.test.ts, which can assert the rule without racing the subscription",
+  "get /items/{id}/edges":
+    "filters edges by edge type, a different registry with no subtree grammar",
+  "get /items/{id}/backrefs": "same edge-type axis as the outbound listing",
+  "get /edge-types": "lists the edge-type registry itself, not items",
+  "get /types/{id}": "resolves one type by id; there is no filter to agree on",
+  "get /audit":
+    "filters audit rows by resource type, a fixed vocabulary rather than the item registry",
+};
+
+describe("every type-filtered read surface is accounted for", () => {
+  it("is compared above or carries a stated reason it differs", async () => {
+    const res = await request(ctx.app, "GET", "/openapi.json", {});
+    expect(res.status).toBe(200);
+    const spec = (await res.json()) as {
+      paths: Record<
+        string,
+        Record<string, { parameters?: { name?: string; in?: string }[] }>
+      >;
+    };
+
+    const compared = new Set(SURFACES.map((s) => s.name.toLowerCase()));
+    const unclassified: string[] = [];
+
+    for (const [path, methods] of Object.entries(spec.paths)) {
+      for (const [method, op] of Object.entries(methods)) {
+        if (method.toLowerCase() !== "get") continue;
+        const takesType = (op.parameters ?? []).some(
+          (param) => param.in === "query" && param.name === "type",
+        );
+        if (!takesType) continue;
+        const route = `${method.toLowerCase()} ${path}`;
+        if (compared.has(route)) continue;
+        if (route in NOT_A_TYPE_FILTERED_READ) continue;
+        unclassified.push(route);
+      }
+    }
+
+    // A new read taking `?type=` lands here. Add it to `SURFACES` so it is
+    // held to the same resolution as the others, or name it above with the
+    // reason it resolves differently — deciding which is the point.
+    expect(unclassified).toEqual([]);
+
+    // The other direction: an exclusion outliving its route stops excluding
+    // anything, and the next route to take that path inherits the excuse.
+    const specRoutes = new Set(
+      Object.entries(spec.paths).flatMap(([path, methods]) =>
+        Object.keys(methods).map((m) => `${m.toLowerCase()} ${path}`),
+      ),
+    );
+    for (const route of Object.keys(NOT_A_TYPE_FILTERED_READ)) {
+      expect(specRoutes.has(route), `stale exclusion: ${route}`).toBe(true);
+    }
+  });
+});

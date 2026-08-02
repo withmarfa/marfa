@@ -1,5 +1,6 @@
 import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
+import { isSubtypeOf } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
 import { cycleRequestContext } from "./cycle-context.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";
@@ -454,6 +455,29 @@ export interface SubscribeOptions {
  * subscriber that forgets to close would keep the listener attached for
  * the life of the process, slowly counting against `setMaxListeners()`.
  */
+/**
+ * Whether an event's item type answers a `?type=` subscription filter.
+ *
+ * A subtree, not a string match: `core.media` answers for
+ * `core.media.song`, exactly as `/items`, `/search` and `/export` resolve
+ * the same parameter, and exactly as the realtime guide describes the
+ * stream. This was a `!==` comparison, so a subscriber narrowing to a
+ * parent type silently received nothing — the one read surface in the API
+ * resolving a type differently from every other.
+ *
+ * Named rather than inlined because it is a rule a test can hold directly;
+ * asserting it through the subscription loop means racing that loop's own
+ * iterator, which tests the harness more than the rule.
+ */
+export function eventMatchesTypeFilter(
+  eventType: string,
+  filter: string | undefined,
+  spaceId?: string | null,
+): boolean {
+  if (!filter) return true;
+  return isSubtypeOf(eventType, filter, spaceId);
+}
+
 export async function* subscribe(
   options?: SubscribeOptions,
 ): AsyncGenerator<ItemEventWithId> {
@@ -461,7 +485,7 @@ export async function* subscribe(
   try {
     for await (const [event] of iter) {
       const itemEvent = event as ItemEventWithId;
-      if (options?.typeFilter && itemEvent.item.type !== options.typeFilter)
+      if (!eventMatchesTypeFilter(itemEvent.item.type, options?.typeFilter))
         continue;
       if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
       yield itemEvent;
