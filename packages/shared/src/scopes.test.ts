@@ -8,6 +8,8 @@ import {
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
   scopeCovers,
+  edgePermissionCovers,
+  metadataPermissionCovers,
 } from "./scopes.js";
 import type { PermissionBundle } from "./scopes.js";
 
@@ -380,5 +382,116 @@ describe("expandBundlesToScopes", () => {
 
   it("returns empty for no bundles", () => {
     expect(expandBundlesToScopes([])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two admission checks the auth middleware calls directly.
+//
+// `scopeCovers` had both directions pinned; these two did not, and the gap
+// was measurable rather than theoretical: making either one grant when the
+// permission map is absent left all 494 tests here green and the server's
+// edge, type and scope-enforcement suites green too. The mainline is well
+// covered by those integration suites — making `edgePermissionCovers`
+// return true unconditionally fails eight of them — so what was missing is
+// specifically the deny direction, which is the half a permission check
+// exists for.
+// ---------------------------------------------------------------------------
+
+describe("edgePermissionCovers", () => {
+  it("denies when the map is absent, rather than defaulting open", () => {
+    expect(edgePermissionCovers(undefined, "about", "read")).toBe(false);
+    expect(edgePermissionCovers(undefined, "about", "write")).toBe(false);
+  });
+
+  it("denies when the map is empty — edge access is opt-in", () => {
+    expect(edgePermissionCovers({}, "about", "read")).toBe(false);
+  });
+
+  it("denies an edge type the map does not name", () => {
+    expect(edgePermissionCovers({ about: "write" }, "parent-of", "read")).toBe(
+      false,
+    );
+  });
+
+  it("grants the named edge type, and write implies read", () => {
+    expect(edgePermissionCovers({ about: "read" }, "about", "read")).toBe(true);
+    expect(edgePermissionCovers({ about: "write" }, "about", "read")).toBe(
+      true,
+    );
+    expect(edgePermissionCovers({ about: "write" }, "about", "write")).toBe(
+      true,
+    );
+  });
+
+  it("refuses to let read satisfy write", () => {
+    expect(edgePermissionCovers({ about: "read" }, "about", "write")).toBe(
+      false,
+    );
+  });
+
+  it("honors the wildcard, on the same read/write terms", () => {
+    expect(edgePermissionCovers({ "*": "read" }, "anything", "read")).toBe(
+      true,
+    );
+    expect(edgePermissionCovers({ "*": "read" }, "anything", "write")).toBe(
+      false,
+    );
+    expect(edgePermissionCovers({ "*": "write" }, "anything", "write")).toBe(
+      true,
+    );
+  });
+});
+
+describe("metadataPermissionCovers", () => {
+  it("denies when the map is absent, rather than defaulting open", () => {
+    expect(metadataPermissionCovers(undefined, "types", "write")).toBe(false);
+    expect(metadataPermissionCovers(undefined, "types", "read")).toBe(false);
+  });
+
+  it("denies a sub-resource the map does not name", () => {
+    expect(
+      metadataPermissionCovers({ types: "write" }, "edge_types", "write"),
+    ).toBe(false);
+  });
+
+  it("grants the named sub-resource, and write implies read", () => {
+    expect(metadataPermissionCovers({ types: "write" }, "types", "write")).toBe(
+      true,
+    );
+    expect(metadataPermissionCovers({ types: "write" }, "types", "read")).toBe(
+      true,
+    );
+    expect(metadataPermissionCovers({ types: "read" }, "types", "write")).toBe(
+      false,
+    );
+  });
+
+  it("honors the bare `metadata:<verb>` wildcard across sub-resources", () => {
+    expect(metadataPermissionCovers({ "*": "write" }, "types", "write")).toBe(
+      true,
+    );
+    expect(
+      metadataPermissionCovers({ "*": "write" }, "edge_types", "write"),
+    ).toBe(true);
+    expect(metadataPermissionCovers({ "*": "read" }, "types", "write")).toBe(
+      false,
+    );
+  });
+});
+
+describe("the global type wildcard stays in its own map", () => {
+  // `*:write` is the widest scope in the grammar. The OIDC literals already
+  // have their non-bleed pinned; this is the same guarantee for the scope
+  // that actually carries data-plane authority — it must not silently
+  // become edge or metadata authority too.
+  it("does not project into edge permissions", () => {
+    expect(scopesToEdgePermissions(["*:write"])).toEqual({});
+    expect(scopesToEdgePermissions(["*:read"])).toEqual({});
+  });
+
+  it("does not project into metadata permissions", () => {
+    expect(scopesToMetadataPermissions(["*:write"])).toEqual({});
+    expect(scopesToMetadataPermissions(["*:read"])).toEqual({});
   });
 });
