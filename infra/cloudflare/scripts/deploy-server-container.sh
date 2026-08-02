@@ -313,19 +313,26 @@ else
   export V_OTEL_ENVIRONMENT="production"
   # Prod has its own free Neon budget, so a longer idle window is affordable and
   # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
-  # Production keeps the larger preset: it is the environment where a cold
-  # start is felt by a person, and the measured 6s startup is the thing being
-  # bought. The memory saving is real but not worth a doubled latency floor
-  # on the surface that has users.
-  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-standard-1}"
-  # Was 10m. The scheduled health probe hits this environment about
-  # seventeen times a day, and each probe bought ten minutes of residency for
-  # a check that takes milliseconds — roughly 2.8 container-hours a day of
-  # pure idle, which was production's entire baseline cost. At 2m the same
-  # probe schedule costs about 0.6. The only thing traded is a cold start on
-  # the first request after a quiet gap, and the instance type is deliberately
-  # left at standard-1 here so that cold start stays the measured 6s.
-  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
+  # Pre-launch posture. Production has no real traffic yet, so the doubled
+  # latency floor that comes with the smaller preset is not currently paid by
+  # anyone, and the memory saving is four times. Scale this back to
+  # `standard-1` at go-live: the 6s startup is worth buying once people are
+  # waiting on it, and this line is the whole change.
+  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-basic}"
+  # Deliberately NOT shortened, and that is a reversal worth explaining.
+  #
+  # This was briefly cut to 2m while production sat on `standard-1`, because
+  # at 4 GiB the residency the scheduled health probe bought — about
+  # seventeen probes a day, each holding the container up for the length of
+  # this window — was production's entire baseline cost. On `basic` the same
+  # residency costs a quarter as much, and the difference between a 2m and a
+  # 10m window is roughly sixty cents a month.
+  #
+  # Sixty cents does not buy a cold start on every visit after a short gap,
+  # and on the smaller preset that cold start is the measured 15s rather than
+  # 6s. The value of a lever depends on the multiplier it acts on; cutting the
+  # memory removed most of the reason to cut the window.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
   # Deliberate warm policy — OFF by default (opt-in). Warm keeps the prod
   # instance resident so real traffic never pays a cold start. COST: an
   # always-on container bills continuously — provisioned memory + disk plus its
