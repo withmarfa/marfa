@@ -17,7 +17,7 @@ import {
 import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireAuth,
+  requireSpaceAdmin,
   hashApiKey,
   stampOAuthGrantLastUsed,
   hasPlatformAuthority,
@@ -404,12 +404,16 @@ export function authRoutes(
   // -----------------------------------------------------------------------
 
   router.get("/grants", async (c) => {
-    const key = requireAuth(c);
-    // Space-scope the listing. A credential carrying a space_id is
-    // fenced by the `spaceId` argument below whatever its rank; one
-    // without a space would fall through to every space's grants, so
-    // that shape needs platform authority (or an explicit platform
-    // credential) to reach here.
+    // Listing every app a space authorized, and revoking one, are
+    // operations on other principals' access — the same tier as the key
+    // management routes beside them, not something a narrow member
+    // credential does. The space fence below is the second axis: rank
+    // says who may act, the space says where.
+    const key = requireSpaceAdmin(c);
+    // A credential carrying a space_id is fenced by the `spaceId`
+    // argument below; one without a space would fall through to every
+    // space's grants, so that shape needs platform authority (or an
+    // explicit platform credential) to reach here.
     if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -450,10 +454,11 @@ export function authRoutes(
   });
 
   router.delete("/grants/:id", async (c) => {
-    const key = requireAuth(c);
-    // Same fence as `GET /grants`: only an unbound credential with
+    // Same two axes as `GET /grants`: space-admin rank to act at all,
+    // and the space fence below so only an unbound credential with
     // platform authority may resolve `spaceId` to undefined and address
     // a grant in any space.
+    const key = requireSpaceAdmin(c);
     if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
