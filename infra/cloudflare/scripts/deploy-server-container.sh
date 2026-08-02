@@ -179,7 +179,25 @@ else
 fi
 
 # Shared / derived.
-export SERVER_INSTANCE_TYPE="standard-1"
+# Memory and disk bill on PROVISIONED capacity; only vCPU bills on actual use.
+# Measured against the real image with a live database: idle 175 MiB, and
+# 188 MiB peak under nineteen concurrent reads plus a full export. The working
+# set does not move. So memory is ~93% of the container bill and buys nothing
+# above ~200 MiB, while vCPU is ~2% of it.
+#
+# Custom instance types cannot express the right shape: Cloudflare requires
+# >= 1 vCPU and >= 3 GiB per vCPU for a custom type, so "keep the CPU, cut the
+# memory" is not purchasable. The presets are the only lever, and they bundle
+# both dimensions:
+#
+#   basic       1/4 vCPU   1 GiB   4 GB
+#   standard-1  1/2 vCPU   4 GiB   8 GB   <- what both environments were on
+#
+# Dropping to basic quarters the memory bill and halves the vCPU allocation.
+# Measured cost of that halving on this image: app startup 6s -> 15s, read p50
+# 250ms -> 400ms. Whether that trade is worth taking differs per environment,
+# so it is set in the per-env blocks below rather than shared here — a shared
+# assignment would run first and silently win over their `:-` defaults.
 # Load-bearing, not a capacity choice. The OAuth consent flows serialize their
 # writes to a user's standing grant through an in-process mutex, which only
 # covers one process. Raise this and a permission the user just revoked can
@@ -258,6 +276,13 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   # Aggressive scale-to-zero on staging: idle awake-time is the dominant driver
   # of Neon compute, and staging's free budget is the one that keeps lapsing.
   export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
+  # Staging is a test target with no interactive users, so the cold-start cost
+  # of the smaller preset (app startup 6s -> 15s) is one nobody experiences,
+  # while the memory saving is the same 4x it would be anywhere. Measured peak
+  # working set is 188 MiB, so 1 GiB still leaves five times headroom; the
+  # `load:extreme` profile seeds twelve thousand items and is the one thing
+  # worth watching if it is ever run here.
+  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-basic}"
   # Deliberate warm policy — OFF by default (opt-in). Warm keeps the single
   # instance resident so the first request after an idle gap never pays a cold
   # start (staging backs the Tickets responsiveness surface). COST: an always-on
@@ -288,7 +313,19 @@ else
   export V_OTEL_ENVIRONMENT="production"
   # Prod has its own free Neon budget, so a longer idle window is affordable and
   # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
-  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
+  # Production keeps the larger preset: it is the environment where a cold
+  # start is felt by a person, and the measured 6s startup is the thing being
+  # bought. The memory saving is real but not worth a doubled latency floor
+  # on the surface that has users.
+  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-standard-1}"
+  # Was 10m. The scheduled health probe hits this environment about
+  # seventeen times a day, and each probe bought ten minutes of residency for
+  # a check that takes milliseconds — roughly 2.8 container-hours a day of
+  # pure idle, which was production's entire baseline cost. At 2m the same
+  # probe schedule costs about 0.6. The only thing traded is a cold start on
+  # the first request after a quiet gap, and the instance type is deliberately
+  # left at standard-1 here so that cold start stays the measured 6s.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
   # Deliberate warm policy — OFF by default (opt-in). Warm keeps the prod
   # instance resident so real traffic never pays a cold start. COST: an
   # always-on container bills continuously — provisioned memory + disk plus its
