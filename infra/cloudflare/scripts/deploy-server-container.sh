@@ -69,7 +69,9 @@
 #                               IMMUTABLE per-build tag "<env>-<short-git-sha>",
 #                               e.g. "staging-1a2b3c4")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
-#   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
+#   - V_BLOB_BACKEND           (default "s3", the durable backend; "fs" also
+#                               requires ALLOW_EPHEMERAL_BLOBS=1 because the
+#                               container disk is wiped on scale-to-zero)
 #   - SKIP_S3_CRED_CHECK       (set to 1 to bypass the s3 credential guard that
 #                               otherwise blocks a BLOB_BACKEND=s3 deploy when the
 #                               Worker lacks the S3 secrets)
