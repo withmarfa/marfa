@@ -139,8 +139,10 @@ export class MarfaServerContainer extends Container<Env> {
     NODE_ENV: "production",
     ENABLE_HSTS: "true",
     MARFA_INTEGRATION_RUNTIME: "hosted",
-    // Hosted defaults to R2 via the S3 API (durable across scale-to-zero);
-    // overridable to "fs" for validation deploys before R2 creds exist.
+    // Hosted stores blobs in R2 via the S3 API (durable across
+    // scale-to-zero). The deploy pipeline always renders BLOB_BACKEND into
+    // the Worker vars, so this fallback only matters if the var is ever
+    // dropped from the template; it falls to the durable side on purpose.
     BLOB_BACKEND: cfEnv.BLOB_BACKEND ?? "s3",
     S3_REGION: "auto",
     MARFA_EMAIL_BACKEND: "cloudflare",
