@@ -69,7 +69,9 @@
 #                               IMMUTABLE per-build tag "<env>-<short-git-sha>",
 #                               e.g. "staging-1a2b3c4")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
-#   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
+#   - V_BLOB_BACKEND           (default "s3", the durable backend; "fs" also
+#                               requires ALLOW_EPHEMERAL_BLOBS=1 because the
+#                               container disk is wiped on scale-to-zero)
 #   - SKIP_S3_CRED_CHECK       (set to 1 to bypass the s3 credential guard that
 #                               otherwise blocks a BLOB_BACKEND=s3 deploy when the
 #                               Worker lacks the S3 secrets)
@@ -219,12 +221,21 @@ export V_INTEGRATION_RUNTIME="hosted"
 # endpoint must match the bucket's jurisdiction or every S3 op returns
 # NoSuchBucket — set S3_ENDPOINT to override the derived default.
 export V_S3_ENDPOINT="${S3_ENDPOINT:-https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com}"
-# Default to fs until R2 S3-API credentials are minted (see operator notes);
-# flip to s3 by exporting V_BLOB_BACKEND=s3 once the secrets are set. When s3 is
-# requested, the credential guard below refuses to deploy unless the Worker
-# already carries the S3 secrets — so an s3 cutover can't silently ship broken
-# blob writes.
-export V_BLOB_BACKEND="${V_BLOB_BACKEND:-fs}"
+# Hosted blob storage is durable object storage. The container filesystem is
+# wiped on every scale-to-zero cycle and on every redeploy, so an fs deploy on
+# a hosted environment silently discards every blob uploaded since the last
+# roll. The backend therefore defaults to s3 here, and an ephemeral deploy has
+# to be asked for by name: set both V_BLOB_BACKEND=fs and
+# ALLOW_EPHEMERAL_BLOBS=1, or the deploy refuses. The credential guard below
+# still vets the s3 path before rollout, so the safe default cannot ship
+# broken blob writes either.
+export V_BLOB_BACKEND="${V_BLOB_BACKEND:-s3}"
+if [[ "$V_BLOB_BACKEND" != "s3" && "${ALLOW_EPHEMERAL_BLOBS:-}" != "1" ]]; then
+  echo "error: V_BLOB_BACKEND=$V_BLOB_BACKEND stores blobs on the container's ephemeral disk," >&2
+  echo "which loses them on the next scale-to-zero cycle or redeploy." >&2
+  echo "If an ephemeral validation deploy is intended, set ALLOW_EPHEMERAL_BLOBS=1 as well." >&2
+  exit 1
+fi
 
 # Resolve a deploy-critical value that lives as a repository Actions variable.
 # CI has these in scope and a local shell does not, so both used to fall back to
