@@ -130,6 +130,14 @@ function buildContext(opts: BuildOpts): BuiltContext {
       edgeCalls.push(input);
       return Promise.resolve({ id: `edg_${String(edgeCalls.length)}` });
     },
+    ensureEdge: (input: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }) => {
+      edgeCalls.push(input);
+      return Promise.resolve("created" as const);
+    },
   } as unknown as ConnectionClient;
 
   const ctx: ConnectionContext = {

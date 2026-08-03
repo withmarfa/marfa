@@ -53,6 +53,13 @@ interface Route {
 interface BuildOpts {
   connectionRecord?: Partial<ItemResource>;
   routes: Route[];
+  /** Steer ensureEdge outcomes; default resolves "created". Throw to
+   *  simulate a real refusal. */
+  edgeResponder?: (input: {
+    source_id: string;
+    target_id: string;
+    edge_type: string;
+  }) => Promise<"created" | "exists">;
 }
 
 interface BuiltState {
@@ -124,6 +131,15 @@ function buildContext(opts: BuildOpts): BuiltState {
     }) => {
       edges.push(input);
       return Promise.resolve({ id: `edg_${String(edges.length)}` });
+    },
+    ensureEdge: (input: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }) => {
+      edges.push(input);
+      if (opts.edgeResponder) return opts.edgeResponder(input);
+      return Promise.resolve("created" as const);
     },
   } as unknown as ConnectionClient;
 
@@ -550,6 +566,110 @@ describe("google-youtube handleSchedule", () => {
       (e) => e.source_id === playlistMarfaId && e.edge_type === "parent-of",
     );
     expect(playlistEdges.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // One liked video with a channel: the minimal sweep that attempts an edge.
+  function oneLikedVideoRoutes(): Route[] {
+    return withOverrides(
+      {
+        match: (p) =>
+          p.includes("/playlistItems?") && p.includes("playlistId=LL_owner"),
+        respond: () =>
+          jsonResponse({
+            items: [
+              {
+                id: "PLI_e1",
+                snippet: {
+                  publishedAt: "2026-05-23T12:00:00Z",
+                  resourceId: { kind: "youtube#video", videoId: "V_edge" },
+                },
+                contentDetails: { videoId: "V_edge" },
+              },
+            ],
+          }),
+      },
+      {
+        match: (p) => p.includes("/videos?"),
+        respond: () =>
+          jsonResponse({
+            items: [
+              {
+                id: "V_edge",
+                snippet: { title: "Edge case", channelId: "UC_owner" },
+              },
+            ],
+          }),
+      },
+    );
+  }
+
+  it("an already-existing edge is quiet: no action_required, not counted as created", async () => {
+    const { ctx, emitted, edges } = buildContext({
+      routes: oneLikedVideoRoutes(),
+      edgeResponder: () => Promise.resolve("exists"),
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(edges.length).toBeGreaterThan(0);
+
+    const actionRequired = emitted.filter(
+      (e) => e.properties?.severity === "action_required",
+    );
+    expect(actionRequired).toHaveLength(0);
+
+    const summary = emitted.find((e) =>
+      ((e.properties?.summary as string | undefined) ?? "").includes(
+        "google-youtube inbound",
+      ),
+    );
+    expect(summary?.properties?.severity).toBe("info");
+    const detail = summary?.properties?.detail as
+      | Record<string, unknown>
+      | undefined;
+    expect(detail?.edges_created).toBe(0);
+    expect(detail?.edges_refused).toBe(0);
+  });
+
+  it("a real edge refusal is reported and counted, never swallowed", async () => {
+    const { ctx, emitted } = buildContext({
+      routes: oneLikedVideoRoutes(),
+      edgeResponder: () =>
+        Promise.reject(
+          new Error(
+            'Marfa API 400 Bad Request POST /edges: {"error":{"code":"edge_constraint_violation","message":"Edge \\"parent-of\\" is one-to-many on the target side","details":{"constraint":"cardinality"}}}',
+          ),
+        ),
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+
+    const refusalRows = emitted.filter(
+      (e) =>
+        e.properties?.severity === "action_required" &&
+        ((e.properties.summary as string | undefined) ?? "").includes(
+          "failed to create parent-of edge",
+        ),
+    );
+    expect(refusalRows.length).toBeGreaterThan(0);
+    const detail = refusalRows[0]?.properties?.detail as
+      | Record<string, unknown>
+      | undefined;
+    expect((detail?.error as string | undefined) ?? "").toContain(
+      "one-to-many",
+    );
+
+    const summary = emitted.find((e) =>
+      ((e.properties?.summary as string | undefined) ?? "").includes(
+        "google-youtube inbound",
+      ),
+    );
+    expect(summary?.properties?.severity).toBe("warning");
+    const summaryDetail = summary?.properties?.detail as
+      | Record<string, unknown>
+      | undefined;
+    expect(Number(summaryDetail?.edges_refused)).toBeGreaterThan(0);
   });
 
   it("quota-exceeded: 403 quotaExceeded surfaces as action_required activity + ok:true", async () => {
