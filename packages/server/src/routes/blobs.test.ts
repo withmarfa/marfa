@@ -229,10 +229,46 @@ describe("POST /blobs/cleanup", () => {
     expect(body.referenced).toBeGreaterThan(0);
   });
 
-  it("removes orphaned blobs when not dry-run", async () => {
+  it("defaults to dry run, so an argument-less call deletes nothing", async () => {
+    const data = new TextEncoder().encode("default-safety orphan blob");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
     const cleanupRes = await request(ctx.app, "POST", "/blobs/cleanup", {
       key: ctx.adminKey,
     });
+    expect(cleanupRes.status).toBe(200);
+    const body = (await cleanupRes.json()) as {
+      orphaned: number;
+      removed: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(true);
+    expect(body.removed).toBe(0);
+    expect(body.orphaned).toBeGreaterThan(0);
+
+    // The orphan is untouched: deletion always requires an explicit ask.
+    const headRes = await ctx.app.request(`/blobs/${hash}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+    });
+    expect(headRes.status).toBe(200);
+  });
+
+  it("removes orphaned blobs when dry_run=false is passed explicitly", async () => {
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=false",
+      { key: ctx.adminKey },
+    );
     expect(cleanupRes.status).toBe(200);
     const body = (await cleanupRes.json()) as {
       total_blobs: number;
@@ -242,6 +278,55 @@ describe("POST /blobs/cleanup", () => {
     };
     expect(body.dry_run).toBe(false);
     expect(body.removed).toBe(body.orphaned);
+  });
+
+  it("keeps a blob referenced only by version history", async () => {
+    const data = new TextEncoder().encode("bytes only history points at");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    // Reference the blob from a live item, then overwrite the referencing
+    // key so the hash survives only in the version snapshot of the old
+    // state.
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "carries a file", attachment_hash: hash },
+      },
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as { item: { id: string } };
+    const id = created.item.id;
+    const patchRes = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { properties: { attachment_hash: "replaced" } },
+    });
+    if (patchRes.status !== 200) {
+      throw new Error(`patch failed: ${await patchRes.text()}`);
+    }
+
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=false",
+      { key: ctx.adminKey },
+    );
+    expect(cleanupRes.status).toBe(200);
+
+    // The bytes a version still points at must survive the cleanup.
+    const headRes = await ctx.app.request(`/blobs/${hash}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+    });
+    expect(headRes.status).toBe(200);
   });
 });
 

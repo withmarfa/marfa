@@ -1,4 +1,4 @@
-import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, desc, gt, inArray, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { Version } from "@withmarfa/shared";
 import type { VersionStore } from "../interface.js";
@@ -83,6 +83,26 @@ export class SqliteVersionStore implements VersionStore {
       .where(inArray(versions.id, ids))
       .run();
     return result.rowsAffected;
+  }
+
+  async scanProperties(
+    limit: number,
+    cursor?: string,
+  ): Promise<{ properties: Record<string, unknown>[]; cursor: string | null }> {
+    const rows = await this.db
+      .select({ id: versions.id, properties: versions.properties })
+      .from(versions)
+      .where(cursor ? gt(versions.id, cursor) : undefined)
+      .orderBy(asc(versions.id))
+      .limit(limit)
+      .all();
+    const last = rows.at(-1);
+    return {
+      properties: rows.map(
+        (r) => JSON.parse(r.properties) as Record<string, unknown>,
+      ),
+      cursor: rows.length === limit && last ? last.id : null,
+    };
   }
 
   async listThinningCandidates(
