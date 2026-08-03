@@ -10,6 +10,8 @@ import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
+import { withStartupWait } from "./storage/startup-wait.js";
+import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
   TrashPurger,
@@ -66,18 +68,37 @@ async function main() {
     log("info", "Server version", { sha: "dev" });
   }
 
+  // A database that is merely slow to come back (a rebooting host, a
+  // pooler warming up) must not turn a supervised server into a crash
+  // loop: wait with backoff inside the process, loudly, up to the budget.
+  // Misconfiguration is not retryable and still fails immediately.
+  const waitForDb = <T>(create: () => Promise<T>): Promise<T> =>
+    withStartupWait(create, {
+      budgetMs: config.dbStartupWaitMs ?? 90_000,
+      onAttempt: (attempt, delayMs, err) => {
+        log("warn", "Database not ready; waiting to retry", {
+          attempt,
+          retry_in_ms: delayMs,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    });
+
   let storage: Storage;
   if (config.storageDialect === "pg") {
     if (!config.databaseUrl) {
       throw new Error("DATABASE_URL is required when DB_DIALECT=pg");
     }
+    const databaseUrl = config.databaseUrl;
     const directUrl = config.databaseUrlDirect ?? "";
-    storage = await createPgStorage(config.databaseUrl, {
-      versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
-      authMode: config.authMode,
-      directConnectionString: directUrl,
-      poolMode: config.dbPoolMode,
-    });
+    storage = await waitForDb(() =>
+      createPgStorage(databaseUrl, {
+        versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+        authMode: config.authMode,
+        directConnectionString: directUrl,
+        poolMode: config.dbPoolMode,
+      }),
+    );
     // Which endpoint streaming RLS reserves from is not otherwise observable
     // from outside the process, and getting it wrong strands a role on shared
     // pooler backends, where it surfaces as permission errors on requests that
@@ -89,10 +110,12 @@ async function main() {
       streaming_endpoint_host: pgEndpointHost(directUrl || config.databaseUrl),
     });
   } else {
-    storage = await createSqliteStorage(config.sqlitePath, {
-      versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
-      authMode: config.authMode,
-    });
+    storage = await waitForDb(() =>
+      createSqliteStorage(config.sqlitePath, {
+        versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+        authMode: config.authMode,
+      }),
+    );
   }
 
   let blobBackend: BlobBackend;
@@ -198,6 +221,15 @@ async function main() {
 
   const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
   webhookPoller.start();
+
+  // Opt-in liveness heartbeat: off unless the operator names a receiver.
+  const heartbeat = config.heartbeatUrl
+    ? new HeartbeatPinger(
+        config.heartbeatUrl,
+        config.heartbeatIntervalMs ?? 60_000,
+      )
+    : null;
+  heartbeat?.start();
 
   const versionThinner = new VersionThinner(
     storage.versions,
@@ -459,6 +491,7 @@ async function main() {
     log("info", "Shutting down...");
     webhookConsumer.stop();
     webhookPoller.stop();
+    heartbeat?.stop();
     clearTimeout(eventLogCleanupDelay);
     clearInterval(eventLogCleanupInterval);
     clearTimeout(auditCleanupDelay);
