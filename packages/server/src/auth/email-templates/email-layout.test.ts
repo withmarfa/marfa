@@ -54,7 +54,8 @@ describe("renderEmail", () => {
     expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
     expect(html).toContain("&amp;");
     expect(html).toContain("&quot;");
-    expect(html).toContain("&#39;");
+    // React escapes apostrophes as &#x27; (hex form), not &#39;.
+    expect(html).toContain("&#x27;");
     // The raw, unescaped url must not appear in an attribute.
     expect(html).not.toContain('href="https://example.com/?a=1&b=<2>"x""');
   });
