@@ -41,7 +41,10 @@ export interface RateLimitConfig {
 const DEFAULT_AGGREGATE_MULTIPLIER = 4;
 
 /**
- * Sliding-window rate limiter backed by `storage.rateLimits`.
+ * Fixed-window rate limiter backed by `storage.rateLimits`: a window's
+ * `expires_at` is stamped on its first request and does not roll on
+ * increments, so a cap of N admits exactly N requests per window and
+ * the whole budget refreshes when the window lapses.
  *
  * The counter table sits in the same database every other space-scoped
  * table lives in. Two server instances pointed at the same DB share

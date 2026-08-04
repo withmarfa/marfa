@@ -347,7 +347,7 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Marfa transport (idempotency key per `(user_id, token)` for log correlation). Conditional on a real backend, same gate pattern as the email verification flow.
 - **Token TTL.** `resetPasswordTokenExpiresIn: 3600` (1 hour). Single-use; better-auth deletes the verification row on successful reset.
 - **Session revocation.** `revokeSessionsOnPasswordReset: true` — every other session for the user is dropped on a successful reset. The user must re-sign-in everywhere.
-- **Per-email throttle.** `auth/per-email-throttle.ts` mints `PerEmailThrottle` instances. The forgot-password router holds one (3/hour per email, in-memory). Layered on top of the per-IP `pathLimits` cap (`/auth/forgot-password: 30`) in `middleware/rate-limit.ts`.
+- **Per-email throttle.** `auth/per-email-throttle.ts` mints `PerEmailThrottle` instances. The forgot-password router holds one (3/hour per email, in-memory). Layered on top of the per-IP `pathLimits` cap (`/auth/forgot-password: 15`) in `middleware/rate-limit.ts`.
 - **No-enumeration invariant.** `POST /auth/forgot-password` always 302s with `?sent=1` regardless of whether the address exists, whether the upstream succeeded, or whether the email transport delivered. Better-auth's `request-password-reset` endpoint enforces the same shape upstream (timing-safe). The throttle path is the only branch that surfaces a different state (`?error=rate_limited`), and it does so based on the email itself, not on whether the account exists, so no enumeration leaks there either.
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-space lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row, used by the integration test in lieu of intercepting the email transport.
@@ -399,21 +399,32 @@ The `auth.grant.*` rows emit from explicit Marfa route handlers, not from the `@
 
 `middleware/rate-limit.ts`'s `pathLimits` carry small per-IP caps on every auth-abuse-prone endpoint. The middleware iterates entries in object insertion order and takes the FIRST `path.startsWith(prefix)` match, so more-specific prefixes (`/auth/sign-in/magic-link`) MUST appear before broader siblings (`/auth/sign-in`).
 
-Defaults (per-minute window per IP):
+Defaults (per-minute window per IP), in insertion order — `app.ts` is the source of truth:
 
 | Path                        | Cap |
 | --------------------------- | --- |
-| `/auth/sign-in/magic-link`  | 5   |
-| `/auth/sign-in/email`       | 10  |
-| `/auth/sign-in`             | 10  |
-| `/auth/sign-up`             | 5   |
-| `/auth/forgot-password`     | 5   |
-| `/auth/reset-password`      | 10  |
-| `/auth/verify-email/resend` | 5   |
-| `/auth/oauth2/token`        | 60  |
 | `/keys`                     | 200 |
+| `/auth/device/token`        | 60  |
+| `/auth/device`              | 30  |
+| `/auth/sign-in/magic-link`  | 15  |
+| `/auth/sign-in/email`       | 30  |
+| `/auth/sign-in`             | 30  |
+| `/auth/sign-up`             | 15  |
+| `/auth/forgot-password`     | 15  |
+| `/auth/reset-password`      | 30  |
+| `/auth/verify-email/resend` | 15  |
+| `/auth/oauth2/register`     | 10  |
+| `/auth/oauth2/token`        | 60  |
+| `/auth/oauth2/introspect`   | 60  |
+| `/auth/oauth2/revoke`       | 30  |
+| `/auth/oauth2/consent`      | 30  |
+| `/auth/oauth2/authorize`    | 30  |
+| `/auth/authorize/decision`  | 30  |
+| `/auth/authorize`           | 60  |
 
 Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap: bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s); per-path windows would need a middleware refactor, deferred.
+
+A rejected request answers 429 with `Retry-After` plus the `X-RateLimit-Limit` / `-Remaining` / `-Reset` trio; the error handler copies the context's prepared headers onto the fresh Response it builds, which is also what keeps `X-Request-ID` on every error response.
 
 ## Passkey UI
 

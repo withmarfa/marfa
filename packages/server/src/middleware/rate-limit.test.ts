@@ -401,3 +401,51 @@ describe("rate-limit per-path isolation under /auth", () => {
     expect(register.status).not.toBe(429);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Response headers on the 429 (and error responses generally)
+// ---------------------------------------------------------------------------
+
+describe("rate-limit response headers survive the error handler", () => {
+  // The middleware prepares Retry-After and the X-RateLimit-* trio before
+  // throwing, and the logger prepares X-Request-ID for every request. The
+  // error handler builds a fresh Response, which drops prepared headers
+  // unless it copies them — these tests pin the copy, because the published
+  // reference promises the headers and the SDK's retry path reads
+  // Retry-After.
+  it("a 429 carries Retry-After and the X-RateLimit-* trio", async () => {
+    const key = await makeMemberKey(ctx, "rl-headers");
+    const hit = async () =>
+      ctx.app.request("/items", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+
+    for (let i = 0; i < 4; i++) {
+      const res = await hit();
+      expect(res.status).toBe(200);
+    }
+    const overflow = await hit();
+    expect(overflow.status).toBe(429);
+
+    const retryAfter = Number(overflow.headers.get("Retry-After"));
+    expect(Number.isInteger(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThanOrEqual(0);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+
+    expect(overflow.headers.get("X-RateLimit-Limit")).toBe("4");
+    expect(overflow.headers.get("X-RateLimit-Remaining")).toBe("0");
+    const reset = Number(overflow.headers.get("X-RateLimit-Reset"));
+    expect(Number.isInteger(reset)).toBe(true);
+    expect(reset * 1000).toBeGreaterThan(Date.now() - 1000);
+  });
+
+  it("an ordinary error response carries X-Request-ID", async () => {
+    const key = await makeMemberKey(ctx, "rl-reqid");
+    const res = await ctx.app.request(
+      "/items/019621f0-0000-7000-8000-000000000000",
+      { headers: { Authorization: `Bearer ${key}` } },
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("X-Request-ID")).toBeTruthy();
+  });
+});
