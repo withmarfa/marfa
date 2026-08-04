@@ -1,4 +1,4 @@
-import type { ErrorHandler } from "hono";
+import type { Context, ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
@@ -6,14 +6,19 @@ import { log } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
 
 function jsonResponse(
+  c: Context<AppEnv>,
   body: unknown,
   status: number,
   errorCode?: string,
 ): Response {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (errorCode) headers["X-Error-Code"] = errorCode;
+  // Headers set before the throw (`c.header(...)` in middleware) live in the
+  // context's prepared headers, and Hono discards them when a handler returns
+  // a fresh Response. Copying them here is what keeps `X-Request-ID` on every
+  // error and `Retry-After` / `X-RateLimit-*` on 429s — all documented, all
+  // set by middleware that cannot know a later handler will throw.
+  const headers = new Headers(c.res.headers);
+  headers.set("Content-Type", "application/json");
+  if (errorCode) headers.set("X-Error-Code", errorCode);
   return new Response(JSON.stringify(body), { status, headers });
 }
 
@@ -44,7 +49,7 @@ export function createErrorHandler(config: {
         message: err.message,
       };
       if (err.details) error.details = err.details;
-      return jsonResponse({ error }, err.status, err.code);
+      return jsonResponse(c, { error }, err.status, err.code);
     }
 
     // Hono's validator throws HTTPException("Malformed JSON in request body") before
@@ -54,6 +59,7 @@ export function createErrorHandler(config: {
       err.message === "Malformed JSON in request body"
     ) {
       return jsonResponse(
+        c,
         {
           error: {
             code: "validation_error",
@@ -68,6 +74,7 @@ export function createErrorHandler(config: {
     if (err instanceof HTTPException) {
       const code = err.status >= 500 ? "internal_error" : "validation_error";
       return jsonResponse(
+        c,
         { error: { code, message: err.message } },
         err.status,
         code,
@@ -77,6 +84,7 @@ export function createErrorHandler(config: {
     // SyntaxError thrown directly by JSON.parse (not wrapped by Hono's validator).
     if (err instanceof SyntaxError) {
       return jsonResponse(
+        c,
         {
           error: {
             code: "validation_error",
@@ -94,6 +102,7 @@ export function createErrorHandler(config: {
       (err as { name?: string }).name === "ZodError"
     ) {
       return jsonResponse(
+        c,
         {
           error: {
             code: "validation_error",
@@ -133,6 +142,7 @@ export function createErrorHandler(config: {
     }
 
     return jsonResponse(
+      c,
       { error: { code: "internal_error", message: "Internal server error" } },
       500,
       "internal_error",
