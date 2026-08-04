@@ -93,7 +93,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export space data",
   description:
-    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry.",
+    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -352,6 +352,11 @@ interface ArchiveManifest {
   item_count: number;
   edge_count: number;
   blob_count: number;
+  /** Custom type and edge-type registrations carried in `types.ndjson`.
+   *  Optional so an archive written before the member existed still
+   *  parses; absent reads the same as zero. */
+  custom_type_count?: number;
+  custom_edge_type_count?: number;
   blobs: Record<string, { mime_type: string; size: number }>;
 }
 
@@ -389,6 +394,9 @@ async function handleArchiveExport(
 
   const lines: string[] = [];
   const edgeLines: string[] = [];
+  const typeLines: string[] = [];
+  let customTypeCount = 0;
+  let customEdgeTypeCount = 0;
   const blobHashes = new Set<string>();
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
 
@@ -441,6 +449,19 @@ async function handleArchiveExport(
         edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
       } while (edgeCursor);
 
+      // The space's own registrations, not the filtered item set's: a
+      // restore has to be able to write every item the archive carries,
+      // and an unfiltered archive is the case that matters. Carrying a
+      // type the archive happens not to use costs one line.
+      for (const schema of await storage.types.listCustom(spaceId)) {
+        typeLines.push(JSON.stringify({ custom_type: schema }));
+        customTypeCount += 1;
+      }
+      for (const schema of await storage.edgeTypes.list(spaceId)) {
+        typeLines.push(JSON.stringify({ custom_edge_type: schema }));
+        customEdgeTypeCount += 1;
+      }
+
       // Blob metadata lookup uses space_id; single-space self-hosts pass "" as the instance-wide sentinel.
       for (const hash of blobHashes) {
         const record = await storage.blobs.get(hash, spaceId ?? "");
@@ -469,6 +490,8 @@ async function handleArchiveExport(
     item_count: lines.length,
     edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,
+    custom_type_count: customTypeCount,
+    custom_edge_type_count: customEdgeTypeCount,
     blobs: blobMeta,
   };
 
@@ -493,6 +516,14 @@ async function handleArchiveExport(
       edgeLines.length > 0 ? edgeLines.join("\n") + "\n" : "",
     );
     pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
+
+    // Always emitted, empty or not, for the same reason as edges.ndjson:
+    // a restore has to be able to tell "this space registered nothing"
+    // from "this archive predates type registrations".
+    const typesBuf = Buffer.from(
+      typeLines.length > 0 ? typeLines.join("\n") + "\n" : "",
+    );
+    pack.entry({ name: "types.ndjson", size: typesBuf.length }, typesBuf);
 
     for (const hash of Object.keys(blobMeta)) {
       const data = await blobBackend.get(hash);

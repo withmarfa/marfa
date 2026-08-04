@@ -445,6 +445,11 @@ export interface TypeStore {
   create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
   update(id: string, schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
   delete(id: string, spaceId?: string): Promise<void>;
+  /** One space's own custom types, without the global core and system set
+   *  `list` folds in. Exists because an export has to carry the
+   *  registrations a restore would otherwise be missing, and only the
+   *  custom ones are the space's to carry. */
+  listCustom(spaceId?: string): Promise<TypeSchema[]>;
   /** Load every custom type across all spaces for server-startup registry
    *  warmup. Each row carries its owning space so the warmup can register it
    *  into the right space overlay. */

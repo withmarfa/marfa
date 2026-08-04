@@ -31,6 +31,8 @@ import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
+import { registerArchiveTypes } from "./admin-archive-types.js";
+import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 
 const MAX_ARCHIVE_ITEMS = 5000;
 // Edges routinely outnumber items; a 4x multiple keeps the cap
@@ -84,9 +86,9 @@ const restoreArchiveRoute = createRoute({
   method: "post",
   path: "/restore-archive",
   tags: ["Admin"],
-  summary: "Restore items, edges, metadata, and blobs from an archive",
+  summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. Version history and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty space can write the items that use them; a registration the target space already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. Version history and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -119,6 +121,10 @@ const restoreArchiveRoute = createRoute({
             edges_imported: z.number(),
             edges_skipped: z.number(),
             blobs_imported: z.number(),
+            custom_types_registered: z.number(),
+            custom_types_skipped: z.number(),
+            custom_edge_types_registered: z.number(),
+            custom_edge_types_skipped: z.number(),
           }),
         },
       },
@@ -148,6 +154,15 @@ const restoreArchiveRoute = createRoute({
       },
       description: "Admin required",
     },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description:
+        "The archive redefines a type the target space already registers differently, or carries a core edge type. Nothing was written.",
+    },
   },
 });
 
@@ -166,6 +181,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     let manifest: ArchiveManifest | null = null;
     const itemLines: string[] = [];
     const edgeLines: string[] = [];
+    const typeLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
     // Resolve the space under which the archive will be restored.
@@ -234,6 +250,11 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
             const text = buf.toString("utf-8").trimEnd();
             if (text) {
               edgeLines.push(...text.split("\n"));
+            }
+          } else if (header.name === "types.ndjson") {
+            const text = buf.toString("utf-8").trimEnd();
+            if (text) {
+              typeLines.push(...text.split("\n"));
             }
           } else if (header.name.startsWith("blobs/")) {
             const hash = header.name.slice("blobs/".length);
@@ -349,6 +370,24 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       );
     }
 
+    const typeEntries: ArchiveTypeEntry[] = [];
+    for (const line of typeLines) {
+      try {
+        typeEntries.push(JSON.parse(line) as ArchiveTypeEntry);
+      } catch {
+        // Same rule as item and edge lines: the exporter always emits
+        // valid JSON, so a bad line means the archive was hand-edited.
+      }
+    }
+
+    // Before the transaction, so a rollback cannot strand the registry
+    // holding types the database no longer has. See registerArchiveTypes.
+    const typeResult = await registerArchiveTypes(
+      storage,
+      typeEntries,
+      spaceId,
+    );
+
     const result = await storage.runInTransaction(async () => {
       let imported = 0;
       let duplicates = 0;
@@ -463,6 +502,10 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         edges_imported: result.edgesImported,
         edges_skipped: result.edgesSkipped,
         blobs_imported: blobCount,
+        custom_types_registered: typeResult.typesRegistered,
+        custom_types_skipped: typeResult.typesSkipped,
+        custom_edge_types_registered: typeResult.edgeTypesRegistered,
+        custom_edge_types_skipped: typeResult.edgeTypesSkipped,
         total_items: items.length,
         total_edges: edges.length,
       },
@@ -475,6 +518,10 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         edges_imported: result.edgesImported,
         edges_skipped: result.edgesSkipped,
         blobs_imported: blobCount,
+        custom_types_registered: typeResult.typesRegistered,
+        custom_types_skipped: typeResult.typesSkipped,
+        custom_edge_types_registered: typeResult.edgeTypesRegistered,
+        custom_edge_types_skipped: typeResult.edgeTypesSkipped,
       },
       200,
     );

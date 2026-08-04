@@ -68,6 +68,24 @@ export class SqliteTypeStore implements TypeStore {
     unregisterTypeSchema(id, spaceId);
   }
 
+  async listCustom(spaceId?: string): Promise<TypeSchema[]> {
+    const rows = await this.db
+      .select()
+      .from(customTypes)
+      .where(sql`space_id = ${spaceId ?? ""}`)
+      .all();
+    const results: TypeSchema[] = [];
+    for (const row of rows) {
+      const parsed = safeJsonParse<TypeSchema | null>(
+        row.schema,
+        null,
+        `custom_types.schema[${row.id}]`,
+      );
+      if (parsed) results.push(parsed);
+    }
+    return results;
+  }
+
   async loadCustomTypes(): Promise<LoadedType[]> {
     const rows = await this.db.select().from(customTypes).all();
     const results: LoadedType[] = [];
