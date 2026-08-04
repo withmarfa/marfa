@@ -10,6 +10,7 @@ The Hono HTTP server exposing the Marfa API. Private package, never published to
 - `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` imports the bootstrap `SCHEMA_SQL` from a sibling `schema-sql.generated.ts`, auto-generated from migrations by `scripts/generate-schema-sql.ts`. Never hand-edit the generated file.
 - `src/middleware/auth.ts` — bearer-token + OAuth resolution; sets `c.var.apiKey`.
 - `src/test-utils.ts` — `createTestContext()` for in-process integration tests across PG/SQLite.
+- `src/enrichment/` — deterministic text extraction. `extract.ts` dispatches on the item's declared MIME (plain text decodes, `office.ts` parses documents through officeparser, `ocr.ts` recognizes images through tesseract.js behind an injectable seam), and `sweeper.ts` is the background job that finds candidates, extracts, and writes `extracted_text` back onto the item. See the dedicated section below.
 - `src/integrations/local-runtime/` — Node-bundled integrations substrate. Conditional boot via `MARFA_INTEGRATION_RUNTIME=local`; pg-boss drives cron + queue, a `worker_thread` per-integration pool runs handler code, per-Connection state lives under the `connection.runtime` reserved extension namespace. See the dedicated section below.
 
 ## Schema changes
@@ -504,6 +505,22 @@ Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; ho
 **PG test isolation — template-database pattern.** Each PG test file gets its own freshly-cloned database via `CREATE DATABASE … TEMPLATE marfa_test_template`. The template is built once at test-run start (vitest globalSetup at `src/test-global-setup.ts`): it runs migrations into an empty DB and stays quiescent for the rest of the run. Per-file lifecycle lives in `src/storage/pg/test-template.ts`. `createPgTestStorage()` (consumed by `createTestContext` and the few test files that roll their own storage with custom `authMode`) clones the template, opens storage against the clone, and returns an awaitable `cleanup()` that drops the clone with `WITH (FORCE)`. Per-file clones are parallel-safe by construction — no shared-DB truncate races. `cleanup()` is awaitable so afterAll hooks don't starve under heavy admin DDL traffic. `MARFA_TEST_PG_ADMIN_URL` points at the cluster's `postgres` system DB so the lifecycle can issue admin operations; `scripts/test-pg.sh` exports both that and a `DATABASE_URL` for tooling that reads the standard env var.
 
 **PG connection-cap math.** Worker count is Vitest's default (`cpus - 1`); the server's `vitest.config.ts` deliberately does NOT pin a project-level `maxWorkers` (pinning one differs from the sibling projects' default, which forces this project into its own `sequence.groupOrder` group and destabilizes the timing-sensitive cycle-attribution pubsub test). Per-worker connection pressure is bounded by the per-file pool size (`maxPoolSize: 3` in `test-utils.ts`), so peak in-flight connections ≈ `workers × 3 + admin clients (≈1 per worker)`. `scripts/test-pg.sh` bumps the container to `max_connections=500` for headroom, and CI runs that same script rather than a service container, so the cap is 500 everywhere and the ceiling scales with the runner instead of being fixed at the image's default 100. The worker count is the thing to watch: a runner with many cores raises peak connections linearly, and the lever is `--maxWorkers` or the root config rather than the database, since pinning `maxWorkers` on this project alone moves it into its own scheduling group.
+
+## Deterministic text enrichment
+
+A background sweeper extracts text from `core.file` blobs and writes it to the item's `extracted_text` property. On by default (`MARFA_ENRICHMENT_ENABLED=false` disables); the full env surface is in the root AGENTS.md.
+
+**State-driven, never event-driven.** The `enrichment_state` table is the whole trigger mechanism: one row per file item the sweeper has looked at, and the candidate query is an anti-join against it. An item is a candidate when it has no row, when its `blob_ref` differs from the row's, when the row's `extractor_version` is behind the current one, or when it failed with attempts to spare. Nothing subscribes to item events, so the write the sweeper performs can never schedule the next sweep.
+
+**Search wiring is nothing.** `extracted_text` is an ordinary string field on `core.file`, so both dialects' FTS indexers already fold it into the `extra` slot on the write the sweeper makes. There is no search-side code for this feature, and the sweeper test asserting a search hit is what pins that.
+
+**`EXTRACTOR_VERSION` is a re-extraction switch.** Bumping it re-admits every already-done item, one batch per tick, so bump it when output changes materially (a new format, a parser swap, different truncation) and not otherwise.
+
+**The OCR seam exists so tests never touch the network.** `TesseractOcr` fetches a language model on first use, so unit tests inject a fake through `createWorkerFn` and the real engine runs only behind `MARFA_TEST_OCR=1`. The worker is created lazily, so a deployment that never sees an image never spawns one; `terminate` is idempotent and the engine recreates the worker on the next call, which is what makes the per-item timeout able to actually stop a recognition.
+
+**PDF extraction reads embedded text only.** A scanned page-image PDF yields nothing, deliberately: rasterized-page OCR is a different cost class. The parser's own optional OCR stays off for the same reason.
+
+**`enrichment_state` is not granted to `marfa_app` and so is not policed by RLS.** The sweeper is a background job on the owner connection and no request path reads the table. A grant without a policy is the shape that has bitten before, so the table stays off the role entirely rather than gaining both.
 
 ## Local integrations runtime
 

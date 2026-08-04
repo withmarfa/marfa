@@ -302,6 +302,17 @@ CREATE TABLE IF NOT EXISTS public.edges (
     updated_at text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS public.enrichment_state (
+    item_id text NOT NULL,
+    space_id text,
+    blob_ref text NOT NULL,
+    extractor_version integer NOT NULL,
+    status text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    error text,
+    updated_at text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS public.event_log (
     id bigint NOT NULL,
     event_type text NOT NULL,
@@ -821,6 +832,20 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.enrichment_state'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['item_id']::text[]) THEN
+    ALTER TABLE ONLY public.enrichment_state
+        ADD CONSTRAINT enrichment_state_pkey PRIMARY KEY (item_id);
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
 WHERE c.conrelid = 'public.event_log'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
@@ -1300,6 +1325,21 @@ WHERE c.conrelid = 'public.auth_session'::regclass AND c.contype = 'f'
       = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_session
         ADD CONSTRAINT auth_session_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.enrichment_state'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.items'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['item_id']::text[]) THEN
+    ALTER TABLE ONLY public.enrichment_state
+        ADD CONSTRAINT enrichment_state_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.items(id) ON DELETE CASCADE;
   END IF;
 END
 $$;

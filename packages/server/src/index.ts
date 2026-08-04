@@ -31,6 +31,8 @@ import {
   type LocalRuntimeBundle,
 } from "./integrations/local-runtime/index.js";
 import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
+import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
+import { TesseractOcr } from "./enrichment/ocr.js";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -323,6 +325,30 @@ async function main() {
       : undefined;
   runtimeCredentialReaper?.start();
 
+  // Text extraction from uploaded files, on by default: a document nobody
+  // can find is barely stored. The OCR engine is constructed eagerly but
+  // loads nothing until an image actually reaches it.
+  const enrichmentSweeper =
+    config.enrichmentEnabled !== false
+      ? new TextEnrichmentSweeper({
+          storage,
+          blobs: blobBackend,
+          ocr:
+            config.enrichmentOcrEnabled !== false
+              ? new TesseractOcr({
+                  cachePath: config.enrichmentTessdataDir ?? "./data/tessdata",
+                })
+              : null,
+          intervalMs: config.enrichmentIntervalMs ?? 30_000,
+          batchSize: config.enrichmentBatchSize ?? 8,
+          itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
+          maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
+          maxTextChars: config.enrichmentMaxTextChars ?? 200_000,
+          maxAttempts: config.enrichmentMaxAttempts ?? 3,
+        })
+      : undefined;
+  enrichmentSweeper?.start();
+
   const bulkActionWorker = new BulkActionWorker({
     storage,
     pollIntervalMs: config.bulkActionPollIntervalMs ?? 500,
@@ -503,6 +529,7 @@ async function main() {
     rateLimitCleaner.stop();
     dcrClientCleaner?.stop();
     runtimeCredentialReaper?.stop();
+    enrichmentSweeper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
     if (reactiveRunBridge) {

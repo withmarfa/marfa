@@ -23,6 +23,7 @@ import { SqliteUserStore } from "./user-store.js";
 import { SqliteSpaceStore } from "./space-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
+import { SqliteEnrichmentStore } from "./enrichment-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
@@ -82,6 +83,7 @@ export async function createSqliteStorage(
   const authSessionStore = new SqliteAuthSessionStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
+  const enrichmentStore = new SqliteEnrichmentStore(db);
 
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
     for (const { space_id, schema } of types) {
@@ -109,6 +111,7 @@ export async function createSqliteStorage(
     blobs: blobStore,
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
+    enrichment: enrichmentStore,
     oauth: oauthStore,
     // Thin reader over the @better-auth/oauth-provider plugin's tables
     // for the consent route and projection after-hooks. The plugin owns writes.
