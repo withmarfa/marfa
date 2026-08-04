@@ -243,6 +243,33 @@ export class ConnectionClient {
     return this.request<{ id: string }>("POST", "/edges", input);
   }
 
+  /** Create an edge, treating "already exists" as success. Returns
+   *  "created" or "exists". Every other refusal throws: a cardinality
+   *  rejection, a permission failure, or a network error means the
+   *  relationship did NOT form, and a handler that swallows those is
+   *  silently dropping edges. The duplicate case is identified by the
+   *  server's `constraint: "duplicate"` detail, never by message text. */
+  async ensureEdge(input: {
+    source_id: string;
+    target_id: string;
+    edge_type: string;
+    properties?: Record<string, unknown>;
+  }): Promise<"created" | "exists"> {
+    try {
+      await this.createEdge(input);
+      return "created";
+    } catch (err) {
+      if (
+        err instanceof MarfaApiError &&
+        err.code === "edge_constraint_violation" &&
+        err.details?.constraint === "duplicate"
+      ) {
+        return "exists";
+      }
+      throw err;
+    }
+  }
+
   /** POST/GET/PATCH/DELETE through the connection-proxy route, forwarding
    *  the runtime credential. Server's wildcard `/connections/:id/proxy/*`
    *  passes through to the upstream service with the connector's stored
@@ -428,6 +455,7 @@ export class ConnectionClient {
       throw new MarfaApiError(
         `Marfa API ${String(res.status)} ${res.statusText} ${method} ${path}: ${text}`,
         res.status,
+        parseApiErrorBody(text),
       );
     }
     if (res.status === 204) return undefined as T;
@@ -462,11 +490,47 @@ function describeContent(content: unknown): string {
   return typeof content;
 }
 
+/**
+ * Structured fields recovered from a Marfa error response body. Kept beside
+ * the raw message because handlers need machine-checkable identity (which
+ * refusal is this) while logs want the whole text.
+ */
+interface ParsedApiError {
+  code?: string;
+  details?: Record<string, unknown>;
+}
+
+function parseApiErrorBody(text: string): ParsedApiError {
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: { code?: unknown; details?: unknown };
+    };
+    const out: ParsedApiError = {};
+    if (typeof parsed.error?.code === "string") out.code = parsed.error.code;
+    if (
+      parsed.error?.details !== null &&
+      typeof parsed.error?.details === "object"
+    ) {
+      out.details = parsed.error.details as Record<string, unknown>;
+    }
+    return out;
+  } catch {
+    // Non-JSON bodies (proxies, HTML error pages) carry no structure.
+    return {};
+  }
+}
+
 export class MarfaApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** Marfa error code from the response body, when the body was parseable. */
+  readonly code?: string;
+  /** Structured error details from the response body, when present. */
+  readonly details?: Record<string, unknown>;
+  constructor(message: string, status: number, parsed?: ParsedApiError) {
     super(message);
     this.status = status;
+    if (parsed?.code !== undefined) this.code = parsed.code;
+    if (parsed?.details !== undefined) this.details = parsed.details;
     this.name = "MarfaApiError";
   }
 }

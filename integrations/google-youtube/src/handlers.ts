@@ -441,21 +441,37 @@ async function ensureChannel(
   }
 }
 
-async function safeCreateParentEdge(
+type ParentEdgeOutcome = "created" | "exists" | "refused";
+
+/**
+ * Create a parent-of edge, quiet only when the edge already exists. A real
+ * refusal (cardinality, permissions, network) is reported and counted,
+ * never swallowed: a discarded refusal here is a relationship that silently
+ * never forms, which is how the playlist edges went missing.
+ */
+async function ensureParentEdge(
   ctx: ConnectionContext,
   parentMarfa: string,
   childMarfa: string,
-): Promise<boolean> {
+): Promise<ParentEdgeOutcome> {
   try {
-    await ctx.marfa.createEdge({
+    return await ctx.marfa.ensureEdge({
       source_id: parentMarfa,
       target_id: childMarfa,
       edge_type: "parent-of",
     });
-    return true;
-  } catch {
-    // 409 / already-exists is the expected outcome on re-sweeps.
-    return false;
+  } catch (err) {
+    await ctx.activity.emit({
+      severity: "action_required",
+      summary: `google-youtube: failed to create parent-of edge ${parentMarfa} -> ${childMarfa}`,
+      detail: {
+        error: errorMessage(err),
+        source_id: parentMarfa,
+        target_id: childMarfa,
+        edge_type: "parent-of",
+      },
+    });
+    return "refused";
   }
 }
 
@@ -466,6 +482,7 @@ async function safeCreateParentEdge(
 interface LikedSweepResult {
   upserted: number;
   edges: number;
+  edges_refused: number;
   highestLikedAt: string | null;
 }
 
@@ -490,7 +507,7 @@ async function syncLikedVideos(
         summary:
           "google-youtube: could not resolve the user's liked-videos playlist id from channels.list?mine=true",
       });
-      return { upserted: 0, edges: 0, highestLikedAt: null };
+      return { upserted: 0, edges: 0, edges_refused: 0, highestLikedAt: null };
     }
     cursor.liked_playlist_id = likedId;
   }
@@ -538,7 +555,7 @@ async function syncLikedVideos(
   }
 
   if (collected.length === 0) {
-    return { upserted: 0, edges: 0, highestLikedAt: null };
+    return { upserted: 0, edges: 0, edges_refused: 0, highestLikedAt: null };
   }
 
   const likedAtById = new Map<string, string>();
@@ -551,6 +568,7 @@ async function syncLikedVideos(
 
   let upserted = 0;
   let edges = 0;
+  let edgesRefused = 0;
 
   for (const ids of chunk(allIds, BATCH_FETCH_MAX)) {
     const params = new URLSearchParams();
@@ -582,12 +600,13 @@ async function syncLikedVideos(
         if (typeof channelId === "string" && channelId.length > 0) {
           const channelMarfa = await ensureChannel(ctx, cursor, channelId);
           if (channelMarfa !== null) {
-            const ok = await safeCreateParentEdge(
+            const outcome = await ensureParentEdge(
               ctx,
               channelMarfa,
               videoMarfaId,
             );
-            if (ok) edges += 1;
+            if (outcome === "created") edges += 1;
+            else if (outcome === "refused") edgesRefused += 1;
           }
         }
       } catch (err) {
@@ -600,7 +619,7 @@ async function syncLikedVideos(
     }
   }
 
-  return { upserted, edges, highestLikedAt };
+  return { upserted, edges, edges_refused: edgesRefused, highestLikedAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +721,7 @@ async function syncSubscriptions(
 interface PlaylistsSweepResult {
   upserted: number;
   edges: number;
+  edges_refused: number;
   videos_materialised: number;
 }
 
@@ -713,6 +733,7 @@ async function syncUserPlaylists(
   let pageToken: string | undefined;
   let upserted = 0;
   let edges = 0;
+  let edgesRefused = 0;
   let videos_materialised = 0;
 
   for (let page = 0; page < MAX_PAGES_PER_SWEEP; page++) {
@@ -763,12 +784,13 @@ async function syncUserPlaylists(
       if (typeof channelId === "string" && channelId.length > 0) {
         const channelMarfa = await ensureChannel(ctx, cursor, channelId);
         if (channelMarfa !== null) {
-          const ok = await safeCreateParentEdge(
+          const outcome = await ensureParentEdge(
             ctx,
             channelMarfa,
             playlistMarfaId,
           );
-          if (ok) edges += 1;
+          if (outcome === "created") edges += 1;
+          else if (outcome === "refused") edgesRefused += 1;
         }
       }
 
@@ -782,6 +804,7 @@ async function syncUserPlaylists(
         );
         videos_materialised += walked.upserted;
         edges += walked.edges;
+        edgesRefused += walked.edges_refused;
       }
     }
 
@@ -789,12 +812,13 @@ async function syncUserPlaylists(
     if (pageToken === undefined) break;
   }
 
-  return { upserted, edges, videos_materialised };
+  return { upserted, edges, edges_refused: edgesRefused, videos_materialised };
 }
 
 interface MaterializeResult {
   upserted: number;
   edges: number;
+  edges_refused: number;
 }
 
 async function materializePlaylistVideos(
@@ -826,10 +850,11 @@ async function materializePlaylistVideos(
     if (pageToken === undefined) break;
   }
 
-  if (videoIds.length === 0) return { upserted: 0, edges: 0 };
+  if (videoIds.length === 0) return { upserted: 0, edges: 0, edges_refused: 0 };
 
   let upserted = 0;
   let edges = 0;
+  let edgesRefused = 0;
   const uniqueIds = Array.from(new Set(videoIds));
 
   for (const ids of chunk(uniqueIds, BATCH_FETCH_MAX)) {
@@ -857,22 +882,24 @@ async function materializePlaylistVideos(
           cursor.mappings.videos[v.id] = videoMarfaId;
         }
         upserted += 1;
-        const ok = await safeCreateParentEdge(
+        const outcome = await ensureParentEdge(
           ctx,
           playlistMarfaId,
           videoMarfaId,
         );
-        if (ok) edges += 1;
+        if (outcome === "created") edges += 1;
+        else if (outcome === "refused") edgesRefused += 1;
         const channelId = v.snippet?.channelId;
         if (typeof channelId === "string" && channelId.length > 0) {
           const channelMarfa = await ensureChannel(ctx, cursor, channelId);
           if (channelMarfa !== null) {
-            const cok = await safeCreateParentEdge(
+            const cOutcome = await ensureParentEdge(
               ctx,
               channelMarfa,
               videoMarfaId,
             );
-            if (cok) edges += 1;
+            if (cOutcome === "created") edges += 1;
+            else if (cOutcome === "refused") edgesRefused += 1;
           }
         }
       } catch (err) {
@@ -885,7 +912,7 @@ async function materializePlaylistVideos(
     }
   }
 
-  return { upserted, edges };
+  return { upserted, edges, edges_refused: edgesRefused };
 }
 
 // ---------------------------------------------------------------------------
@@ -917,8 +944,11 @@ export async function handleSchedule(
     cursor.seeded = true;
     await ctx.cursor.write(CURSOR_KEY, cursor);
 
+    const edgesRefused = liked.edges_refused + playlists.edges_refused;
     await ctx.activity.emit({
-      severity: "info",
+      // A refused edge is a relationship that did not form; the sweep
+      // summary must not read as routine when that happened.
+      severity: edgesRefused > 0 ? "warning" : "info",
       summary: `google-youtube inbound: liked_upserted=${String(
         liked.upserted,
       )} subscriptions_upserted=${String(
@@ -927,13 +957,16 @@ export async function handleSchedule(
         playlists.upserted,
       )} playlist_videos_materialised=${String(
         playlists.videos_materialised,
-      )} edges_created=${String(liked.edges + playlists.edges)}`,
+      )} edges_created=${String(
+        liked.edges + playlists.edges,
+      )} edges_refused=${String(edgesRefused)}`,
       detail: {
         liked_upserted: liked.upserted,
         subscriptions_upserted: subs.upserted,
         playlists_upserted: playlists.upserted,
         playlist_videos_materialised: playlists.videos_materialised,
         edges_created: liked.edges + playlists.edges,
+        edges_refused: edgesRefused,
         materialise_playlists: config.materialise_playlists,
       },
     });

@@ -292,15 +292,20 @@ export async function handleSchedule(
     const parentMarfa = cursor.collection_mappings[String(parentId)];
     if (childMarfa === undefined || parentMarfa === undefined) continue;
     try {
-      await ctx.marfa.createEdge({
+      const outcome = await ctx.marfa.ensureEdge({
         source_id: parentMarfa,
         target_id: childMarfa,
         edge_type: "parent-of",
       });
-      edgesCreated += 1;
-    } catch {
-      // 409 / already-exists is the expected outcome on second sweep;
-      // swallow silently to avoid action_required noise.
+      if (outcome === "created") edgesCreated += 1;
+    } catch (err) {
+      // Only a genuine duplicate is quiet (ensureEdge absorbs it); any
+      // other refusal means the hierarchy edge never formed.
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `raindrop: failed to create parent-of edge ${parentMarfa} -> ${childMarfa}`,
+        detail: { error: errorMessage(err) },
+      });
     }
   }
 
@@ -386,14 +391,18 @@ export async function handleSchedule(
               cursor.collection_mappings[String(collectionId)];
             if (parentMarfa !== undefined) {
               try {
-                await ctx.marfa.createEdge({
+                const outcome = await ctx.marfa.ensureEdge({
                   source_id: parentMarfa,
                   target_id: raindropMarfaId,
                   edge_type: "parent-of",
                 });
-                edgesCreated += 1;
-              } catch {
-                // 409 / already-exists is expected on retries.
+                if (outcome === "created") edgesCreated += 1;
+              } catch (err) {
+                await ctx.activity.emit({
+                  severity: "action_required",
+                  summary: `raindrop: failed to create parent-of edge ${parentMarfa} -> ${raindropMarfaId}`,
+                  detail: { error: errorMessage(err) },
+                });
               }
             }
           }

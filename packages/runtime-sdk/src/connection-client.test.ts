@@ -737,3 +737,118 @@ describe("ConnectionClient.uploadBlob", () => {
     expect(captured).toHaveLength(0);
   });
 });
+
+describe("MarfaApiError structured fields", () => {
+  const DUPLICATE_BODY = JSON.stringify({
+    error: {
+      code: "edge_constraint_violation",
+      message: 'Edge "parent-of" already exists between these items',
+      details: {
+        edge_type: "parent-of",
+        source_id: "item_a",
+        target_id: "item_b",
+        constraint: "duplicate",
+      },
+    },
+  });
+
+  const CARDINALITY_BODY = JSON.stringify({
+    error: {
+      code: "edge_constraint_violation",
+      message:
+        'Edge "parent-of" is one-to-many on the target side; target already has an inbound edge of this type',
+      details: {
+        edge_type: "parent-of",
+        target_id: "item_b",
+        constraint: "cardinality",
+      },
+    },
+  });
+
+  function clientWith(responses: ((req: Request) => Response)[]) {
+    return new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(responses, []),
+    });
+  }
+
+  it("parses code and details from an error body", async () => {
+    const client = clientWith([
+      () => new Response(CARDINALITY_BODY, { status: 400 }),
+    ]);
+    const err = await client
+      .createEdge({ source_id: "a", target_id: "b", edge_type: "parent-of" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(MarfaApiError);
+    const apiErr = err as MarfaApiError;
+    expect(apiErr.status).toBe(400);
+    expect(apiErr.code).toBe("edge_constraint_violation");
+    expect(apiErr.details?.constraint).toBe("cardinality");
+    // The raw body stays in the message for logs.
+    expect(apiErr.message).toContain("one-to-many");
+  });
+
+  it("tolerates a non-JSON error body", async () => {
+    const client = clientWith([
+      () => new Response("<html>bad gateway</html>", { status: 502 }),
+    ]);
+    const err = await client
+      .createEdge({ source_id: "a", target_id: "b", edge_type: "parent-of" })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(MarfaApiError);
+    const apiErr = err as MarfaApiError;
+    expect(apiErr.status).toBe(502);
+    expect(apiErr.code).toBeUndefined();
+    expect(apiErr.details).toBeUndefined();
+  });
+
+  it("ensureEdge treats a duplicate as exists", async () => {
+    const client = clientWith([
+      () => new Response(DUPLICATE_BODY, { status: 400 }),
+    ]);
+    await expect(
+      client.ensureEdge({
+        source_id: "item_a",
+        target_id: "item_b",
+        edge_type: "parent-of",
+      }),
+    ).resolves.toBe("exists");
+  });
+
+  it("ensureEdge returns created on success", async () => {
+    const client = clientWith([
+      () => new Response(JSON.stringify({ id: "edge_1" }), { status: 201 }),
+    ]);
+    await expect(
+      client.ensureEdge({
+        source_id: "item_a",
+        target_id: "item_b",
+        edge_type: "parent-of",
+      }),
+    ).resolves.toBe("created");
+  });
+
+  it("ensureEdge rethrows a cardinality refusal", async () => {
+    const client = clientWith([
+      () => new Response(CARDINALITY_BODY, { status: 400 }),
+    ]);
+    await expect(
+      client.ensureEdge({
+        source_id: "item_a",
+        target_id: "item_b",
+        edge_type: "parent-of",
+      }),
+    ).rejects.toMatchObject({
+      code: "edge_constraint_violation",
+      details: { constraint: "cardinality" },
+    });
+  });
+});

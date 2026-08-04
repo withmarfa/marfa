@@ -319,15 +319,16 @@ export async function handleSchedule(
             });
             highlightMarfaId = created.id;
             cursor.highlight_mappings[highlightKey] = highlightMarfaId;
-            // Only create the edge on first write — on updates it already
-            // exists and the SDK would 409/no-op anyway.
+            // Only create the edge on first write; a duplicate on replay
+            // is absorbed by ensureEdge, so what reaches the catch is a
+            // real refusal.
             try {
-              await ctx.marfa.createEdge({
+              const outcome = await ctx.marfa.ensureEdge({
                 source_id: bookMarfaId,
                 target_id: highlightMarfaId,
                 edge_type: "parent-of",
               });
-              edgesCreated += 1;
+              if (outcome === "created") edgesCreated += 1;
             } catch (err) {
               await ctx.activity.emit({
                 severity: "action_required",

@@ -188,6 +188,9 @@ export async function assertEdgesCanBeCreated(
     // Exact duplicate — in-batch repeat or existing DB row.
     const dupKey = `${p.source_id}|${p.target_id}|${p.edge_type}`;
     if (seen.has(dupKey) || existsSet.has(dupKey)) {
+      // `constraint` is the machine-readable discriminator: a duplicate is
+      // the one refusal an idempotent writer may safely treat as success,
+      // and message text is not a contract.
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" already exists between these items`,
@@ -195,6 +198,7 @@ export async function assertEdgesCanBeCreated(
           edge_type: p.edge_type,
           source_id: p.source_id,
           target_id: p.target_id,
+          constraint: "duplicate",
         },
       );
     }
@@ -216,14 +220,22 @@ export async function assertEdgesCanBeCreated(
           throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-one; source already has one outbound edge of this type`,
-            { edge_type: p.edge_type, source_id: p.source_id },
+            {
+              edge_type: p.edge_type,
+              source_id: p.source_id,
+              constraint: "cardinality",
+            },
           );
         }
         if (totalTarget > 0) {
           throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-one; target already has one inbound edge of this type`,
-            { edge_type: p.edge_type, target_id: p.target_id },
+            {
+              edge_type: p.edge_type,
+              target_id: p.target_id,
+              constraint: "cardinality",
+            },
           );
         }
         break;
@@ -233,7 +245,11 @@ export async function assertEdgesCanBeCreated(
           throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
-            { edge_type: p.edge_type, target_id: p.target_id },
+            {
+              edge_type: p.edge_type,
+              target_id: p.target_id,
+              constraint: "cardinality",
+            },
           );
         }
         break;
@@ -243,7 +259,11 @@ export async function assertEdgesCanBeCreated(
           throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is many-to-one on the source side; source already has an outbound edge of this type`,
-            { edge_type: p.edge_type, source_id: p.source_id },
+            {
+              edge_type: p.edge_type,
+              source_id: p.source_id,
+              constraint: "cardinality",
+            },
           );
         }
         break;
