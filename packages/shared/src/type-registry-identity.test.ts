@@ -133,6 +133,7 @@ const CORE_EDGE_TYPE_IDENTIFIERS = [
   "attached-to",
   "authored-by",
   "derived-from",
+  "in-collection",
   "in-thread",
   "parent-of",
   "references",
