@@ -519,6 +519,13 @@
       "when": 1784934456992,
       "tag": "0073_rename_tenant_to_space",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1784934457992,
+      "tag": "0074_enrichment_state",
+      "breakpoints": true
     }
   ]
 }

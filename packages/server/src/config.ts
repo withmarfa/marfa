@@ -168,6 +168,40 @@ export interface AppConfig {
    *  days. `0` disables the job. Default 3_600_000 (1h); env override
    *  `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS`. */
   runtimeCredentialReaperIntervalMs?: number;
+  /** Deterministic text extraction from file blobs. On unless
+   *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
+   *  uploaded document findable, so an operator opts out rather than in. */
+  enrichmentEnabled?: boolean;
+  /** Cadence (ms) of the enrichment sweep. Default 30_000; env override
+   *  `MARFA_ENRICHMENT_INTERVAL_MS`. */
+  enrichmentIntervalMs?: number;
+  /** Items extracted per sweep. Default 8; env override
+   *  `MARFA_ENRICHMENT_BATCH_SIZE`. Small because extraction is
+   *  CPU-bound and shares the event loop with the request path. */
+  enrichmentBatchSize?: number;
+  /** Per-item extraction budget (ms). Default 60_000; env override
+   *  `MARFA_ENRICHMENT_ITEM_TIMEOUT_MS`. */
+  enrichmentItemTimeoutMs?: number;
+  /** Blobs above this size are skipped without being read. Default
+   *  20MB; env override `MARFA_ENRICHMENT_MAX_BLOB_BYTES`. */
+  enrichmentMaxBlobBytes?: number;
+  /** Extracted text is truncated to this many characters. Default
+   *  200_000; env override `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. */
+  enrichmentMaxTextChars?: number;
+  /** How many times a failing item is retried before the sweeper stops
+   *  offering it. Default 3; env override
+   *  `MARFA_ENRICHMENT_MAX_ATTEMPTS`. */
+  enrichmentMaxAttempts?: number;
+  /** OCR of image files. On unless `MARFA_ENRICHMENT_OCR_ENABLED=false`.
+   *  Off means image items are recorded as unsupported and never retried,
+   *  which is the right posture for a memory-constrained deployment: the
+   *  wasm core is the heaviest thing extraction loads. */
+  enrichmentOcrEnabled?: boolean;
+  /** Directory the OCR language model is cached in across runs. Default
+   *  `./data/tessdata`; env override `MARFA_ENRICHMENT_TESSDATA_DIR`.
+   *  The model downloads on first use, so a writable path here is what
+   *  stops every restart re-fetching it. */
+  enrichmentTessdataDir?: string;
   /** How long a terminal `bulk_action_jobs` row survives before the GC
    *  sweep drops it. Counted against `finished_at`. Default 7 days; env
    *  override `MARFA_BULK_ACTION_JOB_RETENTION_MS`. Set to `0` to
@@ -825,6 +859,31 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
       3_600_000,
     ),
+    enrichmentEnabled: process.env.MARFA_ENRICHMENT_ENABLED !== "false",
+    enrichmentIntervalMs: envNumber(
+      process.env.MARFA_ENRICHMENT_INTERVAL_MS,
+      30_000,
+    ),
+    enrichmentBatchSize: envNumber(process.env.MARFA_ENRICHMENT_BATCH_SIZE, 8),
+    enrichmentItemTimeoutMs: envNumber(
+      process.env.MARFA_ENRICHMENT_ITEM_TIMEOUT_MS,
+      60_000,
+    ),
+    enrichmentMaxBlobBytes: envNumber(
+      process.env.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
+      20 * 1024 * 1024,
+    ),
+    enrichmentMaxTextChars: envNumber(
+      process.env.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
+      200_000,
+    ),
+    enrichmentMaxAttempts: envNumber(
+      process.env.MARFA_ENRICHMENT_MAX_ATTEMPTS,
+      3,
+    ),
+    enrichmentOcrEnabled: process.env.MARFA_ENRICHMENT_OCR_ENABLED !== "false",
+    enrichmentTessdataDir:
+      process.env.MARFA_ENRICHMENT_TESSDATA_DIR ?? "./data/tessdata",
     runtimeCredentialReaperIntervalMs: envNumber(
       process.env.MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS,
       3_600_000,

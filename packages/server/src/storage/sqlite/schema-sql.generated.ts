@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS "space_quotas" (
   \`updated_at\` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS "enrichment_state" (
+  "item_id" TEXT PRIMARY KEY NOT NULL REFERENCES "items"("id") ON DELETE CASCADE,
+  "space_id" TEXT,
+  "blob_ref" TEXT NOT NULL,
+  "extractor_version" INTEGER NOT NULL,
+  "status" TEXT NOT NULL,
+  "attempts" INTEGER NOT NULL DEFAULT 0,
+  "error" TEXT,
+  "updated_at" TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS "items" (
 	\`id\` text PRIMARY KEY NOT NULL,
 	"space_id" text,
