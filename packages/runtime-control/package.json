@@ -14,7 +14,7 @@
   "dependencies": {
     "@withmarfa/shared": "workspace:*",
     "@withmarfa/webhooks": "workspace:*",
-    "hono": "^4.12.27"
+    "hono": "^4.12.34"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260602.1",
