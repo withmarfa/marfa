@@ -218,15 +218,17 @@ const cleanupBlobsRoute = createRoute({
   tags: ["Blobs"],
   summary: "Remove unreferenced blobs",
   description:
-    "Removes blobs that no item references, including items in trash, to reclaim storage. Admin-only; set `dry_run=true` to preview what would be removed without writing.",
+    "Removes blobs that nothing references. Live items, trashed items, metadata extensions, and version history all count as references. Admin-only; defaults to `dry_run=true`, so deletion requires an explicit `dry_run=false`.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
       dry_run: z
         .enum(["true", "false"])
         .optional()
-        .default("false")
-        .describe("Preview removals without deleting when `true`."),
+        .default("true")
+        .describe(
+          "Preview removals without deleting when `true` (the default); pass `false` to delete.",
+        ),
     }),
   },
   responses: {
@@ -565,6 +567,18 @@ export function blobRoutes(
     // Scan active items and trashed items (don't remove blobs still in trash)
     await scanItems();
     await scanItems("trashed");
+
+    // A hash referenced only by a version snapshot is still referenced:
+    // deleting it would strip the bytes out from under a version read.
+    let versionCursor: string | undefined;
+    for (;;) {
+      const page = await storage.versions.scanProperties(200, versionCursor);
+      for (const props of page.properties) {
+        collectBlobHashes(props, referencedHashes);
+      }
+      if (!page.cursor) break;
+      versionCursor = page.cursor;
+    }
 
     const orphaned = allHashes.filter((h) => !referencedHashes.has(h));
 

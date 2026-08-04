@@ -408,6 +408,19 @@ export interface VersionStore {
   getByVersion(itemId: string, version: number): Promise<Version | null>;
   getLatestTimestamp(itemId: string): Promise<string | null>;
   deleteByIds(ids: string[]): Promise<number>;
+  /**
+   * Pages over every version snapshot's parsed properties, instance-wide.
+   * Exists for the admin blob cleanup: a hash referenced only by history is
+   * still referenced, because deleting it would strip the bytes out from
+   * under a version read. Cursor is the version row id.
+   */
+  scanProperties(
+    limit: number,
+    cursor?: string,
+  ): Promise<{
+    properties: Record<string, unknown>[];
+    cursor: string | null;
+  }>;
   listThinningCandidates(
     threshold: number,
     limit: number,
