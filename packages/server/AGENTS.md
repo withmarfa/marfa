@@ -98,6 +98,20 @@ State that must stay coherent across a request flows through one mechanism (midd
 
 **Wire-tampering defense preserved.** The `Math.max(hopCount, 1)` floor inside `passesHopBudget` (and its duplicate in `POST /connections/preview-event`) is kept. It defends against malformed inbound `X-Marfa-Cycle-Hop` headers (origin set but `hopCount: 0`): the ALS refactor removes the contributor-discipline failure mode but not the wire-tampering one.
 
+## Archive type registrations
+
+An archive carries the space's custom type and edge-type registrations in `types.ndjson`, and `registerArchiveTypes` (`routes/admin-archive-types.ts`) replays them before the restore transaction opens. Without it a restore into an empty space dropped every item of a space-registered type while reporting success on the rest.
+
+**Before the transaction, deliberately.** The type registry is a process-level in-memory map that a rollback cannot reach. Registering inside the transaction would leave the registry holding types the database no longer has; registering first inverts that into the harmless direction, where a failed restore leaves a registration nothing uses and the next restore skips as identical. Blobs already land outside the transaction for the same reason.
+
+**Conflicts are decided against the database, not the registry.** The registry is process state seeded at boot and can hold entries the space never wrote, so the pre-pass compares against `types.listCustom(spaceId)` and `edgeTypes.list(spaceId)`. Stored rows are put through `validateTypeSchema` before comparison, because the archive's entries are normalized by validation and a row written under an older shape would otherwise read as a conflict.
+
+**One refusal names every clashing id, and nothing has been written when it fires.** An identical registration is a skip so re-restoring an archive stays a no-op.
+
+**Validation is the route's, not a second reading of it.** Types go through `validateTypeSchema` plus the identifier and reserved-namespace gates; edge types go through the exported `EdgeTypeRequestSchema` and the core-edge refusal. A reserved-namespace type in an archive is refused whatever the restoring credential holds: the platform set is a property of the build, not of the request, and an archive is a file an attacker can hand you.
+
+**`edgeTypes.create` does not touch the registry**, so the replay calls `registerEdgeTypeSchema` alongside it, mirroring `POST /edge-types`. `types.create` does register, so it does not.
+
 ## Postgres RLS
 
 RLS lands as defense-in-depth beneath the application-layer space scoping, across four migration parts.

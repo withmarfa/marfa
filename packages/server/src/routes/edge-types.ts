@@ -24,7 +24,10 @@ import {
 // Schemas
 // ---------------------------------------------------------------------------
 
-const EdgeTypeRequestSchema = z.object({
+/** Exported so the archive restore validates a carried edge type through
+ *  exactly the shape this route accepts, rather than a second reading of
+ *  the same rules that can drift from it. */
+export const EdgeTypeRequestSchema = z.object({
   id: z.string().min(1),
   label: z.string().optional(),
   description: z.string().optional(),
