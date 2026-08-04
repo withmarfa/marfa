@@ -108,7 +108,18 @@ export async function assertEdgesCanBeCreated(
         `Edge target item not found: ${p.target_id}`,
       );
     }
-    if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
+    // Endpoint types resolve within the caller's space, exactly as the edge
+    // type itself did above. Core and system types resolve regardless, so
+    // omitting the space only ever mattered for a constraint naming a
+    // space-registered type — which no core edge had until `in-collection`,
+    // and which every custom edge type naming a custom type has always had.
+    if (
+      !satisfiesEdgeConstraint(
+        source.type,
+        schema.source_type_constraints,
+        opts.space_id,
+      )
+    ) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow source type "${source.type}"`,
@@ -119,7 +130,13 @@ export async function assertEdgesCanBeCreated(
         },
       );
     }
-    if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
+    if (
+      !satisfiesEdgeConstraint(
+        target.type,
+        schema.target_type_constraints,
+        opts.space_id,
+      )
+    ) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow target type "${target.type}"`,
@@ -132,7 +149,11 @@ export async function assertEdgesCanBeCreated(
     }
     if (
       p.edge_type === COLLECTION_EDGE_TYPE &&
-      satisfiesEdgeConstraint(source.type, COLLECTION_TYPE_CONSTRAINT)
+      satisfiesEdgeConstraint(
+        source.type,
+        COLLECTION_TYPE_CONSTRAINT,
+        opts.space_id,
+      )
     ) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
