@@ -430,6 +430,11 @@ describe.each(DOORS)("$name", (door) => {
  * Spec-visible operations whose success response carries secret material
  * but that are NOT credential mints, each with the reason it is excluded.
  * Keys are `<method> <path>` in OpenAPI form.
+ *
+ * Minting paths with no HTTP surface are invisible to every leg in this
+ * file by construction. Those live in `auth/non-http-mint-ceilings.test.ts`,
+ * which pins the in-process call sites and holds them to the same
+ * two-directional shape; extend there, not here, when a mint has no route.
  */
 const NOT_A_MINT_DOOR: Record<string, string> = {};
 

@@ -21,7 +21,7 @@
  *
  * `structuredClone` is the natural primitive because it matches what
  * DO storage uses internally and handles every shape the runtime-sdk
- * persists today (cursors, idempotency rings, echo bloom filters)
+ * persists today (cursors, idempotency rings, echo-suppression records)
  * without ad-hoc JSON-roundtrip caveats.
  */
 import type { CursorStorageAdapter } from "@withmarfa/runtime-sdk";
