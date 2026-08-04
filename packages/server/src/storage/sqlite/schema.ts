@@ -904,3 +904,23 @@ export const auth_passkey = sqliteTable(
     index("idx_auth_passkey_credential_id").on(table.credentialID),
   ],
 );
+
+// Deterministic-enrichment bookkeeping: one row per file item the text
+// sweeper has looked at, keyed by item id. Lives in its own table rather
+// than in item properties so bookkeeping writes never mint version
+// snapshots or fan out item events, and the sweeper's candidate query is
+// one indexed anti-join instead of a per-item scan. A `blob_ref` change
+// or an `extractor_version` bump re-admits the item; `attempts` bounds
+// retries of failing blobs. Hard-deleting the item deletes the row.
+export const enrichmentState = sqliteTable("enrichment_state", {
+  item_id: text("item_id")
+    .primaryKey()
+    .references(() => items.id, { onDelete: "cascade" }),
+  space_id: text("space_id"),
+  blob_ref: text("blob_ref").notNull(),
+  extractor_version: integer("extractor_version").notNull(),
+  status: text("status").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  error: text("error"),
+  updated_at: text("updated_at").notNull(),
+});

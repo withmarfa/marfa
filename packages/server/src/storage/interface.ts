@@ -2131,6 +2131,52 @@ export interface BulkActionJobStore {
   gcExpired(expireBeforeIso: string): Promise<number>;
 }
 
+/** A file item the enrichment sweeper should extract text from. */
+export interface EnrichmentCandidate {
+  item_id: string;
+  space_id: string | null;
+  type: string;
+  blob_ref: string;
+  mime_type: string;
+}
+
+export interface EnrichmentStateInput {
+  item_id: string;
+  space_id: string | null;
+  blob_ref: string;
+  extractor_version: number;
+  status: "done" | "failed" | "skipped";
+  attempts: number;
+  error?: string | null;
+}
+
+export interface EnrichmentStateRecord extends EnrichmentStateInput {
+  updated_at: string;
+}
+
+/**
+ * Bookkeeping for the deterministic text-enrichment sweeper. One row per
+ * file item the sweeper has looked at; the candidate query is the whole
+ * trigger mechanism (state-based, never event-based, so integration
+ * fan-out cannot loop the sweeper).
+ */
+export interface EnrichmentStore {
+  /**
+   * File items needing extraction: `core.file` family, not trashed, with a
+   * `blob_ref`, and either never looked at, changed since (`blob_ref`
+   * differs), authored under an older extractor, or failed with attempts
+   * to spare. Ordered oldest-updated first; bounded by `limit`.
+   */
+  listCandidates(
+    extractorVersion: number,
+    maxAttempts: number,
+    limit: number,
+  ): Promise<EnrichmentCandidate[]>;
+  get(itemId: string): Promise<EnrichmentStateRecord | null>;
+  upsert(state: EnrichmentStateInput): Promise<void>;
+  delete(itemId: string): Promise<void>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
@@ -2184,6 +2230,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * degrade to "no rate limit", which is the wrong default.
    */
   rateLimits: RateLimitStore;
+  /** Deterministic text-enrichment bookkeeping. Always wired by both
+   *  dialect factories; the sweeper is the only consumer. */
+  enrichment: EnrichmentStore;
   /**
    * Optional reference to the wrapped Postgres Drizzle instance, exposed
    * so the RLS middleware can drive `db.transaction(...)` to wrap each

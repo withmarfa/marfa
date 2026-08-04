@@ -42,6 +42,10 @@
     "notes": {
       "type": "string",
       "description": "Personal annotations"
+    },
+    "extracted_text": {
+      "type": "string",
+      "description": "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)"
     }
   },
   "required": ["blob_ref", "mime_type"],

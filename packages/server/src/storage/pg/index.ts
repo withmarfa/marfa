@@ -29,6 +29,7 @@ import { PgUserStore } from "./user-store.js";
 import { PgSpaceStore } from "./space-store.js";
 import { PgEdgeStore } from "./edge-store.js";
 import { PgEdgeTypeStore } from "./edge-type-store.js";
+import { PgEnrichmentStore } from "./enrichment-store.js";
 import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 import { PgSpaceQuotaStore } from "./space-quota-store.js";
@@ -156,6 +157,8 @@ export async function createPgStorage(
     // it; the rate-limit table is platform-internal (no space_id column,
     // no RLS policy) and the queries target global counters by design.
     rateLimits: new PgRateLimitStore(db),
+    // Deterministic text-enrichment bookkeeping for the sweeper.
+    enrichment: new PgEnrichmentStore(db),
     // Space store wired unconditionally — see sqlite index.ts for the
     // rationale. The fan-out on space cleanup needs `spaces.list`
     // available regardless of authMode.
