@@ -21,7 +21,7 @@ Inside `src/`:
 - `connection-context.ts` — `ConnectionContext`: the object passed into every handler invocation. Holds the client, cursor, activity emitter, dispatch metadata.
 - `cron.ts` — cron-expression resolution (`cron-parser`) for schedule handlers.
 - `cursor-store.ts` — cursor-window primitives.
-- `echo-suppression.ts` — bloom-filter-style suppression of events the connector itself just wrote (prevents fanout-loops within hop-budget).
+- `echo-suppression.ts` — exact-match, TTL-expiring suppression of events the connector itself just wrote, keyed per external id (prevents fanout-loops within hop-budget). Not probabilistic: a plain key-value record with an expiry, so there are no false positives to reason about.
 - `activity.ts` — helpers for emitting `system.activity` rows.
 - `queue-consumer.ts` — Cloudflare-side queue consumer (retry / DLQ / hop-budget enforcement). The local substrate reproduces the same semantics in `local-runtime/supervisor.ts`.
 
