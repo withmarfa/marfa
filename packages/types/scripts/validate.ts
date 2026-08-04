@@ -1,10 +1,11 @@
 /**
  * Checks every in-tree JSON schema against the runtime validator.
  *
- * This script owns no rules of its own. It loads `core/`, `connectors/` and
- * `core/system/`, resolves each family in dependency order, and runs
- * `validateTypeSchema` — the same function `POST /types` calls. A schema that
- * passes here is one a space could submit over the wire unchanged.
+ * This script owns no rules of its own. It loads `core/`, `connectors/`,
+ * `core/system/` and `core/edges/`, resolves each family in dependency order,
+ * and runs `validateTypeSchema` / `validateEdgeTypeSchema` — the same
+ * functions the registration routes call. A schema that passes here is one a
+ * space could submit over the wire unchanged.
  *
  * Usage: pnpm --filter @withmarfa/types validate
  */
@@ -12,7 +13,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { TypeSchema } from "../src/schema-types.js";
-import { validateTypeSchema } from "../src/schema-validation.js";
+import {
+  validateEdgeTypeSchema,
+  validateTypeSchema,
+} from "../src/schema-validation.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 
@@ -101,9 +105,33 @@ for (const family of FAMILIES) {
   }
 }
 
-const summary = FAMILIES.map(
-  (f) => `${String(counts[f.name] ?? 0)} ${f.name}`,
-).join(", ");
+// Edge types are their own family with their own validator; they share the
+// item-field model for edge properties but none of the type machinery
+// (inheritance, compatible_with), so they don't join the registry above.
+const edgeRaws = loadFamily("edge", join(typesRoot, "core", "edges"));
+const edgeIds = new Set<string>();
+counts.edge = edgeRaws.length;
+for (const raw of edgeRaws) {
+  checked++;
+  const result = validateEdgeTypeSchema(raw.data);
+  if (!result.success) {
+    for (const error of result.errors) {
+      errors.push(`edge/${raw.file} → ${error.field}\n      ${error.message}`);
+    }
+    continue;
+  }
+  if (edgeIds.has(result.data.id)) {
+    errors.push(
+      `edge/${raw.file} → id\n      Duplicate edge type id "${result.data.id}".`,
+    );
+    continue;
+  }
+  edgeIds.add(result.data.id);
+}
+
+const summary = [...FAMILIES.map((f) => f.name), "edge"]
+  .map((name) => `${String(counts[name] ?? 0)} ${name}`)
+  .join(", ");
 console.log(`Validated ${String(checked)} schemas (${summary})\n`);
 
 if (errors.length > 0) {
