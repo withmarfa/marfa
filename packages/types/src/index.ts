@@ -14,16 +14,20 @@ export type {
 } from "./schema-types.js";
 
 export type {
+  EdgeTypeSchemaValidationResult,
   SchemaValidationContext,
   SchemaValidationIssue,
   TypeSchemaValidationResult,
 } from "./schema-validation.js";
 export {
+  EDGE_CARDINALITIES,
+  EDGE_CASCADES,
   FIELD_FORMATS,
   FIELD_TYPES,
   MERGE_STRATEGIES,
   RESERVED_ITEM_FIELDS,
   normalizeFieldDefinition,
+  validateEdgeTypeSchema,
   validateTypeSchema,
 } from "./schema-validation.js";
 

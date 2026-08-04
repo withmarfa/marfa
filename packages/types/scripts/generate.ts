@@ -14,7 +14,7 @@ import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { FieldDefinition, TypeSchema } from "../src/schema-types.js";
 import {
-  normalizeFieldDefinition,
+  validateEdgeTypeSchema,
   validateTypeSchema,
 } from "../src/schema-validation.js";
 
@@ -323,20 +323,22 @@ console.log(
 // Edge types
 // ---------------------------------------------------------------------------
 
-interface JsonEdgeSchema {
-  id: string;
-  label?: string;
-  description?: string;
-  cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-  source_type_constraints?: string[];
-  target_type_constraints?: string[];
-  cascade_on_delete?: "cascade" | "orphan" | "block";
-  property_schema?: Record<string, Record<string, unknown>>;
-}
-
-const edgeSchemas = loadDir(edgesDir).map(
-  (raw) => raw.data as unknown as JsonEdgeSchema,
-);
+// Edge JSON goes through the same validator the runtime registration route
+// family uses, so a malformed file fails the build here instead of reaching
+// the registry as a blind cast. The validator also owns normalization:
+// constraints defaulted, cascade defaulted, property fields folded through
+// the item-field model.
+const edgeSchemas = loadDir(edgesDir).map((raw) => {
+  const result = validateEdgeTypeSchema(raw.data);
+  if (!result.success) {
+    console.error(`Invalid edge type schema in ${raw.file}:`);
+    for (const error of result.errors) {
+      console.error(`  ✗ ${error.field}: ${error.message}`);
+    }
+    process.exit(1);
+  }
+  return result.data;
+});
 
 function edgeVarName(id: string): string {
   return id
@@ -364,25 +366,20 @@ for (const edge of edgeSchemas) {
     edgeLines.push(`  description: ${quote(edge.description)},`);
   }
   edgeLines.push(`  cardinality: ${quote(edge.cardinality)},`);
-  const src = edge.source_type_constraints ?? ["*"];
-  const tgt = edge.target_type_constraints ?? ["*"];
+  const src = edge.source_type_constraints;
+  const tgt = edge.target_type_constraints;
   edgeLines.push(`  source_type_constraints: [${src.map(quote).join(", ")}],`);
   edgeLines.push(`  target_type_constraints: [${tgt.map(quote).join(", ")}],`);
-  edgeLines.push(
-    `  cascade_on_delete: ${quote(edge.cascade_on_delete ?? "orphan")},`,
-  );
-  const propSchema = edge.property_schema ?? {};
+  edgeLines.push(`  cascade_on_delete: ${quote(edge.cascade_on_delete)},`);
+  const propSchema = edge.property_schema;
   if (Object.keys(propSchema).length === 0) {
     edgeLines.push(`  property_schema: {},`);
   } else {
     edgeLines.push("  property_schema: {");
+    // Already normalized by the validator: a `format: "url"` on an edge
+    // property has collapsed to `type: "url"` exactly as on an item field.
     for (const [name, def] of Object.entries(propSchema)) {
-      // Edge properties reuse the item-field model, so they go through the
-      // same normalizer — a `format: "url"` on an edge property collapses to
-      // `type: "url"` exactly as it does on an item field.
-      edgeLines.push(
-        `    ${name}: ${fieldLiteral(normalizeFieldDefinition(def))},`,
-      );
+      edgeLines.push(`    ${name}: ${fieldLiteral(def)},`);
     }
     edgeLines.push("  },");
   }

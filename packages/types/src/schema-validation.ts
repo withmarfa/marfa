@@ -9,6 +9,9 @@
 // `SchemaValidationContext` instead.
 
 import type {
+  EdgeCardinality,
+  EdgeCascade,
+  EdgeTypeSchema,
   FieldDefinition,
   FieldFormat,
   FieldType,
@@ -1182,4 +1185,192 @@ function describeCompatibilityConflict(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Edge type validation
+// ---------------------------------------------------------------------------
+
+export const EDGE_CARDINALITIES: readonly EdgeCardinality[] = [
+  "one-to-one",
+  "one-to-many",
+  "many-to-one",
+  "many-to-many",
+];
+
+export const EDGE_CASCADES: readonly EdgeCascade[] = [
+  "cascade",
+  "orphan",
+  "block",
+];
+
+const EDGE_CARDINALITY_SET: ReadonlySet<string> = new Set(EDGE_CARDINALITIES);
+const EDGE_CASCADE_SET: ReadonlySet<string> = new Set(EDGE_CASCADES);
+
+/** Kebab-case, matching every shipped edge id (`parent-of`, `in-thread`). */
+const EDGE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+export type EdgeTypeSchemaValidationResult =
+  | { success: true; data: EdgeTypeSchema }
+  | { success: false; errors: SchemaValidationIssue[] };
+
+/**
+ * Validates and normalizes an edge type schema. On success the returned
+ * `data` is the canonical `EdgeTypeSchema` — constraints defaulted to `["*"]`,
+ * cascade defaulted to `"orphan"`, property fields normalized through the
+ * same field model item properties use. The build-time codegen and the
+ * in-tree schema check both call this, so a malformed edge JSON fails the
+ * build instead of reaching the registry as a blind cast.
+ */
+export function validateEdgeTypeSchema(
+  input: unknown,
+): EdgeTypeSchemaValidationResult {
+  const obj = asRecord(input);
+  if (!obj) {
+    return {
+      success: false,
+      errors: [
+        issue({
+          field: "(root)",
+          expected: "an edge type schema object",
+          actual: describe(input),
+          hint: 'Submit an object like { "id": "in-thread", "cardinality": "many-to-one" }.',
+        }),
+      ],
+    };
+  }
+
+  const errors: SchemaValidationIssue[] = [];
+
+  if (typeof obj.id !== "string" || obj.id.length === 0) {
+    errors.push(
+      issue({
+        field: "id",
+        expected: "a non-empty kebab-case identifier",
+        actual: describe(obj.id),
+        hint: 'Give the edge type an id such as "in-thread".',
+      }),
+    );
+  } else if (!EDGE_ID_PATTERN.test(obj.id)) {
+    errors.push(
+      issue({
+        field: "id",
+        expected: "lowercase kebab-case (letters, digits, single hyphens)",
+        actual: describe(obj.id),
+        hint: "Edge ids use hyphens, never dots, slashes, or capitals.",
+      }),
+    );
+  }
+
+  for (const key of ["label", "description"] as const) {
+    if (obj[key] !== undefined && typeof obj[key] !== "string") {
+      errors.push(
+        issue({
+          field: key,
+          expected: "a string",
+          actual: describe(obj[key]),
+          hint: `Write ${key} as prose, or omit it.`,
+        }),
+      );
+    }
+  }
+
+  if (
+    typeof obj.cardinality !== "string" ||
+    !EDGE_CARDINALITY_SET.has(obj.cardinality)
+  ) {
+    errors.push(
+      issue({
+        field: "cardinality",
+        expected: `one of: ${EDGE_CARDINALITIES.join(", ")}`,
+        actual: describe(obj.cardinality),
+        hint: "Every edge type declares its cardinality explicitly.",
+      }),
+    );
+  }
+
+  for (const side of [
+    "source_type_constraints",
+    "target_type_constraints",
+  ] as const) {
+    const value = obj[side];
+    if (value === undefined) continue;
+    if (
+      !Array.isArray(value) ||
+      value.length === 0 ||
+      value.some((entry) => typeof entry !== "string" || entry.length === 0)
+    ) {
+      errors.push(
+        issue({
+          field: side,
+          expected: 'a non-empty array of type identifiers (or ["*"])',
+          actual: describe(value),
+          hint: `Use ["*"] to allow every type, or list the permitted ones.`,
+        }),
+      );
+    }
+  }
+
+  if (
+    obj.cascade_on_delete !== undefined &&
+    (typeof obj.cascade_on_delete !== "string" ||
+      !EDGE_CASCADE_SET.has(obj.cascade_on_delete))
+  ) {
+    errors.push(
+      issue({
+        field: "cascade_on_delete",
+        expected: `one of: ${EDGE_CASCADES.join(", ")}`,
+        actual: describe(obj.cascade_on_delete),
+        hint: 'Omit it for the default, "orphan".',
+      }),
+    );
+  }
+
+  const propertySchema: Record<string, FieldDefinition> = {};
+  if (obj.property_schema !== undefined) {
+    const props = asRecord(obj.property_schema);
+    if (!props) {
+      errors.push(
+        issue({
+          field: "property_schema",
+          expected: "an object mapping property names to field definitions",
+          actual: describe(obj.property_schema),
+          hint: 'Write property_schema as { "position": { "type": "number" } }, or omit it.',
+        }),
+      );
+    } else {
+      // Edge properties reuse the item-field model, so they go through the
+      // same shape checks and the same normalizer as item fields.
+      for (const [name, def] of Object.entries(props)) {
+        const before = errors.length;
+        validateFieldShape(name, def, errors);
+        if (errors.length === before) {
+          const record = asRecord(def);
+          if (record) {
+            propertySchema[name] = normalizeFieldDefinition(record);
+          }
+        }
+      }
+    }
+  }
+
+  if (errors.length > 0) return { success: false, errors };
+
+  const data: EdgeTypeSchema = {
+    id: obj.id as string,
+    cardinality: obj.cardinality as EdgeCardinality,
+    source_type_constraints: (obj.source_type_constraints as
+      | string[]
+      | undefined) ?? ["*"],
+    target_type_constraints: (obj.target_type_constraints as
+      | string[]
+      | undefined) ?? ["*"],
+    cascade_on_delete:
+      (obj.cascade_on_delete as EdgeCascade | undefined) ?? "orphan",
+    property_schema: propertySchema,
+  };
+  if (typeof obj.label === "string") data.label = obj.label;
+  if (typeof obj.description === "string") data.description = obj.description;
+
+  return { success: true, data };
 }

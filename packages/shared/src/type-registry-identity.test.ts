@@ -7,6 +7,7 @@ import {
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
 } from "./type-registry.js";
+import { ALL_EDGE_TYPES } from "./edge-registry.js";
 
 // -----------------------------------------------------------------------------
 // The identifier set is a data contract, not an implementation detail.
@@ -120,5 +121,28 @@ describe("shipped type identifiers", () => {
       expect(CONNECTOR_TYPE_IDS.has(id), `not classified: ${id}`).toBe(true);
       expect(SYSTEM_TYPE_IDS.has(id), `wrongly system: ${id}`).toBe(false);
     }
+  });
+});
+
+// Edge identifiers are the same kind of contract: every stored edge carries
+// its edge type as a plain string in `edges.edge_type`, and nothing rewrites
+// that column. Adding or removing a core edge is a deliberate act that
+// changes this list in the same commit.
+const CORE_EDGE_TYPE_IDENTIFIERS = [
+  "about",
+  "attached-to",
+  "authored-by",
+  "derived-from",
+  "in-thread",
+  "parent-of",
+  "references",
+  "supersedes",
+];
+
+describe("shipped edge type identifiers", () => {
+  it("registers exactly the identifiers already written to stored edges", () => {
+    expect(sortedIds(ALL_EDGE_TYPES)).toEqual(
+      [...CORE_EDGE_TYPE_IDENTIFIERS].sort(),
+    );
   });
 });
