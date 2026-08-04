@@ -14,6 +14,18 @@ import type { EdgeStore, ItemStore } from "./interface.js";
  */
 const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
 
+/**
+ * Collection membership is a flat relation on purpose: a collection holds
+ * items, never other collections. The declarative target constraint pins the
+ * target to the collection family, but nothing declarative can say "and the
+ * source must not be one of those", so the refusal lives here — same
+ * hardcoded-per-edge shape as the cycle-risk set above. Hierarchy is what
+ * `parent-of` is for, and mixing the two gives an item two competing notions
+ * of where it sits.
+ */
+const COLLECTION_EDGE_TYPE = "in-collection";
+const COLLECTION_TYPE_CONSTRAINT = ["user.collection"];
+
 export interface EdgeProposal {
   source_id: string;
   target_id: string;
@@ -115,6 +127,21 @@ export async function assertEdgesCanBeCreated(
           edge_type: p.edge_type,
           target_type: target.type,
           allowed: schema.target_type_constraints,
+        },
+      );
+    }
+    if (
+      p.edge_type === COLLECTION_EDGE_TYPE &&
+      satisfiesEdgeConstraint(source.type, COLLECTION_TYPE_CONSTRAINT)
+    ) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge "${p.edge_type}" does not nest collections; use "parent-of" for hierarchy`,
+        {
+          edge_type: p.edge_type,
+          source_id: p.source_id,
+          source_type: source.type,
+          constraint: "nesting",
         },
       );
     }

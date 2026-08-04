@@ -47,6 +47,19 @@ const derivedFrom: EdgeTypeSchema = {
   property_schema: {},
 };
 
+const inCollection: EdgeTypeSchema = {
+  id: "in-collection",
+  label: "In collection",
+  description: "Source item is a member of the target collection. An item may belong to any number of collections, and a collection holds any number of members. Deleting the collection leaves its members in place. Carries position for ordering within the collection.",
+  cardinality: "many-to-many",
+  source_type_constraints: ["*"],
+  target_type_constraints: ["user.collection"],
+  cascade_on_delete: "orphan",
+  property_schema: {
+    position: { type: "number", description: "Ordering within the collection (1-based)." },
+  },
+};
+
 const inThread: EdgeTypeSchema = {
   id: "in-thread",
   label: "In thread",
@@ -98,6 +111,7 @@ export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   attachedTo,
   authoredBy,
   derivedFrom,
+  inCollection,
   inThread,
   parentOf,
   references,

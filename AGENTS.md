@@ -308,11 +308,11 @@ Lifecycle is universal — the metadata-layer `state` axis is `active | archived
 
 ## Edges
 
-Relationships between items are first-class typed edges, not embedded references. Eight core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
+Relationships between items are first-class typed edges, not embedded references. Nine core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-collection`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
 
 **Direction is spec-exact.** For `parent-of`, source = parent, target = child. For `in-thread`, source = member, target = thread. Every consumer (cycle-detection walks, filter SQL, cascade planner) obeys this.
 
-Custom edge types register at runtime via `POST /edge-types` (space-admin or platform-admin) and persist in `custom_edge_types`. They're space-scoped: a space's custom edge types resolve only within that space (composite `(space_id, id)` PK plus a per-space in-memory registry), while the eight core types stay global. Two spaces may register the same id independently. Core types cannot be redefined. Custom edge types do not inherit.
+Custom edge types register at runtime via `POST /edge-types` (space-admin or platform-admin) and persist in `custom_edge_types`. They're space-scoped: a space's custom edge types resolve only within that space (composite `(space_id, id)` PK plus a per-space in-memory registry), while the nine core types stay global. Two spaces may register the same id independently. Core types cannot be redefined. Custom edge types do not inherit.
 
 Atomic writes on `POST /items` accept `edges: { [type]: [target_ids] }`. Edge-only mutations go through `/edges` (create / update-properties-only / delete) or `/items/:id/edges` + `/backrefs` for listings. Single-item reads hydrate edges inline; list reads opt in via `?include=edges`.
 
