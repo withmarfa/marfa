@@ -357,6 +357,20 @@ export interface AppConfig {
   /** Baseline trace sample ratio (`MARFA_OTEL_SAMPLE_RATIO`, default 0.05).
    *  Errors export at 100% regardless — see `otel/error-aware-sampler.ts`. */
   otelSampleRatio?: number;
+  /** Liveness heartbeat target (`MARFA_HEARTBEAT_URL`). Empty = off, the
+   *  default. When set, the server GETs this URL on a timer so something
+   *  running elsewhere can notice when the pings stop — a process cannot
+   *  report its own death. A ping, not a report: no payload leaves. */
+  heartbeatUrl?: string;
+  /** Heartbeat cadence in ms (`MARFA_HEARTBEAT_INTERVAL_MS`, default
+   *  60000). Ignored while `heartbeatUrl` is unset. */
+  heartbeatIntervalMs?: number;
+  /** How long boot waits for the database before giving up
+   *  (`MARFA_DB_STARTUP_WAIT_MS`, default 90000; `0` = fail fast).
+   *  Covers the slow-Postgres-after-reboot case that otherwise turns a
+   *  supervised server into a crash loop. Only connection-shaped
+   *  failures wait; misconfiguration still fails immediately. */
+  dbStartupWaitMs?: number;
 }
 
 export interface OidcProviderConfig {
@@ -906,6 +920,12 @@ export function loadConfig(): AppConfig {
         process.env.OTEL_EXPORTER_OTLP_HEADERS,
     ),
     otelSampleRatio: parseOtelSampleRatio(process.env.MARFA_OTEL_SAMPLE_RATIO),
+    heartbeatUrl: process.env.MARFA_HEARTBEAT_URL ?? "",
+    heartbeatIntervalMs: envNumber(
+      process.env.MARFA_HEARTBEAT_INTERVAL_MS,
+      60_000,
+    ),
+    dbStartupWaitMs: envNumber(process.env.MARFA_DB_STARTUP_WAIT_MS, 90_000),
   };
 }
 
