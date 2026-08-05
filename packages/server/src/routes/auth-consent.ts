@@ -1573,11 +1573,10 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.album": "Music albums.",
   "core.media.article": "Articles.",
   "core.media.book": "Books.",
+  "core.media.episode": "Episodes of a series.",
   "core.media.film": "Films.",
-  "core.media.podcast": "Podcasts.",
-  "core.media.series": "TV series.",
+  "core.media.series": "Ongoing series.",
   "core.media.song": "Songs.",
-  "core.media.tv_episode": "TV episodes.",
 
   // System
   "system.account_holder": "You, as something items can link to.",

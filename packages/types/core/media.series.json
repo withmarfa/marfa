@@ -2,25 +2,21 @@
   "id": "core.media.series",
   "parent": "core.media",
   "label": "Series",
-  "description": "A TV show or series. Inherits all core.media fields.",
-  "version": 1,
+  "description": "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
+  "version": 2,
   "fields": {
-    "season_count": {
-      "type": "integer",
-      "description": "Number of seasons"
-    },
-    "episode_count": {
-      "type": "integer",
-      "description": "Total episodes across all seasons"
+    "medium": {
+      "type": "string",
+      "description": "What the series is made of. Recommended values: tv, podcast, radio, video, mixed"
     },
     "status": {
       "type": "string",
       "description": "Recommended values: ongoing, ended, cancelled"
-    },
-    "network": {
-      "type": "string",
-      "description": "Broadcasting network or streaming service"
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "body"
+  }
 }

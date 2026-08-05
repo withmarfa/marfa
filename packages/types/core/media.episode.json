@@ -1,0 +1,30 @@
+{
+  "id": "core.media.episode",
+  "parent": "core.media",
+  "label": "Episode",
+  "description": "Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.",
+  "version": 1,
+  "fields": {
+    "medium": {
+      "type": "string",
+      "description": "What the episode is made of. Recommended values: tv, podcast, radio, video, mixed"
+    },
+    "season_number": {
+      "type": "integer",
+      "description": "Which season, where the series has them"
+    },
+    "episode_number": {
+      "type": "integer",
+      "description": "Position within the season, or within the series when unseasoned"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Runtime in seconds"
+    }
+  },
+  "required": [],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "body"
+  }
+}

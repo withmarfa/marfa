@@ -306,7 +306,7 @@ The base error class is `MarfaError` (in `@withmarfa/shared`). All structured er
 
 Three families of type ship with the platform, all registering into the same runtime registry and all resolving identically:
 
-- **Core** (`packages/types/core/*.json`, 22 types) — the shared vocabulary: life-nouns any app can agree on.
+- **Core** (`packages/types/core/*.json`, 21 types) — the shared vocabulary: life-nouns any app can agree on.
 - **Integration** (`packages/types/integrations/*.json`, 13 types) — one vendor's payload shape, so an integration has somewhere faithful to write. `google.*`, `raindrop.*`, `readwise.*`, `todoist.task`, `withmarfa.captured_email`.
 - **System** (`packages/types/core/system/*.json`, 8 types) — platform-internal records, with the restrictions described under System types below.
 
