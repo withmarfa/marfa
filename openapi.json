@@ -10749,6 +10749,339 @@
         }
       }
     },
+    "/occurrences": {
+      "get": {
+        "operationId": "listOccurrences",
+        "tags": [
+          "Items"
+        ],
+        "summary": "List event occurrences in a window",
+        "description": "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. The window is required and bounded — a request wider than the cap, or one a rule would flood, is refused rather than silently trimmed.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Window start, ISO 8601. Inclusive."
+            },
+            "required": true,
+            "description": "Window start, ISO 8601. Inclusive.",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Window end, ISO 8601. Exclusive."
+            },
+            "required": true,
+            "description": "Window end, ISO 8601. Exclusive.",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Restrict to one event type. Defaults to every event type the caller can read."
+            },
+            "required": false,
+            "description": "Restrict to one event type. Defaults to every event type the caller can read.",
+            "name": "type",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Occurrences in the window, ordered by start time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "starts_at": {
+                            "type": "string"
+                          },
+                          "ends_at": {
+                            "type": "string"
+                          },
+                          "item": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string"
+                              },
+                              "properties": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "archived",
+                                  "trashed",
+                                  "revoked"
+                                ]
+                              },
+                              "tier": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "feed"
+                                ]
+                              },
+                              "space_id": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "version": {
+                                "type": "number"
+                              },
+                              "schema_version": {
+                                "type": "integer"
+                              },
+                              "source": {
+                                "type": "string"
+                              },
+                              "source_id": {
+                                "type": "string"
+                              },
+                              "device": {
+                                "type": "string"
+                              },
+                              "capture_latitude": {
+                                "type": "number"
+                              },
+                              "capture_longitude": {
+                                "type": "number"
+                              },
+                              "timestamp": {
+                                "type": "string"
+                              },
+                              "created_at": {
+                                "type": "string"
+                              },
+                              "updated_at": {
+                                "type": "string"
+                              },
+                              "edges": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "edges": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "space_id": {
+                                            "type": "string",
+                                            "nullable": true
+                                          },
+                                          "source_id": {
+                                            "type": "string"
+                                          },
+                                          "target_id": {
+                                            "type": "string"
+                                          },
+                                          "edge_type": {
+                                            "type": "string"
+                                          },
+                                          "properties": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                              "nullable": true
+                                            }
+                                          },
+                                          "created_at": {
+                                            "type": "string"
+                                          },
+                                          "updated_at": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "source_id",
+                                          "target_id",
+                                          "edge_type",
+                                          "properties",
+                                          "created_at",
+                                          "updated_at"
+                                        ]
+                                      }
+                                    },
+                                    "has_more": {
+                                      "type": "boolean"
+                                    },
+                                    "next_cursor": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "edges",
+                                    "has_more"
+                                  ]
+                                }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "properties",
+                              "state",
+                              "version",
+                              "schema_version",
+                              "source",
+                              "timestamp",
+                              "created_at",
+                              "updated_at"
+                            ]
+                          },
+                          "series_id": {
+                            "type": "string"
+                          },
+                          "replaces": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "starts_at",
+                          "item"
+                        ]
+                      }
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "window"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, unreadable, inverted, or over-long window; unreadable recurrence rule; or a window one series would flood",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/metadata/tags": {
       "get": {
         "operationId": "listTags",

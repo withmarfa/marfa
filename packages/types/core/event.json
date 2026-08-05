@@ -55,6 +55,20 @@
     "notes": {
       "type": "string",
       "description": "Personal annotations"
+    },
+    "recurrence": {
+      "type": "array",
+      "items_type": "string",
+      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored."
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA time zone the event's wall-clock times are expressed in, e.g. Europe/Berlin. Required for a recurring series to expand correctly across a daylight-saving transition."
+    },
+    "original_starts_at": {
+      "type": "string",
+      "description": "For an event that replaces one occurrence of a series, the start time of the occurrence it replaces. Its series is named by a parent-of edge.",
+      "format": "datetime"
     }
   },
   "required": ["title"],

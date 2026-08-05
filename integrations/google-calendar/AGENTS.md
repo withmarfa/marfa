@@ -111,14 +111,27 @@ event per Marfa item id, regardless of how many queue retries fire.
 Items without these fields write the plain `dateTime` shape, which
 keeps `core.event` round-trips intact.
 
-## Recurrence — parked
+## Recurrence
 
-`recurrence` (RRULE strings) and `recurring_event_id` (parent
-pointer) ARE round-tripped onto `google.calendar.event` items for
-fidelity, but no expansion / instance-handling is implemented.
-Recurring events appear as their parent record only. Closing this
-gap is a follow-up; the type carries the data so the migration is
-purely handler-side.
+A series is stored as one item carrying its rule. `recurrence` (the
+RFC 5545 property lines), `timezone`, and `original_starts_at` are
+stamped on **both** target types — they describe the event, not
+Google — and `recurring_event_id` stays on the fidelity type as the
+upstream pointer.
+
+Occurrences are never stored. `GET /occurrences?from=&to=` expands
+the rule server-side over the window a caller asks for.
+
+An instance Calendar sends separately (a moved or edited one) is
+bound to its series by a `parent-of` edge, series to instance, which
+the manifest grants. `original_starts_at` carries the occurrence it
+replaces, so the expansion knows which computed slot to drop. Both
+halves are load-bearing: the edge alone names a relationship without
+saying which occurrence it displaces.
+
+An instance whose series has not arrived yet is left unbound rather
+than guessed at. It is still an ordinary item, and the next sync that
+carries the series binds it, because the edge write is idempotent.
 
 ## Conditional writes — parked
 
