@@ -67,7 +67,11 @@ async function readSse(
   res: Response,
   opts: { timeoutMs?: number; until?: (text: string) => boolean } = {},
 ): Promise<{ text: string; closed: boolean }> {
-  const timeoutMs = opts.timeoutMs ?? (opts.until ? 15_000 : 500);
+  // With `until` the budget is a ceiling, not a cost — the loop returns as
+  // soon as the event lands, so a healthy run never spends it. Raised from
+  // 15s after the sibling streaming suite hit that ceiling twice in
+  // consecutive CI runs while passing locally in under a second.
+  const timeoutMs = opts.timeoutMs ?? (opts.until ? 60_000 : 500);
   expect(res.body).not.toBeNull();
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
