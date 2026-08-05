@@ -25,6 +25,7 @@ import {
   isOwnConnectionRead,
   itemProvenanceSource,
   requireActivityAttribution,
+  requireMirrorProtection,
   checkTypeAccess,
   requireEdgePermission,
   requireRowWritable,
@@ -193,6 +194,44 @@ const createItemRoute = createRoute({
         },
       },
       description: "Forbidden",
+    },
+  },
+});
+
+const promoteItemRoute = createRoute({
+  operationId: "promoteItem",
+  method: "post",
+  path: "/{id}/promote",
+  tags: ["Items"],
+  summary: "Promote an integration's copy into your own item",
+  description:
+    "Mints a new item you own from an integration's mirror of an external record, joined back to the mirror by a `derived-from` edge. The mirror stays a faithful copy the integration keeps re-syncing; the promoted item is yours to edit and is never touched by a re-sync. Only items an integration owns can be promoted.",
+  security: [{ bearerAuth: [] }],
+  request: { params: IdParam },
+  responses: {
+    201: {
+      content: {
+        "application/json": {
+          schema: z.object({ item: z.record(z.string(), z.unknown()) }),
+        },
+      },
+      description: "Promoted item created",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "The item is not an integration's copy",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "Item not found",
     },
   },
 });
@@ -1065,6 +1104,7 @@ export function itemRoutes(storage: Storage) {
             ? { ...existing.properties, ...properties }
             : existing.properties,
         );
+        requireMirrorProtection(credentialForUpdate, existing);
 
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
@@ -1094,6 +1134,13 @@ export function itemRoutes(storage: Storage) {
                 ...(body.timestamp !== undefined && {
                   timestamp: body.timestamp,
                 }),
+                // An owning integration's re-sync gets faithful-mirror
+                // null semantics: the upstream cleared the field, so an
+                // explicit null clears the key here too.
+                ...(existing.source.startsWith("integration:") &&
+                credentialForUpdate?.item_source === existing.source
+                  ? { null_clears: true }
+                  : {}),
               },
               spaceId,
             );
@@ -1250,6 +1297,64 @@ export function itemRoutes(storage: Storage) {
       },
       201,
     );
+  });
+
+  router.openapi(promoteItemRoute, async (c) => {
+    requireAuth(c);
+    const credential = c.get("apiKey");
+    const spaceId = credential?.space_id;
+    const { id } = c.req.valid("param");
+
+    const mirror = await storage.items.get(id, spaceId);
+    if (!mirror) {
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+    }
+    if (!mirror.source.startsWith("integration:")) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Only an integration's copy can be promoted; this item is already yours",
+        { item_id: id, source: mirror.source },
+      );
+    }
+    requireTypeAccess(c, mirror.type, "write");
+    requireEdgePermission(c, "derived-from", "write");
+
+    // The copy is yours: caller-stamped provenance, no natural key (the
+    // upstream record's identity stays with the mirror), library tier.
+    const promoted = await storage.items.create(
+      {
+        type: mirror.type,
+        properties: { ...mirror.properties },
+        tier: "library",
+        ...(itemProvenanceSource(credential) !== undefined
+          ? { source: itemProvenanceSource(credential) }
+          : {}),
+      },
+      spaceId,
+    );
+    // derived-from is many-to-many with orphan cascade and the source is
+    // a freshly minted node, so the raw write cannot violate cardinality
+    // or create a cycle.
+    await storage.edges.createRaw(
+      {
+        source_id: promoted.id,
+        target_id: mirror.id,
+        edge_type: "derived-from",
+        properties: {},
+      },
+      spaceId,
+    );
+
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      space_id: spaceId ?? null,
+      key_id: credential?.id,
+      action: "item.promote",
+      resource_type: "item",
+      resource_id: promoted.id,
+      details: { mirror_id: mirror.id, type: mirror.type },
+    });
+    return c.json({ item: promoted }, 201);
   });
 
   router.openapi(getItemStatsRoute, async (c) => {
@@ -1622,6 +1727,7 @@ export function itemRoutes(storage: Storage) {
         ? { ...item.properties, ...(body.properties as object) }
         : item.properties,
     );
+    requireMirrorProtection(c.get("apiKey"), item);
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per space — the same constraint enforced at create time.
@@ -1748,6 +1854,12 @@ export function itemRoutes(storage: Storage) {
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
                 source_id: hasSourceId ? body.source_id : undefined,
+                // Owning integration re-syncing its mirror: an explicit
+                // null clears the key, keeping the copy faithful.
+                ...(item.source.startsWith("integration:") &&
+                c.get("apiKey")?.item_source === item.source
+                  ? { null_clears: true }
+                  : {}),
               },
               tid,
             )

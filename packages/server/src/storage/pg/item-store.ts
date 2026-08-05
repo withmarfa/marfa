@@ -636,7 +636,9 @@ export class PgItemStore implements ItemStore {
         // values with null. Required-field nulls are preserved.
         const incomingProps =
           input.properties !== undefined
-            ? coerceNullProperties(row.type, input.properties, spaceId)
+            ? input.null_clears === true
+              ? input.properties
+              : coerceNullProperties(row.type, input.properties, spaceId)
             : undefined;
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
@@ -660,9 +662,19 @@ export class PgItemStore implements ItemStore {
             );
           }
 
-          const merged = incomingProps
+          const shallowMerged = incomingProps
             ? { ...currentProps, ...incomingProps }
             : currentProps;
+          // Faithful-mirror re-sync: a key the upstream cleared is dropped
+          // rather than surviving as a stale value.
+          const merged =
+            input.null_clears === true && incomingProps
+              ? Object.fromEntries(
+                  Object.entries(shallowMerged).filter(
+                    ([k]) => incomingProps[k] !== null,
+                  ),
+                )
+              : shallowMerged;
           const newVersion = row.version + 1;
           const newTier = input.tier ?? row.tier;
 
