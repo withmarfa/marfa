@@ -1368,6 +1368,185 @@
         }
       }
     },
+    "/items/{id}/reconcile": {
+      "get": {
+        "operationId": "reconcileItem",
+        "tags": [
+          "Items"
+        ],
+        "summary": "Compare your item against the mirror it was promoted from",
+        "description": "Reports, field by field, where your item and the integration's mirror now differ. Promotion forks a copy; the mirror keeps re-syncing, so this is how you see what moved upstream since. Accepting a field is an ordinary `PATCH` on your own item, so nothing here writes. Reports against every mirror the item is joined to by `derived-from`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Item id"
+            },
+            "required": true,
+            "description": "Item id",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Field-by-field comparison against each mirror",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mirrors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "mirror_id": {
+                            "type": "string"
+                          },
+                          "mirror_type": {
+                            "type": "string"
+                          },
+                          "mirror_source": {
+                            "type": "string"
+                          },
+                          "mirror_updated_at": {
+                            "type": "string"
+                          },
+                          "fields": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "same",
+                                    "diverged",
+                                    "only_yours",
+                                    "only_mirror"
+                                  ]
+                                },
+                                "yours": {
+                                  "nullable": true
+                                },
+                                "mirror": {
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "state"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "mirror_id",
+                          "mirror_type",
+                          "mirror_source",
+                          "mirror_updated_at",
+                          "fields"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "mirrors"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The item was not promoted from an integration's copy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "item_not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items/stats": {
       "get": {
         "operationId": "getItemStats",

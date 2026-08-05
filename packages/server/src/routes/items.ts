@@ -30,7 +30,9 @@ import {
   requireEdgePermission,
   requireRowWritable,
   getTypeFilter,
+  INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
+import { compareProperties } from "./mirror-reconcile.js";
 import { reserveQuota } from "../middleware/quota.js";
 import type { Storage, ItemSortField } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
@@ -224,6 +226,61 @@ const promoteItemRoute = createRoute({
         },
       },
       description: "The item is not an integration's copy",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "Item not found",
+    },
+  },
+});
+
+const ReconcileFieldSchema = z.object({
+  key: z.string(),
+  state: z.enum(["same", "diverged", "only_yours", "only_mirror"]),
+  yours: z.unknown().optional(),
+  mirror: z.unknown().optional(),
+});
+
+const ReconcileResponseSchema = z.object({
+  mirrors: z.array(
+    z.object({
+      mirror_id: z.string(),
+      mirror_type: z.string(),
+      mirror_source: z.string(),
+      mirror_updated_at: z.string(),
+      fields: z.array(ReconcileFieldSchema),
+    }),
+  ),
+});
+
+const reconcileItemRoute = createRoute({
+  operationId: "reconcileItem",
+  method: "get",
+  path: "/{id}/reconcile",
+  tags: ["Items"],
+  summary: "Compare your item against the mirror it was promoted from",
+  description:
+    "Reports, field by field, where your item and the integration's mirror now differ. Promotion forks a copy; the mirror keeps re-syncing, so this is how you see what moved upstream since. Accepting a field is an ordinary `PATCH` on your own item, so nothing here writes. Reports against every mirror the item is joined to by `derived-from`.",
+  security: [{ bearerAuth: [] }],
+  request: { params: IdParam },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: ReconcileResponseSchema },
+      },
+      description: "Field-by-field comparison against each mirror",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "The item was not promoted from an integration's copy",
     },
     404: {
       content: {
@@ -1355,6 +1412,47 @@ export function itemRoutes(storage: Storage) {
       details: { mirror_id: mirror.id, type: mirror.type },
     });
     return c.json({ item: promoted }, 201);
+  });
+
+  router.openapi(reconcileItemRoute, async (c) => {
+    requireAuth(c);
+    const credential = c.get("apiKey");
+    const spaceId = credential?.space_id;
+    const { id } = c.req.valid("param");
+
+    const yours = await storage.items.get(id, spaceId);
+    if (!yours) {
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+    }
+    requireTypeAccess(c, yours.type, "read");
+
+    const joined = await storage.edges.listFromSource(id, {
+      edge_type: "derived-from",
+    });
+    const mirrors = [];
+    for (const edge of joined.data) {
+      const mirror = await storage.items.get(edge.target_id, spaceId);
+      // A derived-from edge can join any two items; only the ones an
+      // integration owns are mirrors, and only those have anything to
+      // reconcile against.
+      if (!mirror?.source.startsWith(INTEGRATION_SOURCE_PREFIX)) continue;
+      requireTypeAccess(c, mirror.type, "read");
+      mirrors.push({
+        mirror_id: mirror.id,
+        mirror_type: mirror.type,
+        mirror_source: mirror.source,
+        mirror_updated_at: mirror.updated_at,
+        fields: compareProperties(yours.properties, mirror.properties),
+      });
+    }
+    if (mirrors.length === 0) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "This item was not promoted from an integration's copy, so there is nothing to reconcile against",
+        { item_id: id },
+      );
+    }
+    return c.json({ mirrors }, 200);
   });
 
   router.openapi(getItemStatsRoute, async (c) => {
