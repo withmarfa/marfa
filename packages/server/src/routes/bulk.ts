@@ -36,7 +36,9 @@ import {
   requireTypeAccess,
   requireEdgePermission,
   requireActivityAttribution,
+  requireMirrorProtection,
   permitsActivityAttribution,
+  permitsMirrorWrite,
   itemProvenanceSource,
   getTypeFilter,
   hasPlatformAuthority,
@@ -738,6 +740,7 @@ export function bulkRoutes(storage: Storage) {
           ? { ...existing.properties, ...raw.properties }
           : existing.properties,
       );
+      requireMirrorProtection(key, existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -985,10 +988,13 @@ export function bulkRoutes(storage: Storage) {
     const mayAct = (item: Item): boolean =>
       permitsActivityAttribution(callerKey, item.type, item.properties) &&
       (patch === undefined ||
-        permitsActivityAttribution(callerKey, item.type, {
+        (permitsActivityAttribution(callerKey, item.type, {
           ...item.properties,
           ...patch,
-        }));
+        }) &&
+          // Property patches answer to the mirror rule; transitions and
+          // retiers stay user gestures on rows an integration owns.
+          permitsMirrorWrite(callerKey, item)));
 
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.

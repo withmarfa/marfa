@@ -282,6 +282,8 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "POST /items/:id/transition":
     "lifecycle state axis, not the item's properties",
   "POST /items/:id/restore": "lifecycle state axis, not the item's properties",
+  "POST /items/:id/promote":
+    "creates a fresh item from a mirror it only reads; never writes an existing row's properties, and the create it performs runs the create-door gates",
 };
 
 // ---------------------------------------------------------------------------

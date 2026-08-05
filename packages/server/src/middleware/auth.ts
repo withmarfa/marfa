@@ -825,6 +825,45 @@ export function requireActivityAttribution(
  * legitimate action over thousands, which is a worse answer than the one
  * the route already gives for the type axis.
  */
+/** The provenance prefix every integration-written row carries. */
+export const INTEGRATION_SOURCE_PREFIX = "integration:";
+
+/**
+ * One rule: nothing writes to an item an integration owns. Ownership is
+ * provenance — a row whose source carries the integration prefix is an
+ * integration's mirror of an external record, and the owning integration
+ * re-syncing (a credential whose item_source matches the row's source)
+ * is the only legitimate writer of its properties. Everyone else,
+ * platform admins included, is refused toward promotion: two write
+ * paths onto one mirror is how user edits and re-syncs silently clobber
+ * each other. Lifecycle transitions, tags, and extensions stay user
+ * gestures — they do not edit the copy, so they do not answer to this.
+ *
+ * Called from each property-writing door, like the attribution check
+ * beside it; the same door-coverage tests pin the set.
+ */
+export function requireMirrorProtection(
+  key: ApiKey | undefined,
+  row: { id: string; source: string },
+): void {
+  if (permitsMirrorWrite(key, row)) return;
+  throw new MarfaError(
+    ErrorCode.INTEGRATION_OWNED,
+    "This item is an integration's copy of an external record; only the owning integration writes it. Promote it to edit your own copy",
+    { item_id: row.id, source: row.source },
+  );
+}
+
+/** The predicate behind `requireMirrorProtection`, for the door that
+ *  narrows rather than refuses (`POST /items/bulk-actions`). */
+export function permitsMirrorWrite(
+  key: ApiKey | undefined,
+  row: { id: string; source: string },
+): boolean {
+  if (!row.source.startsWith(INTEGRATION_SOURCE_PREFIX)) return true;
+  return key?.item_source === row.source;
+}
+
 export function permitsActivityAttribution(
   key: ApiKey | undefined,
   type: string,

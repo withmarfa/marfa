@@ -21,6 +21,11 @@ export enum ErrorCode {
   VERSION_CONFLICT = "version_conflict",
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
+  /**
+   * The row is an integration's copy of an external record; only the
+   * owning integration writes it. Promote it to edit your own copy.
+   */
+  INTEGRATION_OWNED = "integration_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
@@ -289,6 +294,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.VERSION_CONFLICT]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
+  [ErrorCode.INTEGRATION_OWNED]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 404,

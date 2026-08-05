@@ -139,6 +139,14 @@ export interface CreateItemInput {
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
+  /**
+   * Faithful-mirror semantics for an owning integration's re-sync: an
+   * explicit null deletes the key instead of reading as "leave unset".
+   * The upstream cleared the field, so the mirror must clear it too —
+   * otherwise a stale value survives every re-sync. Set by the server
+   * for owner writes to integration-owned rows; never caller-supplied.
+   */
+  null_clears?: boolean;
   version?: number;
   /** Force a version snapshot for this update, bypassing the
    *  snapshot-interval throttle in version gating. */
