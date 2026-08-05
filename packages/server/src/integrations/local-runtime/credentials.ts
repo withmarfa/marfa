@@ -9,7 +9,7 @@
  * builders the hosted install pipeline uses (`manifest-permissions.ts`),
  * so a credential can only touch the types its manifest declares plus
  * the edge and extension namespaces it asked for. Two substrate-contract
- * grants ride along because no connector can run without them:
+ * grants ride along because no integration can run without them:
  * `connection.runtime` write (its own state subtree) and
  * `system.activity` write (status reporting). Reading its own Connection
  * needs no grant — `isOwnConnectionRead` in `middleware/auth.ts` admits

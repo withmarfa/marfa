@@ -6,11 +6,11 @@ import type { AppEnv } from "./auth.js";
 
 /**
  * Header pair carrying the parent event's cycle metadata into a
- * connector-driven request.
+ * integration-driven request.
  *
  * The SDK's `ConnectionClient.request()` stamps these on every mutating
- * call (POST/PUT/PATCH/DELETE; not GET) using the connector's parent
- * `cycle` (from `ItemEventMessage.cycle`) and the connector's own
+ * call (POST/PUT/PATCH/DELETE; not GET) using the integration's parent
+ * `cycle` (from `ItemEventMessage.cycle`) and the integration's own
  * `connection_id`. The middleware below reads them off the request and
  * resolves `c.var.cycle` for the rest of the handler.
  *
@@ -83,7 +83,7 @@ function originFromApiKey(
  *      to produce these values); the server treats them as the
  *      already-incremented metadata for THIS request's events.
  *   2. **Headers absent, api key has connection binding** — chain head
- *      from a connector. `originatingConnectionId: <connection_id>`,
+ *      from an integration. `originatingConnectionId: <connection_id>`,
  *      `hopCount: 0`. The downstream publish will be the first event
  *      attributed to this connection.
  *   3. **Otherwise** — human chain head. Sentinel:
@@ -130,7 +130,7 @@ function resolveCycle(c: Context<AppEnv>): {
     ) {
       const trimmedOrigin = headerOrigin.trim();
       return {
-        // Empty string in the origin header — treat as null. Connectors
+        // Empty string in the origin header — treat as null. Integrations
         // sending the chain through always populate origin with a non-
         // empty connection_id; an empty value means "chain head, but the
         // SDK still wanted to send the headers."

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Inbound Raindrop bookmarks + collections connector. Token-credential install (kind: api_token, default Bearer). Polls Raindrop's REST API on a 10-minute cron and lands raindrops as raindrop.raindrop items with parent-of edges to raindrop.collection items.",
+  "description": "Inbound Raindrop bookmarks + collections integration. Token-credential install (kind: api_token, default Bearer). Polls Raindrop's REST API on a 10-minute cron and lands raindrops as raindrop.raindrop items with parent-of edges to raindrop.collection items.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -13,7 +13,7 @@ import {
 // ---------------------------------------------------------------------------
 // Connection OAuth proxy
 //
-// `POST /connections/:id/proxy/*` — let a connector (or a space admin)
+// `POST /connections/:id/proxy/*` — let an integration (or a space admin)
 // make an outbound HTTP call to an external service through a single
 // server-side path that:
 //   1. Decrypts the connection's stored access_token and stamps it as
@@ -630,7 +630,7 @@ async function requireConnectionProxyAccess(
   // The lookup above is already fenced on `key.space_id`, so a
   // space-bound caller of any rank sees only its own connections.
   const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
-  // Two connector-credential shapes accept here:
+  // Two integration-credential shapes accept here:
   //   1. OAuth-token grants the user issued for a kind:app connection —
   //      synthetic credentials minted in middleware/auth.ts with
   //      `source: "oauth:<connectionId>"`.
@@ -642,10 +642,10 @@ async function requireConnectionProxyAccess(
   //      free-form source string. Without this widening, every
   //      hosted-substrate integration Worker's `ctx.marfa.proxyRequest`
   //      call 403s on dispatch.
-  const isConnector =
+  const isIntegration =
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);
-  if (!isAdmin && !isConnector) {
+  if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot proxy through this connection",

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
+  ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
   RESERVED_ITEM_FIELDS,
   validateTypeSchema as validateTypeSchemaShape,
@@ -37,7 +37,7 @@ export type {
   TypeSchemaValidationResult,
   VersionPolicy,
 };
-export { ALL_TYPES, ALL_CONNECTOR_TYPES, ALL_SYSTEM_TYPES };
+export { ALL_TYPES, ALL_INTEGRATION_TYPES, ALL_SYSTEM_TYPES };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -51,15 +51,14 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 // The platform-shipped types are global — bundled with @withmarfa/types and
 // resolvable by every space. This map is read-only after construction. Three
 // families feed it and each stays identifiable afterwards: `ALL_TYPES` is the
-// core set, `ALL_CONNECTOR_TYPES` is the vendor-shaped set a connector writes
+// core set, `ALL_INTEGRATION_TYPES` is the vendor-shaped set an integration writes
 // into, and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
 // identically — the split describes provenance so a catalog can say what a
 // space is actually looking at, not a difference in how lookups behave.
 const _coreRegistry = new Map<string, TypeSchema>(
-  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [
-    schema.id,
-    schema,
-  ]),
+  [...ALL_TYPES, ...ALL_INTEGRATION_TYPES, ...ALL_SYSTEM_TYPES].map(
+    (schema) => [schema.id, schema],
+  ),
 );
 
 /**
@@ -106,14 +105,14 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
 );
 
 /**
- * The set of type IDs shipped as connector types: one vendor's payload shape,
- * present so a connector has somewhere faithful to write. They carry no
+ * The set of type IDs shipped as integration types: one vendor's payload shape,
+ * present so an integration has somewhere faithful to write. They carry no
  * behavioral restrictions — the split from the core set is a provenance
  * distinction, so a catalog can tell a space which types are the shared
  * vocabulary and which exist because a specific upstream service does.
  */
-export const CONNECTOR_TYPE_IDS: ReadonlySet<string> = new Set(
-  ALL_CONNECTOR_TYPES.map((schema) => schema.id),
+export const INTEGRATION_TYPE_IDS: ReadonlySet<string> = new Set(
+  ALL_INTEGRATION_TYPES.map((schema) => schema.id),
 );
 
 /**

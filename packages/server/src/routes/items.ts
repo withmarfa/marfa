@@ -965,10 +965,10 @@ export function itemRoutes(storage: Storage) {
         typeof properties.connection_id === "string"
           ? properties.connection_id
           : undefined;
-      // A connector may only speak for itself. Checked before the
+      // An integration may only speak for itself. Checked before the
       // feed-eligibility lookup below, which would otherwise read a
       // sibling Connection's `feed_activity` toggle and let one
-      // connector decide where another's activity surfaces.
+      // integration decide where another's activity surfaces.
       requireActivityAttribution(credential, type, properties);
       if (connectionId) {
         const connection = await storage.items.get(connectionId, spaceId);
@@ -1606,8 +1606,8 @@ export function itemRoutes(storage: Storage) {
     // type rather than on a claim the body never carries here.
     assertTierApplicable(item.type, body.tier);
 
-    // The row has to be this connector's both before and after the
-    // update. Before, or a connector could edit a sibling's activity —
+    // The row has to be this integration's both before and after the
+    // update. Before, or an integration could edit a sibling's activity —
     // rewrite its summary, downgrade its severity — without ever naming
     // a connection in the body. After, or it could re-attribute its own
     // row to a sibling once the row exists. The merge below mirrors the

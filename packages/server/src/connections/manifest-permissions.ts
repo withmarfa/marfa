@@ -21,7 +21,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  *  Marfa-side level in either direction:
  *
  *    - `read` is an inbound integration: it pulls from upstream and
- *      WRITES the result into Marfa. Every inbound connector in-tree
+ *      WRITES the result into Marfa. Every inbound integration in-tree
  *      calls `createItem` on its target types, so mapping `read` to a
  *      read grant would break ingestion outright.
  *    - `write` is outbound, but the one in-tree example (`task-auto-archive`)

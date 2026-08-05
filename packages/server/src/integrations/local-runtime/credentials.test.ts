@@ -168,7 +168,7 @@ describe("mintLocalRuntimeCredential — direction is not an access level", () =
   // means "reads from upstream", and such an integration exists precisely to
   // write what it pulled into Marfa. Deriving a read-only Marfa grant from it
   // silently kills ingestion: the fetch succeeds, every createItem 403s, the
-  // cursor never advances, and the connector reports action_required forever.
+  // cursor never advances, and the integration reports action_required forever.
   it.each(["read", "write", "both"] as const)(
     "mints write on target types for direction: %s",
     async (direction) => {
@@ -222,7 +222,7 @@ describe("mintLocalRuntimeCredential — own-connection read", () => {
     );
 
     // The carve-out is per-item, not a space-wide system.connection grant:
-    // a sibling connector's configuration stays out of reach.
+    // a sibling integration's configuration stays out of reach.
     const res = await request(ctx.app, "GET", `/items/${theirs}`, {
       key: cred.api_key,
     });
@@ -450,7 +450,7 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
   it("leaves another connection's credentials alone", async () => {
     // Revoking unconditionally is only correct per connection. A sweep that
     // ignored the connection id would pass both cases above while breaking
-    // every other connector in the space.
+    // every other integration in the space.
     const integrationId = await createIntegrationItem();
     const mine = await createActiveConnection(integrationId);
     const theirs = await createActiveConnection(integrationId);
@@ -529,7 +529,7 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
     // The rule is the substrate's, not the transport's. A space-less
     // credential is not a narrow credential but the platform tier: the
     // RLS wrapper skips a space-less caller and the storage layer drops
-    // its space predicate, so the connector reads every space's rows.
+    // its space predicate, so the integration reads every space's rows.
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);
 

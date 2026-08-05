@@ -38,10 +38,10 @@ interface ItemResponse {
 }
 
 const VALID_MANIFEST = {
-  name: "acme.connector",
+  name: "acme.integration",
   version: "1.0.0",
   publisher: "Acme",
-  description: "Demo connector",
+  description: "Demo integration",
   direction: "both" as const,
   triggers: [{ type: "webhook" as const }],
   target_types: ["core.note"],
@@ -247,7 +247,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 // Runtime credential (integration: source) can manage own leases
 // ---------------------------------------------------------------------------
 
-describe("connector runtime credential — integration: source", () => {
+describe("integration runtime credential — integration: source", () => {
   it("issues a lease when called with the connection's runtime credential", async () => {
     const connectionId = await createConnection();
     const rawKey = `marfa_k1_runtime_test_${Math.random().toString(36).slice(2)}`;

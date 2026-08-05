@@ -641,7 +641,7 @@ export interface CreatedInboundWebhook extends InboundWebhook {
 export interface CreateInboundWebhookInput {
   /** The external service's id for this subscription, optional. */
   external_service_id?: string;
-  /** Subscribed event types — opaque strings the connector understands. */
+  /** Subscribed event types — opaque strings the integration understands. */
   events: string[];
   /**
    * The Integration manifest, inline. Validated via
@@ -674,7 +674,7 @@ export interface InboundWebhookEvent {
 }
 
 /**
- * Wire view of a leased bearer token issued to a connector for cases the
+ * Wire view of a leased bearer token issued to an integration for cases the
  * OAuth proxy doesn't cover (multipart streaming, WebSocket, SDK lock-in,
  * non-HTTP). The lease IS a bearer token; storage is hashed (SHA-256) like
  * API keys, and the plaintext is returned exactly once on issue.
@@ -792,7 +792,7 @@ export interface ConnectionUninstallResult {
 
 /**
  * Item-event types the reactive-run bridge fans out to integration
- * connectors. Mirrors the `ItemEvent['type']` union in `packages/server/
+ * integrations. Mirrors the `ItemEvent['type']` union in `packages/server/
  * src/pubsub.ts`. Used by `POST /connections/preview-event` for the
  * operator-supplied `event_type` in the preview-event request.
  */
@@ -937,7 +937,7 @@ export interface LeaseTokenIntrospection {
 }
 
 /**
- * Wire view of a stored OAuth token for an external-service connector.
+ * Wire view of a stored OAuth token for an external-service integration.
  * Tokens are encrypted at rest server-side; the wire view reveals only the
  * metadata necessary for admin/observability surfaces. The `access_token`
  * and `refresh_token` fields are intentionally absent — there is no API
@@ -1062,7 +1062,7 @@ export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Maximum number of hops a single event may traverse before the bus
-   * drops it as a suspected cycle. Connector reactions can publish further
+   * drops it as a suspected cycle. Integration reactions can publish further
    * events; without a budget, a malformed integration could spin a feedback
    * loop. Default 5; admins can raise it for deeply pipelined integrations
    * or lower it to tighten the leash.

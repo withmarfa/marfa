@@ -4,7 +4,7 @@
  * Two triggers, one shared sweep:
  *   - `item-event`: any core.task event (created, updated,
  *     state_changed, deleted, restored) fires a bounded sweep.
- *     The reactive-run bridge already drops the connector's own
+ *     The reactive-run bridge already drops the integration's own
  *     writes (self-event suppression) so own-archive events don't loop.
  *   - `schedule`: daily fallback for guarantee under low event
  *     volume.

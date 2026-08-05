@@ -11,7 +11,7 @@
  *
  * The consequence was that a connection owner could install a connection
  * and destroy it, but not temporarily stop it. Pause is the operation
- * someone reaches for first when a connector misbehaves, and the only route
+ * someone reaches for first when an integration misbehaves, and the only route
  * from running to not-running was the irreversible one that drops the OAuth
  * grant and forces a fresh consent round trip.
  *
@@ -129,7 +129,7 @@ async function applyRuntimeState(
   // Status first, schedule second. The order matters on a partial failure:
   // a connection recorded as paused whose alarm is still armed is visibly
   // wrong and retryable, while an alarm cancelled with nothing recording
-  // why looks like a connector that silently stopped working.
+  // why looks like an integration that silently stopped working.
   await storage.items.update(
     input.connectionId,
     {

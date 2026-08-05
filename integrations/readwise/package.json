@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Inbound Readwise highlights + books connector. Schedule trigger polls Readwise's Export API on an hourly cron and lands highlights as `readwise.highlight` items with parent `readwise.book` items linked by `parent-of` edges. Token-credential install (kind: api_token, auth_scheme: Token) — Readwise's REST API requires `Authorization: Token <key>`.",
+  "description": "Inbound Readwise highlights + books integration. Schedule trigger polls Readwise's Export API on an hourly cron and lands highlights as `readwise.highlight` items with parent `readwise.book` items linked by `parent-of` edges. Token-credential install (kind: api_token, auth_scheme: Token) — Readwise's REST API requires `Authorization: Token <key>`.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

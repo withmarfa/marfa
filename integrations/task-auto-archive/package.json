@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Reactive intra-Marfa connector that archives core.task items older than N days. Item-event triggered, with a daily schedule sweep as a fallback. Validates the reactive substrate (cycle detection, hop budget, bounded sweep).",
+  "description": "Reactive intra-Marfa integration that archives core.task items older than N days. Item-event triggered, with a daily schedule sweep as a fallback. Validates the reactive substrate (cycle detection, hop budget, bounded sweep).",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

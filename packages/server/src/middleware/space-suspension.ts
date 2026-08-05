@@ -28,10 +28,10 @@
  *     to a suspended space to suspend it further, change quotas, or
  *     unsuspend it.
  *
- * **Runtime-credential keys are NOT exempt.** Connector runtime keys
+ * **Runtime-credential keys are NOT exempt.** Integration runtime keys
  * (`is_runtime_credential: true`) carry a `space_id` and are
  * non-platform — they hit the gate like any other space credential.
- * Suspending a space therefore stops their connectors from writing
+ * Suspending a space therefore stops their integrations from writing
  * upstream, which is the desired blast-radius.
  *
  * **Caching.** Space status is read on the hot path of every write;

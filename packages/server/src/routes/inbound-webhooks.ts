@@ -69,7 +69,7 @@ function rowToWire(
  * for the given connection. The caller must be authenticated AND match
  * either:
  *   1. An admin credential whose space scope covers the connection.
- *   2. The connector's own credential — a credential whose `source` is
+ *   2. The integration's own credential — a credential whose `source` is
  *      `oauth:${connectionId}` (the OAuth-token synthetic credential
  *      pattern from the auth middleware).
  *
@@ -99,10 +99,10 @@ async function requireConnectionAccess(
   // Same widening as `requireConnectionProxyAccess` in
   // `routes/connection-proxy.ts` — accept runtime credentials minted
   // for this connection alongside the OAuth-app-grant shape.
-  const isConnector =
+  const isIntegration =
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);
-  if (!isAdmin && !isConnector) {
+  if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage inbound webhooks on this connection",
@@ -282,7 +282,7 @@ const listDeliveriesRoute = createRoute({
   tags: ["Inbound Webhooks"],
   summary: "List recent receipts for an inbound webhook subscription",
   description:
-    "Returns recent inbound deliveries received on this subscription, newest first, recording each receipt's verification and dispatch outcome. Use to debug a failing connector or audit what the upstream service has sent.",
+    "Returns recent inbound deliveries received on this subscription, newest first, recording each receipt's verification and dispatch outcome. Use to debug a failing integration or audit what the upstream service has sent.",
   security: [{ bearerAuth: [] }],
   request: {
     params: InboundWebhookIdsParam,

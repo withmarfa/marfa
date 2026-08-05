@@ -5,7 +5,7 @@ import {
   getTypeSchema,
   listTypes,
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
+  ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
@@ -37,12 +37,14 @@ import {
  * them: a space editing a shipped schema would change what the identifier
  * means for every other space, and items already written against it.
  *
- * The set spans core, connector and system types deliberately — a connector
+ * The set spans core, integration and system types deliberately — an integration
  * type is no more mutable than a core one, and reading only `ALL_TYPES` here
- * would leave the connector family editable.
+ * would leave the integration family editable.
  */
 const SHIPPED_TYPE_IDS = new Set(
-  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((t) => t.id),
+  [...ALL_TYPES, ...ALL_INTEGRATION_TYPES, ...ALL_SYSTEM_TYPES].map(
+    (t) => t.id,
+  ),
 );
 
 const MAX_INHERITANCE_DEPTH = 10;

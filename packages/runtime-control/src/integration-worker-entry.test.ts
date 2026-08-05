@@ -11,7 +11,7 @@
  * The scaffold is why this is a test rather than a convention. It is
  * the file contributors copy to start an integration, so a defect
  * sitting in it is the one defect that reproduces itself, once per new
- * connector, each time looking like the house style.
+ * integration, each time looking like the house style.
  *
  * Asserting the default export rather than the absence of the word
  * `fetch`: a hand-rolled surface has to be exported to be served, and

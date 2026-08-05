@@ -388,7 +388,7 @@ describe.each(DOORS)("$name", (door) => {
   });
 
   it("still writes the credential's own activity", async () => {
-    // The gate has to admit the only thing a connector legitimately does
+    // The gate has to admit the only thing an integration legitimately does
     // with this type, or the runtime SDK's activity sink stops reporting
     // on every run and nothing says so.
     const target = await activityRow(mine, `ok-${String(seq++)}`);
@@ -465,8 +465,8 @@ describe("every route that can write an item is accounted for", () => {
  * They were open to a credential the properties doors refuse. Same space,
  * same type filter, different axis, and `system.activity` sits in every
  * runtime credential's type filter because that grant is what lets a
- * connector report its own progress. So a type check alone admits every
- * sibling connector's rows, and a type check alone was all these had.
+ * integration report its own progress. So a type check alone admits every
+ * sibling integration's rows, and a type check alone was all these had.
  *
  * They share one row-level gate rather than each carrying a call, and this
  * table is the reason that shape was chosen: five doors have now been
@@ -544,7 +544,7 @@ describe.each(ROW_DOORS)("$name", (door) => {
 
   it("still reaches the credential's own row", async () => {
     // A gate that refuses everyone passes the case above and breaks every
-    // legitimate connector, so the permissive direction is asserted too.
+    // legitimate integration, so the permissive direction is asserted too.
     const own = await activityRow(mine, `own-${String(Math.random())}`);
     const res = await door.act(mine.key, own.id);
     // Not "succeeds" — some of these then fail downstream for reasons

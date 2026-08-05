@@ -13,7 +13,7 @@
  *
  * The `X-Marfa-` prefix is the canonical convention shared with the
  * Cloudflare Worker control plane and the Node-side server. Both
- * surfaces honor the same header names so a connector emitting one
+ * surfaces honor the same header names so an integration emitting one
  * receipt shape works through either path.
  */
 import type { Verifier } from "./types.js";

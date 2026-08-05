@@ -82,7 +82,7 @@ function esc(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/* Standalone monochrome "Luma" card — these connector-config pages render
+/* Standalone monochrome "Luma" card — these integration-config pages render
    outside the /auth/* layout, so they carry their own minimal styles
    matching auth.css. The neutral palette, radii, pill inputs/buttons, and
    the squared `.chk` check are kept in sync with auth-css.ts so the

@@ -236,7 +236,7 @@ describe("ConnectionClient", () => {
       fetch: makeFetch(
         [
           // The route returns { item, metadata } per items-lifecycle.ts;
-          // ConnectionClient.transitionItem unwraps so the connector sees
+          // ConnectionClient.transitionItem unwraps so the integration sees
           // a plain ItemResource.
           () =>
             new Response(
@@ -286,7 +286,7 @@ describe("ConnectionClient cycle headers", () => {
     expect(captured[0]!.cycleHop).toBe("3");
   });
 
-  it("stamps the connector as the chain head when cycleParent is null", async () => {
+  it("stamps the integration as the chain head when cycleParent is null", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -305,7 +305,7 @@ describe("ConnectionClient cycle headers", () => {
       ),
     });
     await client.createItem({ type: "core.note", properties: { body: "x" } });
-    // Schedule / webhook trigger: cycleParent: null → connector is the head.
+    // Schedule / webhook trigger: cycleParent: null → integration is the head.
     // nextHopMetadata(null, conn_1) → { origin: conn_1, hop: 1 }
     expect(captured[0]!.cycleOrigin).toBe("conn_1");
     expect(captured[0]!.cycleHop).toBe("1");
@@ -375,7 +375,7 @@ describe("ConnectionClient cycle headers", () => {
     await client.createItem({ type: "core.note", properties: {} });
     await client.createItem({ type: "core.note", properties: {} });
     // Three mutating calls in the same run — every one stamps hop = 3
-    // (parent + 1). The connector's "run is one logical hop" contract:
+    // (parent + 1). The integration's "run is one logical hop" contract:
     // per-request increments would conflate an N-call handler with an
     // N-deep chain.
     for (const c of captured) {

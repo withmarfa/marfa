@@ -1,7 +1,7 @@
 /**
  * Manifest for the Sync Agent re-presentation.
  *
- * Local-runtime connector. The actual execution is the existing
+ * Local-runtime integration. The actual execution is the existing
  * daemon in the withmarfa/sync repo (npm: @withmarfa/sync) — the manifest
  * here exists so that the agent can be installed as a Connection
  * (manifest + Credential + per-Connection runtime extension namespace)
@@ -9,13 +9,13 @@
  * `~/.marfa/sync.json`.
  *
  * Triggers: `manual` only. The Cloudflare runtime tier does not
- * dispatch to local connectors; the agent's own filesystem
+ * dispatch to local integrations; the agent's own filesystem
  * watchers + debounced sync drive execution. Manual trigger
  * exists so the install consent screen can offer a "Run now"
  * affordance the daemon honors via a sentinel.
  *
  * webhook_verification is required by the schema but unused for
- * local connectors — declared as hmac-sha256 by convention.
+ * local integrations — declared as hmac-sha256 by convention.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 

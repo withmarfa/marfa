@@ -15,7 +15,7 @@
  * are all `requireSpaceAdmin`, and the configure route's own comment says
  * it matches the install routes. The HTML install pair was the one that
  * never got the gate, so a member key holding nothing but
- * `system.integration: read` could provision a connector into its own
+ * `system.integration: read` could provision an integration into its own
  * space and then be unable to configure or remove the thing it had just
  * created.
  *

@@ -9,7 +9,7 @@
  *
  * Both inbound (poll Calendar → upsert Marfa items) and outbound
  * (item-event on the target type → push to Calendar via OAuth proxy)
- * are wired through one connector. All four `bidirectional_handling`
+ * are wired through one integration. All four `bidirectional_handling`
  * fields are exercised:
  *
  *   - `echo_ttl_seconds` (120) — after writing to Calendar, the same
@@ -29,7 +29,7 @@
  * provider-agnostic `GET /oauth/callback/:provider` route (see
  * `packages/server/src/routes/oauth-callback.ts`), which exchanges the
  * authorization code and persists tokens to
- * `storage.connectionOauthTokens`. The connector reads them at request
+ * `storage.connectionOauthTokens`. The integration reads them at request
  * time through the OAuth proxy.
  *
  * Scope discipline: this integration requests

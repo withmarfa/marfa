@@ -62,11 +62,11 @@ function hashLease(raw: string): string {
  *     install pipeline mints for the per-Connection Worker (see
  *     `connections/install-pipeline.ts`).
  *
- * Either source identifies "the connector itself" for the purpose of
+ * Either source identifies "the integration itself" for the purpose of
  * managing leased tokens on this connection. Both `oauth:` and the
  * runtime credential's `integration:` source must pass — the design is
- * "the connector requests a short-TTL bearer for direct calls", and the
- * runtime credential is a legitimate connector.
+ * "the integration requests a short-TTL bearer for direct calls", and the
+ * runtime credential is a legitimate integration.
  */
 function isConnectionScopedSource(
   source: string,
@@ -106,7 +106,7 @@ async function requireConnectionAccess(
   // routes: leased tokens belong to a connection, and a connection
   // belongs to a space.
   const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
-  const isConnector = isConnectionScopedSource(key.source, connectionId);
+  const isIntegration = isConnectionScopedSource(key.source, connectionId);
   // Defense-in-depth: any credential that would resolve to an undefined
   // spaceId below must be entitled to cross-space reach, because the
   // storage call sites treat `undefined` as "any space". The test is
@@ -119,7 +119,7 @@ async function requireConnectionAccess(
   // unset on those.
   if (
     !key.space_id &&
-    !isConnector &&
+    !isIntegration &&
     !hasPlatformAuthority(key) &&
     !key.is_platform
   ) {
@@ -133,7 +133,7 @@ async function requireConnectionAccess(
   if (connection?.type !== "system.connection") {
     throw new MarfaError(ErrorCode.NOT_FOUND, "Connection not found");
   }
-  if (!isAdmin && !isConnector) {
+  if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage leased tokens on this connection",

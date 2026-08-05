@@ -2,7 +2,7 @@
  * Redirect-allowlist boot guard — warns loud at boot if a hosted
  * deployment runs with an empty `MARFA_OAUTH_REDIRECT_ALLOWLIST`.
  *
- * The connector OAuth bootstrap (`POST /connections/:id/oauth/start`)
+ * The integration OAuth bootstrap (`POST /connections/:id/oauth/start`)
  * builds the upstream authorize URL from a caller-supplied
  * `redirect_uri`. An empty allowlist now FAILS CLOSED in hosted mode —
  * every `redirect_uri` is rejected — so an operator who forgot to set the
@@ -44,7 +44,7 @@ export function checkRedirectAllowlist(
   if (opts.allowlist.length > 0) return;
   log(
     "warn",
-    "MARFA_OAUTH_REDIRECT_ALLOWLIST is empty in hosted mode — the connector " +
+    "MARFA_OAUTH_REDIRECT_ALLOWLIST is empty in hosted mode — the integration " +
       "OAuth start flow (POST /connections/:id/oauth/start) will reject every " +
       "redirect_uri (fail closed) to prevent authorization-code interception. " +
       "Set MARFA_OAUTH_REDIRECT_ALLOWLIST to the allowed redirect URIs to enable it.",

@@ -6,7 +6,7 @@ In-memory mocks of the Cloudflare runtime primitives (DO storage + alarms, Queue
 
 - **`src/harness.test.ts`** — pins the harness primitives themselves (per-connection storage isolation, retry / fail outcomes from handler results, queue drain semantics).
 - **`src/in-memory-{kv,queue,storage,alarm}.test.ts`** — pins each in-memory primitive in isolation.
-- **`src/e2e-flow.test.ts`** — composes the runtime-sdk consumer with the harness across **two connectors in a chain** (webhook → primary handler → simulated reactive event → secondary handler). The single test that catches regressions in seam-crossings: `integration_name` envelope filter, base64 body decode at the dispatch seam, cycle metadata threading (`originating_connection_id`, `hop_count`).
+- **`src/e2e-flow.test.ts`** — composes the runtime-sdk consumer with the harness across **two integrations in a chain** (webhook → primary handler → simulated reactive event → secondary handler). The single test that catches regressions in seam-crossings: `integration_name` envelope filter, base64 body decode at the dispatch seam, cycle metadata threading (`originating_connection_id`, `hop_count`).
 
 The control-plane verify+enqueue side of the webhook flow lives in `runtime-control/src/webhook-flow.test.ts` — that pins the `integration_name` stamp at the source. `e2e-flow.test.ts` picks up where that one leaves off (queue → handler → reactive → handler).
 

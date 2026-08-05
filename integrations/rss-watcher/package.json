@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Read-only RSS/Atom feed connector. Polls a feed on a schedule and creates a core.bookmark per new entry. Exists as the simplest end-to-end test of the schedule + cursor + outbound-write substrate.",
+  "description": "Read-only RSS/Atom feed integration. Polls a feed on a schedule and creates a core.bookmark per new entry. Exists as the simplest end-to-end test of the schedule + cursor + outbound-write substrate.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

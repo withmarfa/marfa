@@ -27,11 +27,11 @@ function generateRawKey(): string {
 }
 
 /**
- * Refuse a caller-supplied `source` that claims a connector shape.
+ * Refuse a caller-supplied `source` that claims an integration shape.
  *
  * `source` is otherwise free text, but three prefixes are read elsewhere
- * as proof that a credential IS a particular connection's connector —
- * see `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Genuine connector
+ * as proof that a credential IS a particular connection's integration —
+ * see `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Genuine integration
  * credentials are minted at the storage layer by the install pipeline and
  * the runtime broker, never through an HTTP mint route, so nothing
  * legitimate is turned away here.
@@ -44,7 +44,7 @@ export function assertUnreservedSource(source: string): void {
   if (!isReservedCredentialSource(source)) return;
   throw new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes identify a connection's own connector credential and are issued by the install pipeline, not by this route.`,
+    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes identify a connection's own integration credential and are issued by the install pipeline, not by this route.`,
   );
 }
 

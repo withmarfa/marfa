@@ -11,7 +11,7 @@
  *
  * Both inbound (poll Sync API → upsert Marfa items) and outbound
  * (item-event on the target type → push to Todoist via REST + Sync
- * commands) are wired through one connector:
+ * commands) are wired through one integration:
  *
  *   - **Inbound** — `POST /api/v1/sync` with `sync_token` (opaque
  *     watermark, `"*"` sentinel on first run). Body is the full

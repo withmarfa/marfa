@@ -2,7 +2,7 @@
  * OAuth bootstrap routes.
  *
  * Two endpoints that complete the OAuth Authorization Code dance for
- * connector connections:
+ * integration connections:
  *
  *   - `POST /connections/:id/oauth/start` (admin-gated): builds the
  *     upstream provider's authorize URL with a server-signed `state`
@@ -23,12 +23,12 @@
  * provider config (client_id, client_secret, token_url, authorize_url)
  * comes from the `system.credential` referenced by the connection's
  * `credential_ref`. Calendar uses `/oauth/callback/google`; future
- * connectors use their own paths but share this route.
+ * integrations use their own paths but share this route.
  *
  * Why this lives in routes/oauth-callback.ts (not in auth-pages.ts):
  * `auth-pages.ts` covers the Marfa-as-IdP surface (Better Auth + the
  * /auth/* routes for human sign-in + OAuth grants to apps). This
- * file covers Marfa-as-OAuth-client (the connector's outbound OAuth
+ * file covers Marfa-as-OAuth-client (the integration's outbound OAuth
  * flow). Different concern, different file.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -321,7 +321,7 @@ export interface OAuthCallbackOptions {
  * is treated:
  *   - `hosted` → fail closed. An empty allowlist rejects every
  *     `redirect_uri`, because an admin-level caller on a multi-space
- *     deployment could otherwise point a connector's authorization code at
+ *     deployment could otherwise point an integration's authorization code at
  *     an attacker-controlled redirect (authorization-code interception). The
  *     operator MUST set `MARFA_OAUTH_REDIRECT_ALLOWLIST`.
  *   - `keys` → unenforced passthrough. Single-space self-hosts run with no
@@ -379,7 +379,7 @@ function isRedirectAllowed(
  * Every flow includes `code_challenge` + `code_challenge_method=S256`. The
  * verifier is generated server-side and stored in the encrypted state
  * envelope; the callback exchanges it at the token endpoint. There is no
- * non-PKCE path — the connector OAuth bootstrap requires it unconditionally.
+ * non-PKCE path — the integration OAuth bootstrap requires it unconditionally.
  */
 export function oauthStartRoutes(
   storage: Storage,

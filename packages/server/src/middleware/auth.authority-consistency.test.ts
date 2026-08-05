@@ -114,7 +114,7 @@ describe("roleBypassesPermissionMaps", () => {
 });
 
 describe("isReservedCredentialSource", () => {
-  it("claims the three connector prefixes", () => {
+  it("claims the three integration prefixes", () => {
     expect(isReservedCredentialSource("oauth:conn-1")).toBe(true);
     expect(isReservedCredentialSource("integration:conn-1")).toBe(true);
     expect(isReservedCredentialSource("runtime-abc-123")).toBe(true);
@@ -358,8 +358,8 @@ describe("/keys — the space fence keys on the binding, not the role", () => {
 // POST /keys — the reserved source prefixes
 // ---------------------------------------------------------------------------
 
-describe("POST /keys — connector source prefixes are not mintable", () => {
-  it("refuses a source claiming a connection's connector identity", async () => {
+describe("POST /keys — integration source prefixes are not mintable", () => {
+  it("refuses a source claiming a connection's integration identity", async () => {
     const space = await spaceStore().create("authority-source-reserve");
     const connectionId = await seedConnection(space.id);
     const spaceAdmin = await mintKey({
@@ -370,8 +370,8 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
     const res = await request(ctx.app, "POST", "/keys", {
       key: spaceAdmin,
       body: {
-        label: "forged-connector",
-        // Read by three connection routes as proof of connector identity.
+        label: "forged-integration",
+        // Read by three connection routes as proof of integration identity.
         source: `oauth:${connectionId}`,
         role: "member",
       },

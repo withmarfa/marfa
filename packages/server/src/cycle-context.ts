@@ -12,7 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * middleware-tier.
  *
  * Cycle metadata contract: `null` originator + hop 0 is the human
- * sentinel that bypasses the budget, a connector chain head is
+ * sentinel that bypasses the budget, an integration chain head is
  * `{ <connection_id>, 0 }`, mid-chain is `{ <head>, parent + 1 }`.
  */
 export interface CycleRequestContext {

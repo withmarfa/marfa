@@ -263,7 +263,7 @@ function buildBookmarkInput(
   if (feed.feed_title !== null) properties.source_title = feed.feed_title;
   if (feed.feed_url !== null) properties.source_url = feed.feed_url;
   // Stamp the upstream entry id as `source_id`. Combined with the
-  // server-stamped `source` from this connector's runtime credential, this
+  // server-stamped `source` from this integration's runtime credential, this
   // gives `POST /items` natural-key idempotency: a whole-batch retry
   // (createItem-success / cursor-write-fail) re-POSTs the same entries and
   // the server short-circuits to update instead of creating duplicates.

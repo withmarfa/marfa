@@ -613,7 +613,7 @@ describe("POST /items — platform-credential gate", () => {
     expect(res.status).toBe(201);
   });
 
-  it("admits runtime credentials writing system.activity (carve-out for connector status reporting)", async () => {
+  it("admits runtime credentials writing system.activity (carve-out for integration status reporting)", async () => {
     // Runtime credentials are is_platform: false but is_runtime_credential:
     // true and bound to a connection. The activity sink in runtime-sdk
     // calls POST /items with type: "system.activity" to surface progress

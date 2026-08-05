@@ -20,7 +20,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// In-tree connector directories under `integrations/`. `_template` carries
+// In-tree integration directories under `integrations/`. `_template` carries
 // no real manifest and is skipped; any dir without a manifest export is
 // skipped with a warning rather than failing the run.
 const DIRS = [

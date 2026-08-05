@@ -2,7 +2,7 @@
  * End-to-end Connections runtime flow.
  *
  * Composes the runtime-test harness with the runtime-sdk consumer to
- * exercise a chain of two connectors crossing every seam from the queue
+ * exercise a chain of two integrations crossing every seam from the queue
  * inwards:
  *
  *   1. A webhook envelope arrives on the queue (mirroring what the
@@ -63,7 +63,7 @@ import {
   SECONDARY_CURSOR_KEY,
   registerSecondaryHandler,
   type SecondaryMarker,
-} from "./fixtures/secondary-connector.js";
+} from "./fixtures/secondary-integration.js";
 
 const PRIMARY_INTEGRATION_NAME = "marfa.e2e-primary";
 const PRIMARY_CONNECTION_ID = "conn_primary";

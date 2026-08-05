@@ -236,7 +236,7 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
-  /** Allow-list of `redirect_uri` values accepted by the connector OAuth
+  /** Allow-list of `redirect_uri` values accepted by the integration OAuth
    *  bootstrap (`POST /connections/:id/oauth/start`). Comma-separated
    *  via `MARFA_OAUTH_REDIRECT_ALLOWLIST`. Empty list disables enforcement
    *  — convenient for self-hosted dev but an open-redirect risk in
@@ -521,9 +521,9 @@ export function parseOtelHeaders(
  * `system.integration` (the marketplace catalog) is not in the default
  * grant — an app that needs it requests it.
  *
- * Connector types (`google.*`, `readwise.*`, …) are the person's own synced
+ * Integration types (`google.*`, `readwise.*`, …) are the person's own synced
  * content, so `connected` covers them for READ. Writes stay request-only:
- * a connector row is a vendor-faithful mirror owned by its integration, and
+ * an integration row is a vendor-faithful mirror owned by its integration, and
  * a third-party write would fork it from upstream with nothing propagating
  * the change back.
  */
@@ -1028,7 +1028,7 @@ function parseEmailBackend(
 
 /**
  * Parse `MARFA_OAUTH_REDIRECT_ALLOWLIST` — comma-separated list of
- * fully-qualified `redirect_uri` values accepted by the connector OAuth
+ * fully-qualified `redirect_uri` values accepted by the integration OAuth
  * bootstrap. Whitespace between entries is tolerated. Empty / unset
  * means "no allow-list" (validation is bypassed; see oauth-callback.ts).
  */

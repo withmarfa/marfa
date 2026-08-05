@@ -3,7 +3,7 @@
   "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "Bidirectional Google Contacts (People API) connector. Schedule trigger polls people.connections.list with the syncToken cursor (full re-list on 410 expiry); item-event trigger pushes Marfa google.contacts.contact / core.entity.person changes back via the OAuth proxy with etag-based optimistic concurrency. Reuses the Google OAuth provider credential established for the google.* family via credential_ref.",
+  "description": "Bidirectional Google Contacts (People API) integration. Schedule trigger polls people.connections.list with the syncToken cursor (full re-list on 410 expiry); item-event trigger pushes Marfa google.contacts.contact / core.entity.person changes back via the OAuth proxy with etag-based optimistic concurrency. Reuses the Google OAuth provider credential established for the google.* family via credential_ref.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
