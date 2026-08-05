@@ -17,11 +17,13 @@ The Hono HTTP server exposing the Marfa API. Private package, never published to
 
 When changing a column or adding a table:
 
-1. Edit the Drizzle schema (`storage/{pg,sqlite}/schema.ts`).
-2. Generate migrations: `pnpm --filter @withmarfa/server run migrate:pg:generate` and `migrate:sqlite:generate`. Each command refreshes the corresponding `src/storage/<dialect>/schema-sql.generated.ts` automatically as a post-step. The PG one needs Docker running so it can spin up a transient `postgres:17` to dump the schema. **Never hand-edit a `schema-sql.generated.ts` file**; the next regen overwrites it and the `schema-sql-freshness` CI job catches drift.
-3. Hand-review the generated SQL under `drizzle/{pg,sqlite}/`. Drizzle Kit sometimes produces DROP+ADD where a careful ALTER+UPDATE+ALTER would be lossless. Edit the SQL by hand if needed, then re-run the regen so `schema-sql.generated.ts` reflects the edit. For multi-statement SQLite migrations, ensure `--> statement-breakpoint` separates each `;` — libsql's migrator silently drops trailing statements without it. The `sqlite-migrations-lint` CI job and the `pnpm --filter @withmarfa/server lint:sqlite-migrations` script enforce this and fail loud if a new migration introduces the regression.
-4. Update both `_journal.json` files under `drizzle/{pg,sqlite}/meta/` to add the new entry (Drizzle Kit usually handles this automatically).
-5. Run `pnpm test:fresh-sqlite` and `pnpm test:pg` to verify the migration applies correctly to existing databases AND the bootstrap path produces the same shape.
+1. Edit the Drizzle schema (`storage/{pg,sqlite}/schema.ts`) so the ORM layer matches what the migration creates.
+2. Hand-write the migration SQL under `drizzle/{pg,sqlite}/` as `NNNN_short_slug.sql`, numbered one past the latest entry in that dialect's `meta/_journal.json`. Prefer a lossless ALTER+UPDATE+ALTER over DROP+ADD where one exists. For multi-statement SQLite migrations, ensure `--> statement-breakpoint` separates each `;` — libsql's migrator silently drops trailing statements without it. The `sqlite-migrations-lint` CI job and the `pnpm --filter @withmarfa/server lint:sqlite-migrations` script enforce this and fail loud if a new migration introduces the regression.
+3. Add the matching entry to `drizzle/<dialect>/meta/_journal.json`: copy the previous entry's shape, bump `idx`, stamp `when` with current epoch millis, and set `tag` to the filename without extension.
+4. Regenerate the bootstrap blocks: `pnpm --filter @withmarfa/server run schema-sql:generate`. Each dialect's `src/storage/<dialect>/schema-sql.generated.ts` is rebuilt from the migration chain; the PG half needs Docker running so it can spin up a transient `postgres:17` to dump the schema. **Never hand-edit a `schema-sql.generated.ts` file**; the next regen overwrites it and the `schema-sql-freshness` CI job catches drift.
+5. Run `pnpm test:fresh-sqlite` and `pnpm test:pg` to verify the migration applies correctly to existing databases AND the bootstrap path produces the same shape. The `ci-fresh-migrate-{sqlite,pg}` jobs repeat the empty-database run on every code PR, so a broken hand-written migration fails before merge.
+
+There is no migration generator: migrations are hand-written SQL plus a journal entry, and the runtime migrator reads nothing but `meta/_journal.json` and the `.sql` files.
 
 ## Routes
 

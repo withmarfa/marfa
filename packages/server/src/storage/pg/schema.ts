@@ -14,8 +14,9 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// Drizzle has no first-class tsvector type. This customType lets drizzle-kit
-// emit the right migration shape; search reads use raw SQL, not Drizzle select.
+// Drizzle has no first-class tsvector type. This customType declares the
+// column so the table definition matches the real schema; search reads use
+// raw SQL, not Drizzle select.
 const tsvector = customType<{ data: string; driverData: string }>({
   dataType: () => "tsvector",
 });

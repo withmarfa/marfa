@@ -193,17 +193,19 @@ The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the
 
 ## Database migrations
 
-Drizzle migrations under `packages/server/drizzle/{pg,sqlite}/` are the schema source of truth. Inline DDL in `connection.ts` (the `SCHEMA_SQL` block) exists only as the fresh-DB bootstrap path for tests (`:memory:` SQLite) and new instances; it mirrors what running `pnpm migrate` from `0000` would produce.
+Drizzle migrations under `packages/server/drizzle/{pg,sqlite}/` are the schema source of truth. The bootstrap `SCHEMA_SQL` (imported by each dialect's `connection.ts` from a sibling `schema-sql.generated.ts`) exists only as the fresh-DB path for tests (`:memory:` SQLite) and new instances; it is generated from the migration chain and never hand-edited.
+
+**Migrations are written by hand: SQL plus a journal entry.** There is no migration generator — the runtime migrator reads `meta/_journal.json` and the `.sql` files, nothing else.
 
 When changing schema:
 
-1. Update the Drizzle schema file(s) (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`).
-2. Generate migrations: `pnpm --filter @withmarfa/server run migrate:pg:generate` and `migrate:sqlite:generate`.
-3. Review the generated SQL in `drizzle/pg/` and `drizzle/sqlite/`.
-4. Mirror the change into the bootstrap `SCHEMA_SQL` block in the corresponding `connection.ts` so fresh databases get it without the migrator.
-5. Run standalone migration on existing dbs: `pnpm --filter @withmarfa/server run migrate`.
+1. Update the Drizzle schema file(s) (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`) so the ORM layer matches what the migration will create.
+2. Hand-write the migration SQL as `drizzle/{pg,sqlite}/NNNN_short_slug.sql`, numbered one past the latest entry in that dialect's `meta/_journal.json`.
+3. Add the matching entry to each `meta/_journal.json` (copy the previous entry's shape: bump `idx`, stamp `when` with current epoch millis, `tag` matches the filename without extension).
+4. Regenerate the bootstrap blocks: `pnpm --filter @withmarfa/server run schema-sql:generate` (the PG half needs Docker for a transient `postgres:17`).
+5. Apply to existing databases with `pnpm --filter @withmarfa/server run migrate`; `pnpm test:fresh-sqlite` and `pnpm test:pg` prove the chain and the bootstrap agree, and the `ci-fresh-migrate-{sqlite,pg}` jobs apply the whole chain to an empty database on every code PR.
 
-FTS5 virtual tables stay inline in `sqlite/connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
+FTS5 virtual tables stay inline in `sqlite/connection.ts` because the Drizzle schema can't express them. Don't add other inline DDL.
 
 ### Migrations on the hosted deploy (migrate-then-deploy)
 

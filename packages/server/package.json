@@ -23,8 +23,6 @@
     "migrate": "tsx src/storage/migrate.ts",
     "migrate:oauth-to-credential": "tsx src/scripts/deprecated/migrate-oauth-to-credential.ts",
     "migrate:sync-json-to-connection": "tsx src/scripts/deprecated/migrate-sync-json-to-connection.ts",
-    "migrate:pg:generate": "drizzle-kit generate --config=drizzle.pg.config.ts && pnpm run schema-sql:generate:pg",
-    "migrate:sqlite:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts && pnpm run schema-sql:generate:sqlite",
     "schema-sql:generate": "pnpm run schema-sql:generate:sqlite && pnpm run schema-sql:generate:pg",
     "schema-sql:generate:sqlite": "tsx scripts/generate-schema-sql.ts --dialect=sqlite",
     "schema-sql:generate:pg": "bash scripts/with-temp-pg.sh tsx scripts/generate-schema-sql.ts --dialect=pg",
@@ -81,7 +79,6 @@
     "@types/tar-stream": "^3.1.4",
     "@withmarfa/integration-sync": "workspace:*",
     "@withmarfa/runtime-test": "workspace:*",
-    "drizzle-kit": "^0.31.10",
     "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
