@@ -148,13 +148,13 @@ export class PgOAuthStore implements OAuthStore {
     await this.db
       .update(items)
       .set({
-        properties: sql`(jsonb_set(${items.properties}::jsonb, '{last_used_at}', to_jsonb(${nowIso}::text)))::text`,
+        properties: sql`jsonb_set(${items.properties}, '{last_used_at}', to_jsonb(${nowIso}::text))`,
       })
       .where(
         and(
           eq(items.id, connectionItemId),
           spacePredicate,
-          sql`(${items.properties}::jsonb->>'last_used_at' IS NULL OR (${items.properties}::jsonb->>'last_used_at') < ${cutoffIso})`,
+          sql`(${items.properties}->>'last_used_at' IS NULL OR (${items.properties}->>'last_used_at') < ${cutoffIso})`,
         ),
       );
   }

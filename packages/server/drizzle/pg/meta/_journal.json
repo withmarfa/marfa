@@ -526,6 +526,13 @@
       "when": 1784934457992,
       "tag": "0074_enrichment_state",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1785920331512,
+      "tag": "0075_items_properties_jsonb",
+      "breakpoints": true
     }
   ]
 }

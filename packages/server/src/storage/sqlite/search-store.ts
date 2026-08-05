@@ -8,8 +8,7 @@ import {
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
-import { rowToItem, rowToMetadata } from "./helpers.js";
-import type { items } from "./schema.js";
+import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 // Shared FTS text extractor — both dialects consult this so the indexed
 // surface is identical (same fields, same `searchable: false` opt-outs,
 // same long-tail ordering).
@@ -169,7 +168,8 @@ export class SqliteSearchStore implements SearchStore {
         fts.item_id AS fts_item_id,
         snippet(items_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet,
         bm25(items_fts) AS rank,
-        i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
+        i.id, i.type, i.state, json(i.properties) AS properties,
+        i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.version,
         i.schema_version, i.device, i.tier, i.space_id,
         i.capture_latitude, i.capture_longitude,
@@ -202,7 +202,7 @@ export class SqliteSearchStore implements SearchStore {
     return rows.map((row) => ({
       item: rowToItem({
         ...row,
-      } as unknown as typeof items.$inferSelect),
+      } as unknown as ItemRow),
       metadata: rowToMetadata({
         item_id: row.id as string,
         tags: (row.tags as string | null) ?? "[]",

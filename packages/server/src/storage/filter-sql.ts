@@ -250,17 +250,18 @@ function propertyFieldSql(
   const jsonPath = `$.${path}`;
   const isNumeric = typeof value === "number";
 
-  // JSON extraction expression varies by dialect
+  // JSON extraction expression varies by dialect: sqlite's json_extract
+  // reads the JSONB blob directly; pg reads the jsonb column natively.
   const extract =
     dialect === "sqlite"
       ? sql`json_extract(${propertiesCol}, ${jsonPath})`
-      : sql`${propertiesCol}::json->>${path}`;
+      : sql`${propertiesCol}->>${path}`;
 
   // Numeric extraction for comparison operators
   const numericExtract =
     dialect === "sqlite"
       ? sql`CAST(json_extract(${propertiesCol}, ${jsonPath}) AS REAL)`
-      : sql`(${propertiesCol}::json->>${path})::numeric`;
+      : sql`(${propertiesCol}->>${path})::numeric`;
 
   switch (op) {
     case "eq":
@@ -566,11 +567,11 @@ function propertyFieldRawSql(
     );
   }
 
-  // Postgres: properties::json->>'path'
+  // Postgres: the jsonb column answers ->> natively
   const pathPlaceholder = placeholder(dialect, idx);
   params.push(path);
   idx++;
-  const extract = `${alias}.properties::json->>${pathPlaceholder}`;
+  const extract = `${alias}.properties->>${pathPlaceholder}`;
   const numExtract = `(${extract})::numeric`;
 
   return propertyOpRawSql(

@@ -164,7 +164,7 @@ describe("filterToRawSql", () => {
     it("generates property equality with json accessor", () => {
       const expr = parseFilter('properties.author eq "Orwell"');
       const result = filterToRawSql(expr, "pg", "i");
-      expect(result.clause).toBe("i.properties::json->>$1 = $2");
+      expect(result.clause).toBe("i.properties->>$1 = $2");
       expect(result.params).toEqual(["author", "Orwell"]);
       expect(result.nextParamIdx).toBe(3);
     });
@@ -172,7 +172,7 @@ describe("filterToRawSql", () => {
     it("generates property numeric gt with cast", () => {
       const expr = parseFilter("properties.page_count gt 200");
       const result = filterToRawSql(expr, "pg", "i");
-      expect(result.clause).toBe("(i.properties::json->>$1)::numeric > $2");
+      expect(result.clause).toBe("(i.properties->>$1)::numeric > $2");
       expect(result.params).toEqual(["page_count", 200]);
     });
 
@@ -189,9 +189,7 @@ describe("filterToRawSql", () => {
         'state eq "active" AND properties.author eq "Orwell"',
       );
       const result = filterToRawSql(expr, "pg", "i", 3);
-      expect(result.clause).toBe(
-        "(i.state = $3 AND i.properties::json->>$4 = $5)",
-      );
+      expect(result.clause).toBe("(i.state = $3 AND i.properties->>$4 = $5)");
       expect(result.params).toEqual(["active", "author", "Orwell"]);
       expect(result.nextParamIdx).toBe(6);
     });

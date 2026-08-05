@@ -1,5 +1,4 @@
 import { shouldCreateVersion } from "../version-gating.js";
-import { safeJsonParse } from "../json-utils.js";
 import {
   eq,
   ne,
@@ -255,7 +254,7 @@ export class PgItemStore implements ItemStore {
             type: input.type,
             state,
             tier: input.tier ?? "library",
-            properties: JSON.stringify(properties),
+            properties,
             created_at: now,
             updated_at: now,
             timestamp: input.timestamp ?? now,
@@ -630,11 +629,7 @@ export class PgItemStore implements ItemStore {
           );
         }
 
-        const currentProps = safeJsonParse<Record<string, unknown>>(
-          row.properties,
-          {},
-          "item update properties",
-        );
+        const currentProps = row.properties;
         // Treat `null` on an optional field as "leave unset" — the same
         // semantics the create path applies — so a re-synced payload that
         // emits explicit nulls for absent fields doesn't overwrite stored
@@ -672,7 +667,7 @@ export class PgItemStore implements ItemStore {
           const newTier = input.tier ?? row.tier;
 
           const setClause: Record<string, unknown> = {
-            properties: JSON.stringify(merged),
+            properties: merged,
             version: newVersion,
             updated_at: now,
             ...(input.tier !== undefined && { tier: input.tier }),
@@ -705,7 +700,7 @@ export class PgItemStore implements ItemStore {
 
           return rowToItem({
             ...row,
-            properties: JSON.stringify(merged),
+            properties: merged,
             version: newVersion,
             updated_at: now,
             tier: newTier,
@@ -778,7 +773,7 @@ export class PgItemStore implements ItemStore {
         const newTier = input.tier ?? row.tier;
 
         const mergeSet: Record<string, unknown> = {
-          properties: JSON.stringify(result.merged),
+          properties: result.merged,
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
@@ -809,7 +804,7 @@ export class PgItemStore implements ItemStore {
 
         return rowToItem({
           ...row,
-          properties: JSON.stringify(result.merged),
+          properties: result.merged,
           version: newVersion,
           updated_at: now,
           tier: newTier,

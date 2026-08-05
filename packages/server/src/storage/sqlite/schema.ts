@@ -3,6 +3,7 @@ import {
   text,
   integer,
   real,
+  blob,
   index,
   uniqueIndex,
   primaryKey,
@@ -62,7 +63,10 @@ export const items = sqliteTable(
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
-    properties: text("properties").notNull(),
+    // SQLite's binary JSONB encoding. Write through jsonb(...) and update
+    // through jsonb_set (json_set returns text and would silently revert the
+    // encoding); read through json(...) — the raw blob is not JSON text.
+    properties: blob("properties", { mode: "buffer" }).notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
     timestamp: text("timestamp").notNull(),

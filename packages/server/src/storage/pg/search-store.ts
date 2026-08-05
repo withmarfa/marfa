@@ -234,10 +234,10 @@ export class PgSearchStore implements SearchStore {
         m.item_id AS meta_item_id, m.tags, m.extensions,
         ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,
         ts_headline('english',
-          coalesce(i.properties::json->>'title','') || ' ' ||
-          coalesce(i.properties::json->>'body','') || ' ' ||
-          coalesce(i.properties::json->>'description','') || ' ' ||
-          coalesce(i.properties::json->>'name',''),
+          coalesce(i.properties->>'title','') || ' ' ||
+          coalesce(i.properties->>'body','') || ' ' ||
+          coalesce(i.properties->>'description','') || ' ' ||
+          coalesce(i.properties->>'name',''),
           ${tsqueryExpr},
           'StartSel=<mark>, StopSel=</mark>, MaxFragments=1, MaxWords=32'
         ) AS snippet

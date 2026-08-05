@@ -54,24 +54,6 @@ CREATE TABLE IF NOT EXISTS "enrichment_state" (
   "updated_at" TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS "items" (
-	\`id\` text PRIMARY KEY NOT NULL,
-	"space_id" text,
-	\`type\` text NOT NULL,
-	\`state\` text DEFAULT 'active' NOT NULL,
-	\`properties\` text NOT NULL,
-	\`created_at\` text NOT NULL,
-	\`updated_at\` text NOT NULL,
-	\`timestamp\` text NOT NULL,
-	\`source\` text,
-	\`source_id\` text,
-	\`version\` integer DEFAULT 1 NOT NULL,
-	\`schema_version\` integer,
-	\`device\` text,
-	\`capture_latitude\` real,
-	\`capture_longitude\` real
-, \`tier\` text NOT NULL DEFAULT 'library');
-
 CREATE TABLE IF NOT EXISTS \`metadata\` (
 	\`item_id\` text PRIMARY KEY NOT NULL,
 	\`tags\` text DEFAULT '[]' NOT NULL,
@@ -433,6 +415,25 @@ CREATE TABLE IF NOT EXISTS "custom_edge_types" (
   \`created_at\` text NOT NULL,
   \`updated_at\` text NOT NULL,
   PRIMARY KEY ("space_id", \`id\`)
+);
+
+CREATE TABLE IF NOT EXISTS "items" (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`space_id\` text,
+	\`type\` text NOT NULL,
+	\`state\` text DEFAULT 'active' NOT NULL,
+	\`properties\` blob NOT NULL,
+	\`created_at\` text NOT NULL,
+	\`updated_at\` text NOT NULL,
+	\`timestamp\` text NOT NULL,
+	\`source\` text,
+	\`source_id\` text,
+	\`version\` integer DEFAULT 1 NOT NULL,
+	\`schema_version\` integer,
+	\`device\` text,
+	\`capture_latitude\` real,
+	\`capture_longitude\` real,
+	\`tier\` text DEFAULT 'library' NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);

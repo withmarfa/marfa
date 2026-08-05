@@ -12,6 +12,7 @@ import {
   sql,
   inArray,
   isNull,
+  getTableColumns,
   type SQL,
 } from "drizzle-orm";
 import {
@@ -53,6 +54,15 @@ import type { DrizzleDb } from "./connection.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
+
+// The stored properties column is SQLite's binary JSONB encoding. Every read
+// projects it back to JSON text via json() so rowToItem can parse it; every
+// write converts through jsonb(). In-place updates elsewhere must use
+// jsonb_set — json_set returns text and would silently revert the encoding.
+const itemColumns = {
+  ...getTableColumns(items),
+  properties: sql<string>`json(${items.properties})`.as("properties"),
+};
 
 /**
  * Detect a SQLite unique-constraint violation on `idx_items_source_dedup`.
@@ -239,7 +249,7 @@ export class SqliteItemStore implements ItemStore {
             type: input.type,
             state,
             tier: input.tier ?? "library",
-            properties: JSON.stringify(properties),
+            properties: sql`jsonb(${JSON.stringify(properties)})`,
             created_at: now,
             updated_at: now,
             timestamp: input.timestamp ?? now,
@@ -303,7 +313,7 @@ export class SqliteItemStore implements ItemStore {
     options?: ItemGetOptions,
   ): Promise<Item | null> {
     const row = await this.db
-      .select()
+      .select(itemColumns)
       .from(items)
       .where(this.spaceWhere(id, spaceId, options?.includePlatformScoped))
       .get();
@@ -315,7 +325,7 @@ export class SqliteItemStore implements ItemStore {
   // Internal get that includes trashed items (for restore, delete, transition)
   private async getRaw(id: string, spaceId?: string): Promise<Item | null> {
     const row = await this.db
-      .select()
+      .select(itemColumns)
       .from(items)
       .where(this.spaceWhere(id, spaceId))
       .get();
@@ -352,7 +362,7 @@ export class SqliteItemStore implements ItemStore {
     ];
     if (spaceId) conditions.push(eq(items.space_id, spaceId));
     const row = await this.db
-      .select()
+      .select(itemColumns)
       .from(items)
       .where(and(...conditions))
       .get();
@@ -371,7 +381,11 @@ export class SqliteItemStore implements ItemStore {
     const where = spaceId
       ? and(inArray(items.id, unique), eq(items.space_id, spaceId))
       : inArray(items.id, unique);
-    const rows = await this.db.select().from(items).where(where).all();
+    const rows = await this.db
+      .select(itemColumns)
+      .from(items)
+      .where(where)
+      .all();
     for (const row of rows) {
       if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
       out.set(row.id, rowToItem(row));
@@ -566,7 +580,7 @@ export class SqliteItemStore implements ItemStore {
     }
 
     const rows = await this.db
-      .select()
+      .select(itemColumns)
       .from(items)
       .where(and(...conditions))
       .orderBy(...orderBy)
@@ -602,7 +616,11 @@ export class SqliteItemStore implements ItemStore {
     const whereClause = this.spaceWhere(id, spaceId);
 
     return await this.db.transaction(async (tx) => {
-      const row = await tx.select().from(items).where(whereClause).get();
+      const row = await tx
+        .select(itemColumns)
+        .from(items)
+        .where(whereClause)
+        .get();
       if (!row) {
         throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
@@ -675,7 +693,7 @@ export class SqliteItemStore implements ItemStore {
         const newTier = input.tier ?? row.tier;
 
         const setClause: Record<string, unknown> = {
-          properties: JSON.stringify(merged),
+          properties: sql`jsonb(${JSON.stringify(merged)})`,
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
@@ -767,7 +785,7 @@ export class SqliteItemStore implements ItemStore {
       const newTier = input.tier ?? row.tier;
 
       const mergeSet: Record<string, unknown> = {
-        properties: JSON.stringify(result.merged),
+        properties: sql`jsonb(${JSON.stringify(result.merged)})`,
         version: newVersion,
         updated_at: now,
         ...(input.tier !== undefined && { tier: input.tier }),
