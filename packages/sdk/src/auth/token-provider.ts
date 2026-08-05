@@ -1,3 +1,5 @@
+import * as oauth from "oauth4webapi";
+import { ALLOW_INSECURE_HTTP } from "./insecure-http.js";
 import type { TokenStorage } from "./storage.js";
 import { OAuthError, type OAuthErrorCode } from "./errors.js";
 import { discoverEndpoints, type Endpoints } from "./discovery.js";
@@ -148,7 +150,14 @@ export class StoredTokenProvider implements TokenProvider {
 
   /** Single-flight refresh — concurrent callers await the same promise.
    *  Public so consumers can force a refresh on 401 responses (RFC 6750
-   *  invalid_token) without waiting for the proactive-refresh window. */
+   *  invalid_token) without waiting for the proactive-refresh window.
+   *
+   *  Kept hand-written when the exchange itself moved to `oauth4webapi`:
+   *  the library is a protocol client and holds no state across calls, so
+   *  it has nowhere to put the guard. Without it a page that fires three
+   *  requests on load performs three refreshes, and with refresh-token
+   *  rotation on the server the last two present an already-rotated token
+   *  and sign the user out. */
   async refresh(): Promise<string> {
     if (this.inflightRefresh) return this.inflightRefresh;
     if (!this.cache) {
@@ -164,26 +173,31 @@ export class StoredTokenProvider implements TokenProvider {
           this.fetch,
         ));
         for (let attempt = 1; ; attempt++) {
-          // OAuth 2.0 §3.2: token endpoint takes form-encoded.
-          const res = await this.fetch(endpoints.token, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              grant_type: "refresh_token",
-              refresh_token: refreshToken,
-              client_id: this.clientId,
-            }).toString(),
-          });
-          // A rate-limited or unavailable response need not be JSON.
-          const body = (await res.json().catch(() => ({}))) as {
-            access_token?: string;
-            refresh_token?: string;
-            expires_in?: number;
-            scope?: string;
-            error?: string;
-          };
-
-          if (res.ok && body.access_token) {
+          // The exchange itself is the library's: it builds the
+          // form-encoded body, applies `none` client authentication for a
+          // public client, and validates the response against RFC 6749
+          // rather than trusting whatever JSON came back. The retry and
+          // sign-out policy around it stays ours, because it is a product
+          // decision about when a session is dead, not a protocol one.
+          const res = await oauth.refreshTokenGrantRequest(
+            endpoints.as,
+            { client_id: this.clientId },
+            oauth.None(),
+            refreshToken,
+            {
+              ...ALLOW_INSECURE_HTTP,
+              [oauth.customFetch]: this.fetch,
+            },
+          );
+          // A rate-limited or unavailable response need not be JSON, and
+          // the library's processor rejects rather than returning on a
+          // non-2xx, so the error path reads the body directly.
+          if (res.ok) {
+            const body = await oauth.processRefreshTokenResponse(
+              endpoints.as,
+              { client_id: this.clientId },
+              res,
+            );
             const expiresInMs = (body.expires_in ?? 3600) * 1000;
             const updated: PersistedTokens = {
               access_token: body.access_token,
@@ -195,6 +209,10 @@ export class StoredTokenProvider implements TokenProvider {
             await this.persist(updated);
             return updated.access_token;
           }
+
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
 
           const code =
             (body.error as OAuthErrorCode | undefined) ?? "invalid_grant";

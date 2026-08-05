@@ -25,6 +25,7 @@ const DEVICE_ENDPOINT = `${ISSUER}/auth/device`;
 function discoveryResponse(): Response {
   return new Response(
     JSON.stringify({
+      issuer: `${ISSUER}/auth`,
       token_endpoint: TOKEN_ENDPOINT,
       authorization_endpoint: AUTHORIZE_ENDPOINT,
       device_authorization_endpoint: DEVICE_ENDPOINT,
@@ -37,6 +38,9 @@ function refreshOkResponse(): Response {
   return new Response(
     JSON.stringify({
       access_token: "fresh_at",
+      // RFC 6749 requires it and the library enforces it; the real
+      // server sends "Bearer", so the double does too.
+      token_type: "Bearer",
       refresh_token: "fresh_rt",
       expires_in: 3600,
       scope: "core.note:read",
@@ -100,7 +104,7 @@ describe("StoredTokenProvider.refresh", () => {
     const token = await provider.getAccessToken();
     expect(token).toBe("fresh_at");
     expect(calls[0]?.url).toBe(
-      `${ISSUER}/.well-known/oauth-authorization-server`,
+      `${ISSUER}/.well-known/oauth-authorization-server/auth`,
     );
     expect(calls[1]?.url).toBe(TOKEN_ENDPOINT);
   });
@@ -124,7 +128,7 @@ describe("StoredTokenProvider.refresh", () => {
     await provider.refresh();
     await provider.refresh();
     const discoveryFetches = calls.filter((c) =>
-      c.url.endsWith("/.well-known/oauth-authorization-server"),
+      c.url.includes("/.well-known/oauth-authorization-server"),
     );
     expect(discoveryFetches).toHaveLength(1);
   });
@@ -143,6 +147,7 @@ describe("StoredTokenProvider.refresh", () => {
         token: TOKEN_ENDPOINT,
         authorize: AUTHORIZE_ENDPOINT,
         deviceAuthorize: DEVICE_ENDPOINT,
+        as: { issuer: ISSUER, token_endpoint: TOKEN_ENDPOINT },
       },
     });
     await provider.hydrateFromStorage();
@@ -181,6 +186,7 @@ describe("StoredTokenProvider.refresh failure taxonomy", () => {
     token: TOKEN_ENDPOINT,
     authorize: AUTHORIZE_ENDPOINT,
     deviceAuthorize: DEVICE_ENDPOINT,
+    as: { issuer: ISSUER, token_endpoint: TOKEN_ENDPOINT },
   };
 
   function rateLimited(): Response {

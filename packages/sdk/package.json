@@ -31,11 +31,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@withmarfa/shared": "workspace:*"
+    "@withmarfa/shared": "workspace:*",
+    "oauth4webapi": "^3.8.6"
   },
   "devDependencies": {
-    "@withmarfa/server": "workspace:*",
     "@types/node": "^25.9.1",
+    "@withmarfa/server": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
   }

@@ -74,6 +74,7 @@ const errorResponse = (errCode: string, status = 400): Response =>
 const discoveryResponse = (): Response =>
   new Response(
     JSON.stringify({
+      issuer: `${ISSUER}/auth`,
       authorization_endpoint: `${ISSUER}/auth/oauth2/authorize`,
       token_endpoint: `${ISSUER}/auth/oauth2/token`,
       device_authorization_endpoint: `${ISSUER}/auth/device`,
@@ -104,7 +105,7 @@ describe("startDeviceFlow", () => {
     expect(handle.expires_in).toBe(600);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toBe(
-      `${ISSUER}/.well-known/oauth-authorization-server`,
+      `${ISSUER}/.well-known/oauth-authorization-server/auth`,
     );
     expect(calls[1]?.url).toBe(`${ISSUER}/auth/device`);
     const rawBody = calls[1]?.init?.body;

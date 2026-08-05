@@ -68,8 +68,12 @@ describe("discoverEndpoints", () => {
       "http://example.test:8602/auth/device",
     );
     expect(calls).toHaveLength(1);
+    // RFC 8414 inserts the well-known segment before the issuer's path,
+    // so an issuer of `<origin>/auth` is discovered here, not at the bare
+    // origin. The server serves both; only this one lets the library check
+    // that the document's `issuer` is the one we asked about.
     expect(calls[0]?.url).toBe(
-      "http://example.test:8602/.well-known/oauth-authorization-server",
+      "http://example.test:8602/.well-known/oauth-authorization-server/auth",
     );
   });
 
@@ -111,7 +115,9 @@ describe("discoverEndpoints", () => {
     await expect(discoverEndpoints(ISSUER, fetch)).rejects.toThrow(
       DiscoveryError,
     );
-    await expect(discoverEndpoints(ISSUER, fetch)).rejects.toThrow(/HTTP 404/);
+    await expect(discoverEndpoints(ISSUER, fetch)).rejects.toThrow(
+      /unexpected HTTP status code/,
+    );
   });
 
   it("throws DiscoveryError when the response is not valid JSON", async () => {
@@ -126,7 +132,7 @@ describe("discoverEndpoints", () => {
       DiscoveryError,
     );
     await expect(discoverEndpoints(ISSUER, fetch)).rejects.toThrow(
-      /not valid JSON/,
+      /failed to parse|JSON/,
     );
   });
 
@@ -143,7 +149,7 @@ describe("discoverEndpoints", () => {
     const fetch: typeof globalThis.fetch = () =>
       Promise.reject(new TypeError("connect ECONNREFUSED"));
     await expect(discoverEndpoints(ISSUER, fetch)).rejects.toThrow(
-      /network error/,
+      /OAuth discovery failed/,
     );
   });
 
