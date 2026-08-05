@@ -638,6 +638,9 @@ importers:
       hono:
         specifier: ^4.12.34
         version: 4.12.34
+      ical.js:
+        specifier: ^2.2.1
+        version: 2.2.1
       ipaddr.js:
         specifier: ^2.4.0
         version: 2.4.0
@@ -3331,6 +3334,9 @@ packages:
   hono@4.12.34:
     resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
+
+  ical.js@2.2.1:
+    resolution: {integrity: sha512-yK/UlPbEs316igb/tjRgbFA8ZV75rCsBJp/hWOatpyaPNlgw0dGDmU+FoicOcwX4xXkeXOkYiOmCqNPFpNPkQg==}
 
   idb-keyval@6.3.0:
     resolution: {integrity: sha512-um+2dgAWmYsu615EXpWVwSmapJhON0G43t3Ka/EVaohzPQXSMqKEqeDK/oIW3Ow+BXaF2PvSc+oBTFp793A5Ow==}
@@ -6510,6 +6516,8 @@ snapshots:
       is-glob: 4.0.3
 
   hono@4.12.34: {}
+
+  ical.js@2.2.1: {}
 
   idb-keyval@6.3.0: {}
 

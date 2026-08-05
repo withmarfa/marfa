@@ -224,6 +224,10 @@ interface CalendarEvent {
   creator?: { email?: string };
   recurrence?: string[];
   recurringEventId?: string;
+  /** Present on an instance that replaces one occurrence of a series;
+   *  names the occurrence it replaces. Without it a moved instance
+   *  cannot be bound to the slot it came from. */
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
   colorId?: string;
 }
 
@@ -339,6 +343,36 @@ async function listEventsPaged(
   }
 }
 
+/**
+ * Join a moved or edited instance back to the series it came from.
+ *
+ * Calendar models an exception as a separate event carrying its
+ * series' id and the start of the occurrence it replaces. Marfa models
+ * the same fact as a `parent-of` edge from series to instance, which is
+ * what lets the occurrence expansion know a computed slot has been
+ * taken. Both halves are needed: the edge without `original_starts_at`
+ * names a relationship but not which occurrence it displaces.
+ *
+ * A series Calendar has not sent yet is skipped rather than guessed at.
+ * Its instance still exists as an ordinary item, and the next sync that
+ * carries the series binds it, because the edge write is idempotent.
+ */
+async function bindToSeries(
+  ctx: ConnectionContext,
+  cursor: { mappings: Record<string, string> },
+  event: CalendarEvent,
+  itemId: string,
+): Promise<void> {
+  if (event.recurringEventId === undefined) return;
+  const seriesItemId = cursor.mappings[event.recurringEventId];
+  if (seriesItemId === undefined || seriesItemId === itemId) return;
+  await ctx.marfa.ensureEdge({
+    source_id: seriesItemId,
+    target_id: itemId,
+    edge_type: "parent-of",
+  });
+}
+
 export async function handleSchedule(
   ctx: ConnectionContext,
   message: ScheduleMessage,
@@ -403,15 +437,18 @@ async function handleScheduleSingle(
 
         const input = buildEventInput(event, config.target_type, calendarId);
         try {
-          if (marfa_id !== undefined) {
-            await ctx.marfa.updateItem(marfa_id, input);
+          let itemId = marfa_id;
+          if (itemId !== undefined) {
+            await ctx.marfa.updateItem(itemId, input);
           } else {
             const created = await ctx.marfa.createItem({
               ...input,
               source_id: event.id,
             });
             cursor.mappings[event.id] = created.id;
+            itemId = created.id;
           }
+          await bindToSeries(ctx, cursor, event, itemId);
           upserted += 1;
         } catch (err) {
           await ctx.activity.emit({
@@ -958,8 +995,9 @@ async function syncOneCalendar(
 
         const input = buildEventInput(event, config.target_type, calendarId);
         try {
-          if (marfa_id !== undefined) {
-            await ctx.marfa.updateItem(marfa_id, input);
+          let itemId = marfa_id;
+          if (itemId !== undefined) {
+            await ctx.marfa.updateItem(itemId, input);
           } else {
             const created = await ctx.marfa.createItem({
               ...input,
@@ -967,7 +1005,9 @@ async function syncOneCalendar(
             });
             cursor.mappings[event.id] = created.id;
             mappingCalendars[event.id] = calendarId;
+            itemId = created.id;
           }
+          await bindToSeries(ctx, cursor, event, itemId);
           upserted += 1;
         } catch (err) {
           await ctx.activity.emit({
@@ -1378,6 +1418,21 @@ function buildEventInput(
   }
   if (event.status !== undefined) properties.status = event.status;
 
+  // Recurrence is not a Google detail: the rule, the zone it is read in,
+  // and the occurrence a moved instance replaces are what make a series
+  // answerable on any target type. Dropping them here left `core.event`
+  // holding one item dated to the first occurrence.
+  if (Array.isArray(event.recurrence) && event.recurrence.length > 0) {
+    properties.recurrence = event.recurrence;
+  }
+  const timezone = event.start?.timeZone ?? event.end?.timeZone;
+  if (timezone !== undefined) properties.timezone = timezone;
+  const originalStart =
+    event.originalStartTime?.dateTime ?? event.originalStartTime?.date;
+  if (originalStart !== undefined) {
+    properties.original_starts_at = originalStart;
+  }
+
   if (targetType === "core.event") {
     if (event.htmlLink !== undefined) properties.url = event.htmlLink;
     return { type: targetType, properties };
@@ -1387,11 +1442,6 @@ function buildEventInput(
   // preserves what Calendar considers authoritative.
   if (event.htmlLink !== undefined) properties.html_link = event.htmlLink;
   if (event.etag !== undefined) properties.etag = event.etag;
-  if (event.start?.timeZone !== undefined) {
-    properties.timezone = event.start.timeZone;
-  } else if (event.end?.timeZone !== undefined) {
-    properties.timezone = event.end.timeZone;
-  }
   // all_day is implied by `date` (no time) rather than `dateTime`.
   if (event.start?.date !== undefined && event.start.dateTime === undefined) {
     properties.all_day = true;
@@ -1406,9 +1456,6 @@ function buildEventInput(
     properties.organizer_email = event.organizer.email;
   if (event.creator?.email !== undefined)
     properties.creator_email = event.creator.email;
-  if (Array.isArray(event.recurrence) && event.recurrence.length > 0) {
-    properties.recurrence = event.recurrence;
-  }
   if (event.recurringEventId !== undefined) {
     properties.recurring_event_id = event.recurringEventId;
   }

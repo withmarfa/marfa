@@ -58,6 +58,7 @@
     "better-auth": "1.6.25",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.34",
+    "ical.js": "^2.2.1",
     "ipaddr.js": "^2.4.0",
     "jose": "^6.2.3",
     "nodemailer": "^9.0.1",

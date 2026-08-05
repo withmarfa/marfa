@@ -85,6 +85,7 @@ interface BuiltContext {
   updated: { id: string; patch: Partial<CreateItemInput> }[];
   transitions: { id: string; to: ItemState }[];
   proxyCalls: ProxyCall[];
+  edges: { source_id: string; target_id: string; edge_type: string }[];
 }
 
 function buildContext(opts: BuildOpts): BuiltContext {
@@ -94,6 +95,8 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const updated: { id: string; patch: Partial<CreateItemInput> }[] = [];
   const transitions: { id: string; to: ItemState }[] = [];
   const proxyCalls: ProxyCall[] = [];
+  const edges: { source_id: string; target_id: string; edge_type: string }[] =
+    [];
   let proxyIdx = 0;
   const connectionId = "conn_gcal_test";
 
@@ -122,6 +125,14 @@ function buildContext(opts: BuildOpts): BuiltContext {
     transitionItem: (id: string, to: ItemState) => {
       transitions.push({ id, to });
       return Promise.resolve({ id, type: "core.event", state: to });
+    },
+    ensureEdge: (input: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }) => {
+      edges.push(input);
+      return Promise.resolve("created" as const);
     },
     proxyRequest: (method: string, path: string, body?: unknown) => {
       proxyCalls.push({ method, path, body });
@@ -153,6 +164,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
     updated,
     transitions,
     proxyCalls,
+    edges,
   };
 }
 
@@ -730,5 +742,95 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     );
     expect(r).toEqual({ ok: true });
     expect(proxyCalls).toHaveLength(0);
+  });
+});
+
+const SERIES_INBOUND = {
+  items: [
+    {
+      id: "gseries_1",
+      summary: "Weekly review",
+      start: { dateTime: "2026-07-06T10:00:00Z", timeZone: "Europe/Berlin" },
+      end: { dateTime: "2026-07-06T11:00:00Z", timeZone: "Europe/Berlin" },
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      status: "confirmed",
+    },
+    {
+      id: "gseries_1_20260713T100000Z",
+      summary: "Weekly review",
+      start: { dateTime: "2026-07-13T15:00:00Z", timeZone: "Europe/Berlin" },
+      end: { dateTime: "2026-07-13T16:00:00Z", timeZone: "Europe/Berlin" },
+      recurringEventId: "gseries_1",
+      originalStartTime: { dateTime: "2026-07-13T10:00:00Z" },
+      status: "confirmed",
+    },
+  ],
+  nextSyncToken: "sync_series",
+};
+
+describe("Google Calendar handlers — recurrence", () => {
+  it("carries the rule and its zone onto core.event, not only the fidelity type", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(SERIES_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: { configuration: { target_type: "core.event" } },
+      },
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    const series = created.find((c) => c.source_id === "gseries_1");
+    expect(series?.type).toBe("core.event");
+    expect(series?.properties).toMatchObject({
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+      timezone: "Europe/Berlin",
+    });
+  });
+
+  it("stamps the occurrence a moved instance replaces", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(SERIES_INBOUND)],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    const instance = created.find(
+      (c) => c.source_id === "gseries_1_20260713T100000Z",
+    );
+    expect(instance?.properties).toMatchObject({
+      original_starts_at: "2026-07-13T10:00:00Z",
+    });
+  });
+
+  it("binds a moved instance to its series with parent-of, series first", async () => {
+    const { ctx, edges } = buildContext({
+      proxyResponses: [() => jsonResponse(SERIES_INBOUND)],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(edges).toEqual([
+      { source_id: "mit_1", target_id: "mit_2", edge_type: "parent-of" },
+    ]);
+  });
+
+  it("leaves an instance unbound when its series has not arrived yet", async () => {
+    const { ctx, edges, created } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [SERIES_INBOUND.items[1]],
+            nextSyncToken: "sync_orphan",
+          }),
+      ],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    // The item still lands; only the join waits.
+    expect(created).toHaveLength(1);
+    expect(edges).toEqual([]);
+  });
+
+  it("draws no edge for an ordinary non-recurring event", async () => {
+    const { ctx, edges } = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(edges).toEqual([]);
   });
 });

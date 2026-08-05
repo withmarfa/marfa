@@ -272,6 +272,8 @@ const NOT_A_TYPE_FILTERED_READ: Record<string, string> = {
   "get /types/{id}": "resolves one type by id; there is no filter to agree on",
   "get /audit":
     "filters audit rows by resource type, a fixed vocabulary rather than the item registry",
+  "get /occurrences":
+    "answers over the event type family only, narrowing further than the caller's permissions rather than agreeing with them; a non-event type is empty here by design, so it cannot resolve like a general item read",
 };
 
 describe("every type-filtered read surface is accounted for", () => {

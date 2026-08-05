@@ -112,7 +112,9 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   webhook_verification: { method: "google-channel" },
   permissions: {
     extension: { "connection.runtime": "write" },
-    edge: {},
+    // A moved instance of a recurring series is joined to its series
+    // with parent-of, which the occurrence expansion reads.
+    edge: { "parent-of": "write" },
   },
 };
 
