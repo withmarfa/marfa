@@ -151,7 +151,7 @@ export const SECRET_INFO = {
   connectionOauthToken: "connection-oauth-tokens",
   /**
    * API-key credentials carried by `system.credential` rows of
-   * `kind: api_key`. Used by connectors that re-present an existing
+   * `kind: api_key`. Used by integrations that re-present an existing
    * long-lived API key as a Connection's credential — the sync agent
    * re-presentation is the first consumer.
    *

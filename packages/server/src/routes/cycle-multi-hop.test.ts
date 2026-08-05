@@ -9,7 +9,7 @@
  *
  * The test drives the loop by issuing successive `POST /items` requests
  * with mounting `X-Marfa-Cycle-Hop` values under a fixed
- * `X-Marfa-Cycle-Origin`, alternating an `X-Marfa-Connector-Tag` (purely
+ * `X-Marfa-Cycle-Origin`, alternating an `X-Marfa-Integration-Tag` (purely
  * informational — connection identity for the test reader; the server
  * resolves cycle metadata from headers regardless). Each step asserts
  * the emitted event's cycle stamp; the final overflow step asserts the
@@ -117,7 +117,7 @@ async function noCreatedMatchingWithin(
 }
 
 describe("cycle multi-hop A→B→A→… loop", () => {
-  it("propagates the same originator across alternating connector hops and trips the budget at the tail", async () => {
+  it("propagates the same originator across alternating integration hops and trips the budget at the tail", async () => {
     // Install the production cycle-detection wiring so overflow emits
     // the `system.activity` row we'll assert at the end. Default
     // `getHopBudget` returns DEFAULT_HOP_BUDGET (5).
@@ -130,7 +130,7 @@ describe("cycle multi-hop A→B→A→… loop", () => {
     const baseTitle = `multi-hop-${Math.random().toString(36).slice(2, 8)}`;
 
     // Drive the loop: each iteration is one HTTP request that
-    // simulates a connector reacting to the previous publish.
+    // simulates an integration reacting to the previous publish.
     // `hop=1` is conn-B reacting to conn-A's chain-head event;
     // `hop=2` is conn-A reacting back; and so on. The loop alternates
     // perspective but the originator stays pinned to conn-A — that's

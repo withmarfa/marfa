@@ -125,7 +125,7 @@ export async function buildConnectionContext(
   // Thread the parent cycle into the ConnectionClient so every mutating
   // call back into Marfa stamps the cycle headers. Schedule / webhook
   // handlers start a fresh chain (cycleParent: null — `nextHopMetadata`
-  // stamps the connector as the chain head); item-event handlers
+  // stamps the integration as the chain head); item-event handlers
   // inherit the parent's cycle from the queue message.
   const cycleParent = message.kind === "item-event" ? message.cycle : null;
   const client = new ConnectionClient({

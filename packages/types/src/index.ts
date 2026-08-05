@@ -33,7 +33,7 @@ export {
 
 export {
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
+  ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
 } from "../generated/type-registry.js";
 export { ALL_EDGE_TYPES } from "../generated/edge-type-registry.js";

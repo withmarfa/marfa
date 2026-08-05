@@ -4,7 +4,7 @@
  * Renders through the shared auth layout (`renderAuthLayout` +
  * `/auth/static/auth.css`) so it tracks the same locked language as every
  * other auth surface — no duplicated inline stylesheet. The capability the
- * connector adds sits in a soft tile; the raw type identifiers and scope
+ * integration adds sits in a soft tile; the raw type identifiers and scope
  * strings live behind a collapsed "Technical details" disclosure (hidden by
  * default); the actions are stacked pill buttons.
  *
@@ -57,11 +57,11 @@ interface ConsentParams {
 function describeDirection(direction: "read" | "write" | "both"): string {
   switch (direction) {
     case "read":
-      return "Read-only — the connector will read from the external service into your Marfa space.";
+      return "Read-only — the integration will read from the external service into your Marfa space.";
     case "write":
-      return "Write-only — the connector will write from your Marfa space out to the external service.";
+      return "Write-only — the integration will write from your Marfa space out to the external service.";
     case "both":
-      return "Two-way — the connector will read from and write to the external service.";
+      return "Two-way — the integration will read from and write to the external service.";
   }
 }
 
@@ -82,7 +82,7 @@ function summarizeDirection(direction: "read" | "write" | "both"): string {
 }
 
 /**
- * The verb pair the connector exercises against each target type, expressed
+ * The verb pair the integration exercises against each target type, expressed
  * in the scope grammar (`<type>:read` / `<type>:write`). `both` grants both.
  */
 function directionVerbs(direction: "read" | "write" | "both"): string[] {

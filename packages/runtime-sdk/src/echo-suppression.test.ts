@@ -70,7 +70,7 @@ describe("echo suppression", () => {
   });
 
   it("inLagWindow deletes the underlying record on expiry", async () => {
-    // A connector that writes to an external_id and never reads it back
+    // An integration that writes to an external_id and never reads it back
     // via shouldSkipReactive would leak the storage row forever.
     // inLagWindow mirrors shouldSkipReactive's expire-on-read so cleanup
     // happens on every access path.

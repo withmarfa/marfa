@@ -327,8 +327,8 @@ export function createApp(
   app.use("*", deletionGate.middleware);
 
   // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
-  // X-Marfa-Cycle-Hop headers (a connector continuing a chain) or falls
-  // back to the api key's connection binding (a connector kicking off a
+  // X-Marfa-Cycle-Hop headers (an integration continuing a chain) or falls
+  // back to the api key's connection binding (an integration kicking off a
   // chain). Mounted AFTER auth because the fallback path reads
   // `c.var.apiKey`. The resolved cycle is written to BOTH `c.var.cycle`
   // (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage) so
@@ -691,7 +691,7 @@ export function createApp(
   }
 
   app.route("/events", eventRoutes(storage, streamingRoutesOptions));
-  // Inbound subscription management (admin/connector auth) lives under
+  // Inbound subscription management (admin/integration auth) lives under
   // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
   // public receipt path /webhooks/inbound/:id resolves correctly.
   app.route("/connections", inboundWebhookSubscriptionRoutes(storage));

@@ -10,7 +10,7 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  * The chain is detected through two fields:
  *
  *   - `originatingConnectionId` is set when the chain was kicked off by
- *     a connector (not a human). It propagates verbatim down the chain.
+ *     an integration (not a human). It propagates verbatim down the chain.
  *   - `hopCount` increments on each reactive publish; pubsub.publish()
  *     drops events whose hop_count would exceed the space's
  *     `max_event_hop_budget` (default 5).
@@ -164,11 +164,11 @@ export function __resetCycleDetectionForTests(): void {
 }
 
 /**
- * Helper for connector reaction handlers (exported here so the contract
+ * Helper for integration reaction handlers (exported here so the contract
  * is in one place). Returns the cycle
  * metadata to stamp on a downstream event when reacting to a parent —
  * propagates `originatingConnectionId` (taking the parent's, or stamping
- * the current connector's if the chain starts here) and increments
+ * the current integration's if the chain starts here) and increments
  * `hopCount`.
  */
 export function nextHopMetadata(
@@ -313,7 +313,7 @@ export async function resolveHopBudget(
  */
 /**
  * Resolve the hop count the budget gate should enforce against. For
- * connector-originated events (origin set) it applies a floor of 1 so a
+ * integration-originated events (origin set) it applies a floor of 1 so a
  * malformed wire publish that stamps origin but leaves hopCount at 0
  * doesn't slip past the budget. ALS-driven propagation means in-process
  * callers can't produce this shape, but a tampered inbound header still
@@ -327,17 +327,17 @@ export function computeEffectiveHopCount(cycle: {
   originatingConnectionId: string | null;
   hopCount: number;
 }): number {
-  const isConnectorOriginated = cycle.originatingConnectionId != null;
-  return isConnectorOriginated ? Math.max(cycle.hopCount, 1) : cycle.hopCount;
+  const isIntegrationOriginated = cycle.originatingConnectionId != null;
+  return isIntegrationOriginated ? Math.max(cycle.hopCount, 1) : cycle.hopCount;
 }
 
 async function passesHopBudget(
   event: PubsubEvent,
   cycle: { originatingConnectionId: string | null; hopCount: number },
 ): Promise<boolean> {
-  const isConnectorOriginated = cycle.originatingConnectionId != null;
+  const isIntegrationOriginated = cycle.originatingConnectionId != null;
   // Human-originated events (no origin, no hops) bypass the budget.
-  if (!isConnectorOriginated && cycle.hopCount === 0) return true;
+  if (!isIntegrationOriginated && cycle.hopCount === 0) return true;
   const effectiveHopCount = computeEffectiveHopCount(cycle);
   const budget = await getHopBudget(event.spaceId);
   if (effectiveHopCount <= budget) return true;

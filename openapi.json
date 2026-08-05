@@ -14998,7 +14998,7 @@
           "Inbound Webhooks"
         ],
         "summary": "List recent receipts for an inbound webhook subscription",
-        "description": "Returns recent inbound deliveries received on this subscription, newest first, recording each receipt's verification and dispatch outcome. Use to debug a failing connector or audit what the upstream service has sent.",
+        "description": "Returns recent inbound deliveries received on this subscription, newest first, recording each receipt's verification and dispatch outcome. Use to debug a failing integration or audit what the upstream service has sent.",
         "security": [
           {
             "bearerAuth": []

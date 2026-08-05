@@ -11,7 +11,7 @@
  *      transparently calls the lease broker again when the cached
  *      credential expires.
  *   3. The Connection's permissions are narrow (per the manifest)
- *      and the surface a connector needs is correspondingly narrow:
+ *      and the surface an integration needs is correspondingly narrow:
  *      create item, get item, update item, list items, write
  *      `connection.runtime` extensions, emit `system.activity`.
  *      A bespoke client keeps the surface honest.
@@ -23,7 +23,7 @@ import {
 } from "./types.js";
 
 /**
- * Headers that propagate the cycle metadata from a connector reaction
+ * Headers that propagate the cycle metadata from an integration reaction
  * back to the Marfa server. Mirror the server's
  * `middleware/cycle.ts:CYCLE_HEADERS` constant. Cross-package contract —
  * change in lockstep.
@@ -46,7 +46,7 @@ export interface ConnectionClientOptions {
   /** Custom fetch for testing — defaults to globalThis.fetch. */
   fetch?: typeof fetch;
   /**
-   * Parent cycle metadata for this run. When the connector is reacting
+   * Parent cycle metadata for this run. When the integration is reacting
    * to an `ItemEventMessage`, pass `message.cycle`. When it's a fresh
    * schedule / webhook trigger (or any other non-reactive source), pass
    * `null`. The client stamps `X-Marfa-Cycle-Origin` /
@@ -84,7 +84,7 @@ export interface ItemResource {
 }
 
 /** Query parameters for `listItems`. Mirrors the server's
- *  `GET /items` query schema; only the fields connectors realistically
+ *  `GET /items` query schema; only the fields integrations realistically
  *  use are surfaced. Add more on demand. */
 export interface ListItemsQuery {
   type?: string;
@@ -202,7 +202,7 @@ export class ConnectionClient {
   }
 
   /** GET /items with the supplied query. Server caps the page size at
-   *  200; the connector iterates via `cursor` for full sweeps. */
+   *  200; the integration iterates via `cursor` for full sweeps. */
   async listItems(query: ListItemsQuery = {}): Promise<ListItemsPage> {
     const params = new URLSearchParams();
     if (query.type !== undefined) params.set("type", query.type);
@@ -272,7 +272,7 @@ export class ConnectionClient {
 
   /** POST/GET/PATCH/DELETE through the connection-proxy route, forwarding
    *  the runtime credential. Server's wildcard `/connections/:id/proxy/*`
-   *  passes through to the upstream service with the connector's stored
+   *  passes through to the upstream service with the integration's stored
    *  bearer applied (OAuth access_token for `kind: oauth_token`
    *  credentials, the static API token for `kind: api_token` credentials).
    *  Returns the raw Response so handlers stream / parse as needed.

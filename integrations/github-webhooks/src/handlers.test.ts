@@ -101,7 +101,7 @@ const ISSUES_OPENED = {
     id: 1234567890,
     node_id: "I_kwDOABCDEFG12345",
     number: 42,
-    title: "Repro: connector misses ping",
+    title: "Repro: integration misses ping",
     body: "Steps to reproduce…",
     html_url: "https://github.com/withmarfa/marfa/issues/42",
     user: { login: "octocat" },
@@ -118,7 +118,7 @@ const PR_OPENED = {
     id: 9876543210,
     node_id: "PR_kwDOABCDEFG67890",
     number: 7,
-    title: "Add Layer-3 RSS connector",
+    title: "Add Layer-3 RSS integration",
     body: "First Layer-3 PR.",
     html_url: "https://github.com/withmarfa/marfa/pull/7",
     user: { login: "augustcayzer" },
@@ -133,7 +133,7 @@ const PR_CLOSED = {
   action: "closed",
   pull_request: {
     number: 7,
-    title: "Add Layer-3 RSS connector",
+    title: "Add Layer-3 RSS integration",
     html_url: "https://github.com/withmarfa/marfa/pull/7",
   },
   repository: { full_name: "withmarfa/marfa" },
@@ -178,7 +178,7 @@ describe("github-webhooks handler", () => {
     expect(result).toEqual({ ok: true });
     expect(created).toHaveLength(1);
     expect(created[0]!.properties).toMatchObject({
-      title: "Repro: connector misses ping",
+      title: "Repro: integration misses ping",
       url: "https://github.com/withmarfa/marfa/issues/42",
       author: "octocat",
       source_url: "https://github.com/withmarfa/marfa",
@@ -204,7 +204,7 @@ describe("github-webhooks handler", () => {
     );
     expect(created).toHaveLength(1);
     expect(created[0]!.properties).toMatchObject({
-      title: "Add Layer-3 RSS connector",
+      title: "Add Layer-3 RSS integration",
       url: "https://github.com/withmarfa/marfa/pull/7",
       author: "augustcayzer",
       source_title: "withmarfa/marfa / pull_requests",

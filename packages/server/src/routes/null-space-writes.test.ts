@@ -5,7 +5,7 @@
  * five weeks, every one of them attributed by `properties.connection_id` to a
  * Connection that had a perfectly good space. Only the runtime execution
  * path was affected: the install and uninstall pipelines pass a space
- * explicitly, while a connector's own writes are stamped from the credential
+ * explicitly, while an integration's own writes are stamped from the credential
  * it presents. `POST /keys` minted space-less credentials from a platform
  * admin, so a credential that read as scoped carried the platform tier, and
  * every row it wrote landed unowned.
@@ -121,7 +121,7 @@ async function unownedRowIds(type: string): Promise<string[]> {
 }
 
 describe("a runtime credential's writes belong to its space", () => {
-  it("REGRESSION: an activity row written by a connector carries the space", async () => {
+  it("REGRESSION: an activity row written by an integration carries the space", async () => {
     const space = await ctx.storage.spaces!.create("activity-owner");
     const cred = await runtimeCredential(space.id);
 

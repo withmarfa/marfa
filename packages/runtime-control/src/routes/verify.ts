@@ -343,8 +343,8 @@ export function registerVerifyRoute(
       });
     }
 
-    // items_created: reserved for when connectors stamp `created_item_ids`
-    // on their system.activity rows. No in-tree connector does so yet.
+    // items_created: reserved for when integrations stamp `created_item_ids`
+    // on their system.activity rows. No in-tree integration does so yet.
     const itemsCreated: string[] = [];
 
     return c.json({

@@ -3,7 +3,7 @@
  * positions declared in the Integration manifest's
  * `bidirectional_handling` block.
  *
- * Echo TTL: when the connector writes to an external service, the
+ * Echo TTL: when the integration writes to an external service, the
  * service's webhook fires for the same change shortly after. Without
  * dedup, the inbound side re-ingests Marfa's own write. Mechanism:
  * a short-lived `pending_writes` set keyed by
@@ -97,7 +97,7 @@ export function createEchoSuppression(
       const now = now_ms();
       if (lagDeadline <= now) {
         // Delete on expiry to close the second access path without a prune loop;
-        // a connector that never calls shouldSkipReactive would otherwise leak.
+        // an integration that never calls shouldSkipReactive would otherwise leak.
         await storage.delete(key(externalId));
         return false;
       }

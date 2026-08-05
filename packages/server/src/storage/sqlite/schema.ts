@@ -411,7 +411,7 @@ export const inboundWebhookEvents = sqliteTable(
 // connection_oauth_tokens
 //
 // One row per `system.connection` of kind `integration` whose
-// connector authenticates with a token-bearing OAuth grant. The proxy route
+// integration authenticates with a token-bearing OAuth grant. The proxy route
 // (`POST /connections/:id/proxy/*`) reads from this table, decrypts, and
 // stamps `Authorization: Bearer <access>` on the upstream call.
 //

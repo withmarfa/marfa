@@ -1,9 +1,9 @@
 /**
- * Secondary-connector fixture for the e2e flow test.
+ * Secondary-integration fixture for the e2e flow test.
  *
- * The e2e test composes two connectors in a chain: a primary that runs
+ * The e2e test composes two integrations in a chain: a primary that runs
  * a webhook handler and "publishes" a reactive item-event, and this
- * secondary connector which subscribes to the item-event and writes a
+ * secondary integration which subscribes to the item-event and writes a
  * cursor marker proving the chain crossed every seam (control plane →
  * queue → first handler → reactive event → second handler → storage).
  *
@@ -30,7 +30,7 @@ export interface SecondaryMarker {
   item_id: string;
   /** Cycle hop_count as observed by the secondary handler. The bridge
    *  increments hop_count on republish (`nextHopMetadata`); a
-   *  secondary connector seeing hop_count > 0 proves it received the
+   *  secondary integration seeing hop_count > 0 proves it received the
    *  event from the chain rather than as the originator. */
   hop_count: number;
   /** Originating connection id from the cycle metadata — proves the
@@ -43,7 +43,7 @@ export interface SecondaryMarker {
  * e2e test after switching the harness to the secondary's
  * integrationName so consumeBatch routes the queued event here.
  *
- * The handler is intentionally trivial: write a marker. Real connectors
+ * The handler is intentionally trivial: write a marker. Real integrations
  * do work; the e2e test cares about seam-crossings, not work.
  */
 export function registerSecondaryHandler(): void {

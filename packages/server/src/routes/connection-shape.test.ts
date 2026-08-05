@@ -12,7 +12,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// system.connection shape tests. Exercises connector-specific fields via POST /items + GET /items:
+// system.connection shape tests. Exercises integration-specific fields via POST /items + GET /items:
 // schema acceptance, persistence, and enum rejection. Writes to system.* require is_platform: true;
 // the bootstrap admin key from createTestContext satisfies that gate.
 
@@ -29,7 +29,7 @@ interface ErrorResponse {
   error: { code: string; message?: string };
 }
 
-const VALID_CONNECTOR = {
+const VALID_INTEGRATION = {
   type: "system.connection",
   properties: {
     kind: "integration",
@@ -48,10 +48,10 @@ const VALID_CONNECTOR = {
 };
 
 describe("system.connection — kind: integration shape", () => {
-  it("accepts and persists every connector-shape field", async () => {
+  it("accepts and persists every integration-shape field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: VALID_CONNECTOR,
+      body: VALID_INTEGRATION,
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as ItemResponse;
@@ -85,7 +85,7 @@ describe("system.connection — kind: integration shape", () => {
       body: {
         type: "system.connection",
         properties: {
-          ...VALID_CONNECTOR.properties,
+          ...VALID_INTEGRATION.properties,
           runtime_status: "totally-fine",
         },
       },
@@ -101,7 +101,7 @@ describe("system.connection — kind: integration shape", () => {
       body: {
         type: "system.connection",
         properties: {
-          ...VALID_CONNECTOR.properties,
+          ...VALID_INTEGRATION.properties,
           direction: "diagonal",
         },
       },
@@ -117,7 +117,7 @@ describe("system.connection — kind: integration shape", () => {
       body: {
         type: "system.connection",
         properties: {
-          ...VALID_CONNECTOR.properties,
+          ...VALID_INTEGRATION.properties,
           kind: "future-kind",
         },
       },
@@ -133,7 +133,7 @@ describe("system.connection — kind: integration shape", () => {
       body: {
         type: "system.connection",
         properties: {
-          ...VALID_CONNECTOR.properties,
+          ...VALID_INTEGRATION.properties,
           feed_activity: true,
         },
       },

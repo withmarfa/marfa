@@ -720,7 +720,7 @@ export function bulkRoutes(storage: Storage) {
     // `PATCH /items/{id}` gate for gate, because the two are the same
     // operation reached through different doors: the row's real type
     // decides the type gate, and the attribution check runs on the row
-    // both as it stands and as it will stand. Before, so a connector
+    // both as it stands and as it will stand. Before, so an integration
     // cannot edit a sibling's activity without naming a connection at
     // all; after, so it cannot re-point its own. The merge mirrors the
     // shallow property merge the storage layer performs.
@@ -966,8 +966,8 @@ export function bulkRoutes(storage: Storage) {
 
     // The type axis is not the only one a caller can be narrower than.
     // `system.activity` sits in every runtime credential's type filter —
-    // that grant is what lets a connector report its own progress — so a
-    // filter naming the type matches every connector's rows in the
+    // that grant is what lets an integration report its own progress — so a
+    // filter naming the type matches every integration's rows in the
     // space, and the worker applies the action to the frozen id list
     // without re-deriving who may write what. One credential could
     // rewrite, retier or revoke every sibling's activity in a single
@@ -978,7 +978,7 @@ export function bulkRoutes(storage: Storage) {
     //
     // Judged on the row as it stands and, for `update_properties`, on the
     // row the patch produces — the same two halves every other door
-    // checks. Before, or a connector edits a sibling's activity without
+    // checks. Before, or an integration edits a sibling's activity without
     // naming a connection at all; after, or it re-points its own.
     const callerKey = c.get("apiKey");
     const patch = body.action === "update_properties" ? body.patch : undefined;

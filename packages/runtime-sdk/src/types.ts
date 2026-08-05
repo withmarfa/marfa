@@ -25,14 +25,14 @@ export const SDK_DEFAULT_HOP_BUDGET = 5;
 
 /**
  * Compute cycle metadata for a downstream event published from a
- * connector reaction. Mirrors the server-side `nextHopMetadata` — kept
+ * integration reaction. Mirrors the server-side `nextHopMetadata` — kept
  * here so integration handlers don't roll their own and accidentally
  * skip stamping `originating_connection_id`.
  *
  * Pass the parent's `cycle` (from `ItemEventMessage.cycle`) and the
- * current connector's `connection_id`. The returned metadata stamps:
+ * current integration's `connection_id`. The returned metadata stamps:
  *   - `originating_connection_id`: parent's if set, otherwise the
- *     current connection (this connector kicks off the chain).
+ *     current connection (this integration kicks off the chain).
  *   - `hop_count`: parent's + 1.
  */
 export function nextHopMetadata(
@@ -137,7 +137,7 @@ export interface ScheduleMessage extends QueueEnvelopeBase {
 }
 
 /** Produced by the server-side reactive-run bridge when an
- *  event_log row matches a connector's subscription. */
+ *  event_log row matches an integration's subscription. */
 export interface ItemEventMessage extends QueueEnvelopeBase {
   kind: "item-event";
   event_type: string;

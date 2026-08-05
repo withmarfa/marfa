@@ -567,15 +567,15 @@ export function connectionRoutes(
     };
 
     const hopBudgetMax = await resolveHopBudget(spaceId);
-    const isConnectorOriginated = event.originatingConnectionId != null;
-    // Shares pubsub.computeEffectiveHopCount so the connector-at-hop-0-counts-as-1
+    const isIntegrationOriginated = event.originatingConnectionId != null;
+    // Shares pubsub.computeEffectiveHopCount so the integration-at-hop-0-counts-as-1
     // floor can't drift from the live budget gate.
     const effectiveHopCount = computeEffectiveHopCount({
       originatingConnectionId: event.originatingConnectionId ?? null,
       hopCount: event.hopCount ?? 0,
     });
     const hopBudgetExceeded =
-      isConnectorOriginated && effectiveHopCount > hopBudgetMax;
+      isIntegrationOriginated && effectiveHopCount > hopBudgetMax;
 
     const envelopes: PreviewEventEnvelope[] = [];
     const considerSubscriber = (

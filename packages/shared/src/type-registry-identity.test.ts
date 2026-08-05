@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
+  ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
-  CONNECTOR_TYPE_IDS,
+  INTEGRATION_TYPE_IDS,
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
 } from "./type-registry.js";
@@ -49,7 +49,7 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.task",
 ];
 
-const CONNECTOR_TYPE_IDENTIFIERS = [
+const INTEGRATION_TYPE_IDENTIFIERS = [
   "google.calendar.event",
   "google.contacts.contact",
   "google.drive.file",
@@ -78,7 +78,7 @@ const SYSTEM_TYPE_IDENTIFIERS = [
 
 const ALL_SHIPPED_IDENTIFIERS = [
   ...CORE_TYPE_IDENTIFIERS,
-  ...CONNECTOR_TYPE_IDENTIFIERS,
+  ...INTEGRATION_TYPE_IDENTIFIERS,
   ...SYSTEM_TYPE_IDENTIFIERS,
 ].sort();
 
@@ -94,9 +94,9 @@ describe("shipped type identifiers", () => {
     expect(sortedIds(ALL_TYPES)).toEqual([...CORE_TYPE_IDENTIFIERS].sort());
   });
 
-  it("keeps the connector family exact", () => {
-    expect(sortedIds(ALL_CONNECTOR_TYPES)).toEqual(
-      [...CONNECTOR_TYPE_IDENTIFIERS].sort(),
+  it("keeps the integration family exact", () => {
+    expect(sortedIds(ALL_INTEGRATION_TYPES)).toEqual(
+      [...INTEGRATION_TYPE_IDENTIFIERS].sort(),
     );
   });
 
@@ -108,17 +108,17 @@ describe("shipped type identifiers", () => {
 
   it("partitions the registry into three disjoint families", () => {
     const total =
-      ALL_TYPES.length + ALL_CONNECTOR_TYPES.length + ALL_SYSTEM_TYPES.length;
+      ALL_TYPES.length + ALL_INTEGRATION_TYPES.length + ALL_SYSTEM_TYPES.length;
     expect(TYPE_REGISTRY.size).toBe(total);
   });
 
-  it("resolves connector types exactly like core types", () => {
-    // The families differ in provenance only. A connector type that stopped
+  it("resolves integration types exactly like core types", () => {
+    // The families differ in provenance only. An integration type that stopped
     // resolving, or that picked up a system-type restriction, would strand
-    // every item a connector has written.
-    for (const id of CONNECTOR_TYPE_IDENTIFIERS) {
+    // every item an integration has written.
+    for (const id of INTEGRATION_TYPE_IDENTIFIERS) {
       expect(TYPE_REGISTRY.get(id)?.id, `missing ${id}`).toBe(id);
-      expect(CONNECTOR_TYPE_IDS.has(id), `not classified: ${id}`).toBe(true);
+      expect(INTEGRATION_TYPE_IDS.has(id), `not classified: ${id}`).toBe(true);
       expect(SYSTEM_TYPE_IDS.has(id), `wrongly system: ${id}`).toBe(false);
     }
   });

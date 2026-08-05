@@ -1,7 +1,7 @@
 /**
  * Manifest for the GitHub Webhooks test integration.
  *
- * Read-only inbound-webhook connector. Listens for `issues` and
+ * Read-only inbound-webhook integration. Listens for `issues` and
  * `pull_request` events on a registered repo. Each opened
  * issue/PR becomes a `core.bookmark` item.
  *

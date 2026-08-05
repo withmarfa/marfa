@@ -1,13 +1,13 @@
 /**
  * Manifest for the Task Auto-Archive test integration.
  *
- * Reactive intra-Marfa connector. Archives `core.task` items older
+ * Reactive intra-Marfa integration. Archives `core.task` items older
  * than `archive_after_days` (configuration field, default 30).
  *
  * Two triggers fire the same sweep function:
  *   - `item-event` for responsiveness — any core.task event nudges
  *     the handler (the bridge's self-event suppression keeps the
- *     connector's own writes from re-entering).
+ *     integration's own writes from re-entering).
  *   - `schedule` (03:00 daily) for guaranteed coverage when no
  *     item events touch the type.
  *

@@ -182,7 +182,7 @@ describe("performUninstall — error paths", () => {
     });
   });
 
-  it("throws UninstallError(wrong_connection_kind) when called against a non-connector connection", async () => {
+  it("throws UninstallError(wrong_connection_kind) when called against a non-integration connection", async () => {
     // Mint a system.connection with kind: app (the OAuth-grant
     // shape) and confirm uninstall rejects it. Uninstall is scoped to
     // integration kinds.

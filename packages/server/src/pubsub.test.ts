@@ -244,20 +244,20 @@ describe("publish — hop budget enforcement", () => {
     expect(result).toBeUndefined();
   });
 
-  it("enforces budget on connector-originated events even when hopCount=0", async () => {
-    // A misbehaving connector that stamps `originatingConnectionId` but
+  it("enforces budget on integration-originated events even when hopCount=0", async () => {
+    // A misbehaving integration that stamps `originatingConnectionId` but
     // leaves hopCount at 0 must not slip past the budget. The fix
     // attributes by origin presence — effective hopCount floors at 1.
     const overflow = vi.fn(() => Promise.resolve());
     initEventLog(ctx.storage.eventLog, {
-      // Budget of 0 — any connector-originated event should overflow.
+      // Budget of 0 — any integration-originated event should overflow.
       getHopBudget: () => Promise.resolve(0),
       onHopOverflow: overflow,
     });
 
     const result = await publish({
       type: "created",
-      item: fakeItem("item-misbehaving-connector"),
+      item: fakeItem("item-misbehaving-integration"),
       hopCount: 0,
       originatingConnectionId: "conn-misbehaving",
     });
@@ -449,7 +449,7 @@ describe("publish — cycle resolution from cycleRequestContext", () => {
     expect(last?.hop_count).toBe(3);
   });
 
-  it("ALS-resolved connector-originated event with hopCount=0 still enforces the budget floor", async () => {
+  it("ALS-resolved integration-originated event with hopCount=0 still enforces the budget floor", async () => {
     // Wire-tampering defense (`Math.max(hopCount, 1)`) survives the ALS
     // refactor. An ALS context with origin set + hopCount=0 (the chain-
     // head shape a runtime credential request resolves to) is fine at

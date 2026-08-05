@@ -734,7 +734,7 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
     );
 
     // Default hop budget is 5; hop_count: 99 with a non-null originating
-    // id makes this connector-originated and over budget.
+    // id makes this integration-originated and over budget.
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
       key: ctx.adminKey,
       body: {

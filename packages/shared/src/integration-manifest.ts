@@ -40,7 +40,7 @@ import { isValidTypeIdentifier } from "./validation.js";
  *                      manifest declares this trigger; the inbound webhook
  *                      subscription consumes the manifest's verification
  *                      declaration.
- *   - **item-event** — a Marfa item changes. The connector subscribes via
+ *   - **item-event** — a Marfa item changes. The integration subscribes via
  *                      the item-event bus; cycle-detection metadata
  *                      protects against A→B→A loops.
  *   - **manual**     — the Integration declares it accepts user-initiated
@@ -113,7 +113,7 @@ const PartialWriteModeSchema = z.enum(["all-or-nothing", "accept-partial"]);
 
 const BidirectionalHandlingSchema = z.object({
   /**
-   * Echo-suppression TTL (seconds). The connector's `pending_writes` set
+   * Echo-suppression TTL (seconds). The integration's `pending_writes` set
    * is keyed by `(external_id, content_hash)` and entries expire after
    * this window. Default 60 per Design Direction line 100; per-Integration
    * override allowed.
@@ -137,7 +137,7 @@ const BidirectionalHandlingSchema = z.object({
    */
   tombstone_mapping: TombstoneMappingSchema,
   /**
-   * Partial-write mode — what the connector does when an external write
+   * Partial-write mode — what the integration does when an external write
    * partially succeeds.
    *   - `all-or-nothing` (default): roll back the local optimistic write
    *     and surface an error.

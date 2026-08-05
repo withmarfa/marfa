@@ -12,7 +12,7 @@
  *   2. A credential's item provenance survives its own rotation. The
  *      stamped `source` used to be the credential's, which changes on
  *      every mint, so upsert identity `(source, source_id)` moved with
- *      it and every refresh forked the connector's corpus.
+ *      it and every refresh forked the integration's corpus.
  *   3. A mint cannot outlive the uninstall it raced. The state check and
  *      the write were not serialized against the pipeline that revokes
  *      credentials and revokes the Connection.
@@ -586,7 +586,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // being edited belongs to a sibling, and the patch names this
     // credential's own connection. Judged on the merged result, that
     // reads as a credential writing its own activity; judged on the row
-    // as it stands, it is one connector taking another's.
+    // as it stands, it is one integration taking another's.
     const space = await ctx.storage.spaces!.create("activity-claim");
     const mine = await credentialFor(space.id, "acme.claim-mine");
     const sibling = await credentialFor(space.id, "acme.claim-sibling");
@@ -687,7 +687,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
   });
 
   it("still lets a credential write and update its own activity", async () => {
-    // The gate has to admit the only thing a connector legitimately does
+    // The gate has to admit the only thing an integration legitimately does
     // with this type, or the runtime SDK's activity sink stops working
     // on every run and the failure is invisible until nothing reports.
     const space = await ctx.storage.spaces!.create("activity-own");

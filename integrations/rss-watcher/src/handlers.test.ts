@@ -2,7 +2,7 @@
  * Handler-level tests for the RSS Watcher integration.
  *
  * Builds ConnectionContext inline (the template's pattern) so the
- * Marfa HTTP API doesn't need to be reachable. The connector's
+ * Marfa HTTP API doesn't need to be reachable. The integration's
  * outbound fetch (against the feed URL) is injected via
  * `createScheduleHandler({ fetch })` so no globalThis stubbing is
  * needed.
@@ -328,7 +328,7 @@ describe("RSS Watcher schedule handler", () => {
   it("switches feeds when the configured feed_url changes", async () => {
     // The connection is reconfigured between ticks. Caching the URL on
     // the cursor and never re-reading it meant the change was silently
-    // ignored: the connector kept polling the old feed forever.
+    // ignored: the integration kept polling the old feed forever.
     const ref = {
       current: {
         properties: { configuration: { feed_url: "https://example.com/a" } },

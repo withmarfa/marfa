@@ -47,7 +47,7 @@ export interface AppEnv extends Record<string, unknown> {
     /**
      * Cycle metadata for events published from this request. Resolved
      * by `cycleMiddleware` after auth from either the inbound
-     * `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` headers (a connector
+     * `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` headers (an integration
      * reacting to a parent event — the SDK threads them via
      * `ConnectionClient.request()`) or from the caller's api key when
      * the headers are absent (the chain head).
@@ -61,8 +61,8 @@ export interface AppEnv extends Record<string, unknown> {
      *
      * **Never `null`.** A human-issued chain head is `{
      * originatingConnectionId: null, hopCount: 0 }` (the explicit
-     * sentinel); a connector chain head is `{ originatingConnectionId:
-     * <connection_id>, hopCount: 0 }`; a connector continuing a chain
+     * sentinel); an integration chain head is `{ originatingConnectionId:
+     * <connection_id>, hopCount: 0 }`; an integration continuing a chain
      * is `{ originatingConnectionId: <head>, hopCount: parent + 1 }`.
      * The `null` originator on the human sentinel is the contract
      * `passesHopBudget` keys on to bypass the budget — see
@@ -457,21 +457,21 @@ export function authMiddleware(
 
 /**
  * Credential `source` prefixes that the connection routes read as proof
- * of connector identity: `requireConnectionAccess` in
+ * of integration identity: `requireConnectionAccess` in
  * `routes/inbound-webhooks.ts` and `routes/connection-leased-tokens.ts`,
  * `requireConnectionProxyAccess` in `routes/connection-proxy.ts`, and the
  * cycle resolver's origin derivation all match on them.
  *
  * A caller-supplied `source` is free text, so without this reservation a
  * space admin could mint a plain `member` key labelled
- * `oauth:<connection-id>` and hold connector authority over that
+ * `oauth:<connection-id>` and hold integration authority over that
  * connection — proxying through its decrypted upstream token, issuing
  * leases, rewriting its inbound webhooks — while carrying none of the
  * bindings that authority is supposed to follow from. Same shape as
  * lifting `role` out of the body: a field the request controls, read
  * later as authority.
  *
- * The legitimate holders never pass through the mint routes. Connector
+ * The legitimate holders never pass through the mint routes. Integration
  * credentials are created at the storage layer by the install pipeline
  * and the runtime broker; the OAuth shape is synthesized per-request in
  * this file and never persisted at all.
@@ -482,7 +482,7 @@ export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "runtime-",
 ] as const;
 
-/** Whether `source` claims one of the reserved connector shapes. */
+/** Whether `source` claims one of the reserved integration shapes. */
 export function isReservedCredentialSource(source: string): boolean {
   const normalized = source.trim().toLowerCase();
   return RESERVED_CREDENTIAL_SOURCE_PREFIXES.some((prefix) =>
@@ -527,7 +527,7 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
 /**
  * Predicate form of `checkAdmin`'s test, for the handful of routes that
  * need the answer as a boolean rather than a throw (they combine it with
- * a connector-credential branch, or use it to widen a space filter).
+ * an integration-credential branch, or use it to widen a space filter).
  *
  * Exported so no callsite re-derives it. A hand-rolled `role === "admin"`
  * silently readmits the space-bound admin this gate exists to exclude,
@@ -626,11 +626,11 @@ export function checkTypeAccess(
   // scoping at the storage layer); only writes need `is_platform`.
   //
   // Carve-out: runtime credentials (`is_runtime_credential: true`) may
-  // write `system.activity`. That's the connector's status-reporting
+  // write `system.activity`. That's the integration's status-reporting
   // channel — the activity sink in `runtime-sdk` calls `POST /items`
   // with `type: "system.activity"` to surface progress / errors for the
   // connection the credential is bound to. Without the carve-out a
-  // legitimate connector can't emit activity rows.
+  // legitimate integration can't emit activity rows.
   if (level === "write") {
     const tier = classifyNamespace(type);
     if ((tier === "system" || tier === "marfa") && !key.is_platform) {
@@ -722,10 +722,10 @@ export function requireTypeAccess(
  * `GET /items/:connection_id`, so it needs read access to a
  * `system.connection` row. Granting `system.connection: read` in
  * `type_permissions` would be space-wide — `type_permissions` keys on
- * type, with no per-item axis — handing every connector read access to
+ * type, with no per-item axis — handing every integration read access to
  * every other Connection's configuration in the space. This carve-out is
  * the per-item form: the credential's `connection_id` stamp must equal
- * the item being read, so a connector sees its own Connection and no
+ * the item being read, so an integration sees its own Connection and no
  * other. Mirrors the identity check the connection-proxy and extension
  * routes already apply.
  */
@@ -753,9 +753,9 @@ export function isOwnConnectionRead(
  *
  * That is not cosmetic. Upsert identity is `(source, source_id)`:
  * `findBySourceId` scopes its lookup by the item's `source`, so a
- * connector re-syncing an upstream record after a credential refresh
+ * integration re-syncing an upstream record after a credential refresh
  * looks for it under a source no row carries, finds nothing, and creates
- * a second item. Every rotation forks the connector's whole corpus, and
+ * a second item. Every rotation forks the integration's whole corpus, and
  * because both writes succeed the failure is silent.
  *
  * `item_source` is derived from the bound Connection and is fixed for
@@ -776,22 +776,22 @@ export function itemProvenanceSource(
  *
  * The `system.activity` carve-out in `checkTypeAccess` lets a runtime
  * credential write into the reserved `system.*` namespace without being
- * a platform credential, because status reporting is how a connector
+ * a platform credential, because status reporting is how an integration
  * says anything at all. That carve-out is about the type; it says
  * nothing about whose activity the row claims to be.
  * `properties.connection_id` is the field every operator surface groups,
  * filters and alerts on, and it arrives in the request body.
  *
- * Left unchecked, one connector can write `severity: action_required`
+ * Left unchecked, one integration can write `severity: action_required`
  * rows against a sibling Connection in the same space: a Repairs inbox
  * entry telling a user to re-authorize an integration that is working
- * fine, attributed to a connector that never ran. Nothing distinguishes
+ * fine, attributed to an integration that never ran. Nothing distinguishes
  * the row from a real one, because on the wire it is a real one.
  *
  * A runtime credential is bound to exactly one Connection, so the rule
  * is equality with that binding. Every other credential is unaffected:
  * writing `system.*` at all already requires a platform credential,
- * which is an operator acting deliberately rather than a connector
+ * which is an operator acting deliberately rather than an integration
  * acting on its own.
  *
  * Called from each door that can write an item rather than folded into
@@ -865,7 +865,7 @@ function claimedConnectionId(properties: unknown): unknown {
  * Type permission is a separate axis and is still checked by the caller.
  * This narrows within a type the caller may already write, which is the
  * gap: `system.activity` sits in every runtime credential's type filter,
- * because that grant is what lets a connector report its own progress.
+ * because that grant is what lets an integration report its own progress.
  */
 export function requireRowWritable(
   key: ApiKey | undefined,

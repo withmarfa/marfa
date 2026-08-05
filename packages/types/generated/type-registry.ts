@@ -1,4 +1,4 @@
-// Auto-generated from core/*.json, connectors/*.json and core/system/*.json — do not edit manually.
+// Auto-generated from core/*.json, integrations/*.json and core/system/*.json — do not edit manually.
 // Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
 import type { TypeSchema } from "../src/schema-types.js";
@@ -851,7 +851,7 @@ const googleYoutubeVideo: TypeSchema = {
   compatible_with: ["core.media"],
 };
 
-export const ALL_CONNECTOR_TYPES: TypeSchema[] = [
+export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
   raindropCollection,
   raindropRaindrop,
   readwiseBook,
@@ -879,7 +879,7 @@ const systemAccountHolder: TypeSchema = {
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
-  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
+  description: "User-meaningful telemetry emitted by an external-service integration at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorize, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the integration writes. Lifecycle bounded to active | revoked. Has no tier by default.",
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
@@ -932,7 +932,7 @@ const systemConnection: TypeSchema = {
 const systemCredential: TypeSchema = {
   id: "system.credential",
   label: "Credential",
-  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier. For kind: oauth_token, the connector's OAuth provider config (upstream URLs, client id) is stored under `oauth_provider_config` and the client secret under `secret_encrypted` (AES-256-GCM via the connectionOauthToken HKDF domain). For kind: api_token, the upstream API base URL is stored under `api_token_config.upstream_base_url` and the user-supplied bearer token under `secret_encrypted` (same HKDF domain — no separate key minting). The companion connection items reference credentials via `credential_ref`.",
+  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier. For kind: oauth_token, the integration's OAuth provider config (upstream URLs, client id) is stored under `oauth_provider_config` and the client secret under `secret_encrypted` (AES-256-GCM via the connectionOauthToken HKDF domain). For kind: api_token, the upstream API base URL is stored under `api_token_config.upstream_base_url` and the user-supplied bearer token under `secret_encrypted` (same HKDF domain — no separate key minting). The companion connection items reference credentials via `credential_ref`.",
   version: 1,
   fields: {
     label: { type: "string", description: "Human-readable label", required: true },

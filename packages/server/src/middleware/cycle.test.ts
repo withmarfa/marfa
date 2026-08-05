@@ -1,8 +1,8 @@
 /**
  * Tests for `cycleMiddleware`.
  *
- * Exercises every resolution path: header pair (connector continuing a
- * chain), api-key fallback (connector chain head — runtime credential
+ * Exercises every resolution path: header pair (integration continuing a
+ * chain), api-key fallback (integration chain head — runtime credential
  * and OAuth), and the human sentinel.
  *
  * These tests stand up a minimal Hono app with the same mounting order
@@ -54,7 +54,7 @@ function apiKey(overrides: Partial<ApiKey> = {}): ApiKey {
 }
 
 describe("cycleMiddleware", () => {
-  describe("header path — connector continuing a chain", () => {
+  describe("header path — integration continuing a chain", () => {
     it("uses the X-Marfa-Cycle-Origin / X-Marfa-Cycle-Hop pair when both present", async () => {
       const app = buildApp();
       const res = await app.request("/echo", {
