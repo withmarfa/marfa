@@ -47,6 +47,16 @@ export function generateCodeVerifier(length = 64): string {
 /** Compute the S256 challenge: BASE64URL(SHA-256(verifier)). Prefers Web
  *  Crypto; falls back to a pure-JS SHA-256 in insecure contexts where
  *  `crypto.subtle` is unavailable. */
+/**
+ * The PKCE challenge is computed here rather than by
+ * `oauth4webapi.calculatePKCECodeChallenge`, which is the one piece of
+ * the flow that could not move to the library. That helper reaches
+ * straight for `crypto.subtle`, and a browser on a plain-http,
+ * non-localhost origin does not have it — the self-hosted-on-a-LAN case
+ * `sha256.ts` exists for. Verified by running the library's helper with
+ * `crypto.subtle` undefined: it throws, while the discovery call and
+ * both token exchanges keep working.
+ */
 export async function computeCodeChallenge(verifier: string): Promise<string> {
   const data = new TextEncoder().encode(verifier);
   // The lib types `crypto.subtle` as always-present, but it is undefined in

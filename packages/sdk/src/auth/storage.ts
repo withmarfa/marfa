@@ -4,6 +4,13 @@
  * Browser default: localStorage keyed by `(origin, client_id)`.
  * Node default: in-memory; Node consumers can pass a file-backed
  * implementation if they need cross-process persistence.
+ *
+ * Kept hand-written when the OAuth protocol work moved to
+ * `oauth4webapi`: the library deliberately has no opinion on where
+ * tokens live, and where they live is the part callers most need to
+ * override. The `~/.marfa/<instance>.json` store under `auth/node` is a
+ * cross-tool contract, not an implementation detail, so it belongs to
+ * this SDK rather than to a dependency.
  */
 
 export interface TokenStorage {

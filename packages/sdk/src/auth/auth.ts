@@ -1,3 +1,5 @@
+import * as oauth from "oauth4webapi";
+import { ALLOW_INSECURE_HTTP } from "./insecure-http.js";
 import { defaultTokenStorage } from "./storage.js";
 import type { TokenStorage } from "./storage.js";
 import {
@@ -52,6 +54,29 @@ interface PendingState {
 
 interface StoredBrowserSession {
   id_token?: unknown;
+}
+
+/** OAuth error codes this SDK models. Anything the server sends that is
+ *  not one of them reads as `invalid_grant`, which is the conservative
+ *  answer: treat an unrecognized refusal as a dead grant rather than as
+ *  something retryable. */
+const OAUTH_ERROR_CODES = [
+  "invalid_grant",
+  "invalid_request",
+  "invalid_client",
+  "invalid_scope",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "access_denied",
+  "server_error",
+  "temporarily_unavailable",
+] as const;
+
+function toOAuthErrorCode(value: unknown): (typeof OAUTH_ERROR_CODES)[number] {
+  return typeof value === "string" &&
+    (OAUTH_ERROR_CODES as readonly string[]).includes(value)
+    ? (value as (typeof OAUTH_ERROR_CODES)[number])
+    : "invalid_grant";
 }
 
 export class MarfaAuth {
@@ -166,43 +191,49 @@ export class MarfaAuth {
     }
 
     const endpoints = await discoverEndpoints(this.issuer, this.fetch);
-    // OAuth 2.0 §3.2: token endpoint takes form-encoded.
-    const res = await this.fetch(endpoints.token, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        code_verifier: pending.verifier,
-        redirect_uri: pending.redirectUri,
-        client_id: this.clientId,
-      }).toString(),
-    });
-    const body = (await res.json()) as {
-      access_token?: string;
-      refresh_token?: string;
-      expires_in?: number;
-      scope?: string;
-      id_token?: string;
-      error?: string;
-      error_description?: string;
-    };
-    if (!res.ok || !body.access_token || !body.refresh_token) {
-      const errCode = body.error
-        ? (body.error as
-            | "invalid_grant"
-            | "invalid_request"
-            | "invalid_client"
-            | "invalid_scope"
-            | "unauthorized_client"
-            | "unsupported_grant_type"
-            | "access_denied"
-            | "server_error"
-            | "temporarily_unavailable")
-        : "invalid_grant";
+    const client = { client_id: this.clientId };
+    // The exchange is the library's: it builds the form-encoded body,
+    // applies `none` client authentication for a public client, and
+    // validates the response against RFC 6749 rather than trusting the
+    // JSON that came back. `token_type`, which the hand-written reader
+    // never checked, is one of the things it now insists on.
+    const res = await oauth.authorizationCodeGrantRequest(
+      endpoints.as,
+      client,
+      oauth.None(),
+      new URLSearchParams({ code }),
+      pending.redirectUri,
+      pending.verifier,
+      {
+        ...ALLOW_INSECURE_HTTP,
+        [oauth.customFetch]: this.fetch,
+      },
+    );
+    // The refusal is read first and separately. The library's processor
+    // rejects rather than returning on a non-2xx, and merging the two
+    // shapes into one value would erase the types it does give us.
+    if (!res.ok) {
+      const failure = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        error_description?: string;
+      };
       throw new OAuthError(
-        errCode,
-        body.error_description ?? body.error ?? "Token exchange failed",
+        toOAuthErrorCode(failure.error),
+        failure.error_description ?? failure.error ?? "Token exchange failed",
+        res.status,
+      );
+    }
+    const body = await oauth.processAuthorizationCodeResponse(
+      endpoints.as,
+      client,
+      res,
+    );
+    // A 2xx that carries no refresh token is still a failure for this
+    // SDK: the whole session model rests on being able to refresh.
+    if (!body.refresh_token) {
+      throw new OAuthError(
+        "invalid_grant",
+        "Token exchange returned no refresh token",
         res.status,
       );
     }

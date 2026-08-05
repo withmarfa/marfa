@@ -47,6 +47,7 @@ describe("InMemoryTokenStorage", () => {
 
 function discoveryFetch(issuer: string): typeof globalThis.fetch {
   const doc = JSON.stringify({
+    issuer: `${issuer}/auth`,
     authorization_endpoint: `${issuer}/auth/oauth2/authorize`,
     token_endpoint: `${issuer}/auth/oauth2/token`,
     device_authorization_endpoint: `${issuer}/auth/device`,

@@ -14,8 +14,17 @@
  *
  * Failure is hard: a server that doesn't publish the discovery doc isn't a
  * server this SDK supports. There is no fallback to hardcoded paths.
+ *
+ * The request and the metadata validation are `oauth4webapi`'s rather than
+ * hand-written. That matters beyond deleting code: the library checks that
+ * the doc's `issuer` matches the issuer it was asked about, which is the
+ * defense against a metadata document pointing a client at someone else's
+ * token endpoint, and it is the check a hand-written reader is most likely
+ * to skip.
  */
-import { normalizeIssuer } from "./issuer.js";
+import * as oauth from "oauth4webapi";
+import { ALLOW_INSECURE_HTTP } from "./insecure-http.js";
+import { normalizeIssuer, authIssuerFor } from "./issuer.js";
 
 /** OAuth endpoints we read from the discovery doc. RFC 8414 publishes
  *  more fields; the SDK only reads the ones it uses. */
@@ -26,6 +35,9 @@ export interface Endpoints {
   authorize: string;
   /** `device_authorization_endpoint` — RFC 8628 device-flow initiate. */
   deviceAuthorize: string;
+  /** The validated metadata, for the library calls that need the whole
+   *  document rather than one URL. */
+  as: oauth.AuthorizationServer;
 }
 
 /** Raised when the server's discovery doc can't be loaded or doesn't
@@ -40,20 +52,12 @@ export class DiscoveryError extends Error {
   }
 }
 
-const DISCOVERY_PATH = "/.well-known/oauth-authorization-server";
-
 // Module-scope cache, keyed by normalized issuer origin. We store the
 // *promise*, not the resolved value, so concurrent first-calls during app
 // boot funnel through a single in-flight fetch. On rejection we evict the
 // entry so a later retry can re-attempt — a stuck rejected promise would
 // permanently break the SDK after a single network blip.
 const cache = new Map<string, Promise<Endpoints>>();
-
-interface DiscoveryDoc {
-  token_endpoint?: unknown;
-  authorization_endpoint?: unknown;
-  device_authorization_endpoint?: unknown;
-}
 
 /**
  * Fetch and validate the server's OAuth discovery doc. Returns the small
@@ -68,46 +72,37 @@ export async function discoverEndpoints(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const fetch = fetchImpl ?? globalThis.fetch.bind(globalThis);
   const promise = (async (): Promise<Endpoints> => {
-    let res: Response;
+    const authIssuer = authIssuerFor(issuer);
+    let as: oauth.AuthorizationServer;
     try {
-      res = await fetch(`${key}${DISCOVERY_PATH}`);
+      const res = await oauth.discoveryRequest(authIssuer, {
+        algorithm: "oauth2",
+        ...ALLOW_INSECURE_HTTP,
+        ...(fetchImpl ? { [oauth.customFetch]: fetchImpl } : {}),
+      });
+      as = await oauth.processDiscoveryResponse(authIssuer, res);
     } catch (err) {
       throw new DiscoveryError(
-        `OAuth discovery network error against ${key}`,
+        `OAuth discovery failed against ${authIssuer.href}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
         key,
         { cause: err },
       );
     }
-    if (!res.ok) {
-      throw new DiscoveryError(
-        `OAuth discovery returned HTTP ${String(res.status)} against ${key}`,
-        key,
-      );
-    }
-    let doc: DiscoveryDoc;
-    try {
-      doc = (await res.json()) as DiscoveryDoc;
-    } catch (err) {
-      throw new DiscoveryError(
-        `OAuth discovery doc was not valid JSON from ${key}`,
-        key,
-        { cause: err },
-      );
-    }
-    const token = requireUrl(doc.token_endpoint, "token_endpoint", key);
+    const token = requireUrl(as.token_endpoint, "token_endpoint", key);
     const authorize = requireUrl(
-      doc.authorization_endpoint,
+      as.authorization_endpoint,
       "authorization_endpoint",
       key,
     );
     const deviceAuthorize = requireUrl(
-      doc.device_authorization_endpoint,
+      as.device_authorization_endpoint,
       "device_authorization_endpoint",
       key,
     );
-    return { token, authorize, deviceAuthorize };
+    return { token, authorize, deviceAuthorize, as };
   })();
 
   // Evict the cache entry on rejection so a future call retries; keep it

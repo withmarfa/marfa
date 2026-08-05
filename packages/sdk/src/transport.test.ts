@@ -430,6 +430,7 @@ const AUTH_ENDPOINTS = {
   token: TOKEN_ENDPOINT,
   authorize: `${ISSUER}/auth/oauth2/authorize`,
   deviceAuthorize: `${ISSUER}/auth/device`,
+  as: { issuer: ISSUER, token_endpoint: TOKEN_ENDPOINT },
 };
 const STORAGE_KEY = "marfa.auth.tokens:transport-test";
 const SEEDED_ACCESS_TOKEN = "seeded_at";
@@ -438,6 +439,9 @@ const SEEDED_REFRESH_TOKEN = "seeded_rt";
 function tokenEndpointSuccess(access: string, refresh: string): Response {
   return makeJsonResponse(200, {
     access_token: access,
+    // RFC 6749 requires it and the library enforces it; the real server
+    // sends "Bearer", so the double does too.
+    token_type: "Bearer",
     refresh_token: refresh,
     expires_in: 3600,
     scope: "core.note:read",
@@ -483,10 +487,14 @@ async function makeAuthFixture(options: {
           : input.url;
 
     if (url === TOKEN_ENDPOINT) {
-      // The provider form-encodes the grant into a string body.
-      const form = new URLSearchParams(
-        typeof init?.body === "string" ? init.body : "",
-      );
+      // `fetch` accepts either a pre-encoded string or URLSearchParams,
+      // and the caller's choice is not the transport's business — so the
+      // double reads both rather than assuming one.
+      const raw = init?.body;
+      const form =
+        raw instanceof URLSearchParams
+          ? raw
+          : new URLSearchParams(typeof raw === "string" ? raw : "");
       tokenExchanges.push(form.get("refresh_token") ?? "");
       return Promise.resolve(options.tokenResponse());
     }
