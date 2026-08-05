@@ -11,7 +11,18 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   name: "withmarfa.rss-watcher",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    feed_url: {
+      type: "string",
+      description: "The Atom or RSS feed to poll.",
+      required: true,
+    },
+    cron: {
+      type: "string",
+      description: "Poll cadence override, cron syntax.",
+    },
+  },
   publisher: "withmarfa",
   description:
     "Polls an Atom 1.0 or RSS 2.0 feed on a schedule and creates a core.bookmark per new entry. Read-only.",

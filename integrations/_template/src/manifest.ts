@@ -13,7 +13,13 @@ export const TEMPLATE_MANIFEST = {
   publisher: "marfa",
   description:
     "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end.",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    cron: {
+      type: "string",
+      description: "Poll cadence override, cron syntax.",
+    },
+  },
   direction: "read" as const,
   runtime_compatibility: ["hosted", "local"] as const,
   target_types: ["core.note"] as const,

@@ -262,7 +262,7 @@ describe("performUninstall — partial-state semantics", () => {
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource(installed.connectionId),
+        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
       },
       hashApiKey("marfa_k1_" + "0".repeat(64), "test-salt"),
       undefined,

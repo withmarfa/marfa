@@ -472,10 +472,10 @@ export function runtimeCredentialRoutes(
             connection_id: body.connection_id,
             expires_at: expiresAt,
             // `source` rotates on every mint, so it cannot carry provenance.
-            // `item_source` stays stable for the Connection's lifetime, which
-            // is what keeps `(source, source_id)` upsert identity intact
-            // across a credential refresh.
-            item_source: runtimeCredentialItemSource(body.connection_id),
+            // `item_source` keys on the integration and the space, which is
+            // what keeps `(source, source_id)` upsert identity intact across
+            // credential refreshes and reinstalls alike.
+            item_source: runtimeCredentialItemSource(manifest),
           },
           keyHash,
           // The connection's space, never the caller's. The broker

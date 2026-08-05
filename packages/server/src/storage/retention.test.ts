@@ -774,7 +774,7 @@ async function seedRuntimeCredential(opts: {
       type_permissions: {},
       connection_id: `conn_${opts.id}`,
       expires_at: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS).toISOString(),
-      item_source: runtimeCredentialItemSource(`conn_${opts.id}`),
+      item_source: runtimeCredentialItemSource({ name: `acme.fixture-` }),
     },
     hashApiKey(`marfa_k1_${opts.id}`, TEST_API_KEY_SALT),
     undefined,

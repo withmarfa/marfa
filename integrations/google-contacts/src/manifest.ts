@@ -44,7 +44,15 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   name: "google.contacts",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    target_type: {
+      type: "string",
+      description: "Item type synced contacts land as.",
+      from_target_types: true,
+      default: "google.contacts.contact",
+    },
+  },
   publisher: "google",
   description:
     "Bidirectional sync between Google Contacts (People API) and Marfa. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Marfa-side mutations back via OAuth proxy with etag-based concurrency.",

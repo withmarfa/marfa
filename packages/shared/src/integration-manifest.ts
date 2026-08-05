@@ -183,6 +183,48 @@ const WebhookVerificationSchema = z.discriminatedUnion("method", [
   z.object({ method: z.literal("cloudflare-email") }),
 ]);
 
+/**
+ * Connection configuration contract — manifest 1.2.0 additive field.
+ *
+ * Declares every configuration key the integration reads from the
+ * Connection's `properties.configuration`, so the install pipeline can
+ * refuse a key no handler will honor and a configuration surface can
+ * render a form for any integration without knowing it specifically. An
+ * undeclared key an integration quietly reads is the defect this field
+ * ends: only its author could know the key existed.
+ */
+const ConfigurationFieldSchema = z
+  .object({
+    type: z.enum(["string", "number", "boolean", "string_array"]),
+    description: z
+      .string()
+      .min(1, "configuration fields describe themselves to the surface"),
+    required: z.boolean().optional(),
+    /** Closed value set for string fields. */
+    values: z.array(z.string()).min(1).optional(),
+    /**
+     * Derive the closed value set from the manifest's own target_types,
+     * so a type-picking key cannot drift from what the credential may
+     * actually write.
+     */
+    from_target_types: z.boolean().optional(),
+    default: z
+      .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+      .optional(),
+  })
+  .strict();
+
+export type ConfigurationFieldSpec = z.infer<typeof ConfigurationFieldSchema>;
+
+/**
+ * Configuration keys the platform itself owns on every Connection,
+ * whatever the manifest declares. Validation admits them alongside the
+ * declared set.
+ */
+export const RESERVED_CONFIGURATION_KEYS: ReadonlySet<string> = new Set([
+  "upstream_base_url_override",
+]);
+
 export const IntegrationManifestSchema = z
   .object({
     name: ManifestNameSchema,
@@ -214,10 +256,92 @@ export const IntegrationManifestSchema = z
     webhook_verification: WebhookVerificationSchema,
     manifest_schema_version: SemverSchema,
     permissions: PermissionsSchema.optional(),
+    /**
+     * Connection configuration contract — manifest 1.2.0 additive field.
+     * Optional; an integration that accepts no configuration omits it,
+     * and supplying any configuration to such an integration is refused.
+     */
+    configuration_schema: z
+      .record(z.string().min(1), ConfigurationFieldSchema)
+      .optional(),
   })
   .strict();
 
 export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
+
+export interface ConfigurationIssue {
+  key: string;
+  message: string;
+}
+
+/**
+ * Judge a Connection configuration payload against the manifest's declared
+ * contract. One enforcement point for every surface that writes
+ * `properties.configuration` — install, the configuration surface, and any
+ * future update path — so the rules cannot drift between them.
+ *
+ * `requireRequired` distinguishes the install case (the whole configuration
+ * is being established, so a missing required key is a refusal) from a
+ * partial update (only the supplied keys are judged).
+ */
+export function validateConnectionConfiguration(
+  manifest: Pick<IntegrationManifest, "configuration_schema" | "target_types">,
+  configuration: Record<string, unknown>,
+  options?: { requireRequired?: boolean },
+): ConfigurationIssue[] {
+  const issues: ConfigurationIssue[] = [];
+  const declared = manifest.configuration_schema ?? {};
+
+  for (const [key, value] of Object.entries(configuration)) {
+    if (RESERVED_CONFIGURATION_KEYS.has(key)) continue;
+    const spec = declared[key];
+    if (!spec) {
+      issues.push({
+        key,
+        message: `"${key}" is not a configuration key this integration declares`,
+      });
+      continue;
+    }
+    const typeOk =
+      spec.type === "string"
+        ? typeof value === "string"
+        : spec.type === "number"
+          ? typeof value === "number" && Number.isFinite(value)
+          : spec.type === "boolean"
+            ? typeof value === "boolean"
+            : Array.isArray(value) && value.every((v) => typeof v === "string");
+    if (!typeOk) {
+      issues.push({
+        key,
+        message: `"${key}" must be a ${spec.type.replace("_", " ")}`,
+      });
+      continue;
+    }
+    const allowed = spec.from_target_types
+      ? manifest.target_types
+      : spec.values;
+    if (allowed && typeof value === "string" && !allowed.includes(value)) {
+      issues.push({
+        key,
+        message: `"${key}" must be one of: ${allowed.join(", ")}`,
+      });
+    }
+  }
+
+  if (options?.requireRequired) {
+    for (const [key, spec] of Object.entries(declared)) {
+      if (
+        spec.required === true &&
+        spec.default === undefined &&
+        configuration[key] === undefined
+      ) {
+        issues.push({ key, message: `"${key}" is required` });
+      }
+    }
+  }
+
+  return issues;
+}
 
 /**
  * Highest manifest_schema_version major this library accepts. Used by the

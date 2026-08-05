@@ -55,13 +55,17 @@ interface ConsentParams {
 }
 
 function describeDirection(direction: "read" | "write" | "both"): string {
+  // Direction describes flow relative to the external service, never an
+  // access level: an inbound integration writes what it finds into your
+  // space, so the copy says so rather than claiming "read-only" for a
+  // credential that holds write on every declared type.
   switch (direction) {
     case "read":
-      return "Read-only — the integration will read from the external service into your Marfa space.";
+      return "Brings content in — reads from the external service and writes what it finds into your Marfa space.";
     case "write":
-      return "Write-only — the integration will write from your Marfa space out to the external service.";
+      return "Sends content out — reads from your Marfa space and writes it to the external service.";
     case "both":
-      return "Two-way — the integration will read from and write to the external service.";
+      return "Two-way — changes on either side are written to the other.";
   }
 }
 
@@ -73,27 +77,24 @@ function describeDirection(direction: "read" | "write" | "both"): string {
 function summarizeDirection(direction: "read" | "write" | "both"): string {
   switch (direction) {
     case "read":
-      return "Read into your space.";
+      return "Brought into your space.";
     case "write":
-      return "Written out from your space.";
+      return "Sent out from your space.";
     case "both":
-      return "Read and written both ways.";
+      return "Synced both ways.";
   }
 }
 
 /**
- * The verb pair the integration exercises against each target type, expressed
- * in the scope grammar (`<type>:read` / `<type>:write`). `both` grants both.
+ * The verbs the minted credential actually holds against each target type,
+ * expressed in the scope grammar. Every declared target type is granted
+ * write whatever the direction — an inbound integration writes what it
+ * pulls into Marfa — so the consent surface says write, matching the
+ * credential rather than the flow description.
  */
 function directionVerbs(direction: "read" | "write" | "both"): string[] {
-  switch (direction) {
-    case "read":
-      return ["read"];
-    case "write":
-      return ["write"];
-    case "both":
-      return ["read", "write"];
-  }
+  void direction;
+  return ["write"];
 }
 
 function getTargetTypes(manifest: Record<string, unknown>): string[] {

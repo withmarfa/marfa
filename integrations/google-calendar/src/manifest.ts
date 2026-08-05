@@ -46,7 +46,34 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   name: "google.calendar",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    target_type: {
+      type: "string",
+      description: "Item type synced events land as.",
+      from_target_types: true,
+      default: "google.calendar.event",
+    },
+    selected_calendar_ids: {
+      type: "string_array",
+      description:
+        "Calendars included in the sync; empty means the primary calendar only.",
+    },
+    default_write_calendar_id: {
+      type: "string",
+      description: "Calendar that receives events created in Marfa.",
+    },
+    mode: {
+      type: "string",
+      description: "Whether one calendar or several are synced.",
+      values: ["single", "multi"],
+    },
+    inbound_webhook_url: {
+      type: "string",
+      description:
+        "Push-notification receipt URL the watch channel registers against.",
+    },
+  },
   publisher: "google",
   description:
     "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",

@@ -45,6 +45,7 @@ import { randomBytes } from "node:crypto";
 import {
   ErrorCode,
   MarfaError,
+  validateConnectionConfiguration,
   type IntegrationManifest,
 } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
@@ -194,6 +195,23 @@ export async function performInstall(
     }
   }
 
+  // The configuration seed is judged against the manifest's declared
+  // contract before anything is written — an undeclared key is refused,
+  // because only the integration's author could know it existed, and a
+  // missing required key would install a Connection that cannot run.
+  const configurationIssues = validateConnectionConfiguration(
+    manifest,
+    input.configuration ?? {},
+    { requireRequired: true },
+  );
+  if (configurationIssues.length > 0) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Connection configuration does not match the integration's declared contract",
+      { issues: configurationIssues },
+    );
+  }
+
   // Compensation stack — each step pushes a rollback closure. On any
   // subsequent failure we walk the stack in reverse and re-throw.
   //
@@ -311,7 +329,7 @@ export async function performInstall(
             edge_permissions: buildEdgePermissions(manifest),
             connection_id: connection.id,
             expires_at: credentialExpiresAt,
-            item_source: runtimeCredentialItemSource(connection.id),
+            item_source: runtimeCredentialItemSource(manifest),
           },
           keyHash,
           input.spaceId,

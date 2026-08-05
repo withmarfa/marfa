@@ -49,7 +49,23 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   name: "google.youtube",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    target_type: {
+      type: "string",
+      description: "Item type synced videos land as.",
+      from_target_types: true,
+    },
+    cron: {
+      type: "string",
+      description: "Poll cadence override, cron syntax.",
+    },
+    materialise_playlists: {
+      type: "boolean",
+      description: "Whether playlists land as items joined to their videos.",
+      default: false,
+    },
+  },
   publisher: "google",
   description:
     "Inbound YouTube (Data API v3) integration — liked videos, subscriptions, and user-created playlists. Consumer surface only; outbound deferred.",

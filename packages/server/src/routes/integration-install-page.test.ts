@@ -93,12 +93,15 @@ describe("renderInstallConsentScreen — data mapping", () => {
     expect(html).toContain("google.calendar.event");
   });
 
-  it("renders scopes as <type>:<verb> from target types crossed with direction", () => {
-    // direction "both" → read + write per type.
-    expect(html).toContain("core.event:read");
+  it("renders the minted authority: write on every target type", () => {
+    // The credential holds write on every declared type whatever the
+    // direction — an inbound integration writes what it pulls — so the
+    // consent pills say write and never claim a read-only reach the
+    // permission model does not back.
     expect(html).toContain("core.event:write");
-    expect(html).toContain("google.calendar.event:read");
     expect(html).toContain("google.calendar.event:write");
+    expect(html).not.toContain("core.event:read");
+    expect(html).not.toContain("google.calendar.event:read");
   });
 
   it("uses the manifest summary as the subtitle", () => {

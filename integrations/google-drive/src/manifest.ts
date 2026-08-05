@@ -47,7 +47,34 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   name: "google.drive",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    target_type: {
+      type: "string",
+      description: "Item type synced files land as.",
+      from_target_types: true,
+      default: "google.drive.file",
+    },
+    download_mode: {
+      type: "string",
+      description: "Whether file bytes are ingested or only metadata.",
+      values: ["metadata", "all-files"],
+      default: "metadata",
+    },
+    initial_sync_max_files: {
+      type: "number",
+      description: "Ceiling on files the first full sync ingests.",
+    },
+    max_file_size_bytes: {
+      type: "number",
+      description: "Per-file byte ceiling for downloaded content.",
+    },
+    inbound_webhook_url: {
+      type: "string",
+      description:
+        "Push-notification receipt URL the changes watch registers against.",
+    },
+  },
   publisher: "google",
   description:
     "Inbound-only sync from Google Drive into Marfa. Seeds via files.list, incremental via changes.list with persisted pageToken cursor, push notifications via changes.watch with a renewal cron. Supports `download_mode: metadata` (default — google.drive.file items) and `download_mode: all-files` (non-Google-native, within-ceiling files ingested as core.file with blob_ref).",

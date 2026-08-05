@@ -51,7 +51,13 @@ function manifest(name: string): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "1.2.0",
+    configuration_schema: {
+      custom_knob: {
+        type: "number",
+        description: "Fixture knob for the configuration-threading test.",
+      },
+    },
   };
 }
 

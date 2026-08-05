@@ -628,7 +628,9 @@ describe("POST /items — platform-credential gate", () => {
         type_permissions: { "system.activity": "write" },
         connection_id: "conn_test_carve_out",
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource("conn_test_carve_out"),
+        item_source: runtimeCredentialItemSource({
+          name: "conn_test_carve_out",
+        }),
       },
       hashApiKey(runtimeKey, TEST_API_KEY_SALT),
       "space-x",

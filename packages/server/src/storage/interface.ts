@@ -518,7 +518,9 @@ export interface KeyStore {
     input: CreateKeyInput & {
       connection_id: string;
       expires_at: string;
-      item_source: string;
+      /** Null when the manifest cannot be resolved: such a credential holds
+       *  no type grants and gets no provenance identity. */
+      item_source: string | null;
     },
     keyHash: string,
     spaceId?: string,
