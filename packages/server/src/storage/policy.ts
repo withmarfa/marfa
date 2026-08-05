@@ -87,8 +87,9 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  *   "merges field-by-field" (see `docs/guides/schema/versions.mdx`); matches
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
- * - `id`, `parent`, `version`, `label`, `description` — kept as-is on the leaf
- *   (these identify the leaf type, not the inherited schema).
+ * - `id`, `parent`, `version`, `label`, `description`, `compatible_with` —
+ *   kept as-is on the leaf (these identify the leaf type and its own claims,
+ *   not the inherited schema).
  *
  * Returns `undefined` for unknown type ids.
  */
@@ -137,6 +138,9 @@ export function resolveTypeSchema(
     fields,
   };
   if (self.parent !== undefined) resolved.parent = self.parent;
+  if (self.compatible_with !== undefined) {
+    resolved.compatible_with = self.compatible_with;
+  }
   if (self.label !== undefined) resolved.label = self.label;
   if (self.description !== undefined) resolved.description = self.description;
   if (displayHints) resolved.display_hints = displayHints;
