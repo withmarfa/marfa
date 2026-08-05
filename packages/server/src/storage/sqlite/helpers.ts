@@ -2,7 +2,15 @@ import { safeJsonParse } from "../json-utils.js";
 import type { Item, ItemState, Metadata, Version } from "@withmarfa/shared";
 import type { items, metadata, versions } from "./schema.js";
 
-type ItemRow = typeof items.$inferSelect;
+/**
+ * The row shape every items read produces: the stored column is SQLite's
+ * binary JSONB encoding, so selects project `json(properties)` back to JSON
+ * text for parsing here. A bare select of the raw column would hand this
+ * parser a blob it cannot read.
+ */
+export type ItemRow = Omit<typeof items.$inferSelect, "properties"> & {
+  properties: string;
+};
 type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 

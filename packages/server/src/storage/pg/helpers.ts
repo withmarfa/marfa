@@ -15,11 +15,9 @@ export function rowToItem(row: ItemRow): Item {
     state: row.state as ItemState,
     ...(tier !== undefined && { tier }),
     space_id: row.space_id ?? null,
-    properties: safeJsonParse<Record<string, unknown>>(
-      row.properties,
-      {},
-      `${row.id} properties`,
-    ),
+    // jsonb arrives from the driver already parsed; versions below still
+    // parse because that column stays text.
+    properties: row.properties,
     created_at: row.created_at,
     updated_at: row.updated_at,
     timestamp: row.timestamp,

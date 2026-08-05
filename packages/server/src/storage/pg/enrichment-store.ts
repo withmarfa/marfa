@@ -16,16 +16,14 @@ export class PgEnrichmentStore implements EnrichmentStore {
     maxAttempts: number,
     limit: number,
   ): Promise<EnrichmentCandidate[]> {
-    const blobRef = sql<string>`(${items.properties})::jsonb->>'blob_ref'`;
+    const blobRef = sql<string>`${items.properties}->>'blob_ref'`;
     const rows = await this.db
       .select({
         item_id: items.id,
         space_id: items.space_id,
         type: items.type,
         blob_ref: blobRef,
-        mime_type: sql<
-          string | null
-        >`(${items.properties})::jsonb->>'mime_type'`,
+        mime_type: sql<string | null>`${items.properties}->>'mime_type'`,
       })
       .from(items)
       .leftJoin(enrichmentState, eq(enrichmentState.item_id, items.id))

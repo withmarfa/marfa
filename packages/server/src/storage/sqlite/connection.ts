@@ -97,9 +97,11 @@ export async function createConnection(sqlitePath: string): Promise<{
   if (needsFtsRebuild) {
     await client.executeMultiple("DROP TABLE IF EXISTS items_fts");
     await client.executeMultiple(CREATE_FTS);
-    // Re-index all items (extra defaults to empty since we don't have type context here)
+    // Re-index all items (extra defaults to empty since we don't have type
+    // context here). json() projects the stored JSONB blob back to text —
+    // reading the raw column would hand JSON.parse a binary value.
     const allItems = await client.execute(
-      "SELECT id, properties FROM items WHERE state != 'trashed'",
+      "SELECT id, json(properties) AS properties FROM items WHERE state != 'trashed'",
     );
     for (const row of allItems.rows) {
       try {

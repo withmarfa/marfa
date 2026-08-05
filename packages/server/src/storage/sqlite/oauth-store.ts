@@ -146,7 +146,9 @@ export class SqliteOAuthStore implements OAuthStore {
     await this.db
       .update(items)
       .set({
-        properties: sql`json_set(${items.properties}, '$.last_used_at', ${nowIso})`,
+        // jsonb_set, not json_set: json_set returns text and would silently
+        // revert the stored JSONB blob to the old text encoding.
+        properties: sql`jsonb_set(${items.properties}, '$.last_used_at', ${nowIso})`,
       })
       .where(
         and(

@@ -361,9 +361,9 @@ export class PgOauthProviderStore implements OauthProviderStore {
         and(
           eq(items.type, "system.connection"),
           spacePredicate,
-          sql`${items.properties}::jsonb->>'kind' = 'app'`,
-          sql`${items.properties}::jsonb->>'client_id' = ${opts.clientId}`,
-          sql`${items.properties}::jsonb->>'user_id' = ${opts.authUserId}`,
+          sql`${items.properties}->>'kind' = 'app'`,
+          sql`${items.properties}->>'client_id' = ${opts.clientId}`,
+          sql`${items.properties}->>'user_id' = ${opts.authUserId}`,
         ),
       )
       .limit(1);
@@ -389,7 +389,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
           sql`${auth_oauth_client.createdAt} < ${cutoffIso}`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
-          sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.properties}::jsonb->>'kind' = 'app' AND ${items.properties}::jsonb->>'client_id' = ${auth_oauth_client.clientId})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.properties}->>'kind' = 'app' AND ${items.properties}->>'client_id' = ${auth_oauth_client.clientId})`,
         ),
       )
       .returning({ id: auth_oauth_client.id });

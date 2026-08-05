@@ -81,7 +81,7 @@ export const items = pgTable(
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
-    properties: text("properties").notNull(),
+    properties: jsonb("properties").$type<Record<string, unknown>>().notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
     timestamp: text("timestamp").notNull(),

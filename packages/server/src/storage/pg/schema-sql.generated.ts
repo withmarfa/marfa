@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS public.items (
     space_id text,
     type text NOT NULL,
     state text DEFAULT 'active'::text NOT NULL,
-    properties text NOT NULL,
+    properties jsonb NOT NULL,
     created_at text NOT NULL,
     updated_at text NOT NULL,
     "timestamp" text NOT NULL,

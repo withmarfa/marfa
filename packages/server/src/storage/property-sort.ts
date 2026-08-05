@@ -79,7 +79,7 @@ function textExtract(
 ): SQL {
   return dialect === "sqlite"
     ? sql`json_extract(${propertiesCol}, ${"$." + field})`
-    : sql`${propertiesCol}::json->>${field}`;
+    : sql`${propertiesCol}->>${field}`;
 }
 
 /** The SQL expression that extracts a property value as a number, per dialect.
@@ -92,7 +92,7 @@ function numericExtract(
 ): SQL {
   return dialect === "sqlite"
     ? sql`CAST(json_extract(${propertiesCol}, ${"$." + field}) AS REAL)`
-    : sql`(${propertiesCol}::json->>${field})::numeric`;
+    : sql`(${propertiesCol}->>${field})::numeric`;
 }
 
 export interface PropertySortExpr {
