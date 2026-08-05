@@ -212,3 +212,56 @@ describe("in-collection deletion", () => {
     expect(survivor.status).toBe(200);
   });
 });
+
+describe("in-collection media membership", () => {
+  async function createMedia(type: string, title: string): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type, properties: { title } },
+    });
+    expect(
+      res.status,
+      `POST /items ${type} -> ${String(res.status)}: ${await res.clone().text()}`,
+    ).toBe(201);
+    const data = (await res.json()) as ItemResponse;
+    return data.item.id;
+  }
+
+  it("joins an episode to its series", async () => {
+    const series = await createMedia("core.media.series", "Signal Hill");
+    const episode = await createMedia("core.media.episode", "Pilot");
+    const res = await joinCollection(episode, series, { position: 1 });
+    expect(res.status).toBe(201);
+  });
+
+  it("lets a crossover special sit in two series", async () => {
+    const one = await createMedia("core.media.series", "Signal Hill");
+    const two = await createMedia("core.media.series", "Harbour Lights");
+    const special = await createMedia("core.media.episode", "The Crossing");
+    expect((await joinCollection(special, one)).status).toBe(201);
+    expect((await joinCollection(special, two)).status).toBe(201);
+  });
+
+  it("joins a song to its album the same way", async () => {
+    const album = await createMedia("core.media.album", "Low Tide");
+    const song = await createMedia("core.media.song", "Undertow");
+    const res = await joinCollection(song, album, { position: 3 });
+    expect(res.status).toBe(201);
+  });
+
+  it("orphans, never deletes, episodes when their series is deleted", async () => {
+    const series = await createMedia("core.media.series", "Signal Hill");
+    const episode = await createMedia("core.media.episode", "Finale");
+    expect((await joinCollection(episode, series)).status).toBe(201);
+
+    const del = await request(ctx.app, "DELETE", `/items/${series}`, {
+      key: ctx.adminKey,
+    });
+    expect(del.status).toBe(200);
+
+    const survivor = await request(ctx.app, "GET", `/items/${episode}`, {
+      key: ctx.adminKey,
+    });
+    expect(survivor.status).toBe(200);
+  });
+});

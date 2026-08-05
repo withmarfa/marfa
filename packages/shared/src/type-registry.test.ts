@@ -16,8 +16,8 @@ import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 22 core, 13 integration and 8 system types", () => {
-    expect(TYPE_REGISTRY.size).toBe(43);
+  it("contains 21 core, 13 integration and 8 system types", () => {
+    expect(TYPE_REGISTRY.size).toBe(42);
     expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
     expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
     expect(TYPE_REGISTRY.has("google.contacts.contact")).toBe(true);
@@ -49,9 +49,8 @@ describe("TYPE_REGISTRY", () => {
       "core.media.film",
       "core.media.song",
       "core.media.album",
-      "core.media.podcast",
+      "core.media.episode",
       "core.media.series",
-      "core.media.tv_episode",
     ];
     for (const id of mediaTypes) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
@@ -1069,17 +1068,12 @@ describe("merge_policy — per-type registry snapshot", () => {
       expectedDefault: "last_writer_wins",
     },
     {
-      typeId: "core.media.podcast",
+      typeId: "core.media.episode",
       expectedKeepBoth: ["body", "notes"],
       expectedDefault: "last_writer_wins",
     },
     {
       typeId: "core.media.series",
-      expectedKeepBoth: ["body", "notes"],
-      expectedDefault: "last_writer_wins",
-    },
-    {
-      typeId: "core.media.tv_episode",
       expectedKeepBoth: ["body", "notes"],
       expectedDefault: "last_writer_wins",
     },

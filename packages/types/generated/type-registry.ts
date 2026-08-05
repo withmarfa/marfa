@@ -395,6 +395,32 @@ const coreMediaBook: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const coreMediaEpisode: TypeSchema = {
+  id: "core.media.episode",
+  parent: "core.media",
+  label: "Episode",
+  description: "Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Name of the work", required: true },
+    body: { type: "string", description: "Text content or description" },
+    author: { type: "string", description: "Who created the work" },
+    url: { type: "url", description: "Web address" },
+    description: { type: "string", description: "Summary or blurb" },
+    publisher: { type: "string", description: "Who published the work" },
+    published_at: { type: "datetime", description: "When originally published or released" },
+    image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
+    language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
+    notes: { type: "string", description: "Personal annotations" },
+    medium: { type: "string", description: "What the episode is made of. Recommended values: tv, podcast, radio, video, mixed" },
+    season_number: { type: "integer", description: "Which season, where the series has them" },
+    episode_number: { type: "integer", description: "Position within the season, or within the series when unseasoned" },
+    duration: { type: "number", description: "Runtime in seconds" },
+  },
+  display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
+};
+
 const coreMediaFilm: TypeSchema = {
   id: "core.media.film",
   parent: "core.media",
@@ -420,38 +446,12 @@ const coreMediaFilm: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
-const coreMediaPodcast: TypeSchema = {
-  id: "core.media.podcast",
-  parent: "core.media",
-  label: "Podcast",
-  description: "A podcast episode. Inherits all core.media fields.",
-  version: 1,
-  fields: {
-    title: { type: "string", description: "Name of the work", required: true },
-    body: { type: "string", description: "Text content or description" },
-    author: { type: "string", description: "Who created the work" },
-    url: { type: "url", description: "Web address" },
-    description: { type: "string", description: "Summary or blurb" },
-    publisher: { type: "string", description: "Who published the work" },
-    published_at: { type: "datetime", description: "When originally published or released" },
-    image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
-    language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
-    notes: { type: "string", description: "Personal annotations" },
-    episode_number: { type: "integer", description: "Position in the show" },
-    season_number: { type: "integer", description: "Which season" },
-    duration: { type: "number", description: "Episode length in seconds" },
-    episode_type: { type: "string", description: "Recommended values: full, trailer, bonus" },
-  },
-  display_hints: { title_field: "title", body_field: "body" },
-  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
-};
-
 const coreMediaSeries: TypeSchema = {
   id: "core.media.series",
   parent: "core.media",
   label: "Series",
-  description: "A TV show or series. Inherits all core.media fields.",
-  version: 1,
+  description: "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
+  version: 2,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -463,10 +463,8 @@ const coreMediaSeries: TypeSchema = {
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
-    season_count: { type: "integer", description: "Number of seasons" },
-    episode_count: { type: "integer", description: "Total episodes across all seasons" },
+    medium: { type: "string", description: "What the series is made of. Recommended values: tv, podcast, radio, video, mixed" },
     status: { type: "string", description: "Recommended values: ongoing, ended, cancelled" },
-    network: { type: "string", description: "Broadcasting network or streaming service" },
   },
   display_hints: { title_field: "title", body_field: "body" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
@@ -498,32 +496,6 @@ const coreMediaSong: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
-const coreMediaTvEpisode: TypeSchema = {
-  id: "core.media.tv_episode",
-  parent: "core.media",
-  label: "TV Episode",
-  description: "A TV episode. Inherits all core.media fields.",
-  version: 1,
-  fields: {
-    title: { type: "string", description: "Name of the work", required: true },
-    body: { type: "string", description: "Text content or description" },
-    author: { type: "string", description: "Who created the work" },
-    url: { type: "url", description: "Web address" },
-    description: { type: "string", description: "Summary or blurb" },
-    publisher: { type: "string", description: "Who published the work" },
-    published_at: { type: "datetime", description: "When originally published or released" },
-    image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
-    language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
-    notes: { type: "string", description: "Personal annotations" },
-    episode_number: { type: "integer", description: "Position within the season" },
-    season_number: { type: "integer", description: "Which season" },
-    duration: { type: "number", description: "Episode runtime in seconds" },
-    director: { type: "string", description: "Episode director" },
-  },
-  display_hints: { title_field: "title", body_field: "body" },
-  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
-};
-
 export const ALL_TYPES: TypeSchema[] = [
   coreBookmark,
   coreEntity,
@@ -542,11 +514,10 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaAlbum,
   coreMediaArticle,
   coreMediaBook,
+  coreMediaEpisode,
   coreMediaFilm,
-  coreMediaPodcast,
   coreMediaSeries,
   coreMediaSong,
-  coreMediaTvEpisode,
 ];
 
 const raindropCollection: TypeSchema = {

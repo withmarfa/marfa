@@ -176,7 +176,7 @@ describe("isValidTypeIdentifier", () => {
   });
 
   it("accepts underscores in segments", () => {
-    expect(isValidTypeIdentifier("core.media.tv_episode")).toBe(true);
+    expect(isValidTypeIdentifier("core.entity.job_title")).toBe(true);
   });
 
   it("rejects single segment", () => {
