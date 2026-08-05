@@ -28,11 +28,15 @@
  * install + uninstall routes that already live under that prefix.
  */
 import { Hono } from "hono";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  validateConnectionConfiguration,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { Item } from "@withmarfa/shared";
+import type { ConfigurationFieldSpec, Item } from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
 
 // ---------------------------------------------------------------------------
@@ -277,6 +281,110 @@ export function renderConfigureSuccess(connectionId: string): string {
 </html>`;
 }
 
+/**
+ * Schema-driven configuration form for any integration that declares a
+ * configuration contract. Field controls follow the declared type:
+ * checkbox for boolean, number input for number, select for a closed
+ * value set (including one derived from target_types), text otherwise.
+ * A string_array renders as comma-separated text — the generic surface
+ * favors working everywhere over per-integration polish, which a
+ * bespoke page like the calendar picker can still add on top.
+ */
+export function renderGenericConfigureForm(
+  connectionId: string,
+  manifest: IntegrationManifestShape,
+  current: Record<string, unknown>,
+): string {
+  const schema = manifest.configuration_schema ?? {};
+  const rows = Object.entries(schema)
+    .map(([key, spec]) => {
+      const value = current[key];
+      const allowed = spec.from_target_types
+        ? manifest.target_types
+        : spec.values;
+      let control: string;
+      if (spec.type === "boolean") {
+        control = `<input type="checkbox" name="${esc(key)}" value="true"${value === true ? " checked" : ""}>`;
+      } else if (allowed) {
+        const opts = allowed
+          .map(
+            (v) =>
+              `<option value="${esc(v)}"${value === v ? " selected" : ""}>${esc(v)}</option>`,
+          )
+          .join("");
+        control = `<select name="${esc(key)}">${opts}</select>`;
+      } else if (spec.type === "number") {
+        control = `<input type="number" name="${esc(key)}" value="${typeof value === "number" ? String(value) : ""}">`;
+      } else if (spec.type === "string_array") {
+        const joined = Array.isArray(value) ? value.join(", ") : "";
+        control = `<input type="text" name="${esc(key)}" value="${esc(joined)}" placeholder="comma-separated">`;
+      } else {
+        control = `<input type="text" name="${esc(key)}" value="${typeof value === "string" ? esc(value) : ""}"${spec.required ? " required" : ""}>`;
+      }
+      return `<label class="field"><span class="field-name">${esc(key)}${spec.required ? " *" : ""}</span><span class="field-desc">${esc(spec.description)}</span>${control}</label>`;
+    })
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Configure connection</title>
+    <style>${CONFIGURE_CSS}
+      .field { display: block; margin: 1rem 0; }
+      .field-name { display: block; font-weight: 600; }
+      .field-desc { display: block; font-size: 0.85rem; opacity: 0.75; margin-bottom: 0.3rem; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1 class="title">Configure ${esc(manifest.name)}</h1>
+      <form method="post" action="/connections/${esc(connectionId)}/configure">
+        ${rows}
+        <button type="submit">Save configuration</button>
+      </form>
+    </main>
+  </body>
+</html>`;
+}
+
+/**
+ * Coerce a submitted form back to the declared configuration types. HTML
+ * forms deliver strings; the declared spec says what each key really is.
+ * An unchecked checkbox sends nothing, which reads as false.
+ */
+export function parseGenericConfigurePayload(
+  form: Record<string, unknown>,
+  schema: Record<string, ConfigurationFieldSpec>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, spec] of Object.entries(schema)) {
+    const raw = form[key];
+    if (spec.type === "boolean") {
+      out[key] = raw === "true" || raw === "on";
+      continue;
+    }
+    if (raw === undefined || raw === "") continue;
+    const first: unknown = Array.isArray(raw) ? raw[0] : raw;
+    // Form values are strings; anything else (a file part) is not
+    // configuration material and reads as absent.
+    if (typeof first !== "string") continue;
+    const text = first;
+    if (spec.type === "number") {
+      const n = Number(text);
+      out[key] = Number.isFinite(n) ? n : text;
+    } else if (spec.type === "string_array") {
+      out[key] = text
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    } else {
+      out[key] = text;
+    }
+  }
+  return out;
+}
+
 export function renderConfigureError(message: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -369,6 +477,7 @@ export function parseConfigurePayload(
 interface IntegrationManifestShape {
   name: string;
   target_types: string[];
+  configuration_schema?: Record<string, ConfigurationFieldSpec>;
 }
 
 interface ConnectionPropertiesShape {
@@ -387,7 +496,11 @@ async function resolveIntegrationManifest(
   const integration = await storage.items.get(props.integration_ref);
   if (integration?.type !== "system.integration") return null;
   const integrationProps = integration.properties as {
-    manifest?: { name?: string; target_types?: string[] };
+    manifest?: {
+      name?: string;
+      target_types?: string[];
+      configuration_schema?: Record<string, ConfigurationFieldSpec>;
+    };
   };
   const manifest = integrationProps.manifest;
   if (!manifest || typeof manifest.name !== "string") return null;
@@ -395,6 +508,9 @@ async function resolveIntegrationManifest(
   return {
     name: manifest.name,
     target_types: manifest.target_types,
+    ...(manifest.configuration_schema !== undefined
+      ? { configuration_schema: manifest.configuration_schema }
+      : {}),
   };
 }
 
@@ -454,10 +570,23 @@ export function connectionConfigureRoutes(
       );
     }
 
-    // Today only google.calendar uses this surface — surface an error for
-    // anything else so unexpected manifests don't silently render an
-    // empty picker.
+    // google.calendar keeps its bespoke picker; every other integration
+    // that declares a configuration contract gets the schema-driven form.
     if (manifest.name !== "google.calendar") {
+      if (
+        manifest.configuration_schema &&
+        Object.keys(manifest.configuration_schema).length > 0
+      ) {
+        const currentProps = connection.properties as ConnectionPropertiesShape;
+        setNoStore(c);
+        return c.html(
+          renderGenericConfigureForm(
+            id,
+            manifest,
+            currentProps.configuration ?? {},
+          ),
+        );
+      }
       setNoStore(c);
       return c.html(
         renderConfigureError(
@@ -550,9 +679,56 @@ export function connectionConfigureRoutes(
       );
     }
 
-    // Same gate as the GET path — today only google.calendar has a
-    // configuration surface.
+    // Same dispatch as the GET path: google.calendar keeps its picker,
+    // any other integration with a declared contract takes the generic
+    // path, and everything else is refused.
     if (manifest.name !== "google.calendar") {
+      if (
+        manifest.configuration_schema &&
+        Object.keys(manifest.configuration_schema).length > 0
+      ) {
+        const form = await c.req.parseBody({ all: true });
+        const payload = parseGenericConfigurePayload(
+          form,
+          manifest.configuration_schema,
+        );
+        const issues = validateConnectionConfiguration(manifest, payload);
+        if (issues.length > 0) {
+          setNoStore(c);
+          return c.html(
+            renderConfigureError(issues.map((i) => i.message).join(" ")),
+            400,
+          );
+        }
+        const genericProps = connection.properties as ConnectionPropertiesShape;
+        await storage.items.update(
+          id,
+          {
+            properties: {
+              ...genericProps,
+              configuration: {
+                ...(genericProps.configuration ?? {}),
+                ...payload,
+              },
+            },
+          },
+          spaceId,
+        );
+        void storage.audit.log({
+          key_id: apiKey.id,
+          client_ip: c.get("clientIp") ?? null,
+          space_id: spaceId ?? null,
+          action: "connection.configure",
+          resource_type: "item",
+          resource_id: id,
+          details: {
+            manifest_name: manifest.name,
+            keys: Object.keys(payload),
+          },
+        });
+        setNoStore(c);
+        return c.html(renderConfigureSuccess(id));
+      }
       setNoStore(c);
       return c.html(
         renderConfigureError(
@@ -578,14 +754,29 @@ export function connectionConfigureRoutes(
 
     const existingProps = connection.properties as ConnectionPropertiesShape;
     const existingCfg = existingProps.configuration ?? {};
+    const mergedConfiguration = {
+      ...existingCfg,
+      selected_calendar_ids: parsed.payload.selected_calendar_ids,
+      default_write_calendar_id: parsed.payload.default_write_calendar_id,
+      target_type: parsed.payload.target_type,
+    };
+    // The picker validates its own UI semantics; the declared contract is
+    // still the authority on what may be written, through the same gate
+    // every other configuration write passes.
+    const contractIssues = validateConnectionConfiguration(
+      manifest,
+      mergedConfiguration,
+    );
+    if (contractIssues.length > 0) {
+      setNoStore(c);
+      return c.html(
+        renderConfigureError(contractIssues.map((i) => i.message).join(" ")),
+        400,
+      );
+    }
     const newProps = {
       ...existingProps,
-      configuration: {
-        ...existingCfg,
-        selected_calendar_ids: parsed.payload.selected_calendar_ids,
-        default_write_calendar_id: parsed.payload.default_write_calendar_id,
-        target_type: parsed.payload.target_type,
-      },
+      configuration: mergedConfiguration,
     };
     await storage.items.update(id, { properties: newProps }, spaceId);
 

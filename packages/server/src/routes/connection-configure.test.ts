@@ -246,7 +246,31 @@ async function seedGoogleCalendarConnection(
           },
           oauth_requirements: { calendar: "proxy" },
           webhook_verification: { method: "hmac-sha256" },
-          manifest_schema_version: "1.0.0",
+          manifest_schema_version: "1.2.0",
+          configuration_schema: {
+            target_type: {
+              type: "string",
+              description: "Item type synced events land as.",
+              from_target_types: true,
+            },
+            selected_calendar_ids: {
+              type: "string_array",
+              description: "Calendars included in the sync.",
+            },
+            default_write_calendar_id: {
+              type: "string",
+              description: "Calendar that receives events created in Marfa.",
+            },
+            mode: {
+              type: "string",
+              description: "Whether one calendar or several are synced.",
+              values: ["single", "multi"],
+            },
+            inbound_webhook_url: {
+              type: "string",
+              description: "Push receipt URL for the watch channel.",
+            },
+          },
         },
         registered_at: new Date().toISOString(),
       },
@@ -405,7 +429,9 @@ describe("POST /connections/:id/configure — error paths", () => {
     expect(res.status).toBe(404);
   });
 
-  it("400s when the manifest is not google.calendar", async () => {
+  it("serves the schema-driven path for a non-calendar integration that declares a contract", async () => {
+    // The surface works for any integration that declares a schema; the
+    // bespoke picker is a google.calendar refinement, not the gate.
     const { connectionId } = await seedGoogleCalendarConnection({
       manifestName: "acme.other",
     });
@@ -416,15 +442,38 @@ describe("POST /connections/:id/configure — error paths", () => {
       {
         key: ctx.adminKey,
         form: {
-          selected_calendar_ids: "primary",
-          default_write_calendar_id: "primary",
           target_type: "google.calendar.event",
+          mode: "single",
         },
+      },
+    );
+    expect(res.status).toBe(200);
+    const conn = await ctx.storage.items.get(connectionId, undefined);
+    const cfg = (
+      conn?.properties as { configuration?: Record<string, unknown> }
+    ).configuration;
+    expect(cfg).toMatchObject({
+      target_type: "google.calendar.event",
+      mode: "single",
+    });
+  });
+
+  it("400s a declared-contract violation on the schema-driven path", async () => {
+    const { connectionId } = await seedGoogleCalendarConnection({
+      manifestName: "acme.other-invalid",
+    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/configure`,
+      {
+        key: ctx.adminKey,
+        form: { mode: "sideways" },
       },
     );
     expect(res.status).toBe(400);
     const html = await res.text();
-    expect(html).toContain("does not declare a configuration surface");
+    expect(html).toContain("must be one of");
   });
 
   it("400s when no calendars are selected", async () => {

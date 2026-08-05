@@ -169,11 +169,11 @@ export async function mintLocalRuntimeCredential(
         edge_permissions: buildEdgePermissions(manifest),
         connection_id: connectionId,
         expires_at: expiresAt,
-        // Stable across mints, unlike `source`, which carries a random
-        // suffix per credential. Keeps written items attributable to the
-        // Connection rather than to whichever credential happened to be
-        // live at the time.
-        item_source: runtimeCredentialItemSource(connectionId),
+        // Stable across mints and across reinstalls, unlike `source`,
+        // which carries a random suffix per credential. Keys items to the
+        // integration and the space so a re-synced upstream record always
+        // finds the row it wrote before.
+        item_source: runtimeCredentialItemSource(manifest),
       },
       keyHash,
       spaceId,

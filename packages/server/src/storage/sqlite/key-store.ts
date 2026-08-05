@@ -149,7 +149,7 @@ export class SqliteKeyStore implements KeyStore {
     input: CreateKeyInput & {
       connection_id: string;
       expires_at: string;
-      item_source: string;
+      item_source: string | null;
     },
     keyHash: string,
     spaceId?: string,
@@ -187,7 +187,7 @@ export class SqliteKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
-      item_source: input.item_source,
+      item_source: input.item_source ?? undefined,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
@@ -206,7 +206,7 @@ export class SqliteKeyStore implements KeyStore {
       is_platform: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
-      item_source: input.item_source,
+      item_source: input.item_source ?? undefined,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},

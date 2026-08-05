@@ -35,7 +35,24 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
   name: "google.tasks",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    target_type: {
+      type: "string",
+      description: "Item type synced tasks land as.",
+      from_target_types: true,
+      default: "google.tasks.task",
+    },
+    selected_task_list_ids: {
+      type: "string_array",
+      description:
+        "Task lists included in the sync; empty means the default list only.",
+    },
+    default_write_task_list_id: {
+      type: "string",
+      description: "Task list that receives tasks created in Marfa.",
+    },
+  },
   publisher: "google",
   description:
     "Bidirectional sync between Google Tasks and Marfa. Polls every task list under the connected account on a 10-minute schedule and writes Marfa-side mutations back via OAuth proxy.",

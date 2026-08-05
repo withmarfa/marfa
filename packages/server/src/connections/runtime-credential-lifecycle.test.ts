@@ -229,9 +229,9 @@ describe("item provenance survives a credential rotation", () => {
 
     expect(secondItem.id).toBe(firstItem.id);
     expect(secondItem.source).toBe(firstItem.source);
-    // Derived from the Connection, so it cannot move when the credential
-    // does.
-    expect(firstItem.source).toBe(`integration:${connectionId}`);
+    // Keyed on the integration and the space, so it survives a credential
+    // rotation and an uninstall-reinstall alike.
+    expect(firstItem.source).toBe(`integration:${INTEGRATION}`);
   });
 });
 
@@ -665,7 +665,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
       {
         type: "core.task",
         properties: { title: "left by an earlier generation" },
-        source: `integration:${mine.connectionId}`,
+        source: "integration:acme.upsert-target-type",
         source_id: "narrowed",
       },
       space.id,
