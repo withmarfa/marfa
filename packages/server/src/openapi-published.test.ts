@@ -126,4 +126,23 @@ describe("published OpenAPI spec", () => {
 
     expect(offenders.sort()).toEqual([]);
   });
+
+  it("serves compatible_with on every type-resource response", () => {
+    // Clients resolve a sibling type's read-as relationship from this field,
+    // and generated clients only see what the spec declares — it went missing
+    // once and every generated client silently lost type-compatibility
+    // resolution while the runtime bodies kept carrying it. This pins the
+    // generated surface so the field cannot rot off the wire again.
+    const typeOperations = [...published.entries()].filter(([key]) =>
+      /^(GET|POST|PUT) \/types/.test(key),
+    );
+    expect(typeOperations.length).toBeGreaterThan(0);
+
+    const missing: string[] = [];
+    for (const [key, operation] of typeOperations) {
+      const text = JSON.stringify(operation);
+      if (!text.includes('"compatible_with"')) missing.push(key);
+    }
+    expect(missing.sort()).toEqual([]);
+  });
 });

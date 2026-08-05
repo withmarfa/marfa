@@ -96,6 +96,10 @@ const TypeSchemaResponse = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   parent: z.string().optional(),
+  // Clients resolve a sibling type's read-as relationship from this field,
+  // so it must reach the generated spec — an omission here strips it from
+  // every generated client even though the runtime body carries it.
+  compatible_with: z.array(z.string()).optional(),
   fields: z.record(z.string(), z.unknown()),
   version: z.number(),
   display_hints: z

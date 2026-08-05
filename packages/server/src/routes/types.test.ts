@@ -620,3 +620,92 @@ describe("GET /types/:id — inheritance resolution", () => {
     expect(schema.merge_policy?.fields?.body).toBe("keep_both_copies");
   });
 });
+
+describe("compatible_with at the gate and on the wire", () => {
+  it("rejects a false claim with 422 compatible_with_violation", async () => {
+    // core.note requires body; a claim that omits it does not hold, and the
+    // refusal names the mechanism so a client can act on it.
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "demo.hollow_note",
+        version: 1,
+        compatible_with: ["core.note"],
+        fields: { week_of: { type: "date" } },
+      },
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("compatible_with_violation");
+  });
+
+  it("registers a holding claim and serves it on every read surface", async () => {
+    const created = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "demo.meal_plan",
+        version: 1,
+        compatible_with: ["core.note"],
+        fields: {
+          body: { type: "string", required: true },
+          week_of: { type: "date" },
+        },
+      },
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { type: TypeSchema };
+    expect(createdBody.type.compatible_with).toEqual(["core.note"]);
+
+    const single = await request(ctx.app, "GET", "/types/demo.meal_plan", {
+      key: ctx.adminKey,
+    });
+    const singleBody = (await single.json()) as TypeSchema;
+    expect(singleBody.compatible_with).toEqual(["core.note"]);
+
+    const list = await request(ctx.app, "GET", "/types", {
+      key: ctx.adminKey,
+    });
+    const listBody = (await list.json()) as TypeSchema[];
+    const fromList = listBody.find((t) => t.id === "demo.meal_plan");
+    expect(fromList?.compatible_with).toEqual(["core.note"]);
+  });
+
+  it("keeps compatible items out of target-type queries", async () => {
+    // Compatibility is a read-as promise for consumers, not query membership:
+    // a filter for the target returns only the target and its descendants.
+    // Exercised through a member credential so the resolution path a
+    // non-admin caller takes is the one under test.
+    const keyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "compat-member",
+        source: "compat-member-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+      },
+    });
+    const { key: memberKey } = (await keyRes.json()) as { key: string };
+
+    const item = await request(ctx.app, "POST", "/items", {
+      key: memberKey,
+      body: {
+        type: "demo.meal_plan",
+        properties: { body: "greens", week_of: "2026-08-10" },
+      },
+    });
+    expect(item.status).toBe(201);
+    const itemBody = (await item.json()) as { item: { id: string } };
+
+    const asTarget = await request(ctx.app, "GET", "/items?type=core.note", {
+      key: memberKey,
+    });
+    const targetList = (await asTarget.json()) as { data: { id: string }[] };
+    expect(targetList.data.some((i) => i.id === itemBody.item.id)).toBe(false);
+
+    const asSelf = await request(ctx.app, "GET", "/items?type=demo.meal_plan", {
+      key: memberKey,
+    });
+    const selfList = (await asSelf.json()) as { data: { id: string }[] };
+    expect(selfList.data.some((i) => i.id === itemBody.item.id)).toBe(true);
+  });
+});

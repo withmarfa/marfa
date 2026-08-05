@@ -9096,6 +9096,12 @@
                       "parent": {
                         "type": "string"
                       },
+                      "compatible_with": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "fields": {
                         "type": "object",
                         "additionalProperties": {
@@ -9253,6 +9259,12 @@
                         },
                         "parent": {
                           "type": "string"
+                        },
+                        "compatible_with": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         },
                         "fields": {
                           "type": "object",
@@ -9493,6 +9505,12 @@
                     "parent": {
                       "type": "string"
                     },
+                    "compatible_with": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "fields": {
                       "type": "object",
                       "additionalProperties": {
@@ -9700,6 +9718,12 @@
                         },
                         "parent": {
                           "type": "string"
+                        },
+                        "compatible_with": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         },
                         "fields": {
                           "type": "object",
