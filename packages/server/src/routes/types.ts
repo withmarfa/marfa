@@ -403,20 +403,24 @@ export function typeRoutes(storage: Storage) {
         "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
     }
-    // Platform-credential gate. Only credentials marked as platform may
-    // register `core.*`, `system.*`, or `marfa.*` types — these tiers are
-    // platform-shipped/operational, not authored at runtime by ordinary
-    // space admins.
+    // Reserved namespaces are a property of the build, not of the request.
+    // `core.*`, `system.*` and `marfa.*` are authored as JSON in the type
+    // package and compiled into the registry; nothing legitimate mints one
+    // over HTTP, and the route's own published description already says so.
+    //
+    // This used to admit a platform credential, which made registration and
+    // restore disagree: an archive carrying a reserved-namespace type is
+    // refused whatever credential restores it, precisely because a file is
+    // something an attacker can hand you. A registration is no more
+    // trustworthy for arriving over a socket. The asymmetry also let one
+    // credentialed mistake put a row in a space's exports that its own
+    // restore would then refuse, taking the whole archive down with it.
     if (typeof body.id === "string") {
       const tier = classifyNamespace(body.id);
-      const isPlatformCaller = c.get("apiKey")?.is_platform === true;
-      if (
-        (tier === "core" || tier === "system" || tier === "marfa") &&
-        !isPlatformCaller
-      ) {
+      if (tier === "core" || tier === "system" || tier === "marfa") {
         throw new MarfaError(
           ErrorCode.FORBIDDEN,
-          `Reserved namespace: only platform credentials may register ${tier}.* types`,
+          `Reserved namespace: ${tier}.* types are platform-shipped and cannot be registered at runtime`,
           { namespace: tier },
         );
       }
