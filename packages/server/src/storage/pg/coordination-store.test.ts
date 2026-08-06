@@ -210,3 +210,57 @@ describe.skipIf(!isPg || !url)("pg CoordinationStore", () => {
     }
   });
 });
+
+// The lock's correctness depends on which endpoint it is taken from, and
+// that is not observable from the lock's behaviour on a direct Postgres —
+// there the two clients are the same pool. It is observable from which
+// client the store reserves.
+describe.skipIf(!isPg || !url)("pg CoordinationStore endpoint choice", () => {
+  it("withJobLock reserves from the session client, not the pooled one", async () => {
+    const { createConnection } = await import("./connection.js");
+    const { PgCoordinationStore } = await import("./coordination-store.js");
+    const { drizzle } = await import("drizzle-orm/postgres-js");
+
+    const pooled = await createConnection(url, { skipBootstrap: true });
+    const session = await createConnection(url, { skipBootstrap: true });
+    try {
+      let pooledReserves = 0;
+      let sessionReserves = 0;
+      const spy = (
+        real: typeof pooled.client,
+        count: () => void,
+      ): typeof pooled.client =>
+        new Proxy(real, {
+          get(target, prop, receiver) {
+            if (prop === "reserve") {
+              count();
+              return target.reserve.bind(target);
+            }
+            return Reflect.get(target, prop, receiver) as unknown;
+          },
+        });
+
+      const store = new PgCoordinationStore(
+        spy(pooled.client, () => (pooledReserves += 1)),
+        drizzle(pooled.client),
+        spy(session.client, () => (sessionReserves += 1)),
+      );
+
+      const ran = await store.withJobLock("endpoint-choice", () =>
+        Promise.resolve("ran"),
+      );
+
+      expect(ran).toBe("ran");
+      // A session-scoped advisory lock taken on a transaction-mode pooled
+      // endpoint lands on whichever backend served the statement and can
+      // outlive the client that took it. Then the holder is an orphan no
+      // release will ever reach, and a job elected once per process — the
+      // reactive-run drainer — never starts on any later instance.
+      expect(sessionReserves).toBe(1);
+      expect(pooledReserves).toBe(0);
+    } finally {
+      await pooled.close();
+      await session.close();
+    }
+  });
+});

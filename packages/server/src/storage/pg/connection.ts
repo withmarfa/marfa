@@ -111,12 +111,14 @@ export async function createConnection(
   baseDb: PgDb;
   client: PgClient;
   /**
-   * Dedicated client for streaming RLS reservations. A separate small pool
-   * on the direct (session-mode) endpoint when `directConnectionString` is
-   * set; otherwise the same `client`. Only `acquireStreamRls` reserves from
-   * it — never the data plane or Better Auth.
+   * Dedicated client for work that needs a real session. A separate small
+   * pool on the direct (session-mode) endpoint when `directConnectionString`
+   * is set; otherwise the same `client`. Two callers reserve from it and no
+   * others: `acquireStreamRls`, whose `SET ROLE` is session state, and
+   * `withJobLock`, whose `pg_try_advisory_lock` is a session-scoped lock.
+   * Never the data plane, never Better Auth.
    */
-  streamClient: PgClient;
+  sessionClient: PgClient;
   close: () => Promise<void>;
 }> {
   const directConnectionString = options?.directConnectionString?.trim() ?? "";
@@ -162,10 +164,13 @@ export async function createConnection(
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
-  // Dedicated streaming client on the direct (session-mode) endpoint, when
-  // configured, so streaming's session-level `SET ROLE` never strands on the
-  // app's transaction-mode pooled connections (see `directConnectionString`).
-  const streamClient = directConnectionString
+  // Dedicated client on the direct (session-mode) endpoint, when configured,
+  // for the work that genuinely needs a session: streaming's `SET ROLE`, and
+  // the session-scoped advisory locks behind `withJobLock`. Neither survives
+  // the app's transaction-mode pooled connections, where a statement is its
+  // own transaction and the backend it landed on is not the one the next
+  // statement gets (see `directConnectionString`).
+  const sessionClient = directConnectionString
     ? postgres(directConnectionString, {
         // One slot per concurrent stream; streams are far rarer than
         // data-plane requests and the direct endpoint has a tighter
@@ -216,11 +221,11 @@ export async function createConnection(
     db,
     baseDb,
     client,
-    streamClient,
+    sessionClient,
     close: async () => {
       await client.end();
-      if (streamClient !== client) {
-        await streamClient.end();
+      if (sessionClient !== client) {
+        await sessionClient.end();
       }
     },
   };

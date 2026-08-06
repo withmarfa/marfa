@@ -97,7 +97,9 @@ describe("tryStartReactiveRunBridge — env-var resolution", () => {
   it("returns null when the URLs env var is malformed JSON", () => {
     const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
     const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
-    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    const errSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
     try {
       process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = "not-json";
       process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
@@ -113,7 +115,9 @@ describe("tryStartReactiveRunBridge — env-var resolution", () => {
   it("returns null when the URLs env var is an empty object", () => {
     const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
     const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
-    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    const errSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
     try {
       process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = "{}";
       process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
@@ -129,7 +133,9 @@ describe("tryStartReactiveRunBridge — env-var resolution", () => {
   it("returns null when the URLs env var is a JSON array (not an object)", () => {
     const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
     const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
-    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    const errSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
     try {
       process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = '["https://x"]';
       process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
@@ -145,7 +151,9 @@ describe("tryStartReactiveRunBridge — env-var resolution", () => {
   it("ignores entries whose value isn't a non-empty string but still boots if at least one is valid", async () => {
     const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
     const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
-    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    const errSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
     try {
       process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = JSON.stringify({
         "valid.one": "https://valid.example.com",

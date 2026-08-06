@@ -61,7 +61,7 @@ export async function createPgStorage(
     poolMode?: DbPoolMode;
   },
 ): Promise<Storage> {
-  const { db, baseDb, client, streamClient, close } = await createConnection(
+  const { db, baseDb, client, sessionClient, close } = await createConnection(
     connectionString,
     {
       maxPoolSize: options?.maxPoolSize,
@@ -144,7 +144,7 @@ export async function createPgStorage(
     // RLS-bypassed (better-auth manages its own context).
     accountLifecycle: new PgAccountLifecycleStore(baseDb),
     settings: new PgSettingsStore(db),
-    coordination: new PgCoordinationStore(client, db),
+    coordination: new PgCoordinationStore(client, db, sessionClient),
     // Async substrate for bulk_action. Wired on the wrapped instance so
     // RLS scopes its space_id reads/writes per request; the worker runs
     // outside a request and bypasses RLS via the unwrapped path on
@@ -227,7 +227,7 @@ export async function createPgStorage(
     betterAuthDialect: "pg" as const,
     pgDb: db,
     pgClient: client,
-    pgStreamClient: streamClient,
+    pgStreamClient: sessionClient,
   } satisfies Storage & {
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
     betterAuthDb: unknown;

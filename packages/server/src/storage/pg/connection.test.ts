@@ -112,7 +112,7 @@ describe("createConnection pool-mode guard", () => {
       directConnectionString: DIRECT,
       skipBootstrap: true,
     });
-    expect(conn.streamClient).not.toBe(conn.client);
+    expect(conn.sessionClient).not.toBe(conn.client);
     await conn.close();
   });
 
@@ -129,7 +129,7 @@ describe("createConnection pool-mode guard", () => {
       skipBootstrap: true,
     });
     try {
-      for (const client of [conn.client, conn.streamClient]) {
+      for (const client of [conn.client, conn.sessionClient]) {
         const { idle_timeout: idleTimeout, max_lifetime: maxLifetime } = (
           client as unknown as {
             options: { idle_timeout: number; max_lifetime: number };
@@ -157,7 +157,7 @@ describe("createConnection pool-mode guard", () => {
         skipBootstrap: true,
       },
     );
-    expect(conn.streamClient).not.toBe(conn.client);
+    expect(conn.sessionClient).not.toBe(conn.client);
     await conn.close();
   });
 });

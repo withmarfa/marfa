@@ -41,16 +41,36 @@ import type { PgClient, PgDb } from "./connection.js";
  * to exclude other lock-takers, not to make `fn` atomic, and the callers
  * (`connections/lifecycle-lock.ts`) open their own transactions.
  *
- * `withJobLock` is deliberately left session-scoped. Its `fn` is a background
- * job that can run for minutes, and an explicit transaction held that long
- * is a worse trade than the failure it would fix: the failure is a second
- * instance repeating idempotent work, and it cannot hang anything because a
- * try-lock never waits.
+ * `withJobLock` stays session-scoped, because its `fn` is a background job that
+ * can run for minutes and an explicit transaction held that long is a worse
+ * trade. What it cannot do is take that lock on the pooled client. The
+ * consolation above — "the failure is a second instance repeating idempotent
+ * work" — assumes the holder is a live instance doing the work. Over the
+ * pooler it need not be: a lock outlives the client that took it, so the
+ * holder can be a backend whose process is long gone, and then nobody runs the
+ * job at all.
+ *
+ * That is survivable for a job that retries on a timer, which is what most
+ * callers are: a lost tick costs one tick. It is not survivable for a job
+ * elected once and held for the process lifetime, which is what the
+ * reactive-run bridge's drainer is. There the orphan wins the election
+ * forever, the drainer never starts, and the only symptom is that nothing
+ * happens.
+ *
+ * So the try-lock runs on `sessionClient`, the direct session-mode endpoint
+ * that streaming RLS already needs for the same reason. A reserved connection
+ * there owns a backend for its whole life, which is the assumption the
+ * session-scoped shape was always making and only gets on that endpoint.
  */
 export class PgCoordinationStore implements CoordinationStore {
+  /**
+   * `sessionClient` defaults to `client` for the direct-Postgres case, where
+   * they are the same pool and the distinction does not arise.
+   */
   constructor(
     private client: PgClient,
     private db: PgDb,
+    private sessionClient: PgClient = client,
   ) {}
 
   /**
@@ -83,10 +103,12 @@ export class PgCoordinationStore implements CoordinationStore {
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
     const key = `marfa:${name}`;
-    const conn = await this.client.reserve();
+    const conn = await this.sessionClient.reserve();
     try {
       // session-scoped-by-design: a try-lock that never waits, held on a
       // reserved connection for a background job that can run for minutes.
+      // Reserved from the session-mode client so the backend it lands on is
+      // the one the matching unlock reaches.
       const rows = await conn<{ acquired: boolean }[]>`
         SELECT pg_try_advisory_lock(hashtextextended(${key}, 0)) AS acquired
       `;
