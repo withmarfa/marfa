@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireAdmin,
+  hasPlatformAuthority,
+} from "../middleware/auth.js";
+import type { ApiKey } from "@withmarfa/shared";
 import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
@@ -301,6 +306,29 @@ const reconcileBlobsRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve a blob for a reader.
+ *
+ * A space-bound credential sees its own space's row and nothing else, which
+ * is what makes a cross-space probe answer 404. A platform credential is not
+ * confined to a space, and every other surface it reaches, items included,
+ * resolves across them. The blob routes did not, so an operator could read an
+ * item and then be told the blob it references is absent. Reporting absence
+ * is the dangerous direction: absence is what a repair or a purge acts on.
+ *
+ * Content addressing makes the widened lookup well defined, because every row
+ * for a hash describes the same bytes.
+ */
+async function resolveBlobForReader(
+  storage: Storage,
+  apiKey: ApiKey,
+  hash: string,
+): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
+  return hasPlatformAuthority(apiKey)
+    ? storage.blobs.getAcrossSpaces(hash)
+    : storage.blobs.get(hash, apiKey.space_id ?? "");
+}
+
 export function blobRoutes(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -450,7 +478,7 @@ export function blobRoutes(
     }
 
     // Space-scoped lookup. Cross-space probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
+    const record = await resolveBlobForReader(storage, apiKey, hash);
     if (!record) {
       return new Response(null, { status: 404 });
     }
@@ -477,7 +505,7 @@ export function blobRoutes(
     }
 
     // Space-scoped lookup. Cross-space probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
+    const record = await resolveBlobForReader(storage, apiKey, hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -516,7 +544,7 @@ export function blobRoutes(
     }
 
     // Space-scoped lookup. Cross-space probes return 404.
-    const record = await storage.blobs.get(hash, apiKey.space_id ?? "");
+    const record = await resolveBlobForReader(storage, apiKey, hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }

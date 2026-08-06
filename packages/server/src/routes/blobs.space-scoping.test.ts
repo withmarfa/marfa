@@ -147,4 +147,43 @@ describe("blobs — space scoping", () => {
     });
     expect(getA.status).toBe(404);
   });
+  it("platform authority reads a blob that lives in a space", async () => {
+    ctx = await createTestContext();
+    const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
+    const adminA = await mintSpaceAdmin(ctx, "blob-admin-platform", spaceA);
+
+    // Uploaded by a space-bound caller, so the only row is space A's.
+    const upload = await request(ctx.app, "POST", "/blobs", {
+      key: adminA,
+      headers: { "Content-Type": "application/octet-stream" },
+      body: "owned-by-space-a",
+    });
+    expect(upload.status).toBe(201);
+    const { hash } = (await upload.json()) as { hash: string };
+
+    // The platform credential reads every space's items, so being told this
+    // blob is absent is both wrong and the dangerous direction: absence is
+    // what a repair or a purge acts on.
+    const headPlatform = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
+      key: ctx.adminKey,
+    });
+    expect(headPlatform.status).toBe(200);
+
+    const getPlatform = await request(ctx.app, "GET", `/blobs/${hash}`, {
+      key: ctx.adminKey,
+    });
+    expect(getPlatform.status).toBe(200);
+
+    // `/blobs/:hash/url` shares the same resolver but is presigned-only, so
+    // it refuses before the lookup on the filesystem backend these tests use
+    // and cannot witness the change here.
+
+    // The space fence is untouched: another space still sees nothing.
+    const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
+    const adminB = await mintSpaceAdmin(ctx, "blob-admin-other", spaceB);
+    const getB = await request(ctx.app, "GET", `/blobs/${hash}`, {
+      key: adminB,
+    });
+    expect(getB.status).toBe(404);
+  });
 });

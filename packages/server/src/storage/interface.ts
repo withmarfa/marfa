@@ -618,6 +618,19 @@ export interface BlobStore {
     spaceId: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
   /**
+   * Resolve a hash without a space, for a caller whose authority is not
+   * confined to one. Content addressing makes this well defined: every row
+   * for a hash describes the same bytes, so any of them answers the
+   * question a platform credential is asking.
+   *
+   * Only the platform-authority read path calls this. A space-bound caller
+   * MUST go through `get(hash, spaceId)`, which is what keeps a cross-space
+   * probe answering 404.
+   */
+  getAcrossSpaces(
+    hash: string,
+  ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
+  /**
    * Returns hashes seen across the entire instance (every space), de-duplicated.
    * Used only by the admin reconcile route + metrics. Space-scoped reads
    * MUST go through `get(hash, spaceId)`.

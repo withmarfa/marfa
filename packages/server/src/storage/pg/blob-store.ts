@@ -43,6 +43,22 @@ export class PgBlobStore implements BlobStore {
     };
   }
 
+  async getAcrossSpaces(
+    hash: string,
+  ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
+    const [row] = await this.db
+      .select()
+      .from(blobs)
+      .where(eq(blobs.hash, hash))
+      .limit(1);
+    if (!row) return null;
+    return {
+      mime_type: row.mime_type,
+      size: row.size,
+      storage_path: row.storage_path,
+    };
+  }
+
   async listAll(): Promise<string[]> {
     // Distinct hashes across every space — used by the admin reconcile
     // route to find orphan files on disk. Space-scoped reads use `get`.
