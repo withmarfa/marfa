@@ -39,6 +39,7 @@
 import type { Item } from "@withmarfa/shared";
 import { Pool } from "undici";
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
+import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import {
   buildEntryForConnection,
@@ -72,6 +73,14 @@ import {
  */
 const COOLDOWN_THRESHOLD = 3;
 const ESCALATION_THRESHOLD = 10;
+
+/**
+ * How long an instance that lost the drainer election waits before asking
+ * again. Long enough that a steady multi-instance deployment is not polling
+ * the lock, short enough that a single instance recovers on its own from a
+ * lock the previous holder's connection is still sitting on.
+ */
+const ELECTION_RETRY_MS = 30_000;
 const COOLDOWN_MS = 60_000;
 const MAX_COOLDOWN_MS = 5 * 60_000;
 const UNMAPPED_ACTIVITY_RETRY_BASE_MS = 1_000;
@@ -166,6 +175,8 @@ export interface BridgeConfig {
   unmappedActivityRetryMaxMs?: number;
   /** Epoch-millisecond clock override for deterministic alert-backoff tests. */
   unmappedActivityNow?: () => number;
+  /** How long to wait before re-attempting the drainer election. */
+  electionRetryMs?: number;
   /** Custom fetch (for tests). */
   fetch?: typeof fetch;
 }
@@ -218,6 +229,7 @@ export function tryStartReactiveRunBridge(
     unmappedActivityRetryMaxMs:
       config?.unmappedActivityRetryMaxMs ?? UNMAPPED_ACTIVITY_RETRY_MAX_MS,
     unmappedActivityNow: config?.unmappedActivityNow ?? Date.now,
+    electionRetryMs: config?.electionRetryMs ?? ELECTION_RETRY_MS,
     fetch: config?.fetch,
   });
 }
@@ -245,31 +257,34 @@ function buildResolverFromEnv():
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    console.error(
-      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS is not valid JSON; bridge disabled:",
-      err instanceof Error ? err.message : String(err),
-    );
+    log("error", "Reactive-run route map is not valid JSON; bridge disabled", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    console.error(
-      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS must be a JSON object of integration_name → URL; bridge disabled",
+    log(
+      "error",
+      "Reactive-run route map must be a JSON object of integration_name to URL; bridge disabled",
     );
     return null;
   }
   const map: Record<string, string> = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (typeof value !== "string" || value.length === 0) {
-      console.error(
-        `[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS["${key}"] must be a non-empty string; entry ignored`,
+      log(
+        "error",
+        "Reactive-run route map entry must be a non-empty string; entry ignored",
+        { integration_name: key },
       );
       continue;
     }
     map[key] = value;
   }
   if (Object.keys(map).length === 0) {
-    console.error(
-      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS parsed to an empty map; bridge disabled",
+    log(
+      "error",
+      "Reactive-run route map parsed to an empty map; bridge disabled",
     );
     return null;
   }
@@ -373,6 +388,22 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   // bridge has fully unwound before they move on.
   let drainerExit: Promise<void> | null = null;
 
+  // The gap between election attempts has to be interruptible, or `stop()`
+  // waits out a retry window it has no reason to.
+  let electionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let wakeElectionRetry: (() => void) | null = null;
+  const waitBeforeElectionRetry = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const finish = (): void => {
+        if (electionRetryTimer) clearTimeout(electionRetryTimer);
+        electionRetryTimer = null;
+        wakeElectionRetry = null;
+        resolve();
+      };
+      wakeElectionRetry = finish;
+      electionRetryTimer = setTimeout(finish, ms);
+    });
+
   const clearUnmappedStateIfUnused = (entry: SubscriptionEntry): void => {
     const replacement = Array.from(subscriptions.values()).find(
       (candidate) =>
@@ -445,10 +476,13 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
         try {
           await refreshConnection(next.value.item.id);
         } catch (err) {
-          console.error(
-            "[reactive-run-bridge] cache invalidation failed:",
-            err instanceof Error ? err.message : String(err),
-          );
+          // A missed invalidation leaves this instance dispatching against a
+          // stale view of a connection, which is exactly the kind of drift
+          // that reads as "the integration just stopped working".
+          log("error", "Reactive-run subscription cache invalidation failed", {
+            connection_id: next.value.item.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     } finally {
@@ -468,54 +502,86 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
         const initial = await loadSubscriptions(storage);
         for (const [id, entry] of initial) subscriptions.set(id, entry);
       } catch (err) {
-        console.error(
-          "[reactive-run-bridge] initial subscription load failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        log("error", "Reactive-run initial subscription load failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       // Coordination lock ensures only one server instance runs the
-      // drainer at a time. Other instances wait inside withJobLock.
-      // The drainer is fire-and-forget: it lives for the process
-      // lifetime; .catch() surfaces unexpected exits.
-      drainerExit = storage.coordination
-        .withJobLock("reactive-run-bridge", async () => {
-          // Cache invalidation runs alongside the drainer under the
-          // same lock — only the elected instance maintains its map.
-          void startInvalidationSubscriber();
-          const iter = subscribe()[Symbol.asyncIterator]();
-          drainerIter = iter;
+      // drainer at a time. The election is retried rather than attempted
+      // once: losing it is not permanent, and a process that treated it as
+      // permanent stayed up, healthy and silent, forwarding nothing for its
+      // whole lifetime. Whoever holds the lock releases it on exit, so a
+      // later attempt is how a survivor takes over.
+      const electionRetryMs = config.electionRetryMs ?? ELECTION_RETRY_MS;
+      const isStopping = (): boolean => stopRequested;
+      drainerExit = (async () => {
+        let attempt = 0;
+        for (;;) {
+          if (isStopping()) return;
+          attempt += 1;
+          const outcome = { elected: false };
           try {
-            for (;;) {
-              const next = await iter.next();
-              if (next.done) break;
-              if (stopRequested) break;
-              await fanoutEvent(
-                next.value,
-                subscriptions,
-                subscriberFailures,
-                unmappedActivityStates,
-                refreshConnection,
-                config,
-                fetchImpl,
-                ensurePool,
-                storage,
-              );
-            }
-          } finally {
-            drainerIter = null;
+            await storage.coordination.withJobLock(
+              "reactive-run-bridge",
+              async () => {
+                outcome.elected = true;
+                log("info", "Reactive-run bridge elected; draining", {
+                  attempt,
+                });
+                // Cache invalidation runs alongside the drainer under the
+                // same lock — only the elected instance maintains its map.
+                void startInvalidationSubscriber();
+                const iter = subscribe()[Symbol.asyncIterator]();
+                drainerIter = iter;
+                try {
+                  for (;;) {
+                    const next = await iter.next();
+                    if (next.done) break;
+                    if (stopRequested) break;
+                    await fanoutEvent(
+                      next.value,
+                      subscriptions,
+                      subscriberFailures,
+                      unmappedActivityStates,
+                      refreshConnection,
+                      config,
+                      fetchImpl,
+                      ensurePool,
+                      storage,
+                    );
+                  }
+                } finally {
+                  drainerIter = null;
+                }
+              },
+            );
+          } catch (err: unknown) {
+            log("error", "Reactive-run bridge drainer threw", {
+              error: err instanceof Error ? err.message : String(err),
+              attempt,
+            });
           }
-        })
-        .catch((err: unknown) => {
-          console.error(
-            "[reactive-run-bridge] drainer threw:",
-            err instanceof Error ? err.message : String(err),
-          );
-        })
-        .then(() => undefined);
+          if (isStopping()) return;
+          if (!outcome.elected) {
+            // The only outward sign of this used to be that nothing
+            // happened. An unelected instance forwards no events, so on a
+            // single-instance deployment it means the substrate is dark.
+            log("warn", "Reactive-run bridge not elected; will retry", {
+              attempt,
+              retry_in_ms: electionRetryMs,
+              note: "another instance holds the lock, or a previous holder's connection outlived it",
+            });
+          }
+          await waitBeforeElectionRetry(electionRetryMs);
+        }
+      })();
     },
     async stop(): Promise<void> {
       stopRequested = true;
       running = false;
+      // Wake an instance parked between election attempts, so `stop()` is not
+      // held for the length of a retry window.
+      wakeElectionRetry?.();
       subscriptions.clear();
       subscriberFailures.clear();
       const unmappedActivityInFlight = Array.from(
@@ -712,8 +778,13 @@ function handleUnmappedIntegration(
   config: BridgeConfig,
   storage: Storage,
 ): Promise<void> | null {
-  console.error(
-    `[reactive-run-bridge] no queue URL mapped for integration "${entry.integration_name}" (connection ${entry.connection_id}); skipping dispatch — set CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS to include this integration`,
+  log(
+    "error",
+    "No queue URL mapped for integration; dispatch skipped. Add it to the reactive-run route map",
+    {
+      integration_name: entry.integration_name,
+      connection_id: entry.connection_id,
+    },
   );
   const key = unmappedActivityKey(spaceId, entry.integration_name);
   let state = states.get(key);
@@ -775,10 +846,10 @@ function handleUnmappedIntegration(
       );
       state.retryAfter =
         (config.unmappedActivityNow?.() ?? Date.now()) + retryDelay;
-      console.error(
-        `[reactive-run-bridge] unmapped-integration activity write failed for ${entry.integration_name}:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      log("error", "Unmapped-integration activity write failed", {
+        integration_name: entry.integration_name,
+        error: err instanceof Error ? err.message : String(err),
+      });
       armUnmappedActivityRetry(
         key,
         state,
@@ -996,10 +1067,11 @@ async function handleSubscriberFailure(
   storage: Storage,
 ): Promise<void> {
   const reason = err instanceof Error ? err.message : String(err);
-  console.error(
-    `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
-    reason,
-  );
+  log("error", "Reactive-run fanout failed for subscriber", {
+    connection_id: entry.connection_id,
+    integration_name: entry.integration_name,
+    error: reason,
+  });
   // system.activity write goes via storage directly (not publish()), so it
   // is invisible to the bridge's own subscribe() listener — no feedback loop.
   try {
@@ -1107,10 +1179,10 @@ async function markSubscriberFailing(
     );
   } catch (err) {
     // Best-effort — the per-event error row already informed operators.
-    console.error(
-      `[reactive-run-bridge] failed to mark subscriber ${entry.connection_id} failing:`,
-      err instanceof Error ? err.message : String(err),
-    );
+    log("error", "Failed to mark subscriber failing", {
+      connection_id: entry.connection_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
   // Emit the action_required activity row separately so a failed
   // items.update above doesn't block surface telemetry.
@@ -1173,9 +1245,15 @@ async function sendOne(
         await res.body.dump();
         if (res.statusCode >= 200 && res.statusCode < 300) return "success";
         if (res.statusCode < 500) {
-          console.error(
-            `[reactive-run-bridge] non-retryable ${String(res.statusCode)} from queue`,
-          );
+          // A 4xx here is a misconfiguration, not a blip: a wrong or expired
+          // queue token, or a URL naming a queue that no longer exists. It
+          // recurs on every item write and never escalates on its own, so it
+          // has to be legible on the first one.
+          log("error", "Reactive-run queue refused the message", {
+            status: res.statusCode,
+            retryable: false,
+            hint: "check the queue push URL and the Cloudflare Queues API token",
+          });
           return "rejected";
         }
       } else {
@@ -1190,18 +1268,21 @@ async function sendOne(
         });
         if (res.ok) return "success";
         if (res.status < 500) {
-          console.error(
-            `[reactive-run-bridge] non-retryable ${String(res.status)} from queue`,
-          );
+          // See the undici branch above: a 4xx is configuration, not weather.
+          log("error", "Reactive-run queue refused the message", {
+            status: res.status,
+            retryable: false,
+            hint: "check the queue push URL and the Cloudflare Queues API token",
+          });
           return "rejected";
         }
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[reactive-run-bridge] send attempt ${String(attempt)}:`,
-        reason,
-      );
+      log("warn", "Reactive-run queue send attempt failed; retrying", {
+        attempt,
+        error: reason,
+      });
     } finally {
       clearTimeout(timeout);
     }

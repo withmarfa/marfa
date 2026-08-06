@@ -1520,9 +1520,10 @@ describe("bridge — unmapped integration handling", () => {
     // whichever happened to run first.
     const failureLogs: string[] = [];
     const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation((...args: unknown[]) => {
-        failureLogs.push(args.map((arg) => String(arg)).join(" "));
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        failureLogs.push(String(chunk));
+        return true;
       });
     try {
       await bridge!.start();
@@ -2288,6 +2289,76 @@ describe("bridge — unmapped integration handling", () => {
     } finally {
       rejectFirstWrite(new Error("bridge stopped"));
       ctx.storage.items.create = originalCreate;
+      await bridge!.stop();
+    }
+  });
+  // Losing the election is not permanent, and treating it as permanent is how
+  // an instance stays up, healthy and silent, forwarding nothing for its whole
+  // lifetime. Over a transaction-mode pooler the holder can be an orphaned
+  // backend rather than a live instance, so nobody is doing the work either.
+  it("retries the drainer election after losing it", async () => {
+    const integrationName = "acme.election-retry";
+    const integrationId = await createIntegration(
+      manifest({ name: integrationName }),
+    );
+    await createConnection({ integrationRef: integrationId });
+
+    const realWithJobLock = ctx.storage.coordination.withJobLock.bind(
+      ctx.storage.coordination,
+    );
+    let elections = 0;
+    ctx.storage.coordination.withJobLock = async <T>(
+      name: string,
+      fn: () => Promise<T>,
+    ): Promise<T | undefined> => {
+      if (name === "reactive-run-bridge") {
+        elections += 1;
+        // The first ask is refused, exactly as an orphaned lock refuses it.
+        if (elections === 1) return undefined;
+      }
+      return realWithJobLock(name, fn);
+    };
+
+    const sent: string[] = [];
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      resolveQueueUrl: () => "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: ((url: unknown) => {
+        sent.push(String(url));
+        return Promise.resolve(new Response(null, { status: 202 }));
+      }) as unknown as typeof fetch,
+      electionRetryMs: 20,
+    });
+    expect(bridge).not.toBeNull();
+    try {
+      await bridge!.start();
+      expect(
+        await waitFor(
+          () => Promise.resolve(elections),
+          (n) => n >= 2,
+        ),
+      ).toBeGreaterThanOrEqual(2);
+
+      const note = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "written after the election was retried" },
+      });
+      await publish({
+        type: "created",
+        item: note,
+        originatingConnectionId: "itm_unrelated_origin",
+      });
+
+      // The event reaches the queue, which an instance that gave up on the
+      // first refusal can never do.
+      expect(
+        await waitFor(
+          () => Promise.resolve(sent),
+          (s) => s.length > 0,
+        ),
+      ).not.toHaveLength(0);
+    } finally {
+      ctx.storage.coordination.withJobLock = realWithJobLock;
       await bridge!.stop();
     }
   });

@@ -144,7 +144,12 @@ async function main() {
     void reactiveRunBridge
       .start()
       .then(() => {
-        log("info", "Reactive-run bridge started");
+        // Deliberately not "started": `start()` returns once the subscription
+        // cache is loaded and the election has been kicked off, which says
+        // nothing about whether this instance won it. The bridge logs the
+        // election outcome itself, and that is the line that means events are
+        // being forwarded.
+        log("info", "Reactive-run bridge wired; awaiting election");
       })
       .catch((err: unknown) => {
         log("error", "Reactive-run bridge start failed", {

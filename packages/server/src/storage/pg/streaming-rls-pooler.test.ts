@@ -174,13 +174,13 @@ describe.skipIf(!enabled)(
         skipBootstrap: true,
         maxPoolSize: 3,
       });
-      expect(conn.streamClient).not.toBe(conn.client);
+      expect(conn.sessionClient).not.toBe(conn.client);
 
       try {
         const before = await readAuthSessionAsOwner(conn.client, 10);
         expect(new Set(before)).toEqual(new Set(["ok"]));
 
-        const ctx = await acquireStreamRls(conn.streamClient, SPACE_ID);
+        const ctx = await acquireStreamRls(conn.sessionClient, SPACE_ID);
         try {
           // The assertion the reserved-connection tests structurally cannot make:
           // the stream is live, and the app pool is unaffected by it.
