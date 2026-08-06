@@ -17,10 +17,20 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+export const DEFAULT_ARCHIVE_AFTER_DAYS = 30;
+
 export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
   name: "withmarfa.task-auto-archive",
   version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "1.2.0",
+  configuration_schema: {
+    archive_after_days: {
+      type: "number",
+      description:
+        "Age in days, measured from an item's server-stamped creation time, past which a task is archived.",
+      default: DEFAULT_ARCHIVE_AFTER_DAYS,
+    },
+  },
   publisher: "withmarfa",
   description:
     "Archives core.task items older than N days (configurable per-install).",
@@ -46,4 +56,3 @@ export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
 };
 
 export const INTEGRATION_NAME = TASK_AUTO_ARCHIVE_MANIFEST.name;
-export const DEFAULT_ARCHIVE_AFTER_DAYS = 30;
