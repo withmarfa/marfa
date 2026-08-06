@@ -119,6 +119,67 @@ interface ConnectionConfig {
 }
 
 /**
+ * Fold a single-calendar cursor into the per-calendar shape.
+ *
+ * The two shapes were treated as alternatives, but a connection moves
+ * between them: an install with no configuration syncs the primary calendar
+ * and accumulates a `syncToken` plus a flat `mappings` map, and the moment
+ * the picker saves a selection that same connection resolves to multi mode.
+ * Nothing carried the old state across, so the first multi sweep started
+ * from an empty `per_calendar` and re-listed the calendar from the
+ * beginning, and a re-list without a sync token does not carry the
+ * cancellations that happened in the gap, which strands the matching Marfa
+ * items as orphans nothing will ever trash.
+ *
+ * `mapping_calendars` is the sharper half. Single mode wrote every mapping
+ * without one, and the multi paths read that map to decide which calendar to
+ * address on update and delete, falling back to the connection's write
+ * target. So after the move, a PATCH for an event that lives on `primary`
+ * went to whichever calendar the selection nominated, and a DELETE went
+ * there too — where a 404 reads as "already gone", so Marfa reported the
+ * event deleted, dropped the mapping, and left the real event untouched on
+ * the user's calendar.
+ *
+ * Everything single mode ever wrote lives on `primary`: it is the only
+ * calendar that path ever addressed. So the migration is exact rather than a
+ * guess, and it runs once — afterwards `per_calendar` is populated and the
+ * legacy fields are cleared.
+ */
+function adoptSingleCalendarCursor<T extends CalendarCursor>(
+  cursor: T,
+): asserts cursor is T & {
+  per_calendar: Record<string, PerCalendarCursor>;
+  mapping_calendars: Record<string, string>;
+} {
+  const perCalendar = cursor.per_calendar ?? {};
+  const mappingCalendars = cursor.mapping_calendars ?? {};
+
+  const hasLegacyPosition =
+    cursor.syncToken !== null ||
+    cursor.pageToken != null ||
+    cursor.last_inbound_at !== null;
+  if (hasLegacyPosition && perCalendar[DEFAULT_CALENDAR_ID] === undefined) {
+    perCalendar[DEFAULT_CALENDAR_ID] = {
+      syncToken: cursor.syncToken,
+      pageToken: cursor.pageToken ?? null,
+      last_inbound_at: cursor.last_inbound_at,
+    };
+  }
+  // Clearing these is what makes the migration one-way: a later read sees a
+  // populated `per_calendar` and no legacy position, so it does nothing.
+  cursor.syncToken = null;
+  cursor.pageToken = null;
+  cursor.last_inbound_at = null;
+
+  for (const externalId of Object.keys(cursor.mappings)) {
+    mappingCalendars[externalId] ??= DEFAULT_CALENDAR_ID;
+  }
+
+  cursor.per_calendar = perCalendar;
+  cursor.mapping_calendars = mappingCalendars;
+}
+
+/**
  * Outcome of a config read. A connection record that simply carries no
  * calendar configuration is a legitimate single-"primary" install and
  * resolves `ok`. A lookup that *fails* is a different thing entirely and
@@ -949,8 +1010,7 @@ async function syncOneCalendar(
     last_inbound_at: null,
     mappings: {},
   };
-  cursor.per_calendar = cursor.per_calendar ?? {};
-  cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+  adoptSingleCalendarCursor(cursor);
   // Bound locally so the per-page ingest closure keeps the non-optional
   // narrowing the two assignments above establish.
   const mappingCalendars = cursor.mapping_calendars;
@@ -1090,8 +1150,7 @@ async function handleScheduleMulti(
     last_inbound_at: null,
     mappings: {},
   };
-  cursor.per_calendar = cursor.per_calendar ?? {};
-  cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+  adoptSingleCalendarCursor(cursor);
   // Bound locally so the per-page ingest closure keeps the non-optional
   // narrowing the two assignments above establish.
   const mappingCalendars = cursor.mapping_calendars;
@@ -1271,7 +1330,7 @@ async function handleItemEventMulti(
     last_inbound_at: null,
     mappings: {},
   };
-  cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+  adoptSingleCalendarCursor(cursor);
 
   const item = await ctx.marfa.getItem(message.item_id);
   if (item === null) {
@@ -1291,8 +1350,7 @@ async function handleItemEventMulti(
 
   const mappedCalendarId =
     externalId !== null
-      ? (cursor.mapping_calendars[externalId] ??
-        config.default_write_calendar_id)
+      ? (cursor.mapping_calendars[externalId] ?? DEFAULT_CALENDAR_ID)
       : config.default_write_calendar_id;
 
   if (item.state === "trashed") {

@@ -616,3 +616,87 @@ describe("connection-config lookup failure", () => {
     ).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Moving from the single-calendar shape to the multi one
+// ---------------------------------------------------------------------------
+
+/**
+ * A connection installed with no configuration syncs the primary calendar and
+ * accumulates a single-shaped cursor. The moment the picker saves a selection
+ * it resolves to multi mode, and everything it recorded has to survive the
+ * move. Both cases below seed exactly what single mode leaves behind: a
+ * top-level `syncToken`, and mappings with no `mapping_calendars` beside them.
+ */
+describe("adopting a single-calendar cursor", () => {
+  const legacyCursor = {
+    syncToken: "token_from_single_mode",
+    last_inbound_at: "2026-05-01T00:00:00.000Z",
+    mappings: { gevt_from_single: "mit_from_single" },
+  };
+
+  /** Write target is deliberately NOT primary, so a wrong guess is visible. */
+  function selectionWritingElsewhere(): Partial<ItemResource> {
+    return {
+      id: "conn_gcal_multi",
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        configuration: {
+          selected_calendar_ids: ["primary", "team@example.com"],
+          default_write_calendar_id: "team@example.com",
+          target_type: "google.calendar.event",
+        },
+      },
+    };
+  }
+
+  it("carries the old sync position onto the primary calendar", async () => {
+    const { ctx, proxyCalls } = buildContext({
+      connectionRecord: selectionWritingElsewhere(),
+      proxyResponses: [
+        () => jsonResponse({ items: [], nextSyncToken: "token_primary_next" }),
+        () => jsonResponse({ items: [], nextSyncToken: "token_team_next" }),
+      ],
+    });
+    await ctx.cursor.write("main", legacyCursor);
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result.ok).toBe(true);
+
+    // Without the adoption the sweep starts from nothing, and a token-less
+    // list does not carry the cancellations from the gap, so deletions that
+    // happened while the connection was in single mode are never seen and
+    // their Marfa items are stranded.
+    expect(proxyCalls[0]?.path).toContain("/calendars/primary/");
+    expect(proxyCalls[0]?.path).toContain("syncToken=token_from_single_mode");
+    // The newly selected calendar has no history and correctly starts fresh.
+    expect(proxyCalls[1]?.path).toContain("/calendars/team%40example.com/");
+    expect(proxyCalls[1]?.path).not.toContain("syncToken=");
+  });
+
+  it("deletes a pre-existing event on the calendar it actually lives on", async () => {
+    const item: ItemResource = {
+      id: "mit_from_single",
+      type: "google.calendar.event",
+      state: "trashed",
+      properties: { title: "Synced before the selection existed" },
+    };
+
+    const { ctx, proxyCalls } = buildContext({
+      connectionRecord: selectionWritingElsewhere(),
+      itemForEvent: item,
+      proxyResponses: [() => new Response(null, { status: 204 })],
+    });
+    await ctx.cursor.write("main", legacyCursor);
+
+    await handleItemEvent(ctx, ITEM_EVENT(item.id, "updated"));
+
+    // Every mapping single mode wrote is on primary. Addressing the write
+    // target instead sends the DELETE to a calendar the event was never on,
+    // and a 404 there reads as "already gone" — so Marfa would report the
+    // event deleted, drop the mapping, and leave it on the user's calendar.
+    expect(proxyCalls[0]?.path).toContain("/calendars/primary/events/");
+    expect(proxyCalls[0]?.path).not.toContain("team%40example.com");
+  });
+});
