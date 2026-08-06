@@ -160,30 +160,32 @@ async function resolveConnectionConfig(
       ? cfg.target_type
       : null;
 
-  if (selected.length > 0 && defaultWrite !== null) {
+  // A non-empty selection is the whole signal for multi mode. Requiring
+  // `default_write_calendar_id` alongside it meant a connection that named
+  // its calendars but not its write target fell through to primary-only —
+  // the exact silent degradation this function's contract forbids. Absent a
+  // nominated write target, the first selected calendar receives writes.
+  const [firstSelected] = selected;
+  if (firstSelected !== undefined) {
     return {
       ok: true,
       config: {
         mode: "multi",
         selected_calendar_ids: selected,
-        default_write_calendar_id: defaultWrite,
+        default_write_calendar_id: defaultWrite ?? firstSelected,
         target_type: targetType ?? "google.calendar.event",
       },
     };
   }
 
-  // Single-calendar fallback: bare `calendar_id` on configuration names the
-  // one calendar to sync; default to `primary` when absent.
-  const singleCalendarId =
-    typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
-      ? cfg.calendar_id
-      : DEFAULT_CALENDAR_ID;
+  // No selection: the primary calendar, which is what an install that
+  // configures nothing asks for.
   return {
     ok: true,
     config: {
       mode: "single",
-      selected_calendar_ids: [singleCalendarId],
-      default_write_calendar_id: singleCalendarId,
+      selected_calendar_ids: [DEFAULT_CALENDAR_ID],
+      default_write_calendar_id: DEFAULT_CALENDAR_ID,
       target_type: targetType ?? "core.event",
     },
   };

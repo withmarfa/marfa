@@ -298,6 +298,47 @@ describe("handleSchedule — multi-calendar inbound", () => {
     expect(summary).toBeTruthy();
   });
 
+  // A connection that names its calendars but nominates no write target used
+  // to fall through to the primary-only path: the other selected calendars
+  // were skipped on the way in and outbound writes went to primary, with
+  // nothing to tell the degraded run from a healthy one. The selection alone
+  // now decides, and the first selected calendar receives writes.
+  it("sweeps every selected calendar when no write target is nominated", async () => {
+    const { ctx, created, proxyCalls } = buildContext({
+      connectionRecord: {
+        id: "conn_gcal_selection_only",
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: {
+            selected_calendar_ids: ["primary", "team@example.com"],
+          },
+        },
+      },
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_primary_1")],
+            nextSyncToken: "sync_primary_after",
+          }),
+        () =>
+          jsonResponse({
+            items: [multiEvent("gevt_team_1")],
+            nextSyncToken: "sync_team_after",
+          }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result.ok).toBe(true);
+    // Both selected calendars swept, not just primary.
+    expect(proxyCalls.length).toBe(2);
+    expect(proxyCalls[1]?.path).toContain("/calendars/team%40example.com/");
+    // Multi mode's target type, not the primary-only path's core.event.
+    expect(created.length).toBe(2);
+    expect(created.every((c) => c.type === "google.calendar.event")).toBe(true);
+  });
+
   it("410 on one calendar resets only that calendar's syncToken; others continue", async () => {
     const { ctx, created, emitted } = buildContext({
       connectionRecord: multiCalendarConnection(),
