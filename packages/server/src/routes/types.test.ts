@@ -709,3 +709,34 @@ describe("compatible_with at the gate and on the wire", () => {
     expect(selfList.data.some((i) => i.id === itemBody.item.id)).toBe(true);
   });
 });
+
+describe("POST /types — reserved namespaces are not authored at runtime", () => {
+  // The platform-shipped set is compiled in from JSON in the type package.
+  // Nothing legitimate mints one over HTTP: the only two callers of
+  // `storage.types.create` are this route and the archive-restore replay,
+  // and the replay refuses reserved namespaces before it reaches it.
+  for (const tier of ["core", "system", "marfa"] as const) {
+    it(`refuses a ${tier}.* registration from a platform credential`, async () => {
+      const res = await request(ctx.app, "POST", "/types", {
+        key: ctx.adminKey, // bootstrap admin: is_platform, no space
+        body: { id: `${tier}.runtime-authored-probe`, ...baseType },
+      });
+      // Previously 201: the gate admitted a platform credential, which put
+      // registration and archive restore in disagreement. An archive
+      // carrying such a type is refused whatever credential restores it,
+      // so the row could only ever have made that space's exports
+      // un-restorable.
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toContain("platform-shipped");
+    });
+  }
+
+  it("still admits an ordinary namespace from the same credential", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: "user.runtime-authored-probe", ...baseType },
+    });
+    expect(res.status).toBe(201);
+  });
+});
