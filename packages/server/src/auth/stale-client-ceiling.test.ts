@@ -20,7 +20,8 @@
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expandBundlesToScopes } from "@withmarfa/shared";
 import {
@@ -181,11 +182,13 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
       scope?: string;
     };
     expect(body.access_token).toBeTruthy();
-    // The grant is the intersection, and it is non-empty — the whole point of
-    // narrowing rather than refusing.
-    expect(
-      (body.scope ?? "").split(" ").filter(Boolean).length,
-    ).toBeGreaterThan(0);
+    // The grant is exactly the intersection — asserted as a set rather than
+    // as "more than nothing". A non-empty check passes just as happily when
+    // 3 of 61 requested scopes survive for the wrong reason, which is not the
+    // property being claimed.
+    expect((body.scope ?? "").split(" ").filter(Boolean).sort()).toEqual(
+      [...stale].sort(),
+    );
   });
 
   it("a client with no ceiling keeps the whole default-on set", async () => {
@@ -248,13 +251,38 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
 }
 
 /**
- * Coverage check, in the shape the item-write-doors guard uses.
+ * Coverage check over the call sites this repository owns.
  *
  * The defect was one call site writing a snapshot of a moving value. The way
  * it recurs is a second call site doing the same thing, added by someone who
- * never saw this. So every place that persists a ceiling is enumerated here,
- * and a new one fails the build until it is listed with a reason.
+ * never saw this. So the Marfa-side sources are scanned rather than listed,
+ * and a new one fails the build until it is named with a reason.
+ *
+ * **What this cannot see, stated because the previous version of this comment
+ * claimed a completeness it did not have.** The vendored OAuth plugin serves
+ * two registration endpoints of its own, `POST /oauth2/create-client` and
+ * `POST /admin/oauth2/create-client`, both reachable through the `/auth/*`
+ * catch-all and both writing `auth_oauth_client.scopes` directly through
+ * Better Auth's adapter. They never call Marfa's store, so no scan of this
+ * tree reaches them. They write the registrant's own requested ceiling, which
+ * is the correct behavior for a registration endpoint — the point of naming
+ * them here is that "every writer is covered" would be false, and a guard
+ * that overstates its reach is worse than one that states its edge.
  */
+/** Every `.ts` under a directory, tests excluded. */
+function walkTypeScript(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const abs = join(dir, entry);
+    if (statSync(abs).isDirectory()) {
+      out.push(...walkTypeScript(abs));
+    } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts")) {
+      out.push(abs);
+    }
+  }
+  return out;
+}
+
 describe("call sites that persist a client scope ceiling", () => {
   const DOORS: { file: string; justification: string }[] = [
     {
@@ -266,23 +294,35 @@ describe("call sites that persist a client scope ceiling", () => {
     },
   ];
 
-  it("is the complete list, and each entry is deliberate", () => {
+  it("discovers every Marfa-side writer, and each is deliberate", () => {
     const root = fileURLToPath(new URL("../..", import.meta.url));
-    const candidates = [
-      "src/routes/oauth-register.ts",
-      "scripts/seed-oauth-clients.ts",
+    // Walked, not listed. A hardcoded candidate list cannot fail when
+    // somebody adds a file, which is the only thing this guard is for.
+    const sources = [
+      ...walkTypeScript(join(root, "src")),
+      ...walkTypeScript(join(root, "scripts")),
     ];
 
-    const persisting = candidates.filter((rel) => {
-      const source = readFileSync(new URL(rel, `file://${root}`), "utf8");
-      // A call site persists a ceiling when it hands `createClient` a scopes
-      // value that is not the literal `null`.
-      const call = source.slice(source.indexOf("createClient({"));
+    const persisting: string[] = [];
+    for (const abs of sources) {
+      const source = readFileSync(abs, "utf8");
+      let from = source.indexOf("oauthProvider.createClient({");
+      if (from < 0) from = source.indexOf("oauth.createClient({");
+      if (from < 0) continue;
+      const call = source.slice(from, from + 1200);
       const match = /scopes:\s*([^,\n]+)/.exec(call);
-      return match !== null && match[1]?.trim() !== "null";
-    });
+      if (match && match[1]?.trim() !== "null") {
+        persisting.push(relative(root, abs).split(sep).join("/"));
+      }
+    }
 
     expect(persisting.sort()).toEqual(DOORS.map((d) => d.file).sort());
+  });
+
+  it("every named door carries a reason", () => {
+    for (const door of DOORS) {
+      expect(door.justification.length).toBeGreaterThan(40);
+    }
   });
 
   it("the seed script writes no ceiling", () => {

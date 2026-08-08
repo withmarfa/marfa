@@ -674,6 +674,27 @@ async function narrowAuthorizeScopes(
   if (unknownToServer.length === 0 && outsideClientCeiling.length === 0) return;
   if (granted.length === 0) return;
 
+  // Narrowing trades a clear failure for a smaller grant, and that trade is
+  // only good while the dropped scope costs a permission. These two cost the
+  // session model instead: without `offline_access` there is no refresh token,
+  // and without `openid` there is no id_token. Dropping either silently
+  // succeeds here and then fails two steps later inside the SDK — a token
+  // exchange that cannot find `refresh_token`, or a sign-out that cannot find
+  // an id_token — with nothing pointing back at the scope that went missing.
+  // A named `invalid_scope` at the authorize step is the better answer,
+  // because it says which literal to go and register.
+  const droppedSessionScopes = [
+    ...unknownToServer,
+    ...outsideClientCeiling,
+  ].filter((s) => SESSION_CRITICAL_SCOPES.has(s));
+  if (droppedSessionScopes.length > 0) {
+    log("warn", "oauth authorize: refusing to narrow a session scope", {
+      client_id: clientId,
+      dropped_scopes: droppedSessionScopes,
+    });
+    return;
+  }
+
   query.scope = granted.join(" ");
 
   // Two log lines because they are two different events. A scope this server
@@ -708,6 +729,18 @@ async function narrowAuthorizeScopes(
  * disabled client, an unregistered redirect URI. Those are the operator's to
  * see.
  */
+/**
+ * Scopes whose absence breaks the session model rather than costing a
+ * permission, so narrowing them away is worse than refusing.
+ *
+ * `offline_access` is what mints the refresh token; without it the SDK's
+ * token exchange throws `invalid_grant` because `refresh_token` is missing.
+ * `openid` is what mints the id_token; without it sign-out cannot build its
+ * end-session URL. In both cases the failure surfaces well after the
+ * authorization succeeded, naming neither the scope nor the client.
+ */
+const SESSION_CRITICAL_SCOPES = new Set(["openid", "offline_access"]);
+
 const EXPECTED_AUTHORIZE_ERRORS = new Set([
   "access_denied",
   "login_required",
@@ -738,13 +771,48 @@ const EXPECTED_AUTHORIZE_ERRORS = new Set([
  * Best-effort throughout: this is a reporting path, and it must never be the
  * reason an authorization fails.
  */
+/**
+ * The message every authorize refusal is logged under. The fleet alert
+ * counts on this exact string, so it is exported rather than repeated —
+ * a signal nothing queries is the defect this whole path exists to fix,
+ * and two independently-written copies of a string is how that happens.
+ */
+export const AUTHORIZE_REFUSED_MESSAGE = "oauth authorize refused the request";
+
+/**
+ * `error_description` is developer-facing by RFC 6749 §4.1.2.1 and carries
+ * the diagnostic value — it names which scopes or parameter was at fault.
+ * It is also built from the caller's own input (`The following scopes are
+ * invalid: ${requested}`), so it is attacker-chosen text on an endpoint that
+ * accepts 30 requests a minute per IP. Bounded so a log record cannot be
+ * used as a place to put kilobytes of someone else's choosing.
+ */
+const MAX_ERROR_DESCRIPTION_CHARS = 300;
+
+/** Pull the redirect target off whatever the endpoint produced. */
+function redirectLocationOf(returned: unknown): string | null {
+  if (!returned || typeof returned !== "object") return null;
+
+  // The thrown-redirect shape: a browser navigation. `better-call` converts
+  // this to a Response, which is why `app.onError` never sees it.
+  const headers = (returned as { headers?: unknown }).headers;
+  if (headers instanceof Headers) return headers.get("location");
+
+  // The returned-redirect shape: `{ redirect: true, url }`, which the plugin
+  // produces instead of throwing whenever the request came from `fetch` or
+  // asked for JSON. That covers the first-party app's post-sign-in resume and
+  // every SPA silent-renewal probe — in other words, the common path. Reading
+  // only the thrown shape left exactly those blind.
+  const value = returned as { redirect?: unknown; url?: unknown };
+  if (value.redirect === true && typeof value.url === "string")
+    return value.url;
+
+  return null;
+}
+
 function logAuthorizeOutcome(ctx: HookCtxLite): void {
   try {
-    const returned = ctx.context?.returned;
-    if (!returned || typeof returned !== "object") return;
-    const headers = (returned as { headers?: unknown }).headers;
-    if (!(headers instanceof Headers)) return;
-    const location = headers.get("location");
+    const location = redirectLocationOf(ctx.context?.returned);
     if (!location) return;
 
     // `location` is relative-safe: a base is supplied only so URL parses, and
@@ -753,12 +821,22 @@ function logAuthorizeOutcome(ctx: HookCtxLite): void {
     const error = params.get("error");
     if (!error) return;
 
+    // A redirect carrying BOTH a code and an error is a success landing on a
+    // client whose own registered `redirect_uri` contains `?error=` in its
+    // query — registration does not forbid one. Without this guard every
+    // successful sign-in through such a client would emit a refusal carrying
+    // an error code of the registrant's choosing, which is a way to drown the
+    // signal in noise precisely when it matters.
+    if (params.get("code")) return;
+
+    const description = params.get("error_description");
     const expected = EXPECTED_AUTHORIZE_ERRORS.has(error);
-    log(expected ? "info" : "warn", "oauth authorize refused the request", {
+    log(expected ? "info" : "warn", AUTHORIZE_REFUSED_MESSAGE, {
       error_code: error,
-      // Developer-facing by RFC 6749 §4.1.2.1, and the part that names which
-      // scopes or parameter was at fault. It is the whole diagnostic value.
-      error_description: params.get("error_description") ?? undefined,
+      error_description:
+        description === null
+          ? undefined
+          : description.slice(0, MAX_ERROR_DESCRIPTION_CHARS),
       client_id:
         typeof ctx.query?.client_id === "string"
           ? ctx.query.client_id

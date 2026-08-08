@@ -43,6 +43,47 @@ const DELIVERY_BASELINE_HOURS = 24;
 const ERROR_COUNT_THRESHOLD = 10;
 
 /**
+ * The exact message the server logs every refused authorization under.
+ *
+ * Duplicated from `AUTHORIZE_REFUSED_MESSAGE` in
+ * `packages/server/src/auth/oauth-provider.ts` because this directory runs
+ * standalone on a CI runner with no install step, so it cannot import from
+ * the workspace. `oauth-authorize-observability.test.ts` reads this file and
+ * asserts the two strings agree, so the copy cannot drift silently — which
+ * matters more here than usual, since a mismatch produces a counter that is
+ * always zero and therefore an alert that looks healthy while blind.
+ */
+export const AUTHORIZE_REFUSED_MESSAGE = "oauth authorize refused the request";
+
+/**
+ * Refused authorizations per service within the window before it is called
+ * red.
+ *
+ * **Why this is not folded into the error count.** A client asking for a
+ * scope this server will not grant is not a server error, and logging it at
+ * `error` would put a third party's misconfiguration into the same counter as
+ * a crash. But it is the shape of the fault that took hosted sign-in down for
+ * days: every authorize 302'd with `invalid_scope`, the HTTP probes stayed
+ * green because an SPA shell renders perfectly well when sign-in is broken,
+ * and nothing counted the refusals. A separate counter is what makes that
+ * visible without corrupting the meaning of the other one.
+ *
+ * **The threshold is provisional and says so.** Every other number in this
+ * file is derived from measured production behavior; this signal did not
+ * exist until the outage above was fixed, so there is no history to measure.
+ * Five is chosen as low enough that a total outage trips it within one window
+ * and high enough that an occasional misconfigured third-party client does
+ * not. Revisit against real volume once there is a month of it — and revisit
+ * it deliberately, rather than raising it the first time it fires.
+ *
+ * Only `warn` records count. The `info` ones are ordinary flow control — a
+ * person declining consent, a silent-renewal probe learning it needs
+ * interaction — and folding those in would make the counter track traffic
+ * rather than trouble.
+ */
+export const AUTHORIZE_REFUSAL_THRESHOLD = 5;
+
+/**
  * What healthy scale-to-zero actually looks like. One measurement, one place.
  *
  * Every threshold below is derived from this object, and the tests assert
@@ -170,6 +211,7 @@ export function buildTelemetryQuery() {
   return [
     "SELECT service_name,",
     `  countIf(level = 'error' AND ${recent}) AS error_count,`,
+    `  countIf(message = '${AUTHORIZE_REFUSED_MESSAGE}' AND level = 'warn' AND ${recent}) AS authorize_refusal_count,`,
     `  countIf(message ILIKE '${BOOT_MESSAGE_PREFIX}%' AND ${recent}) AS boot_count,`,
     `  countIf(message ILIKE '${SHUTDOWN_MESSAGE_PREFIX}%' AND ${recent}) AS shutdown_count,`,
     `  countIf(${recent}) AS total_count,`,
@@ -193,6 +235,7 @@ export function servicesFromRows(rows, label) {
     const [
       serviceName,
       errorCount,
+      authorizeRefusalCount,
       bootCount,
       shutdownCount,
       totalCount,
@@ -213,6 +256,7 @@ export function servicesFromRows(rows, label) {
       project: label,
       service: String(serviceName),
       errors: Number(errorCount),
+      authorizeRefusals: Number(authorizeRefusalCount),
       boots,
       shutdowns,
       uncleanRestarts: Math.max(0, boots - shutdowns),
@@ -267,6 +311,20 @@ export function evaluateService(service) {
       detail:
         `${String(service.errors)} error-severity records in the last ` +
         `${String(WINDOW_MINUTES)} minutes (threshold ${String(ERROR_COUNT_THRESHOLD)}).`,
+    });
+  }
+
+  if (service.authorizeRefusals >= AUTHORIZE_REFUSAL_THRESHOLD) {
+    findings.push({
+      severity: "red",
+      area: "authorize-refusals",
+      title: `Sign-in refusals: ${service.service} (${service.project})`,
+      detail:
+        `${String(service.authorizeRefusals)} authorization requests refused in ` +
+        `the last ${String(WINDOW_MINUTES)} minutes ` +
+        `(threshold ${String(AUTHORIZE_REFUSAL_THRESHOLD)}). ` +
+        "Each one is a client that could not complete sign-in. Query the " +
+        "`error_code` attribute on those records for the reason.",
     });
   }
 

@@ -29,6 +29,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
+import { AUTHORIZE_REFUSED_MESSAGE } from "./oauth-provider.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -60,9 +61,7 @@ function captureLogs(): LoggedLine[] {
 }
 
 function authorizeLines(lines: LoggedLine[]): LoggedLine[] {
-  return lines.filter(
-    (l) => l.message === "oauth authorize refused the request",
-  );
+  return lines.filter((l) => l.message === AUTHORIZE_REFUSED_MESSAGE);
 }
 
 async function seedClient(
@@ -198,6 +197,85 @@ describe("authorize failures are observable", () => {
     expect(logged[0]?.data?.error_code).toBe("login_required");
   });
 
+  it("logs a refusal the plugin returns rather than throws", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "obs-json@example.com");
+    const clientId = await seedClient(ctx, []);
+    const lines = captureLogs();
+
+    // The plugin only THROWS its redirect for a browser navigation. For a
+    // `fetch` — or anything asking for JSON — it RETURNS `{redirect, url}`
+    // with no headers at all. That covers the first-party app's post-sign-in
+    // resume and every silent-renewal probe, so reading only the thrown shape
+    // left the common path invisible while the tests all passed.
+    const res = await request(
+      ctx.app,
+      "GET",
+      authorizeUrl(clientId, "openid core.note:read"),
+      { headers: { cookie, accept: "application/json" } },
+    );
+    expect(res.status).toBeLessThan(500);
+
+    const logged = authorizeLines(lines);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.level).toBe("warn");
+    expect(logged[0]?.data?.error_code).toBe("invalid_scope");
+  });
+
+  it("stays silent when a success lands on a redirect URI that itself carries error=", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "obs-poison@example.com");
+
+    // Registration does not forbid a query on a redirect URI, and
+    // unauthenticated dynamic registration is on. Without the code guard,
+    // every successful sign-in through such a client emits a refusal
+    // carrying an error code of the registrant's choosing — a way to drown
+    // the signal in noise precisely when it matters.
+    const poisoned = `${CALLBACK}?error=invalid_scope&error_description=chosen`;
+    const clientId = `obs-${randomBytes(5).toString("hex")}`;
+    const oauth = ctx.storage.oauthProvider;
+    if (!oauth) throw new Error("storage.oauthProvider missing");
+    await oauth.createClient({
+      clientId,
+      name: "Poisoned Redirect Client",
+      isPublic: true,
+      grantTypes: ["authorization_code"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      scopes: null,
+      redirectUris: [poisoned],
+      postLogoutRedirectUris: [ORIGIN + "/"],
+      referenceId: null,
+    });
+
+    const challenge = createHash("sha256")
+      .update(randomBytes(32).toString("base64url"))
+      .digest("base64url");
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: poisoned,
+      scope: "openid",
+      state: "poison",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+    const lines = captureLogs();
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/oauth2/authorize?${params.toString()}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(302);
+
+    // Whatever the outcome, a line here must not carry the registrant's
+    // chosen error code as though the server had produced it.
+    for (const line of authorizeLines(lines)) {
+      expect(line.data?.error_description).not.toBe("chosen");
+    }
+  });
+
   it("separates the two by error code, not by whether one happened", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const cookie = await signInUser(ctx, "obs-both@example.com");
@@ -222,5 +300,37 @@ describe("authorize failures are observable", () => {
     const byLevel = new Map(logged.map((l) => [l.data?.error_code, l.level]));
     expect(byLevel.get("invalid_scope")).toBe("warn");
     expect(byLevel.get("login_required")).toBe("info");
+  });
+});
+
+/**
+ * The alert is the consumer, and the consumer is in another language.
+ *
+ * `.github/observability/` runs standalone on a CI runner with no install
+ * step, so it cannot import this constant and has to carry a copy. A copy
+ * that drifts does not fail loudly: the counter simply matches nothing, stays
+ * at zero forever, and the alert reads as healthy while blind — which is the
+ * exact failure mode the whole signal exists to end. So the agreement is
+ * pinned from this side, where the string is defined.
+ */
+describe("the fleet alert counts the message this server actually logs", () => {
+  it("the built query counts this exact literal", async () => {
+    // Importing the alert module and asking it to build its query is the only
+    // check that means anything here: the query is assembled from a template
+    // literal, so the source text holds `${AUTHORIZE_REFUSED_MESSAGE}` rather
+    // than the string, and grepping the file would pass against a copy that
+    // had drifted.
+    const alertUrl = new URL(
+      "../../../../.github/observability/posthog.mjs",
+      import.meta.url,
+    );
+    const alert = (await import(alertUrl.href)) as {
+      buildTelemetryQuery: () => string;
+    };
+    const query = alert.buildTelemetryQuery();
+    expect(query).toContain(`countIf(message = '${AUTHORIZE_REFUSED_MESSAGE}'`);
+    // Only the actionable half. Folding the `info` records in would make the
+    // counter track traffic rather than trouble.
+    expect(query).toContain("AND level = 'warn'");
   });
 });
