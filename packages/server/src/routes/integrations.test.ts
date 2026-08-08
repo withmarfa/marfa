@@ -496,7 +496,14 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
     });
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("denied");
+    // The decline terminal, identified by its title rather than by a word in
+    // the body — the copy here is user-facing and will keep moving, and a
+    // test that pins a single word turns a copy edit into a red build.
+    expect(html).toContain("<title>Install declined</title>");
+    // And it is a designed page. This terminal used to emit bare HTML with
+    // four rules of inline CSS, so a person who declined met unstyled Times
+    // New Roman straight after a fully designed consent screen.
+    expect(html).toContain('href="/auth/static/auth.css"');
 
     const after = (
       await ctx.storage.items.list({ type: "system.connection", limit: 100 })

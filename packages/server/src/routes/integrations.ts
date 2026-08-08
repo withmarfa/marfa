@@ -31,6 +31,8 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { publish } from "../pubsub.js";
+import { renderAuthLayout } from "./auth-layout.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 // Manifest is stored as opaque on the wire — `validateManifest()` runs
 // the structured Zod check at the route handler.
@@ -495,7 +497,7 @@ export function integrationRoutes(
         : undefined;
 
     if (decision !== "approve") {
-      return c.html(renderDeniedPage());
+      return c.html(renderInstallDeniedPage());
     }
 
     const installed = await performInstall(storage, salt, {
@@ -536,35 +538,40 @@ export function integrationRoutes(
   return apiRouter;
 }
 
-function renderDeniedPage(): string {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Install denied</title>
-<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:40px auto;padding:0 16px}</style>
-</head><body><h1>Install denied</h1><p>No connection was created.</p></body></html>`;
+/**
+ * The two terminals of the integration install flow.
+ *
+ * Both used to emit a bare document with a few rules of inline CSS and a
+ * privately re-implemented HTML escape — the only surfaces the server hands
+ * a person that carried no design at all. A person who declined an install
+ * met unstyled Times New Roman immediately after a fully designed consent
+ * screen, which reads as a different product having broken.
+ */
+export function renderInstallDeniedPage(): string {
+  return renderAuthLayout({
+    title: "Install declined",
+    centered: true,
+    bodyHtml: `
+      ${confirmIcon("check")}
+      <h1 class="title">Install declined</h1>
+      <p class="sub" role="status">Nothing was connected and nothing was changed. You can close this tab.</p>
+    `,
+  });
 }
 
-function renderInstalledPage(installed: {
+export function renderInstalledPage(installed: {
   connection_id: string;
   credential_id: string;
   activity_id: string;
 }): string {
-  const escape = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Installed</title>
-<style>body{font-family:system-ui,sans-serif;max-width:520px;margin:40px auto;padding:0 16px}
-code{background:#eef2ff;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,monospace}
-dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 12px}
-dt{color:#6b7280}</style></head>
-<body><h1>Connection installed</h1>
-<dl>
-  <dt>Connection</dt><dd><code>${escape(installed.connection_id)}</code></dd>
-  <dt>Credential</dt><dd><code>${escape(installed.credential_id)}</code></dd>
-  <dt>Activity</dt><dd><code>${escape(installed.activity_id)}</code></dd>
-</dl>
-<p>The runtime can now refresh credentials via the broker.</p>
-</body></html>`;
+  return renderAuthLayout({
+    title: "Connection installed",
+    centered: true,
+    bodyHtml: `
+      ${confirmIcon("check")}
+      <h1 class="title">Connection installed</h1>
+      <p class="sub" role="status">It is ready to run. You can close this tab.</p>
+      <p class="ref">${escapeHtml(installed.connection_id)}</p>
+    `,
+  });
 }

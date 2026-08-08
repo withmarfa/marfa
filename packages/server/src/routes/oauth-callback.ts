@@ -37,6 +37,7 @@ import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { renderAuthLayout } from "./auth-layout.js";
 import {
   encryptSecret,
   decryptSecret,
@@ -49,7 +50,7 @@ import {
   type OAuthStateEnvelope,
 } from "../oauth/state.js";
 import { setNoStore } from "./no-store.js";
-import { escapeHtml } from "./auth-html.js";
+import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface OAuthAuthorizeConfig {
   oauth_authorize_url: string;
@@ -249,58 +250,48 @@ async function exchangeAuthorizationCode(
   };
 }
 
-/* Standalone monochrome "Luma" card — these callback pages render outside
-   the /auth/* layout (no session), so they carry their own minimal styles
-   matching auth.css. Light-only. */
-const CALLBACK_CSS = `
-  *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 20px;background:#f5f5f5;color:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  .card{width:100%;max-width:440px;background:#fff;border:1px solid #e5e5e5;border-radius:18px;padding:28px;box-shadow:0 1px 2px rgba(10,10,10,.04),0 8px 28px rgba(10,10,10,.06)}
-  h1{margin:0 0 8px;font-size:20px;font-weight:600;letter-spacing:-.02em}
-  p{margin:0 0 10px;color:#737373}
-  p:last-child{margin-bottom:0}
-  p strong{color:#0a0a0a;font-weight:600}
-  .ref{margin-top:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#a3a3a3;word-break:break-all}
-  pre{margin:10px 0 0;padding:12px 14px;background:#f5f5f5;border:1px solid #e5e5e5;border-radius:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:#0a0a0a;white-space:pre-wrap;word-break:break-word}
-`;
-
-function renderSuccessPage(provider: string, connectionId: string): string {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Connection authorized</title>
-    <style>${CALLBACK_CSS}</style>
-  </head>
-  <body>
-    <main class="card">
-      <h1>Connection authorized</h1>
-      <p>This connection is now connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
+/**
+ * The two terminals a person lands on after authorizing an upstream
+ * provider. Both render through the shared auth layout.
+ *
+ * They used to carry a hand-copied subset of `auth.css`, on the stated
+ * grounds that they render outside `/auth/*` and so have no session. That
+ * reasoning was wrong twice over: the stylesheet is a public asset that
+ * needs no session, and a copy kept in sync by hand had already drifted to
+ * light-only while the shared one had followed the device into dark mode
+ * for months. Somebody finishing a connection at night got a white card.
+ */
+export function renderOAuthCallbackSuccess(
+  provider: string,
+  connectionId: string,
+): string {
+  return renderAuthLayout({
+    title: "Connection authorized",
+    centered: true,
+    bodyHtml: `
+      ${confirmIcon("check")}
+      <h1 class="title">Connection authorized</h1>
+      <p class="sub" role="status">You're connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
       <p class="ref">${escapeHtml(connectionId)}</p>
-    </main>
-  </body>
-</html>`;
+    `,
+  });
 }
 
-function renderErrorPage(reason: string, status: number): string {
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Couldn't complete sign-in</title>
-    <style>${CALLBACK_CSS}</style>
-  </head>
-  <body>
-    <main class="card">
-      <h1>Couldn't complete sign-in</h1>
-      <p>The provider redirected back with an error, or the request had expired. Try connecting again.</p>
+export function renderOAuthCallbackError(
+  reason: string,
+  status: number,
+): string {
+  return renderAuthLayout({
+    title: "That didn't finish",
+    centered: true,
+    bodyHtml: `
+      ${confirmIcon("alert")}
+      <h1 class="title">That didn't finish</h1>
+      <p class="sub" role="alert">The provider sent back an error, or the request had expired. Starting the connection again usually clears it.</p>
       <pre>${escapeHtml(reason)}</pre>
       <p class="ref">Status ${String(status)}</p>
-    </main>
-  </body>
-</html>`;
+    `,
+  });
 }
 
 export interface OAuthCallbackOptions {
@@ -534,13 +525,13 @@ export function oauthCallbackRoutes(
         details: { error: upstreamError, error_description: desc },
       });
       setNoStore(c);
-      return c.html(renderErrorPage(reason, 400), 400);
+      return c.html(renderOAuthCallbackError(reason, 400), 400);
     }
 
     if (typeof code !== "string" || typeof state !== "string") {
       setNoStore(c);
       return c.html(
-        renderErrorPage("Missing code or state query param", 400),
+        renderOAuthCallbackError("Missing code or state query param", 400),
         400,
       );
     }
@@ -556,7 +547,10 @@ export function oauthCallbackRoutes(
       });
       setNoStore(c);
       return c.html(
-        renderErrorPage(`State validation failed: ${stateResult.reason}`, 400),
+        renderOAuthCallbackError(
+          `State validation failed: ${stateResult.reason}`,
+          400,
+        ),
         400,
       );
     }
@@ -569,7 +563,10 @@ export function oauthCallbackRoutes(
     if (connection?.type !== "system.connection") {
       setNoStore(c);
       return c.html(
-        renderErrorPage(`Connection ${envelope.connection_id} not found`, 404),
+        renderOAuthCallbackError(
+          `Connection ${envelope.connection_id} not found`,
+          404,
+        ),
         404,
       );
     }
@@ -579,7 +576,7 @@ export function oauthCallbackRoutes(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       setNoStore(c);
-      return c.html(renderErrorPage(reason, 400), 400);
+      return c.html(renderOAuthCallbackError(reason, 400), 400);
     }
 
     // Missing verifier means hostile state or stale code path — refuse rather than attempt non-PKCE exchange.
@@ -594,7 +591,7 @@ export function oauthCallbackRoutes(
       });
       setNoStore(c);
       return c.html(
-        renderErrorPage(
+        renderOAuthCallbackError(
           "This connection request expired or was already used. Start connecting again.",
           400,
         ),
@@ -619,7 +616,7 @@ export function oauthCallbackRoutes(
       });
       setNoStore(c);
       return c.html(
-        renderErrorPage(exchange.reason, exchange.status || 502),
+        renderOAuthCallbackError(exchange.reason, exchange.status || 502),
         502,
       );
     }
@@ -660,7 +657,10 @@ export function oauthCallbackRoutes(
       details: { provider, scopes: exchange.scopes },
     });
     setNoStore(c);
-    return c.html(renderSuccessPage(provider, envelope.connection_id), 200);
+    return c.html(
+      renderOAuthCallbackSuccess(provider, envelope.connection_id),
+      200,
+    );
   });
   return r;
 }
