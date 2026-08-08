@@ -449,6 +449,13 @@
       "when": 1785941033759,
       "tag": "0063_integration_keyed_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1786177932048,
+      "tag": "0064_first_party_clients_no_scope_ceiling",
+      "breakpoints": true
     }
   ]
 }

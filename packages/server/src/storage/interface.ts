@@ -1239,9 +1239,24 @@ export interface CreateClientInput {
   /** Token endpoint auth method (`none` for public, `client_secret_*`
    *  for confidential). */
   tokenEndpointAuthMethod: string;
-  /** Allowed scopes for this client (must be a subset of the server's
-   *  `clientRegistrationAllowedScopes`). */
-  scopes: readonly string[];
+  /**
+   * The client's scope ceiling, or `null` to register no ceiling at all.
+   *
+   * `null` is not "the empty set" and not a tidier spelling of "everything
+   * currently allowed". The plugin resolves the set it validates against as
+   * `client.scopes ?? opts.scopes`, so a `null` column means the client
+   * tracks whatever the server advertises **at check time**, while any
+   * array is frozen at the moment it is written. Since the server's
+   * allowlist is rebuilt from the type and edge registries on every boot,
+   * an array written today is stale the next time a type is added or
+   * removed — in both directions.
+   *
+   * First-party clients register `null` for exactly that reason. A
+   * third-party client registered through DCR keeps a real array, because
+   * there the ceiling is a security boundary the client asked for rather
+   * than a copy of ours.
+   */
+  scopes: readonly string[] | null;
   /** Allowed redirect URIs. May be empty for clients that only run the
    *  device-code grant (no browser redirect). */
   redirectUris: readonly string[];
