@@ -53,6 +53,12 @@ import {
   renderConfigureError,
 } from "../src/routes/connection-configure.js";
 import { renderHttpErrorPage } from "../src/routes/http-error-page.js";
+import {
+  renderOptionA,
+  renderOptionB,
+  renderOptionC,
+  renderUnrecoverable,
+} from "./auth-gallery-reauth-options.js";
 import { renderVerifyEmailEmail } from "../src/auth/email-templates/verify-email.js";
 import { renderMagicLinkEmail } from "../src/auth/email-templates/magic-link.js";
 import { renderResetPasswordEmail } from "../src/auth/email-templates/reset-password.js";
@@ -716,6 +722,37 @@ const INSTALL_MANIFEST: Record<string, unknown> = {
 const CONNECTION_ID = "01999a3f-96ad-4ec1-b378-399d4875cfa5";
 
 const CONNECTION_SCREENS: GalleryScreen[] = [
+  {
+    id: "reauthorisation",
+    label: "Re-authorisation (choose)",
+    // The operator's decision, rendered rather than described. The three
+    // design variants are the options; the state below is the failure that
+    // survives whichever one is chosen.
+    variants: [
+      {
+        id: "unrecoverable",
+        label: "Genuinely unrecoverable",
+        render: () => renderUnrecoverable(),
+      },
+    ],
+    designVariants: [
+      {
+        id: "a-platform-hosted",
+        label: "A — Platform-hosted recovery",
+        render: () => renderOptionA(),
+      },
+      {
+        id: "b-in-app",
+        label: "B — In-app, platform-informed",
+        render: () => renderOptionB(),
+      },
+      {
+        id: "c-consent-diff",
+        label: "C — No error, just consent",
+        render: () => renderOptionC(),
+      },
+    ],
+  },
   {
     id: "auth-error",
     label: "Auth error",
