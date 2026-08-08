@@ -49,7 +49,12 @@ interface HookCtxLite {
   path?: string;
   body?: Record<string, unknown>;
   query?: Record<string, unknown>;
-  context?: { session?: { user?: { id?: string } } | null };
+  context?: {
+    session?: { user?: { id?: string } } | null;
+    /** What the endpoint produced. On a redirect this is the thrown
+     *  `APIError`-shaped object, whose `headers` carry the `Location`. */
+    returned?: unknown;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +441,17 @@ export function buildOauthProjectionPlugin(opts: {
   return {
     id: "marfa-oauth-projection" as const,
     hooks: {
+      after: [
+        {
+          // Gives the authorize endpoint's failures a signal. See
+          // `logAuthorizeOutcome` for why nothing else produces one.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
+          handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            logAuthorizeOutcome(ctx);
+            return Promise.resolve();
+          }),
+        },
+      ],
       before: [
         {
           // Narrows the requested scope set on the authorize endpoint so a
@@ -679,6 +695,77 @@ async function narrowAuthorizeScopes(
       dropped_scopes: outsideClientCeiling,
       granted_scopes: granted,
     });
+  }
+}
+
+/**
+ * OAuth error codes the authorize endpoint returns as ordinary flow control
+ * rather than as a fault. A person declining consent, or a `prompt=none`
+ * probe discovering it needs interaction, is the protocol working.
+ *
+ * Everything NOT in this set means a request that should have worked did
+ * not: a client asking for a scope the server will not grant, an unknown or
+ * disabled client, an unregistered redirect URI. Those are the operator's to
+ * see.
+ */
+const EXPECTED_AUTHORIZE_ERRORS = new Set([
+  "access_denied",
+  "login_required",
+  "consent_required",
+  "interaction_required",
+  "account_selection_required",
+]);
+
+/**
+ * After-hook for `/oauth2/authorize`. Emits a log line whenever the endpoint
+ * redirects with an OAuth error.
+ *
+ * **Without this, an authorize failure is indistinguishable from a success.**
+ * The plugin signals failure with `throw ctx.redirect(...)`, which
+ * `better-call` converts to a `Response` before Hono sees it — so
+ * `app.onError` never runs, the 100%-on-error trace sampling never triggers,
+ * and a fleet alert keyed on `level='error'` cannot fire. The request logger
+ * records the path but not the query string, and the endpoint answers 302 on
+ * every outcome, so neither the status nor the body separates them. A total
+ * sign-in outage ran for days logging nothing but `GET /auth/oauth2/authorize
+ * 302` at `info`, and was found by a person opening the app.
+ *
+ * The level is chosen from the error code rather than fixed, because these
+ * are two different events sharing a shape. A declined consent is the
+ * protocol working and would be noise at `warn`; an `invalid_scope` is a
+ * client that cannot get in and is the whole reason this exists.
+ *
+ * Best-effort throughout: this is a reporting path, and it must never be the
+ * reason an authorization fails.
+ */
+function logAuthorizeOutcome(ctx: HookCtxLite): void {
+  try {
+    const returned = ctx.context?.returned;
+    if (!returned || typeof returned !== "object") return;
+    const headers = (returned as { headers?: unknown }).headers;
+    if (!(headers instanceof Headers)) return;
+    const location = headers.get("location");
+    if (!location) return;
+
+    // `location` is relative-safe: a base is supplied only so URL parses, and
+    // nothing downstream reads the origin.
+    const params = new URL(location, "http://localhost").searchParams;
+    const error = params.get("error");
+    if (!error) return;
+
+    const expected = EXPECTED_AUTHORIZE_ERRORS.has(error);
+    log(expected ? "info" : "warn", "oauth authorize refused the request", {
+      error_code: error,
+      // Developer-facing by RFC 6749 §4.1.2.1, and the part that names which
+      // scopes or parameter was at fault. It is the whole diagnostic value.
+      error_description: params.get("error_description") ?? undefined,
+      client_id:
+        typeof ctx.query?.client_id === "string"
+          ? ctx.query.client_id
+          : undefined,
+    });
+  } catch {
+    // A reporting path must never fail a request.
   }
 }
 
