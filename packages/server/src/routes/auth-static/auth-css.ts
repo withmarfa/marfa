@@ -1385,6 +1385,146 @@ details.disclosure[open] > summary .disclosure__chevron {
   color: var(--fg-muted);
 }
 
+/* ================================================================ */
+/* Connection surfaces                                              */
+/* The OAuth callback terminals, the integration install terminals, */
+/* and the per-integration configuration forms.                     */
+/*                                                                  */
+/* These pages used to carry their own copies of the whole design   */
+/* system — two hand-written stylesheets that redeclared the tokens  */
+/* above and said in their own comments that they were kept in sync  */
+/* by hand. The stated reason was that they render outside /auth/*   */
+/* and so have no session; that was never true, since this           */
+/* stylesheet is a public asset needing no session at all. Only the  */
+/* genuinely page-specific rules survived the move.                  */
+/* ================================================================ */
+
+/* A machine identifier shown for support: a connection id, an HTTP
+   status. Deliberately quiet — it is a reference, not content. */
+.ref {
+  margin: var(--gap-pair) 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg-faint);
+  word-break: break-all;
+}
+
+/* Verbatim upstream text — a provider's error string. Pre-wrapped
+   because these arrive as one long line and must not force the card
+   wider than the viewport. */
+pre {
+  margin: var(--gap-pair) 0 0;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Vertical rhythm for a configuration form's fields. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-base);
+}
+
+.label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0 0 6px;
+}
+
+.label__hint {
+  display: block;
+  font-weight: 400;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+
+/* "Nothing to choose from" inside a picker. Not an error: an empty
+   upstream account is an ordinary state, so it reads as calm. */
+.empty {
+  padding: 18px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md);
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.defrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--gap-base);
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+/* Selectable upstream resources — a calendar, a project, a folder.
+   The whole card is the hit target; the checkbox inside carries the
+   value. The :has() selector is what lets the card show selection
+   without any script, so a no-JS client still sees what it picked. */
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ccard {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+
+.ccard:has(.chk:checked) {
+  border-color: var(--fg);
+  background: var(--surface-2);
+}
+
+.ccard__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ccard__tt {
+  flex: 1;
+  min-width: 0;
+}
+
+.ccard__tt b {
+  font-size: 14px;
+  font-weight: 600;
+  display: block;
+  color: var(--fg);
+}
+
+.ccard__badge {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
