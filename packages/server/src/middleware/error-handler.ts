@@ -4,7 +4,21 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
+import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 
+/**
+ * The single place an error becomes a response.
+ *
+ * Named `jsonResponse` because JSON is what it returns to every client that
+ * is not a browser — which is the API contract and is unchanged, byte for
+ * byte. A request that explicitly prefers HTML gets a page instead: only a
+ * browser navigation sends that, and a person who followed a stale link
+ * should not be handed a JSON blob rendered as raw text in the viewport.
+ *
+ * Negotiating here rather than at each call site is deliberate. Every error
+ * path in this handler already funnels through this function, so one change
+ * covers all of them and no future path can forget.
+ */
 function jsonResponse(
   c: Context<AppEnv>,
   body: unknown,
@@ -17,8 +31,14 @@ function jsonResponse(
   // error and `Retry-After` / `X-RateLimit-*` on 429s — all documented, all
   // set by middleware that cannot know a later handler will throw.
   const headers = new Headers(c.res.headers);
-  headers.set("Content-Type", "application/json");
   if (errorCode) headers.set("X-Error-Code", errorCode);
+
+  if (prefersHtml(c.req.header("accept"))) {
+    headers.set("Content-Type", "text/html; charset=utf-8");
+    return new Response(renderHttpErrorPage(status), { status, headers });
+  }
+
+  headers.set("Content-Type", "application/json");
   return new Response(JSON.stringify(body), { status, headers });
 }
 

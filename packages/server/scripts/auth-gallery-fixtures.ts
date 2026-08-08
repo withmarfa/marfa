@@ -30,6 +30,35 @@ import {
 import { renderPasskeyEnrollPage } from "../src/routes/passkey-enroll-page.js";
 import { renderSecurityPage } from "../src/routes/security-page.js";
 import { renderKeysPage } from "../src/routes/keys-page.js";
+import { renderAuthErrorPage } from "../src/routes/auth-error.js";
+import { renderInstallConsentScreen } from "../src/routes/integration-install-page.js";
+import {
+  renderBadTokenPage,
+  renderConfirmedPage,
+  renderCancelledPage,
+  renderAlreadyDeletedPage,
+} from "../src/routes/auth-account.js";
+import {
+  renderOAuthCallbackSuccess,
+  renderOAuthCallbackError,
+} from "../src/routes/oauth-callback.js";
+import {
+  renderInstallDeniedPage,
+  renderInstalledPage,
+} from "../src/routes/integrations.js";
+import {
+  renderGoogleCalendarPicker,
+  renderConfigureSuccess,
+  renderGenericConfigureForm,
+  renderConfigureError,
+} from "../src/routes/connection-configure.js";
+import { renderHttpErrorPage } from "../src/routes/http-error-page.js";
+import {
+  renderOptionA,
+  renderOptionB,
+  renderOptionC,
+  renderUnrecoverable,
+} from "./auth-gallery-reauth-options.js";
 import { renderVerifyEmailEmail } from "../src/auth/email-templates/verify-email.js";
 import { renderMagicLinkEmail } from "../src/auth/email-templates/magic-link.js";
 import { renderResetPasswordEmail } from "../src/auth/email-templates/reset-password.js";
@@ -674,8 +703,327 @@ const EMAIL_SCREENS: GalleryScreen[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Connection + error surfaces
+// ---------------------------------------------------------------------------
+
+/** A manifest shaped like a real one, so the install consent screen renders
+ *  the scopes it actually derives rather than a placeholder. */
+const INSTALL_MANIFEST: Record<string, unknown> = {
+  name: "google.calendar",
+  version: "1.4.0",
+  publisher: "Marfa",
+  summary: "Two-way sync between Google Calendar and your events.",
+  direction: "both",
+  target_types: ["google.calendar.event"],
+  runtime_compatibility: ["hosted", "local"],
+};
+
+const CONNECTION_ID = "01999a3f-96ad-4ec1-b378-399d4875cfa5";
+
+const CONNECTION_SCREENS: GalleryScreen[] = [
+  {
+    id: "reauthorisation",
+    label: "Re-authorisation (choose)",
+    // The operator's decision, rendered rather than described. The three
+    // design variants are the options; the state below is the failure that
+    // survives whichever one is chosen.
+    variants: [
+      {
+        id: "unrecoverable",
+        label: "Genuinely unrecoverable",
+        render: () => renderUnrecoverable(),
+      },
+    ],
+    designVariants: [
+      {
+        id: "a-platform-hosted",
+        label: "A — Platform-hosted recovery",
+        render: () => renderOptionA(),
+      },
+      {
+        id: "b-in-app",
+        label: "B — In-app, platform-informed",
+        render: () => renderOptionB(),
+      },
+      {
+        id: "c-consent-diff",
+        label: "C — No error, just consent",
+        render: () => renderOptionC(),
+      },
+    ],
+  },
+  {
+    id: "auth-error",
+    label: "Auth error",
+    // Every code the page knows, plus the fallback. These are the pages a
+    // person meets when an app sends them somewhere the server refuses, and
+    // until now none of them had ever been looked at.
+    variants: [
+      {
+        id: "invalid-client",
+        label: "Unknown app",
+        render: () => renderAuthErrorPage("invalid_client"),
+      },
+      {
+        id: "invalid-request",
+        label: "Malformed request",
+        render: () => renderAuthErrorPage("invalid_request"),
+      },
+      {
+        id: "invalid-scope",
+        label: "Invalid scope",
+        render: () => renderAuthErrorPage("invalid_scope"),
+      },
+      {
+        id: "unsupported-response-type",
+        label: "Unsupported response type",
+        render: () => renderAuthErrorPage("unsupported_response_type"),
+      },
+      {
+        id: "access-denied",
+        label: "Cancelled",
+        render: () => renderAuthErrorPage("access_denied"),
+      },
+      {
+        id: "server-error",
+        label: "Server error",
+        render: () => renderAuthErrorPage("server_error"),
+      },
+      {
+        id: "temporarily-unavailable",
+        label: "Temporarily unavailable",
+        render: () => renderAuthErrorPage("temporarily_unavailable"),
+      },
+      {
+        id: "unknown",
+        label: "Unrecognized code",
+        render: () => renderAuthErrorPage("something_new"),
+      },
+      {
+        id: "none",
+        label: "No code at all",
+        render: () => renderAuthErrorPage(null),
+      },
+    ],
+  },
+  {
+    id: "http-error",
+    label: "HTTP error",
+    // A browser navigation that fails. Until recently every one of these was
+    // raw JSON in the viewport.
+    variants: [
+      { id: "404", label: "Not found", render: () => renderHttpErrorPage(404) },
+      {
+        id: "401",
+        label: "Unauthorized",
+        render: () => renderHttpErrorPage(401),
+      },
+      { id: "403", label: "Forbidden", render: () => renderHttpErrorPage(403) },
+      {
+        id: "429",
+        label: "Rate limited",
+        render: () => renderHttpErrorPage(429),
+      },
+      {
+        id: "500",
+        label: "Server error",
+        render: () => renderHttpErrorPage(500),
+      },
+    ],
+  },
+  {
+    id: "account-delete",
+    label: "Account deletion",
+    variants: [
+      {
+        id: "confirmed",
+        label: "Deletion confirmed",
+        render: () => renderConfirmedPage(),
+      },
+      {
+        id: "cancelled",
+        label: "Deletion cancelled",
+        render: () => renderCancelledPage(),
+      },
+      {
+        id: "already-deleted",
+        label: "Already deleted",
+        render: () => renderAlreadyDeletedPage(),
+      },
+      {
+        id: "bad-token",
+        label: "Bad or expired link",
+        render: () => renderBadTokenPage(),
+      },
+    ],
+  },
+  {
+    id: "install-consent",
+    label: "Integration install",
+    variants: [
+      {
+        id: "consent",
+        label: "Consent",
+        render: () =>
+          renderInstallConsentScreen({
+            integrationId: "01999a3f-0000-4ec1-b378-000000000001",
+            manifestName: "google.calendar",
+            manifestVersion: "1.4.0",
+            publisher: "Marfa",
+            summary: "Two-way sync between Google Calendar and your events.",
+            direction: "both",
+            manifest: INSTALL_MANIFEST,
+          }),
+      },
+      {
+        id: "installed",
+        label: "Installed",
+        render: () =>
+          renderInstalledPage({
+            connection_id: CONNECTION_ID,
+            credential_id: "cred_01999a3f",
+            activity_id: "act_01999a3f",
+          }),
+      },
+      {
+        id: "declined",
+        label: "Declined",
+        render: () => renderInstallDeniedPage(),
+      },
+    ],
+  },
+  {
+    id: "oauth-callback",
+    label: "Provider callback",
+    variants: [
+      {
+        id: "success",
+        label: "Authorized",
+        render: () => renderOAuthCallbackSuccess("Google", CONNECTION_ID),
+      },
+      {
+        id: "error",
+        label: "Provider error",
+        render: () =>
+          renderOAuthCallbackError(
+            "access_denied: The user denied the request",
+            400,
+          ),
+      },
+      {
+        id: "expired",
+        label: "Request expired",
+        render: () =>
+          renderOAuthCallbackError("state expired or already used", 400),
+      },
+    ],
+  },
+  {
+    id: "connection-configure",
+    label: "Configure connection",
+    variants: [
+      {
+        id: "calendar-picker",
+        label: "Calendar picker",
+        render: () =>
+          renderGoogleCalendarPicker({
+            connectionId: CONNECTION_ID,
+            calendars: [
+              {
+                id: "primary",
+                summary: "August Cayzer",
+                primary: true,
+                backgroundColor: "#3f51b5",
+                accessRole: "owner",
+              },
+              {
+                id: "work",
+                summary: "Work",
+                backgroundColor: "#0b8043",
+                accessRole: "writer",
+              },
+              {
+                id: "family",
+                summary: "Family",
+                backgroundColor: "#d50000",
+                accessRole: "reader",
+              },
+            ],
+            targetTypeChoices: ["google.calendar.event", "core.event"],
+            defaultTargetType: "google.calendar.event",
+          }),
+      },
+      {
+        id: "calendar-picker-empty",
+        label: "No calendars",
+        // An upstream account with nothing in it is an ordinary state, not an
+        // error, and the copy has to read that way.
+        render: () =>
+          renderGoogleCalendarPicker({
+            connectionId: CONNECTION_ID,
+            calendars: [],
+            targetTypeChoices: ["google.calendar.event", "core.event"],
+            defaultTargetType: "google.calendar.event",
+          }),
+      },
+      {
+        id: "generic-form",
+        label: "Generic form",
+        render: () =>
+          renderGenericConfigureForm(
+            CONNECTION_ID,
+            {
+              name: "readwise",
+              version: "1.0.0",
+              publisher: "Marfa",
+              direction: "read",
+              target_types: ["readwise.highlight", "core.highlight"],
+              configuration_schema: {
+                include_highlights: {
+                  type: "boolean",
+                  description:
+                    "Pull highlights as well as the source documents.",
+                },
+                since_days: {
+                  type: "number",
+                  description: "How far back to look on the first run.",
+                },
+                target_type: {
+                  type: "string",
+                  description: "Which type new items are written as.",
+                  from_target_types: true,
+                },
+                tags: {
+                  type: "string_array",
+                  description:
+                    "Tags applied to every item this connection creates.",
+                },
+              },
+            } as never,
+            { include_highlights: true, since_days: 30 },
+          ),
+      },
+      {
+        id: "saved",
+        label: "Saved",
+        render: () => renderConfigureSuccess(CONNECTION_ID),
+      },
+      {
+        id: "error",
+        label: "Error",
+        render: () =>
+          renderConfigureError(
+            "This integration does not declare a configuration surface.",
+          ),
+      },
+    ],
+  },
+];
+
 export const TABS: GalleryTab[] = [
   { id: "auth", label: "Auth", screens: AUTH_SCREENS },
+  { id: "connections", label: "Connections", screens: CONNECTION_SCREENS },
   { id: "email", label: "Email", screens: EMAIL_SCREENS },
 ];
 

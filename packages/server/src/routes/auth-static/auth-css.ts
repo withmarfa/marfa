@@ -1440,6 +1440,28 @@ pre {
   margin: 0 0 6px;
 }
 
+/* The schema-driven configuration form's rows.
+   These two had no rule anywhere — not in the shared stylesheet and not in
+   the copy the configure page used to carry — so that form has always
+   rendered its field names and descriptions unstyled. Nobody noticed,
+   because reaching it means installing an integration that declares a
+   configuration contract and then opening its settings. Found by putting
+   the page in the preview, which is the argument for the preview. */
+.field-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.field-desc {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+  margin: 2px 0 8px;
+}
+
 .label__hint {
   display: block;
   font-weight: 400;
