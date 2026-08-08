@@ -1184,6 +1184,19 @@ export interface OauthClientRow {
    * confidential client (one that authenticates with a secret).
    */
   isPublic: boolean;
+  /**
+   * The client's registered scope ceiling, or `null` when it holds none.
+   *
+   * The distinction is load-bearing and NOT a tidiness question. The OAuth
+   * plugin resolves the set it validates against as
+   * `client.scopes ?? opts.scopes`, so `null` means "track whatever the
+   * server currently advertises" while `[]` is a real, empty ceiling that
+   * invalidates every scope a client could ask for. Collapsing the two —
+   * by defaulting to `[]` on read, or by writing `[]` where `null` was
+   * meant — turns a client that follows the live registry into one that
+   * can request nothing at all.
+   */
+  scopes: string[] | null;
 }
 
 /**

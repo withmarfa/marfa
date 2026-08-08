@@ -86,12 +86,18 @@ export class PgOauthProviderStore implements OauthProviderStore {
         referenceId: auth_oauth_client.referenceId,
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
+        scopes: auth_oauth_client.scopes,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
       .limit(1);
     const row = rows[0];
     if (!row) return null;
+    // A NULL column means "no ceiling"; an array — including an empty one —
+    // is a real ceiling. Never collapse the two (see `OauthClientRow.scopes`).
+    const scopes = Array.isArray(row.scopes)
+      ? row.scopes.filter((s): s is string => typeof s === "string")
+      : null;
     const redirectUris = Array.isArray(row.redirectUris)
       ? row.redirectUris.filter((s): s is string => typeof s === "string")
       : [];
@@ -108,6 +114,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       postLogoutRedirectUris,
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
+      scopes,
     };
   }
 
