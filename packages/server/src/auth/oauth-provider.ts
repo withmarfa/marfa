@@ -48,6 +48,7 @@ import { log } from "../middleware/logger.js";
 interface HookCtxLite {
   path?: string;
   body?: Record<string, unknown>;
+  query?: Record<string, unknown>;
   context?: { session?: { user?: { id?: string } } | null };
 }
 
@@ -419,6 +420,11 @@ export function buildOauthProjectionPlugin(opts: {
 }) {
   const { storage, apiKeySalt, baseURL } = opts;
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
+  // The same enumeration `buildOauthProviderPlugin` hands the plugin as
+  // `scopes`. Both are built at instance construction from the same
+  // registries and the same configured bundles, so the narrowing hook and
+  // the validation it runs ahead of always agree on what exists.
+  const liveScopes = new Set(buildAllowedScopes());
   const acceptedResources = baseURL
     ? new Set(
         [
@@ -431,6 +437,31 @@ export function buildOauthProjectionPlugin(opts: {
     id: "marfa-oauth-projection" as const,
     hooks: {
       before: [
+        {
+          // Narrows the requested scope set on the authorize endpoint so a
+          // scope the server cannot grant costs the requester that scope
+          // rather than the whole authorization.
+          //
+          // The plugin validates with `new Set(client.scopes ?? opts.scopes)`
+          // and redirects with `invalid_scope` the moment any requested
+          // literal misses. Two things make that fire on requests that ought
+          // to succeed. `auth_oauth_client.scopes` is written once at
+          // registration and never refreshed, so it is a snapshot of an
+          // allowlist that moves whenever the type registry does — stale in
+          // both directions, holding scopes for deleted types and missing
+          // scopes for new ones. And a client caching its discovered scope
+          // set can ask for a literal that has since been retired.
+          //
+          // Narrowing is what RFC 6749 §3.3 provides for, and the granted set
+          // travels back to the client on the token response, so an app that
+          // asked for more than it got can tell. Dead-ending cannot be
+          // recovered from at all: the client is 302'd to its own redirect
+          // URI with an error and no way forward.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            narrowAuthorizeScopes(ctx, storage, liveScopes),
+          ),
+        },
         ...(acceptedResources
           ? [
               {
@@ -549,6 +580,106 @@ function normalizeResourceParameter(
     });
   }
   delete body.resource;
+}
+
+/**
+ * Before-hook for `GET|POST /oauth2/authorize`. Rewrites `ctx.query.scope`
+ * to the intersection of what was requested, what this server can grant, and
+ * what the client is registered for, so an unsatisfiable literal is dropped
+ * instead of failing the authorization.
+ *
+ * **It refuses to narrow in three cases, each deliberately leaving the
+ * plugin's own `invalid_scope` to fire:**
+ *
+ *  1. **No `scope` parameter.** The plugin then defaults the grant to
+ *     `client.scopes ?? opts.scopes`; there is nothing to intersect, and
+ *     writing a value in would invent a request the client never made.
+ *  2. **The client cannot be resolved.** An unknown or unreadable client is
+ *     the plugin's refusal to make, and narrowing against a ceiling we
+ *     failed to read would be guessing at authority.
+ *  3. **The intersection is empty.** An emptied `scope` reaches a consent
+ *     screen with nothing on it, which the decision handler treats as a
+ *     denial — a confusing dead-end swapped for a clear one. A request in
+ *     which nothing at all is grantable is a genuine `invalid_scope`.
+ *
+ * A read failure fails open (log, return) so a transient database blip
+ * degrades to the pre-existing behaviour rather than breaking sign-in.
+ */
+async function narrowAuthorizeScopes(
+  ctx: HookCtxLite,
+  storage: Storage,
+  liveScopes: Set<string>,
+): Promise<void> {
+  const query = ctx.query;
+  if (!query || typeof query !== "object") return;
+
+  const rawScope = query.scope;
+  if (typeof rawScope !== "string") return;
+  const requested = rawScope.split(" ").filter((s) => s.length > 0);
+  if (requested.length === 0) return;
+
+  const clientId = query.client_id;
+  if (typeof clientId !== "string" || clientId.length === 0) return;
+
+  const oauth = storage.oauthProvider;
+  if (!oauth) return;
+
+  let ceiling: Set<string> | null;
+  try {
+    const client = await oauth.getClient(clientId);
+    if (!client) return;
+    // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null ceiling
+    // tracks the live set, and an empty array is a real, empty ceiling that
+    // narrows everything away — which case 3 below then declines to act on.
+    ceiling = client.scopes === null ? null : new Set(client.scopes);
+  } catch (err) {
+    log("warn", "oauth authorize scope-narrowing precheck failed", {
+      client_id: clientId,
+      error: err,
+    });
+    return;
+  }
+
+  const granted: string[] = [];
+  const unknownToServer: string[] = [];
+  const outsideClientCeiling: string[] = [];
+  for (const scope of requested) {
+    if (!liveScopes.has(scope)) {
+      unknownToServer.push(scope);
+      continue;
+    }
+    if (ceiling && !ceiling.has(scope)) {
+      outsideClientCeiling.push(scope);
+      continue;
+    }
+    granted.push(scope);
+  }
+
+  if (unknownToServer.length === 0 && outsideClientCeiling.length === 0) return;
+  if (granted.length === 0) return;
+
+  query.scope = granted.join(" ");
+
+  // Two log lines because they are two different events. A scope this server
+  // has never heard of points at a client built against a different registry
+  // or a type that has been deleted; a scope the server knows but the client
+  // is not registered for points at the client's stored ceiling having fallen
+  // behind the platform. Collapsing them loses the distinction that says
+  // which one to go and fix.
+  if (unknownToServer.length > 0) {
+    log("info", "oauth authorize: dropped scopes this server cannot grant", {
+      client_id: clientId,
+      dropped_scopes: unknownToServer,
+      granted_scopes: granted,
+    });
+  }
+  if (outsideClientCeiling.length > 0) {
+    log("info", "oauth authorize: dropped scopes outside the client ceiling", {
+      client_id: clientId,
+      dropped_scopes: outsideClientCeiling,
+      granted_scopes: granted,
+    });
+  }
 }
 
 async function guardRefreshTokenGrant(

@@ -93,12 +93,25 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         referenceId: auth_oauth_client.referenceId,
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
+        scopes: auth_oauth_client.scopes,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
       .limit(1);
     const row = rows[0];
     if (!row) return null;
+    // A NULL column means "no ceiling"; a stored array — including an empty
+    // one — is a real ceiling. Never collapse the two (see
+    // `OauthClientRow.scopes`). Anything that does not parse to an array is
+    // treated as absent rather than empty: an unreadable ceiling must not
+    // silently become one that permits nothing.
+    const parsedScopes =
+      row.scopes === null
+        ? null
+        : safeJsonParse<unknown>(row.scopes, null, "auth_oauth_client.scopes");
+    const scopes = Array.isArray(parsedScopes)
+      ? parsedScopes.filter((s): s is string => typeof s === "string")
+      : null;
     const parsed = safeJsonParse<unknown>(
       row.redirectUris,
       [],
@@ -125,6 +138,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       postLogoutRedirectUris,
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
+      scopes,
     };
   }
 
