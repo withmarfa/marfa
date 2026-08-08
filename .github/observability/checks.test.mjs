@@ -29,6 +29,8 @@ import {
   unobservablePairing,
   buildTelemetryQuery,
   MEASURED_SCALE_TO_ZERO,
+  AUTHORIZE_REFUSAL_THRESHOLD,
+  AUTHORIZE_REFUSED_MESSAGE,
 } from "./posthog.mjs";
 import {
   countOscillations,
@@ -265,6 +267,7 @@ describe("evaluateService", () => {
     project: "production",
     service: "marfa-server",
     errors: 0,
+    authorizeRefusals: 0,
     boots: 0,
     shutdowns: 0,
     uncleanRestarts: 0,
@@ -279,6 +282,43 @@ describe("evaluateService", () => {
 
   test("stays silent on a quiet, healthy service", () => {
     assert.deepEqual(evaluateService(service()), []);
+  });
+
+  // The fault this counter exists for took hosted sign-in down for days while
+  // every other rule here stayed green: the refusals logged at `warn`, so the
+  // error count never moved, and the HTTP probes kept getting 200 because an
+  // SPA shell renders perfectly well when sign-in is broken.
+  test("reports refused authorizations as red", () => {
+    const findings = evaluateService(
+      service({ authorizeRefusals: AUTHORIZE_REFUSAL_THRESHOLD }),
+    );
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].area, "authorize-refusals");
+    assert.equal(findings[0].severity, "red");
+  });
+
+  test("stays quiet on a handful of refusals below the threshold", () => {
+    // A misconfigured third-party client refusing a few times is not an
+    // outage, and a counter that fires on it gets muted.
+    assert.deepEqual(
+      evaluateService(
+        service({ authorizeRefusals: AUTHORIZE_REFUSAL_THRESHOLD - 1 }),
+      ),
+      [],
+    );
+  });
+
+  test("refusals are judged separately from the error count", () => {
+    // Deliberately NOT folded together: a client asking for a scope the
+    // server will not grant is not a server error, and putting it in the same
+    // counter as a crash corrupts the meaning of both.
+    const findings = evaluateService(
+      service({ authorizeRefusals: AUTHORIZE_REFUSAL_THRESHOLD, errors: 0 }),
+    );
+    assert.deepEqual(
+      findings.map((f) => f.area),
+      ["authorize-refusals"],
+    );
   });
 
   // A hosted container under intermittent traffic sleeps and wakes, logging a
@@ -405,6 +445,7 @@ describe("servicesFromRows", () => {
     const base = {
       service: "marfa-server",
       errors: 0,
+      authorizeRefusals: 0,
       boots: 5,
       shutdowns: 1,
       total: 100,
@@ -412,9 +453,14 @@ describe("servicesFromRows", () => {
       baselineShutdowns: 90,
       ...over,
     };
+    // Positional, and it has to match `buildTelemetryQuery`'s SELECT order
+    // exactly. A column inserted in the query without being inserted here
+    // does not fail loudly — every later field simply reads the one before
+    // it, so the assertions keep passing against the wrong numbers.
     return [
       base.service,
       base.errors,
+      base.authorizeRefusals,
       base.boots,
       base.shutdowns,
       base.total,

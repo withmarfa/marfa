@@ -402,6 +402,33 @@ describe("authorize scope narrowing", () => {
     expect(result.error).toBe("invalid_scope");
   });
 
+  it("refuses rather than silently dropping a session-critical scope", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-session@example.com");
+
+    // A ceiling that omits `offline_access` — the shape of a client whose
+    // registration simply forgot it.
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { challenge } = pkcePair();
+    const res = await beginAuthorize(
+      ctx,
+      clientId,
+      "openid offline_access core.note:read",
+      cookie,
+      challenge,
+    );
+
+    // Narrowing it away would succeed here and then fail inside the SDK at
+    // the token step, with nothing naming the scope that went missing. A
+    // named `invalid_scope` says which literal to go and register.
+    expect(res.status).toBe(302);
+    const result = classifyAuthorize(res);
+    expect(result.outcome).toBe("error");
+    expect(result.error).toBe("invalid_scope");
+    expect(result.description).toContain("offline_access");
+  });
+
   it("leaves a request carrying no scope parameter alone", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const cookie = await signInUser(ctx, "narrow-noscope@example.com");
