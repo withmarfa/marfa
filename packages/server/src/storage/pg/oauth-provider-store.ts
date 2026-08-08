@@ -311,7 +311,10 @@ export class PgOauthProviderStore implements OauthProviderStore {
       clientId: input.clientId,
       clientSecret: null,
       disabled: false,
-      scopes: [...input.scopes],
+      // `null` must reach the column as SQL NULL, not as an empty array:
+      // the plugin's `client.scopes ?? opts.scopes` only falls through on
+      // null, so `[]` would register a ceiling permitting nothing.
+      scopes: input.scopes === null ? null : [...input.scopes],
       userId: null,
       createdAt: now,
       updatedAt: now,

@@ -17,7 +17,6 @@
  * Idempotent: a client that already exists is reported and skipped.
  */
 import { createPgStorage } from "../src/storage/pg/index.js";
-import { buildAllowedScopes } from "../src/auth/oauth-provider.js";
 
 interface SeedClient {
   clientId: string;
@@ -47,12 +46,6 @@ async function main(): Promise<void> {
     console.error("DATABASE_URL is required (the env's direct Postgres URL).");
     process.exit(1);
   }
-
-  // First-party clients can request the full Marfa scope grammar; the consent
-  // screen is where the user narrows. A requested scope must fall within the
-  // client's registered set, so seeding the full ceiling keeps whatever
-  // default-on bundle the app asks for in range.
-  const scopes = buildAllowedScopes();
 
   const storage = await createPgStorage(databaseUrl, {
     authMode: "hosted",
@@ -84,7 +77,16 @@ async function main(): Promise<void> {
       grantTypes: ["authorization_code", "refresh_token"],
       responseTypes: ["code"],
       tokenEndpointAuthMethod: "none",
-      scopes,
+      // No ceiling. A first-party client is meant to be able to request the
+      // whole Marfa scope grammar, and the consent screen is where the user
+      // narrows. Writing the grammar out as an array expressed that intent
+      // but did not achieve it: the array is a snapshot, the grammar is
+      // rebuilt from the type registry on every boot, and nothing refreshes
+      // the row — the idempotent branch below updates logout config only. A
+      // stale snapshot then rejects scopes the platform advertises, which
+      // took hosted sign-in down entirely. `null` is the same intent
+      // expressed so that it stays true.
+      scopes: null,
       redirectUris: client.origins.map((o) => `${o}/auth/callback`),
       postLogoutRedirectUris,
       referenceId: null,

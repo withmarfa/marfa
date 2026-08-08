@@ -330,7 +330,11 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       clientId: input.clientId,
       clientSecret: null,
       disabled: false,
-      scopes: JSON.stringify(input.scopes),
+      // `JSON.stringify(null)` is the four-character string `"null"`, which
+      // is a present value, not an absent one — the plugin's
+      // `client.scopes ?? opts.scopes` would never fall through and the
+      // ceiling would be whatever that string parses to. Write SQL NULL.
+      scopes: input.scopes === null ? null : JSON.stringify(input.scopes),
       userId: null,
       createdAt: now,
       updatedAt: now,
