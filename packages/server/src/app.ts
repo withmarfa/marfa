@@ -45,6 +45,7 @@ import {
   oauthProviderOpenIdConfigMetadata,
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
+import { renderHttpErrorPage, prefersHtml } from "./routes/http-error-page.js";
 import type { EmailTransport as MarfaEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -106,6 +107,22 @@ export function createApp(
       errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
     }),
   );
+
+  // An unmatched route never throws, so it never reaches `onError` — Hono
+  // answers it with a bare `404 Not Found` in plain text. That is the one
+  // error a person is most likely to reach by hand, from a mistyped address
+  // or a link that has moved, and it was the least presentable thing the
+  // server produced. Same negotiation as every other error: a page for a
+  // browser, the documented JSON shape for everything else.
+  app.notFound((c) => {
+    const body = {
+      error: { code: "not_found", message: "Not found" },
+    };
+    if (prefersHtml(c.req.header("accept"))) {
+      return c.html(renderHttpErrorPage(404), 404);
+    }
+    return c.json(body, 404);
+  });
 
   // Expose the resolved AppConfig on the request context so handlers and
   // middleware (e.g. quota enforcement) read env-derived values from the

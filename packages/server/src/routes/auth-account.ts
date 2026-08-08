@@ -600,7 +600,7 @@ async function deleteVerificationsByValueAndPrefix(
 // HTML renderers
 // ---------------------------------------------------------------------------
 
-function renderBadTokenPage(): string {
+export function renderBadTokenPage(): string {
   return renderAuthLayout({
     title: "Invalid or expired link",
     centered: true,
@@ -613,7 +613,7 @@ function renderBadTokenPage(): string {
   });
 }
 
-function renderConfirmedPage(): string {
+export function renderConfirmedPage(): string {
   return renderAuthLayout({
     title: "Account scheduled for deletion",
     centered: true,
@@ -626,7 +626,7 @@ function renderConfirmedPage(): string {
   });
 }
 
-function renderCancelledPage(): string {
+export function renderCancelledPage(): string {
   return renderAuthLayout({
     title: "Account restored",
     centered: true,
@@ -645,7 +645,7 @@ function renderCancelledPage(): string {
 // account-deletion cascade had already committed. The user clicked the
 // cancel link in time — the system just couldn't honor it. Don't imply
 // they missed a deadline.
-function renderAlreadyDeletedPage(): string {
+export function renderAlreadyDeletedPage(): string {
   return renderAuthLayout({
     title: "Account permanently deleted",
     centered: true,

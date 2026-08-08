@@ -477,9 +477,26 @@ User-facing page at `/auth/security` listing connected apps and active sessions,
 - **Notice flash** — `?notice=…` query param maps to a banner at the top of the page (`grant_revoked`, `session_revoked`, `session_not_found`, `cannot_revoke_current`, etc). Unknown codes resolve to no banner, not a 500.
 - **Auth gate** — all four handlers run through `requireConsentSession` (same gate as `/auth/authorize`). Unauthenticated requests 302 to `/auth/sign-in?return_to=…`.
 
-## Auth + email preview gallery (dev tool)
+## Preview gallery (dev tool)
 
-`packages/server/scripts/auth-gallery.ts` (+ `auth-gallery-fixtures.ts`) is a zero-database dev tool for eyeballing every hosted auth page and transactional email in every state without standing up the server or clicking through flows. Run it with `pnpm --filter @withmarfa/server auth:gallery`; for a fixed port use `PORT=<n> pnpm exec tsx scripts/auth-gallery.ts` from `packages/server` (the pnpm filter does not reliably honor `PORT`). It imports the real page renderers (`routes/*-page.ts`, `routes/consent.ts`, `routes/device-pages.ts`, …), the real email templates (`auth/email-templates/*`), and the real `/auth/static/*` assets, so the preview is exactly what ships, never a re-implementation. The shell has an Auth/Email section toggle, the screens (left) and their states (right), the preview (center), Freeform / Browser / Mobile frames, light / system / dark, and arrow-key navigation. It is a script, never a mounted route, so it never deploys. Use it to review any change to the `/auth/*` surface or the email templates before shipping.
+`packages/server/scripts/auth-gallery.ts` (+ `auth-gallery-fixtures.ts`) is a zero-database dev tool for eyeballing **every page this server renders to a person**, in every state, without standing up the server or reaching the state that produces it. Run it with `pnpm --filter @withmarfa/server auth:gallery`; for a fixed port use `PORT=<n> pnpm exec tsx scripts/auth-gallery.ts` from `packages/server` (the pnpm filter does not reliably honor `PORT`). It imports the real renderers, the real email templates, and the real `/auth/static/*` assets, so the preview is exactly what ships, never a re-implementation. Three tabs — Auth, Connections, Email — with screens (left), their states (right), the preview (center), Freeform / Browser / Mobile frames, light / system / dark, and arrow-key navigation. It is a script, never a mounted route, so it never deploys.
+
+**Every page belongs here, not just the pretty ones.** The invalid-scope outage was first seen by the operator on production because the page that rendered it had no preview, and the schema-driven configuration form shipped for months with two unstyled classes nobody had ever looked at. Anything only visible by reaching a hard-to-reach state gets built once and never looked at again.
+
+### Adding a surface
+
+1. **Export the renderer.** A module-private `renderFooPage()` cannot be previewed. The four account-deletion pages were private for exactly this reason.
+2. **Add a screen to the right tab** in `auth-gallery-fixtures.ts`: `{ id, label, variants: [{ id, label, render: () => renderFooPage(...) }] }`. One variant per state a person can actually land on, including the failures — those are the ones nobody has seen.
+3. **Pass real-shaped params.** The fixture is the only caller that is not the app, so it is the one place a wrong shape hides. `renderGenericConfigureForm`'s fixture type-checked and threw at render time until the liveness check below caught it.
+4. **Run the guard.** `src/routes/gallery-coverage.test.ts` fails the build when a route module exports a page renderer the fixtures never mention, and separately invokes every variant so a fixture that has drifted from its renderer fails in CI rather than when somebody finally opens it.
+
+### One layout, one stylesheet
+
+Every page goes through `renderAuthLayout` and `auth.css`. `src/routes/one-auth-layout.test.ts` fails the build on a route module that builds its own document envelope or carries its own `<style>` / `const *_CSS`, with a short allowlist that must name a reason.
+
+This is enforced structurally because it drifted invisibly once: two hand-written copies of the design system, each with a comment saying it was kept in sync by hand, one of which had fallen back to light-only while the shared sheet followed the device into dark mode. Both justified themselves by claiming these pages render outside `/auth/*` and so have no session — which was never true, since `auth.css` is served from a public route.
+
+Email templates are deliberately exempt: a `<link>` to a stylesheet is stripped by most mail clients, so inline styles there are a constraint rather than a choice.
 
 ## Reserved extension namespaces
 
