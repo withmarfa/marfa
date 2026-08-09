@@ -23,6 +23,7 @@ import { expandBundlesToScopes } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { getPermissionBundles } from "../config.js";
+import { withSessionScopes } from "../auth/mint-ceiling.js";
 
 let ctx: TestContext | undefined;
 
@@ -183,8 +184,12 @@ describe("dynamic client registration default-scope ceiling", () => {
     const registered = body.scope.split(" ").filter(Boolean).sort();
     expect(registered).not.toContain("*:write");
     expect(registered).not.toContain("*:read");
+    // The bundle expansion plus the session scopes, which no bundle carries.
+    // Asserting the expansion alone once pinned a ceiling that could not hold
+    // a session: `offline_access` was absent, so the first authorize naming it
+    // was refused for a literal the client was never told to register.
     expect(registered).toEqual(
-      expandBundlesToScopes(getPermissionBundles()).sort(),
+      withSessionScopes(expandBundlesToScopes(getPermissionBundles())).sort(),
     );
   });
 
@@ -201,7 +206,7 @@ describe("dynamic client registration default-scope ceiling", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { scope: string };
     expect(body.scope.split(" ").sort()).toEqual(
-      ["*:read", "*:write", "openid"].sort(),
+      withSessionScopes(["*:read", "*:write", "openid"]).sort(),
     );
   });
 });

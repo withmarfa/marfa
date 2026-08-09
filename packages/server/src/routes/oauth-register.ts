@@ -56,7 +56,7 @@ import { z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
-import { dcrDefaultScopes } from "../auth/mint-ceiling.js";
+import { dcrDefaultScopes, withSessionScopes } from "../auth/mint-ceiling.js";
 import {
   buildAllowedScopes,
   resolveSpaceIdForAuthUser,
@@ -318,12 +318,16 @@ export function oauthRegisterRoutes(
     // plugin's `clientRegistrationDefaultScopes`. Defaulting to the FULL
     // allowlist here handed an unauthenticated registration `*:write`;
     // wider scopes stay requestable, explicitly.
-    const requestedScopes = (body.scope?.trim() ?? "")
+    const namedScopes = (body.scope?.trim() ?? "")
       .split(/\s+/)
       .filter((s) => s.length > 0);
-    if (requestedScopes.length === 0) {
-      requestedScopes.push(...dcrDefaultScopes());
-    }
+    // A named set still gains the session scopes: a ceiling that cannot hold
+    // a session mints a client that cannot sign in, and nothing the client
+    // can do afterwards repairs it.
+    const requestedScopes =
+      namedScopes.length === 0
+        ? dcrDefaultScopes()
+        : withSessionScopes(namedScopes);
     for (const sc of requestedScopes) {
       if (!allowedScopes.has(sc)) {
         return c.json(

@@ -921,3 +921,69 @@ describe("POST /auth/device — the client's registered ceiling", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A registration must be able to sign in with the credential it was given.
+// ---------------------------------------------------------------------------
+
+describe("POST /auth/device — a real registration can complete a login", () => {
+  /** Exactly what `marfa auth login` sends: no `scope`, so the server
+   *  chooses the ceiling. See `CLI_DCR_MANIFEST` in the CLI's auth command. */
+  const CLI_MANIFEST = {
+    client_name: "marfa-cli",
+    redirect_uris: ["http://127.0.0.1:0"],
+    grant_types: [
+      "urn:ietf:params:oauth:grant-type:device_code",
+      "refresh_token",
+    ],
+    token_endpoint_auth_method: "none",
+  };
+
+  /** The CLI's own default request set. `offline_access` is the whole point
+   *  of the device flow — a CLI that cannot refresh re-authenticates hourly. */
+  const CLI_LOGIN_SCOPES = "openid offline_access profile";
+
+  it("lets a client registered with no scope request offline_access", async () => {
+    ctx = await createTestContext();
+    const reg = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: CLI_MANIFEST,
+    });
+    expect(reg.status).toBe(201);
+    const registered = (await reg.json()) as Record<string, unknown>;
+    const clientId = registered.client_id as string;
+
+    // The ceiling the server minted must contain the session scopes it
+    // expects clients to ask for. Omitting them mints a credential that
+    // cannot be used, and the client cannot amend its own registration.
+    expect((registered.scope as string).split(" ")).toEqual(
+      expect.arrayContaining(["openid", "offline_access"]),
+    );
+
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify({ client_id: clientId, scope: CLI_LOGIN_SCOPES }),
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("keeps the session scopes when the registration names its own", async () => {
+    // A narrow, deliberate registration still has to be able to hold a
+    // session. `openid` and `offline_access` carry no data-plane reach, so
+    // admitting them widens nothing a consent screen would show.
+    ctx = await createTestContext();
+    const reg = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: { ...CLI_MANIFEST, scope: "core.note:read" },
+    });
+    expect(reg.status).toBe(201);
+    const registered = (await reg.json()) as Record<string, unknown>;
+    const scopes = (registered.scope as string).split(" ");
+    expect(scopes).toEqual(
+      expect.arrayContaining(["core.note:read", "openid", "offline_access"]),
+    );
+    // Still a ceiling: naming one type does not admit another.
+    expect(scopes).not.toContain("core.task:write");
+  });
+});
