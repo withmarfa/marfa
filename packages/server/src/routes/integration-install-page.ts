@@ -220,7 +220,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
     </div>
     <p class="sub">${escapeHtml(params.summary)}</p>
 
-    <p class="eyebrow">Adds to your space</p>
+    <p class="lsec">Adds to your space</p>
     <div class="captile">
       <div class="captile__t">${escapeHtml(leadLabel(targetTypes))}</div>
       <div class="captile__d">${escapeHtml(summarizeDirection(params.direction))}</div>

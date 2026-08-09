@@ -139,7 +139,10 @@ export function renderGoogleCalendarPicker(
         <label class="ccard">
           <input class="chk" type="checkbox" name="selected_calendar_ids" value="${esc(cal.id)}" ${checked}>
           ${dot}
-          <span class="ccard__tt"><b>${esc(cal.summary)}${primaryBadge}</b>${subline}</span>
+          <span class="ccard__tt">
+            <span class="ccard__name"><b>${esc(cal.summary)}</b>${primaryBadge}</span>
+            ${subline}
+          </span>
         </label>`;
           })
           .join("");
