@@ -51,6 +51,7 @@ import {
   renderConfigureSuccess,
   renderGenericConfigureForm,
   renderConfigureError,
+  renderConnectionNotAuthorized,
 } from "../src/routes/connection-configure.js";
 import { renderHttpErrorPage } from "../src/routes/http-error-page.js";
 import { renderVerifyEmailEmail } from "../src/auth/email-templates/verify-email.js";
@@ -959,6 +960,12 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
             } as never,
             { include_highlights: true, since_days: 30 },
           ),
+      },
+      {
+        id: "not-authorized",
+        label: "Not authorized yet",
+        render: () =>
+          renderConnectionNotAuthorized("01999a3f-96ad-4ec1-b378-399d4875cfa5"),
       },
       {
         id: "saved",

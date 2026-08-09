@@ -26,7 +26,7 @@
  *
  * OAuth uses the proxy mode (`oauth_requirements: { calendar: "proxy" }`).
  * Calendar OAuth tokens are bootstrapped via the server's
- * provider-agnostic `GET /oauth/callback/:provider` route (see
+ * provider-agnostic `GET /oauth/callback` route (see
  * `packages/server/src/routes/oauth-callback.ts`), which exchanges the
  * authorization code and persists tokens to
  * `storage.connectionOauthTokens`. The integration reads them at request

@@ -720,14 +720,11 @@ export function createApp(
   app.route("/connections", connectionProxyRoutes(storage));
   // OAuth bootstrap — POST /connections/:id/oauth/start (admin-gated)
   // returns the upstream authorize URL with signed state; the public
-  // GET /oauth/callback/:provider exchanges the code and persists
-  // tokens under the same connectionOauthTokens row the proxy reads.
+  // GET /oauth/callback exchanges the code and persists tokens under the
+  // same connectionOauthTokens row the proxy reads.
   app.route(
     "/connections",
-    oauthStartRoutes(storage, {
-      redirectUriAllowlist: config.oauthRedirectAllowlist,
-      authMode: config.authMode,
-    }),
+    oauthStartRoutes(storage, { authBaseUrl: config.authBaseUrl }),
   );
   app.route("/oauth/callback", oauthCallbackRoutes(storage));
   // Leased bearer tokens — issuance + revoke + list under

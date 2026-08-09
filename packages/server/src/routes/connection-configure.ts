@@ -296,6 +296,28 @@ export function parseGenericConfigurePayload(
   return out;
 }
 
+/**
+ * Shown when a connection reaches its configuration screen before the
+ * upstream OAuth dance has run, so there is nothing yet to configure.
+ *
+ * This used to redirect to `/connections/:id/oauth/start`, a route
+ * registered POST-only that wants a bearer credential and a JSON body.
+ * Nothing following a redirect sends any of those, so the flow it pointed
+ * at could never run and the redirect only replaced one dead end with a
+ * quieter one. The endpoint is named here rather than jumped to, because
+ * the reader of this surface is the operator who calls it.
+ */
+export function renderConnectionNotAuthorized(connectionId: string): string {
+  return renderAuthLayout({
+    title: "Not authorized yet",
+    centered: true,
+    bodyHtml: `      <h1 class="title">Not authorized yet</h1>
+      <p class="sub">There is nothing to configure until this connection has access to the other service. Start the authorization, open the link it returns, and come back here.</p>
+      <pre>POST /connections/${esc(connectionId)}/oauth/start</pre>
+    `,
+  });
+}
+
 export function renderConfigureError(message: string): string {
   return renderAuthLayout({
     title: "Couldn't configure",
@@ -504,7 +526,7 @@ export function connectionConfigureRoutes(
     const tokens = await storage.connectionOauthTokens.get(id, spaceId);
     if (!tokens) {
       setNoStore(c);
-      return c.redirect(`/connections/${encodeURIComponent(id)}/oauth/start`);
+      return c.html(renderConnectionNotAuthorized(id), 409);
     }
 
     let calendars: CalendarListEntry[];

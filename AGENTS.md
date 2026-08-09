@@ -101,7 +101,7 @@ Three coupled subsystems shipped together as the Connections build:
 
 **Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. The `local` substrate is a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map is in `packages/server/AGENTS.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
 
-For per-route specifics, including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern, see `packages/server/AGENTS.md`.
+For per-route specifics, including the OAuth bootstrap callback at `/oauth/callback` and the inbound webhook receipt URL pattern, see `packages/server/AGENTS.md`.
 
 ## Environment variables
 

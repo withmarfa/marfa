@@ -1,5 +1,12 @@
 /**
- * Cross-space safety belt for the OAuth bootstrap start route.
+ * The integration OAuth bootstrap: what reaches the upstream provider.
+ *
+ * Two properties, kept in one file because they are the same property seen
+ * from different sides. The credential a connection resolves must be its
+ * own space's, and the redirect URI must be this server's own rather than
+ * anything a caller supplied.
+ *
+ * Cross-space safety belt for the start route.
  *
  * The credential lookup inside `readAuthorizeConfig` is fenced by the
  * connection's `space_id`. Without this fence, if a connection in space
@@ -16,13 +23,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { verifyOAuthState } from "../oauth/state.js";
+import { deriveOAuthCallbackUri } from "./oauth-callback.js";
 
 let ctx: TestContext;
 
 beforeAll(async () => {
-  ctx = await createTestContext({
-    oauthRedirectAllowlist: ["http://localhost:0/callback"],
-  });
+  ctx = await createTestContext();
 });
 
 afterAll(async () => {
@@ -83,7 +90,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       `/connections/${crossConn.id}/oauth/start`,
       {
         key: ctx.adminKey, // platform admin — the only role that can reach this route
-        body: { redirect_uri: "http://localhost:0/callback" },
+        body: {},
       },
     );
 
@@ -138,7 +145,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       `/connections/${conn.id}/oauth/start`,
       {
         key: ctx.adminKey,
-        body: { redirect_uri: "http://localhost:0/callback" },
+        body: {},
       },
     );
 
@@ -208,7 +215,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       `/connections/${connId}/oauth/start`,
       {
         key: ctx.adminKey,
-        body: { redirect_uri: "http://localhost:0/callback" },
+        body: {},
       },
     );
     expect(res.status).toBe(200);
@@ -232,7 +239,6 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       {
         key: ctx.adminKey,
         body: {
-          redirect_uri: "http://localhost:0/callback",
           // Override `prompt`; leave `access_type` to the credential default.
           extra_params: { prompt: "none" },
         },
@@ -255,7 +261,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       `/connections/${connId}/oauth/start`,
       {
         key: ctx.adminKey,
-        body: { redirect_uri: "http://localhost:0/callback" },
+        body: {},
       },
     );
     expect(res.status).toBe(200);
@@ -312,7 +318,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       `/connections/${conn.id}/oauth/start`,
       {
         key: ctx.adminKey,
-        body: { redirect_uri: "http://localhost:0/callback" },
+        body: {},
       },
     );
     expect(res.status).toBe(200);
@@ -324,141 +330,163 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
   });
 });
 
-describe("POST /connections/:id/oauth/start — redirect allowlist fail-closed", () => {
-  // Each case spins up its own context with a specific authMode +
-  // oauthRedirectAllowlist, since these are app-construction-time config and
-  // can't be varied per-request. Seeds one valid connection per context.
-  async function seedConnection(c: TestContext): Promise<string> {
-    if (!c.storage.spaces) throw new Error("spaces store required");
-    const space = await c.storage.spaces.create(
-      `redirect-allowlist-${Math.random().toString(36).slice(2, 10)}`,
-    );
-    const cred = await c.storage.items.create(
-      {
-        type: "system.credential",
-        properties: {
-          label: "google",
-          kind: "oauth_token",
-          oauth_provider_config: {
-            oauth_authorize_url: "https://accounts.test/oauth/authorize",
-            oauth_token_url: "https://accounts.test/oauth/token",
-            oauth_client_id: "CLIENT",
-            oauth_default_scope: "openid",
-          },
-          secret_encrypted: encryptSecret(
-            "secret",
-            SECRET_INFO.connectionOauthToken,
-          ),
+// ---------------------------------------------------------------------------
+// The redirect URI is the server's own, and nothing a caller sends can
+// change it.
+// ---------------------------------------------------------------------------
+
+describe("POST /connections/:id/oauth/start — the redirect URI is derived", () => {
+  async function seedConnection(): Promise<string> {
+    const cred = await ctx.storage.items.create({
+      type: "system.credential",
+      properties: {
+        label: "Acme",
+        kind: "oauth_token",
+        oauth_provider_config: {
+          oauth_authorize_url: "https://accounts.test/oauth/authorize",
+          oauth_token_url: "https://accounts.test/oauth/token",
+          oauth_client_id: "CLIENT",
+          oauth_default_scope: "openid",
         },
+        secret_encrypted: encryptSecret(
+          "secret",
+          SECRET_INFO.connectionOauthToken,
+        ),
       },
-      space.id,
-    );
-    const conn = await c.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          integration_ref: "acme.demo",
-          credential_ref: cred.id,
-        },
+    });
+    const conn = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: "acme.demo",
+        credential_ref: cred.id,
       },
-      space.id,
-    );
+    });
     return conn.id;
   }
 
-  it("rejects every redirect_uri when the allowlist is empty in hosted mode (fail closed)", async () => {
-    const hostedCtx = await createTestContext({
-      authMode: "hosted",
-      oauthRedirectAllowlist: [],
-      mcpEnabled: false,
-    });
-    try {
-      if (!hostedCtx.storage.spaces) return; // hosted requires the space store
-      const connId = await seedConnection(hostedCtx);
-      const res = await request(
-        hostedCtx.app,
-        "POST",
-        `/connections/${connId}/oauth/start`,
-        {
-          key: hostedCtx.adminKey,
-          body: { redirect_uri: "https://attacker.example/callback" },
-        },
-      );
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("validation_error");
-    } finally {
-      await hostedCtx.cleanup();
-    }
+  async function start(
+    connId: string,
+    body: Record<string, unknown>,
+  ): Promise<{ authorize_url: string; redirect_uri: string }> {
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connId}/oauth/start`,
+      { key: ctx.adminKey, body },
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as {
+      authorize_url: string;
+      redirect_uri: string;
+    };
+  }
+
+  it("sends this deployment's own callback, with no redirect_uri supplied", async () => {
+    // The whole point: a request carrying nothing about where to come back
+    // to still produces a complete authorize URL. Before this, the same
+    // request was a 400 asking for a value only one setting of which could
+    // ever have been right.
+    const body = await start(await seedConnection(), {});
+    expect(body.redirect_uri).toBe("http://localhost:0/oauth/callback");
+    expect(new URL(body.authorize_url).searchParams.get("redirect_uri")).toBe(
+      "http://localhost:0/oauth/callback",
+    );
   });
 
-  it("allows any redirect_uri when the allowlist is empty in keys mode (passthrough preserved)", async () => {
-    const keysCtx = await createTestContext({
-      authMode: "keys",
-      oauthRedirectAllowlist: [],
-      mcpEnabled: false,
+  it("ignores a redirect_uri a caller sends anyway", async () => {
+    const body = await start(await seedConnection(), {
+      redirect_uri: "https://attacker.example/callback",
     });
-    try {
-      if (!keysCtx.storage.spaces) return;
-      const connId = await seedConnection(keysCtx);
-      const res = await request(
-        keysCtx.app,
-        "POST",
-        `/connections/${connId}/oauth/start`,
-        {
-          key: keysCtx.adminKey,
-          body: { redirect_uri: "https://anything.example/callback" },
-        },
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { authorize_url: string };
-      expect(body.authorize_url).toContain(
-        "redirect_uri=https%3A%2F%2Fanything.example%2Fcallback",
-      );
-    } finally {
-      await keysCtx.cleanup();
-    }
+    expect(body.authorize_url).not.toContain("attacker.example");
+    expect(new URL(body.authorize_url).searchParams.get("redirect_uri")).toBe(
+      "http://localhost:0/oauth/callback",
+    );
   });
 
-  it("with a non-empty allowlist, only listed redirect URIs are allowed (both modes)", async () => {
-    const hostedCtx = await createTestContext({
-      authMode: "hosted",
-      oauthRedirectAllowlist: ["https://app.example/callback"],
+  it("does not let extra_params overwrite the redirect URI", async () => {
+    // This is the one that mattered. `extra_params` was applied to the
+    // parameter map AFTER redirect_uri was set and after the allowlist had
+    // passed, so a caller could name the key directly and send the
+    // authorization code wherever it liked — walking straight past the
+    // control written to stop exactly that.
+    const body = await start(await seedConnection(), {
+      extra_params: {
+        redirect_uri: "https://attacker.example/callback",
+        access_type: "offline",
+      },
     });
-    try {
-      if (!hostedCtx.storage.spaces) return;
-      const connId = await seedConnection(hostedCtx);
+    const params = new URL(body.authorize_url).searchParams;
+    expect(params.get("redirect_uri")).toBe(
+      "http://localhost:0/oauth/callback",
+    );
+    expect(params.getAll("redirect_uri")).toHaveLength(1);
+    // The benign key still lands, so this is a fence rather than a ban.
+    expect(params.get("access_type")).toBe("offline");
+  });
 
-      // Listed URI passes.
-      const allowed = await request(
-        hostedCtx.app,
-        "POST",
-        `/connections/${connId}/oauth/start`,
-        {
-          key: hostedCtx.adminKey,
-          body: { redirect_uri: "https://app.example/callback" },
-        },
-      );
-      expect(allowed.status).toBe(200);
+  it("does not let extra_params overwrite the other protocol parameters", async () => {
+    const body = await start(await seedConnection(), {
+      extra_params: {
+        client_id: "SUBSTITUTE",
+        state: "forged",
+        code_challenge: "forged",
+        code_challenge_method: "plain",
+        response_type: "token",
+      },
+    });
+    const params = new URL(body.authorize_url).searchParams;
+    expect(params.get("client_id")).toBe("CLIENT");
+    expect(params.get("state")).not.toBe("forged");
+    expect(params.get("code_challenge")).not.toBe("forged");
+    expect(params.get("code_challenge_method")).toBe("S256");
+    expect(params.get("response_type")).toBe("code");
+  });
 
-      // Unlisted URI rejected.
-      const rejected = await request(
-        hostedCtx.app,
-        "POST",
-        `/connections/${connId}/oauth/start`,
-        {
-          key: hostedCtx.adminKey,
-          body: { redirect_uri: "https://other.example/callback" },
-        },
-      );
-      expect(rejected.status).toBe(400);
-      const body = (await rejected.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("validation_error");
-    } finally {
-      await hostedCtx.cleanup();
-    }
+  it("signs the derived URI into the state, so the token exchange cannot disagree with the authorize call", async () => {
+    const body = await start(await seedConnection(), {});
+    const state = new URL(body.authorize_url).searchParams.get("state");
+    expect(state).toBeTruthy();
+    const verified = verifyOAuthState(state!);
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) return;
+    expect(verified.envelope.redirect_uri).toBe(
+      "http://localhost:0/oauth/callback",
+    );
+    expect(verified.envelope.provider_label).toBe("Acme");
+  });
+});
+
+describe("GET /oauth/callback", () => {
+  it("is served at one fixed path, with no provider segment", async () => {
+    const res = await request(ctx.app, "GET", "/oauth/callback");
+    // No code and no state, so it refuses — but it refuses as the callback
+    // rather than as an unrouted path, which is what pins the mount point.
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Missing code or state");
+  });
+
+  it("no longer answers on the old per-provider path", async () => {
+    const res = await request(ctx.app, "GET", "/oauth/callback/google");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("deriveOAuthCallbackUri", () => {
+  it("is the base URL plus the callback path", () => {
+    expect(deriveOAuthCallbackUri("https://api.marfa.so")).toBe(
+      "https://api.marfa.so/oauth/callback",
+    );
+  });
+
+  it("does not double the separator when the base carries a trailing slash", () => {
+    // A provider compares the redirect URI as a string, so `//oauth/callback`
+    // is a different value from the one on file and the flow dies at the
+    // provider with an error nothing on this side can explain.
+    expect(deriveOAuthCallbackUri("https://api.marfa.so/")).toBe(
+      "https://api.marfa.so/oauth/callback",
+    );
   });
 });
