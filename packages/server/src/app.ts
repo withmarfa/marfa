@@ -38,7 +38,7 @@ import { credentialRoutes } from "./routes/credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { authRoutes } from "./routes/auth-pages.js";
+import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
 import {
   oauthProviderAuthServerMetadata,
@@ -533,7 +533,7 @@ export function createApp(
       // Inject the device-code URN into `grant_types_supported`
       // (idempotent — guards against the plugin starting to advertise
       // it natively in a future version).
-      const URN = "urn:ietf:params:oauth:grant-type:device_code";
+      const URN = DEVICE_CODE_GRANT_TYPE;
       const grantsRaw = payload.grant_types_supported;
       const grants = Array.isArray(grantsRaw)
         ? grantsRaw.filter((g): g is string => typeof g === "string")

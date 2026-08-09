@@ -1927,6 +1927,20 @@ export function authRoutes(
     if (!client) {
       throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
+    // A client that did not register the device grant may not run it.
+    //
+    // The plugin enforces this on its own token paths, through
+    // `clientAllowsGrant` inside `validateClientCredentials`. The device
+    // flow is Marfa's own state machine and reaches none of that, which is
+    // why the check has to be restated here rather than inherited — and
+    // why it has to read `grant_types` the same way, or the platform holds
+    // two answers to one question.
+    if (!clientAllowsDeviceGrant(client.grantTypes)) {
+      throw new MarfaError(
+        ErrorCode.INVALID_CLIENT,
+        "This client is not registered for the device grant",
+      );
+    }
     // Validate every requested literal against the allowlist. The stored
     // grant is the literal set and consent approves it verbatim, so a
     // scope that slipped through here would be granted unseen — any
@@ -1938,11 +1952,36 @@ export function authRoutes(
         "No valid scopes requested",
       );
     }
+    // Two ceilings, both of which must hold: what the platform offers at
+    // all, and what this client registered for. The plugin resolves the
+    // second as `client.scopes ?? opts.scopes` on the authorization-code
+    // path; this path never read it, so a client registered for one scope
+    // could open a device flow asking for every scope on the platform, with
+    // only a person reading the consent screen carefully in the way.
+    //
+    // It refuses rather than narrowing, which is the opposite of what the
+    // authorize surface does and deliberately so. There, the error rides a
+    // redirect the app may never render and a human is stood in front of
+    // it, so narrowing is what lets a stale request still succeed. Here the
+    // response goes straight back to the machine that made the request,
+    // which can read it. And nothing stale can reach this point: the
+    // platform allowlist is checked live just above, so what the client
+    // ceiling adds is a security boundary rather than a stale copy. Handing
+    // back a device code for less than was asked for, without saying so,
+    // turns a two-line fix at the client into a token that quietly does not
+    // do what the client was built for.
+    const clientCeiling = client.scopes;
     for (const requested of requestedScopes) {
       if (!allowedScopes.has(requested)) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
           `Scope not available: ${requested}`,
+        );
+      }
+      if (clientCeiling !== null && !clientCeiling.includes(requested)) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCOPE,
+          `Scope not registered for this client: ${requested}`,
         );
       }
     }
@@ -2264,7 +2303,7 @@ export function authRoutes(
     const clientId = formData.get("client_id");
 
     if (
-      grantType !== "urn:ietf:params:oauth:grant-type:device_code" ||
+      grantType !== DEVICE_CODE_GRANT_TYPE ||
       typeof deviceCodeRaw !== "string" ||
       typeof clientId !== "string"
     ) {
@@ -2423,6 +2462,34 @@ export function authRoutes(
 // ---------------------------------------------------------------------------
 // Device Authorization Grant — local helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * RFC 8628 device-code grant type literal.
+ *
+ * Exported because four places had their own copy of this string and a
+ * typo in any one of them fails in a way that reads as a protocol
+ * disagreement rather than a spelling mistake.
+ */
+export const DEVICE_CODE_GRANT_TYPE =
+  "urn:ietf:params:oauth:grant-type:device_code";
+
+/**
+ * Whether a client's registered `grant_types` admit the device grant.
+ *
+ * An absent or empty registration means `authorization_code` and nothing
+ * else, per RFC 7591 §2, which is also how the OAuth plugin reads it in
+ * `clientAllowsGrant`. Reading it as "declared nothing, so allow anything"
+ * would be more permissive here than on every path the plugin owns, and a
+ * platform that answers one question two ways is the shape this lane spent
+ * its time removing.
+ */
+export function clientAllowsDeviceGrant(
+  grantTypes: readonly string[] | null,
+): boolean {
+  const declared =
+    grantTypes && grantTypes.length > 0 ? grantTypes : ["authorization_code"];
+  return declared.includes(DEVICE_CODE_GRANT_TYPE);
+}
 
 const DEVICE_CODE_PREFIX = "marfa_dc_";
 const DEVICE_CODE_TTL_MS = 600_000; // 10 minutes

@@ -1197,6 +1197,17 @@ export interface OauthClientRow {
    * can request nothing at all.
    */
   scopes: string[] | null;
+  /**
+   * The grant types the client registered for, or `null` when it named
+   * none.
+   *
+   * `null` carries the same "no declaration" reading as `scopes`, and for
+   * the same reason: a client that never said is not a client that said
+   * nothing. The plugin checks the *server's* supported grant types and
+   * never the client's own, so this is only consulted where Marfa owns the
+   * grant itself — today, the device flow.
+   */
+  grantTypes: string[] | null;
 }
 
 /**
