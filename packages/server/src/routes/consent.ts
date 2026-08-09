@@ -270,7 +270,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         : undefined;
     const detail =
       matched && matched.length > 0
-        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today: ${matched.join(", ")} — and any you define later`)}</span>`
+        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today this covers ${matched.join(", ")}, plus any you add later`)}</span>`
         : "";
     return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
   };
@@ -420,7 +420,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   return renderAuthLayout({
     title: showDiff
-      ? `Update access — ${params.clientName}`
+      ? `Update access for ${params.clientName}`
       : `Authorize ${params.clientName}`,
     bodyHtml,
   });

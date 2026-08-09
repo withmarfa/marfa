@@ -1428,16 +1428,6 @@ details.disclosure[open] > summary .disclosure__chevron {
 /* genuinely page-specific rules survived the move.                  */
 /* ================================================================ */
 
-/* A machine identifier shown for support: a connection id, an HTTP
-   status. Deliberately quiet — it is a reference, not content. */
-.ref {
-  margin: var(--gap-pair) 0 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  color: var(--fg-faint);
-  word-break: break-all;
-}
-
 /* Verbatim upstream text — a provider's error string. Pre-wrapped
    because these arrive as one long line and must not force the card
    wider than the viewport. */

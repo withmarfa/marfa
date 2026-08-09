@@ -61,11 +61,11 @@ function describeDirection(direction: "read" | "write" | "both"): string {
   // credential that holds write on every declared type.
   switch (direction) {
     case "read":
-      return "Brings content in — reads from the external service and writes what it finds into your Marfa space.";
+      return "Brings content in. It reads from the other service and writes what it finds into your space.";
     case "write":
-      return "Sends content out — reads from your Marfa space and writes it to the external service.";
+      return "Sends content out. It reads from your space and writes to the other service.";
     case "both":
-      return "Two-way — changes on either side are written to the other.";
+      return "Two-way. A change on either side is written to the other.";
   }
 }
 
@@ -176,12 +176,12 @@ function renderPermissionDetail(manifest: Record<string, unknown>): string {
   const lines: string[] = [];
   if (permissions.extension) {
     for (const [ns, level] of Object.entries(permissions.extension)) {
-      lines.push(`${escapeHtml(ns)} — ${escapeHtml(level)}`);
+      lines.push(`${escapeHtml(ns)}: ${escapeHtml(level)}`);
     }
   }
   if (permissions.edge) {
     for (const [t, level] of Object.entries(permissions.edge)) {
-      lines.push(`edge.${escapeHtml(t)} — ${escapeHtml(level)}`);
+      lines.push(`edge.${escapeHtml(t)}: ${escapeHtml(level)}`);
     }
   }
   if (lines.length === 0) return "";
@@ -197,7 +197,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   const typeIdField =
     targetTypes.length > 0
       ? targetTypes.map((t) => escapeHtml(t)).join("<br>")
-      : "—";
+      : "None";
 
   // Scopes: each target type crossed with the direction verbs, in the
   // `<type>:<verb>` scope grammar. Falls back to the bare verbs when the
@@ -227,11 +227,11 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
     </div>
 
     <details class="disclosure">
-      <summary><span class="disclosure__chevron" aria-hidden="true"></span> Technical details</summary>
+      <summary><span class="disclosure__chevron" aria-hidden="true"></span> Details</summary>
       <div class="disclosure__body">
-        <p class="disclosure__micro">Type identifier</p>
+        <p class="disclosure__micro">Kind of content</p>
         <div class="codefield">${typeIdField}</div>
-        <p class="disclosure__micro">Scopes</p>
+        <p class="disclosure__micro">Permissions</p>
         <div class="codefield">${scopesField}</div>
         <p class="disclosure__micro">Direction</p>
         <div class="codefield">${escapeHtml(describeDirection(params.direction))}</div>

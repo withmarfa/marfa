@@ -32,7 +32,7 @@ import { renderInstallConsentScreen } from "./integration-install-page.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { publish } from "../pubsub.js";
 import { renderAuthLayout } from "./auth-layout.js";
-import { escapeHtml, confirmIcon } from "./auth-html.js";
+import { confirmIcon } from "./auth-html.js";
 
 // Manifest is stored as opaque on the wire — `validateManifest()` runs
 // the structured Zod check at the route handler.
@@ -530,7 +530,7 @@ export function integrationRoutes(
       });
     }
 
-    return c.html(renderInstalledPage(installed));
+    return c.html(renderInstalledPage());
   });
 
   apiRouter.route("/", htmlRouter);
@@ -559,11 +559,7 @@ export function renderInstallDeniedPage(): string {
   });
 }
 
-export function renderInstalledPage(installed: {
-  connection_id: string;
-  credential_id: string;
-  activity_id: string;
-}): string {
+export function renderInstalledPage(): string {
   return renderAuthLayout({
     title: "Connection installed",
     centered: true,
@@ -571,7 +567,6 @@ export function renderInstalledPage(installed: {
       ${confirmIcon("check")}
       <h1 class="title">Connection installed</h1>
       <p class="sub" role="status">It is ready to run. You can close this tab.</p>
-      <p class="ref">${escapeHtml(installed.connection_id)}</p>
     `,
   });
 }

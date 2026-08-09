@@ -53,7 +53,7 @@ function copyFor(status: number): ErrorPageCopy {
     return {
       title: "Page not found",
       heading: "That page isn't here",
-      body: "The address may be mistyped, or the page may have moved. Nothing has gone wrong with your account.",
+      body: "The address may be wrong, or the page may have moved.",
       icon: "alert",
     };
   }
@@ -61,7 +61,7 @@ function copyFor(status: number): ErrorPageCopy {
     return {
       title: "Not available",
       heading: "You can't reach this page",
-      body: "You may need to sign in, or this may belong to someone else. Signing in again is the usual fix.",
+      body: "You may need to sign in, or this may belong to someone else.",
       icon: "alert",
     };
   }
@@ -69,14 +69,14 @@ function copyFor(status: number): ErrorPageCopy {
     return {
       title: "Too many requests",
       heading: "Too many attempts",
-      body: "Wait a minute and try again. This limit exists to keep accounts safe and it clears on its own.",
+      body: "Wait a minute, then try again. The limit clears on its own.",
       icon: "alert",
     };
   }
   return {
     title: "Something went wrong",
-    heading: "Something went wrong",
-    body: "This one is on us, not on you. Trying again often works; if it keeps happening, it is being recorded on our side.",
+    heading: "Something went wrong at our end",
+    body: "This one is ours, not yours. We have a record of it.",
     icon: "alert",
   };
 }
@@ -90,7 +90,6 @@ export function renderHttpErrorPage(status: number): string {
       ${confirmIcon(copy.icon)}
       <h1 class="title">${copy.heading}</h1>
       <p class="sub" role="alert">${copy.body}</p>
-      <p class="ref">Error ${String(status)}</p>
     `,
   });
 }

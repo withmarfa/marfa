@@ -438,8 +438,8 @@ describe("GET /auth/authorize (consent page)", () => {
     // The wildcard is what the grant carries; the screen has to say what
     // it matches today, and that later types are covered without a re-ask.
     expect(html).toContain('value="user.*:read"');
-    expect(html).toContain("Today: Recipes");
-    expect(html).toContain("and any you define later");
+    expect(html).toContain("Today this covers Recipes");
+    expect(html).toContain("plus any you add later");
   });
 
   it("flags a public/DCR client as unverified on the consent screen", async () => {

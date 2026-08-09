@@ -87,8 +87,8 @@ describe("renderInstallConsentScreen — data mapping", () => {
     expect(html).toMatch(/captile__t[^>]*>Events, Calendar events</);
   });
 
-  it("shows the raw type identifiers in the Technical details disclosure", () => {
-    expect(html).toContain("Technical details");
+  it("shows the raw type identifiers behind the details disclosure", () => {
+    expect(html).toContain("Details</summary>");
     expect(html).toContain("core.event");
     expect(html).toContain("google.calendar.event");
   });

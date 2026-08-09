@@ -73,7 +73,7 @@ describe("the rendered page", () => {
     const server = renderHttpErrorPage(500);
     const all = [notFound, forbidden, rateLimited, server];
     expect(new Set(all).size).toBe(4);
-    expect(server).toContain("on us, not on you");
+    expect(server).toContain("ours, not yours");
   });
 });
 
