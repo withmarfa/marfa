@@ -135,9 +135,48 @@ function buildGroups(
       otherRead.scopes.push(scope);
     }
   }
-  return [...byBundle.values(), otherRead, otherWrite].filter(
-    (g) => g.scopes.length > 0,
-  );
+  return [...byBundle.values(), otherRead, otherWrite]
+    .filter((g) => g.scopes.length > 0)
+    .map((g) => ({ ...g, desc: summarize(g) }));
+}
+
+/**
+ * Describe a group by what is in it.
+ *
+ * Each group used to carry its bundle's fixed description, so a request for
+ * three scopes and a request for every type rendered identical copy: "Your
+ * notes, tasks, bookmarks, files, media, and more." A consent screen's whole
+ * job is stating the size of a grant accurately, and the groups are collapsed
+ * by default, so that sentence is what most people read and act on. Naming
+ * things the app never asked for fails in both directions at once: a cautious
+ * person refuses an app that wanted very little, and a trusting one learns
+ * the copy does not track the request.
+ *
+ * A wildcard is the one case where "and more" is honest, because the grant
+ * really does extend to types that do not exist yet.
+ */
+function summarize(group: ScopeGroup): string {
+  const names: string[] = [];
+  let openEnded = false;
+  for (const scope of group.scopes) {
+    if (scope.typePattern.includes("*")) openEnded = true;
+    const label =
+      SCOPE_LABELS[scope.typePattern] ?? OIDC_LABELS[scope.typePattern];
+    if (label && !names.includes(label)) names.push(label);
+  }
+  if (names.length === 0) return group.desc;
+
+  const listed = names.slice(0, 4);
+  const remainder = names.length - listed.length;
+  let list = listed.join(", ");
+  if (listed.length > 1) {
+    const last = listed[listed.length - 1] ?? "";
+    list = `${listed.slice(0, -1).join(", ")} and ${last}`;
+  }
+  if (remainder > 0) list += `, and ${String(remainder)} more`;
+  else if (openEnded) list += ", and anything else of that kind";
+
+  return `${list}.`;
 }
 
 /**
