@@ -94,6 +94,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
+        grantTypes: auth_oauth_client.grantTypes,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -111,6 +112,18 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         : safeJsonParse<unknown>(row.scopes, null, "auth_oauth_client.scopes");
     const scopes = Array.isArray(parsedScopes)
       ? parsedScopes.filter((s): s is string => typeof s === "string")
+      : null;
+    // Same null-versus-empty reading as `scopes` above.
+    const parsedGrantTypes =
+      row.grantTypes === null
+        ? null
+        : safeJsonParse<unknown>(
+            row.grantTypes,
+            null,
+            "auth_oauth_client.grant_types",
+          );
+    const grantTypes = Array.isArray(parsedGrantTypes)
+      ? parsedGrantTypes.filter((s): s is string => typeof s === "string")
       : null;
     const parsed = safeJsonParse<unknown>(
       row.redirectUris,
@@ -139,6 +152,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
+      grantTypes,
     };
   }
 

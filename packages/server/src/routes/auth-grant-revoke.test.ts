@@ -47,8 +47,10 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-/** Seed an `auth_oauth_client` row — the device handlers only need the
- *  business key to resolve. */
+/** Seed an `auth_oauth_client` row. These tests drive the device flow, so
+ *  the row registers the device grant: initiation refuses a client whose
+ *  registration does not name it, and an unregistered grant reads as
+ *  `authorization_code` alone per RFC 7591 §2. */
 async function seedClient(c: TestContext): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   if (!c.storage.betterAuthDb) {
@@ -66,16 +68,16 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const redirectUris: unknown =
-    c.storage.betterAuthDialect === "pg"
-      ? [`${ORIGIN}/callback`]
-      : JSON.stringify([`${ORIGIN}/callback`]);
+  const asColumn = (v: readonly string[]): unknown =>
+    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const redirectUris = asColumn([`${ORIGIN}/callback`]);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${Math.random().toString(36).slice(2, 10)}`,
     clientId,
     name: "Revoke Test CLI",
     redirectUris,
+    grantTypes: asColumn(["urn:ietf:params:oauth:grant-type:device_code"]),
     disabled: false,
     createdAt: now,
     updatedAt: now,

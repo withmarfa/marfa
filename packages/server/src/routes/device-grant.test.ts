@@ -32,7 +32,13 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-async function createClient(c: TestContext): Promise<string> {
+async function createClient(
+  c: TestContext,
+  registered: {
+    scopes?: readonly string[];
+    grantTypes?: readonly string[];
+  } = {},
+): Promise<string> {
   // The @better-auth/oauth-provider plugin owns DCR at
   // /auth/oauth2/register. For the device-flow tests we shortcut by
   // writing the auth_oauth_client row directly; the device-flow handlers
@@ -62,11 +68,25 @@ async function createClient(c: TestContext): Promise<string> {
     c.storage.betterAuthDialect === "pg"
       ? ["http://localhost:0/callback"]
       : JSON.stringify(["http://localhost:0/callback"]);
+  // Same dialect split as `redirectUris` above: a PG `text[]` takes the
+  // array, SQLite's `text` takes JSON. Absent stays NULL in both, which is
+  // "the client registered none" and not "the client registered an empty
+  // set" — the distinction the ceiling turns on.
+  const asColumn = (v: readonly string[] | undefined): unknown =>
+    v === undefined
+      ? null
+      : c.storage.betterAuthDialect === "pg"
+        ? [...v]
+        : JSON.stringify(v);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
     name: "Test CLI",
     redirectUris,
+    scopes: asColumn(registered.scopes),
+    grantTypes: asColumn(
+      registered.grantTypes ?? ["urn:ietf:params:oauth:grant-type:device_code"],
+    ),
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -798,5 +818,106 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     // `mintTokenPair` ran.
     expect(poll.body.access_token).toBeUndefined();
     expect(poll.body.refresh_token).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The client's own registration is a ceiling on what it may ask for.
+// ---------------------------------------------------------------------------
+
+describe("POST /auth/device — the client's registered ceiling", () => {
+  /** Init without the 200 assertion, so refusals can be inspected. */
+  async function tryInit(
+    c: TestContext,
+    clientId: string,
+    scope: string,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const res = await c.app.fetch(
+      new Request(`${ORIGIN}/auth/device`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify({ client_id: clientId, scope }),
+      }),
+    );
+    return {
+      status: res.status,
+      body: (await res.json()) as Record<string, unknown>,
+    };
+  }
+
+  it("refuses a scope the client never registered for", async () => {
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { scopes: ["core.note:read"] });
+    // Every scope here is on the platform allowlist, so the pre-existing
+    // check passes all of them. What the client asked to be allowed is a
+    // different question, and this path had never asked it.
+    const res = await tryInit(ctx, clientId, "core.note:read core.task:write");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+    expect(JSON.stringify(res.body)).toContain("core.task:write");
+  });
+
+  it("allows a scope inside the registered ceiling", async () => {
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, {
+      scopes: ["core.note:read", "core.note:write"],
+    });
+    const res = await tryInit(ctx, clientId, "core.note:read core.note:write");
+    expect(res.status).toBe(200);
+    expect(res.body.device_code).toBeTruthy();
+  });
+
+  it("tracks the live allowlist when the client registered no ceiling", async () => {
+    // NULL is not an empty ceiling. A client that registered none follows
+    // whatever the platform currently advertises, which is the same reading
+    // the authorization-code path takes via `client.scopes ?? opts.scopes`.
+    // `grant_types` is the opposite: absent there means authorization_code
+    // only, per RFC 7591 §2, so the two nulls deliberately read differently.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx);
+    const res = await tryInit(ctx, clientId, "core.note:read core.task:write");
+    expect(res.status).toBe(200);
+  });
+
+  it("still refuses a scope the platform does not offer, ceiling or not", async () => {
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, {
+      scopes: ["core.note:read", "core.nonexistent.type:read"],
+    });
+    const res = await tryInit(ctx, clientId, "core.nonexistent.type:read");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+  });
+
+  it("refuses a client that registered grant types without the device grant", async () => {
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, {
+      grantTypes: ["authorization_code", "refresh_token"],
+    });
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_client" });
+  });
+
+  it("refuses a client that registered no grant types at all", async () => {
+    // An empty registration is authorization_code only, not "anything
+    // goes" — the reading the plugin applies on every path it owns.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { grantTypes: [] });
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_client" });
+  });
+
+  it("allows a client that registered the device grant", async () => {
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, {
+      grantTypes: [
+        "authorization_code",
+        "urn:ietf:params:oauth:grant-type:device_code",
+      ],
+    });
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(200);
   });
 });

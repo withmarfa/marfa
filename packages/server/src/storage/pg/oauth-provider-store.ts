@@ -87,6 +87,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
         public: auth_oauth_client.public,
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
+        grantTypes: auth_oauth_client.grantTypes,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -97,6 +98,9 @@ export class PgOauthProviderStore implements OauthProviderStore {
     // is a real ceiling. Never collapse the two (see `OauthClientRow.scopes`).
     const scopes = Array.isArray(row.scopes)
       ? row.scopes.filter((s): s is string => typeof s === "string")
+      : null;
+    const grantTypes = Array.isArray(row.grantTypes)
+      ? row.grantTypes.filter((s): s is string => typeof s === "string")
       : null;
     const redirectUris = Array.isArray(row.redirectUris)
       ? row.redirectUris.filter((s): s is string => typeof s === "string")
@@ -115,6 +119,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       referenceId: row.referenceId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
+      grantTypes,
     };
   }
 

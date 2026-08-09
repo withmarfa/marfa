@@ -63,8 +63,7 @@ import {
 } from "../auth/oauth-provider.js";
 import { log } from "../middleware/logger.js";
 
-/** RFC 8628 device-code grant type literal. */
-const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
 
 /**
  * Grants the Marfa route accepts at request-validation time.
