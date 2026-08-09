@@ -261,35 +261,30 @@ async function exchangeAuthorizationCode(
  * light-only while the shared one had followed the device into dark mode
  * for months. Somebody finishing a connection at night got a white card.
  */
-export function renderOAuthCallbackSuccess(
-  provider: string,
-  connectionId: string,
-): string {
+export function renderOAuthCallbackSuccess(provider: string): string {
   return renderAuthLayout({
     title: "Connection authorized",
     centered: true,
     bodyHtml: `
       ${confirmIcon("check")}
       <h1 class="title">Connection authorized</h1>
-      <p class="sub" role="status">You're connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
-      <p class="ref">${escapeHtml(connectionId)}</p>
+      <p class="sub" role="status">You are connected to <strong>${escapeHtml(provider)}</strong>. You can close this tab.</p>
     `,
   });
 }
 
-export function renderOAuthCallbackError(
-  reason: string,
-  status: number,
-): string {
+export function renderOAuthCallbackError(reason: string): string {
   return renderAuthLayout({
     title: "That didn't finish",
     centered: true,
     bodyHtml: `
       ${confirmIcon("alert")}
       <h1 class="title">That didn't finish</h1>
-      <p class="sub" role="alert">The provider sent back an error, or the request had expired. Starting the connection again usually clears it.</p>
-      <pre>${escapeHtml(reason)}</pre>
-      <p class="ref">Status ${String(status)}</p>
+      <p class="sub" role="alert">The other service turned down the request, or it had already expired. Starting the connection again usually works.</p>
+      <details class="disclosure">
+        <summary><span class="disclosure__chevron" aria-hidden="true"></span> Details</summary>
+        <pre>${escapeHtml(reason)}</pre>
+      </details>
     `,
   });
 }
@@ -525,13 +520,13 @@ export function oauthCallbackRoutes(
         details: { error: upstreamError, error_description: desc },
       });
       setNoStore(c);
-      return c.html(renderOAuthCallbackError(reason, 400), 400);
+      return c.html(renderOAuthCallbackError(reason), 400);
     }
 
     if (typeof code !== "string" || typeof state !== "string") {
       setNoStore(c);
       return c.html(
-        renderOAuthCallbackError("Missing code or state query param", 400),
+        renderOAuthCallbackError("Missing code or state query param"),
         400,
       );
     }
@@ -549,7 +544,6 @@ export function oauthCallbackRoutes(
       return c.html(
         renderOAuthCallbackError(
           `State validation failed: ${stateResult.reason}`,
-          400,
         ),
         400,
       );
@@ -565,7 +559,6 @@ export function oauthCallbackRoutes(
       return c.html(
         renderOAuthCallbackError(
           `Connection ${envelope.connection_id} not found`,
-          404,
         ),
         404,
       );
@@ -576,7 +569,7 @@ export function oauthCallbackRoutes(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       setNoStore(c);
-      return c.html(renderOAuthCallbackError(reason, 400), 400);
+      return c.html(renderOAuthCallbackError(reason), 400);
     }
 
     // Missing verifier means hostile state or stale code path — refuse rather than attempt non-PKCE exchange.
@@ -593,7 +586,6 @@ export function oauthCallbackRoutes(
       return c.html(
         renderOAuthCallbackError(
           "This connection request expired or was already used. Start connecting again.",
-          400,
         ),
         400,
       );
@@ -615,10 +607,7 @@ export function oauthCallbackRoutes(
         details: { reason: exchange.reason, status: exchange.status },
       });
       setNoStore(c);
-      return c.html(
-        renderOAuthCallbackError(exchange.reason, exchange.status || 502),
-        502,
-      );
+      return c.html(renderOAuthCallbackError(exchange.reason), 502);
     }
 
     // The connection's space comes from its row column, never from its
@@ -657,10 +646,7 @@ export function oauthCallbackRoutes(
       details: { provider, scopes: exchange.scopes },
     });
     setNoStore(c);
-    return c.html(
-      renderOAuthCallbackSuccess(provider, envelope.connection_id),
-      200,
-    );
+    return c.html(renderOAuthCallbackSuccess(provider), 200);
   });
   return r;
 }

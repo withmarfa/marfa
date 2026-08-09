@@ -477,6 +477,26 @@ User-facing page at `/auth/security` listing connected apps and active sessions,
 - **Notice flash** — `?notice=…` query param maps to a banner at the top of the page (`grant_revoked`, `session_revoked`, `session_not_found`, `cannot_revoke_current`, etc). Unknown codes resolve to no banner, not a 500.
 - **Auth gate** — all four handlers run through `requireConsentSession` (same gate as `/auth/authorize`). Unauthenticated requests 302 to `/auth/sign-in?return_to=…`.
 
+## The words on these pages
+
+Every page the server hands a person shares one voice. Before this was written down each page had its own, because each was written by whoever added the route, and reading them side by side in the gallery is what made that obvious.
+
+**Say the thing, once.** A heading names what happened; the line under it says what to do. If there is nothing to do, do not invent an instruction. "Head back and sign in again" appeared on four unrelated error codes, which taught a reader to skip it.
+
+**No filler.** "This usually clears up on its own", "Please try again", "Something went wrong" alone. If a sentence would be equally true on a different page, it is not carrying anything.
+
+**No em dashes.** House standard, and it applies to page copy and code comments alike. Use a comma, a colon, a full stop, or two sentences.
+
+**Name the situation, not the mechanism.** A person has permissions, not scopes; an app, not a client; a connection, not a credential. "Technical details" describes how we think about it; "Details" describes what the reader gets. Raw type identifiers belong behind a disclosure, if anywhere.
+
+**An identifier earns its place or it goes.** A connection id under "You can close this tab" is decoration: nobody acts on it there. Show one only where somebody would quote it back to you, and then say what it is for.
+
+**A status code is part of a sentence or it is absent.** Never a monospace line of its own beneath the message.
+
+**Address the reader, and do not apologise.** "You can close this tab", not "The tab may now be closed". A server fault says what happens next, not sorry.
+
+The gallery is where this gets checked. Reading the strings in the source will not show you that four pages say the same thing.
+
 ## Preview gallery (dev tool)
 
 `packages/server/scripts/auth-gallery.ts` (+ `auth-gallery-fixtures.ts`) is a zero-database dev tool for eyeballing **every page this server renders to a person**, in every state, without standing up the server or reaching the state that produces it. Run it with `pnpm --filter @withmarfa/server auth:gallery`; for a fixed port use `PORT=<n> pnpm exec tsx scripts/auth-gallery.ts` from `packages/server` (the pnpm filter does not reliably honor `PORT`). It imports the real renderers, the real email templates, and the real `/auth/static/*` assets, so the preview is exactly what ships, never a re-implementation. Three tabs — Auth, Connections, Email — with screens (left), their states (right), the preview (center), Freeform / Browser / Mobile frames, light / system / dark, and arrow-key navigation. It is a script, never a mounted route, so it never deploys.

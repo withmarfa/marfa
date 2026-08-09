@@ -842,12 +842,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
       {
         id: "installed",
         label: "Installed",
-        render: () =>
-          renderInstalledPage({
-            connection_id: CONNECTION_ID,
-            credential_id: "cred_01999a3f",
-            activity_id: "act_01999a3f",
-          }),
+        render: () => renderInstalledPage(),
       },
       {
         id: "declined",
@@ -863,7 +858,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
       {
         id: "success",
         label: "Authorized",
-        render: () => renderOAuthCallbackSuccess("Google", CONNECTION_ID),
+        render: () => renderOAuthCallbackSuccess("Google"),
       },
       {
         id: "error",
@@ -871,14 +866,12 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
         render: () =>
           renderOAuthCallbackError(
             "access_denied: The user denied the request",
-            400,
           ),
       },
       {
         id: "expired",
         label: "Request expired",
-        render: () =>
-          renderOAuthCallbackError("state expired or already used", 400),
+        render: () => renderOAuthCallbackError("state expired or already used"),
       },
     ],
   },
@@ -970,7 +963,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
       {
         id: "saved",
         label: "Saved",
-        render: () => renderConfigureSuccess(CONNECTION_ID),
+        render: () => renderConfigureSuccess(),
       },
       {
         id: "error",

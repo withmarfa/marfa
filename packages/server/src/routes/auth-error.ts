@@ -27,22 +27,18 @@ import { escapeHtml } from "./auth-html.js";
  */
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_client:
-    "We couldn't recognize the app you came from, so sign-in didn't start. This usually clears up on its own — head back and sign in again.",
-  invalid_request:
-    "Something about that sign-in link was off. Head back and sign in again.",
-  invalid_scope:
-    "The app asked for a permission this space doesn't offer. Head back and sign in again.",
+    "We didn't recognize the app that sent you here, so nothing was shared.",
+  invalid_request: "That sign-in link was incomplete.",
+  invalid_scope: "That app asked for something this space doesn't offer.",
   unsupported_response_type:
-    "The app started sign-in in a way this space doesn't support. Head back and sign in again.",
-  access_denied: "Sign-in was cancelled.",
-  server_error:
-    "Something went wrong on our end while signing you in. Please try again.",
+    "That app started sign-in in a way this space doesn't support.",
+  access_denied: "You cancelled sign-in. Nothing was shared.",
+  server_error: "Something failed on our side while signing you in.",
   temporarily_unavailable:
-    "Sign-in is briefly unavailable. Give it a moment and try again.",
+    "Sign-in is briefly unavailable. It usually returns within a minute.",
 };
 
-const GENERIC_MESSAGE =
-  "We couldn't finish signing you in. Head back and sign in again.";
+const GENERIC_MESSAGE = "We couldn't finish signing you in.";
 
 /**
  * Render the OAuth error page as a complete HTML document. Pure (the route
@@ -55,7 +51,7 @@ export function renderAuthErrorPage(errorCode: string | null): string {
     ? (ERROR_MESSAGES[errorCode] ?? GENERIC_MESSAGE)
     : GENERIC_MESSAGE;
   const body = `
-    <h1 class="title">Sign-in didn't finish</h1>
+    <h1 class="title">Couldn't sign you in</h1>
     <p class="sub">${escapeHtml(message)}</p>
     <div class="actions">
       <a href="/auth/sign-in" class="btn btn--primary">Back to sign in</a>

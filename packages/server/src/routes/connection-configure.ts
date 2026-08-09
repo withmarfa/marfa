@@ -165,7 +165,7 @@ export function renderGoogleCalendarPicker(
     title: "Configure Google Calendar",
     wide: true,
     bodyHtml: `      <h1 class="title">Choose calendars to sync</h1>
-      <p class="sub">Tap a calendar to include it. You can change this later.</p>
+      <p class="sub">Pick the calendars you want in Marfa. You can change this later.</p>
       <form method="post" action="">
         <div class="grid">
           ${calendarCards}
@@ -184,7 +184,7 @@ export function renderGoogleCalendarPicker(
             ${targetTypeOptions}
           </select>
         </div>
-        <p class="label__hint"><code>google.calendar.event</code> keeps full Google fidelity (recurrence, timezone, etag). Switch to <code>core.event</code> for cross-app interop with non-Google consumers, at a lossier shape.</p>
+        <p class="label__hint">Keep the Google format to preserve everything Google tracks, including repeats and time zones. Choose the standard format if other apps need to read these events too.</p>
 
         <div class="stack">
           <button class="btn btn--primary" type="submit">Save calendars</button>
@@ -194,13 +194,12 @@ export function renderGoogleCalendarPicker(
   });
 }
 
-export function renderConfigureSuccess(connectionId: string): string {
+export function renderConfigureSuccess(): string {
   return renderAuthLayout({
     title: "Configuration saved",
     centered: true,
     bodyHtml: `      <h1 class="title">Configuration saved</h1>
-      <p class="sub">Your calendar selection is recorded. The next scheduled run will pick up events from the calendars you chose.</p>
-      <p class="sub"><code>${esc(connectionId)}</code></p>
+      <p class="sub">Your choices are saved. New events will start syncing on the next run.</p>
     `,
   });
 }
@@ -631,7 +630,7 @@ export function connectionConfigureRoutes(
           },
         });
         setNoStore(c);
-        return c.html(renderConfigureSuccess(id));
+        return c.html(renderConfigureSuccess());
       }
       setNoStore(c);
       return c.html(
@@ -700,7 +699,7 @@ export function connectionConfigureRoutes(
     });
 
     setNoStore(c);
-    return c.html(renderConfigureSuccess(id));
+    return c.html(renderConfigureSuccess());
   });
 
   return r;

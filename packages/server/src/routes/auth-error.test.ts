@@ -30,7 +30,7 @@ describe("renderAuthErrorPage", () => {
 
   it("renders friendly copy for a known error code, not the raw token", () => {
     const html = renderAuthErrorPage("invalid_client");
-    expect(html).toContain("recognize the app you came from");
+    expect(html).toContain("recognize the app that sent you here");
     expect(html).not.toContain("invalid_client");
   });
 
@@ -59,7 +59,7 @@ describe("GET /auth/error", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     expect(res.headers.get("cache-control")).toContain("no-store");
     const body = await res.text();
-    expect(body).toContain("Sign-in didn't finish");
+    expect(body).toContain("Couldn't sign you in");
     expect(body).toContain('href="/auth/sign-in"');
   });
 });

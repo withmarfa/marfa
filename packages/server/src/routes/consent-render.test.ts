@@ -178,8 +178,8 @@ describe("renderConsentScreen — soft-tile groups", () => {
     });
     // Informative line names what the pattern matches today and says the
     // grant covers later types too; the submitted value stays the wildcard.
-    expect(html).toContain("Today: Recipes, Training log");
-    expect(html).toContain("and any you define later");
+    expect(html).toContain("Today this covers Recipes, Training log");
+    expect(html).toContain("plus any you add later");
     expect(html).toContain('value="user.*:read"');
     expect(html).not.toContain('value="user.recipes:read"');
   });

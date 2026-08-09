@@ -90,7 +90,7 @@ const MONTHS = [
 
 /** Friendly calendar date, e.g. "11 May 2026". */
 function formatDate(iso: string): string {
-  if (!iso) return "—";
+  if (!iso) return "Unknown";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const month = MONTHS[d.getUTCMonth()] ?? "";
