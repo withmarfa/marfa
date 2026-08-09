@@ -341,3 +341,77 @@ describe("renderConsentScreen — error banner", () => {
     expect(html).toContain("&lt;img");
   });
 });
+
+/**
+ * A group's summary describes what is in that group.
+ *
+ * Every group used to render its bundle's fixed description, so a request
+ * for three scopes and a request for every type produced identical copy:
+ * "Your notes, tasks, bookmarks, files, media, and more." The groups are
+ * collapsed by default, so that sentence is what most people read and act
+ * on, and it named things the app had never asked for.
+ *
+ * The failure is symmetric, which is why it matters: a cautious person
+ * refuses an app that wanted very little, and a trusting one learns the copy
+ * does not track the request, which makes the screen worthless as a signal
+ * for the app that really does want everything.
+ */
+describe("group summaries describe the request", () => {
+  const scope = (typePattern: string, operation: "read" | "write") =>
+    ({ kind: "type", typePattern, operation }) as unknown as ParsedScope;
+
+  const summariesOf = (html: string): string[] =>
+    [...html.matchAll(/<span class="gdesc">([^<]*)<\/span>/g)].map(
+      (m) => m[1] ?? "",
+    );
+
+  const render = (scopes: ParsedScope[]) =>
+    renderConsentScreen({
+      clientName: "Test App",
+      clientId: "test-app",
+      oauthQuery: "sig=x",
+      scopes,
+    });
+
+  it("names only what a narrow request asked for", () => {
+    const html = render([
+      scope("core.note", "read"),
+      scope("core.task", "read"),
+    ]);
+    const summaries = summariesOf(html);
+    expect(summaries.length).toBeGreaterThan(0);
+    const joined = summaries.join(" ");
+    expect(joined).toContain("Notes");
+    expect(joined).toContain("Tasks");
+    // The exact things the old fixed copy promised and this request did not
+    // ask for.
+    expect(joined).not.toContain("Bookmarks");
+    expect(joined).not.toContain("Files");
+  });
+
+  it("cannot render a narrow and a wide request identically", () => {
+    const narrow = summariesOf(render([scope("core.note", "read")])).join(" ");
+    const wide = summariesOf(
+      render([
+        scope("core.note", "read"),
+        scope("core.task", "read"),
+        scope("core.bookmark", "read"),
+        scope("core.file", "read"),
+        scope("core.media", "read"),
+      ]),
+    ).join(" ");
+    expect(narrow).not.toBe(wide);
+  });
+
+  it("keeps an open ending only where the grant really is open", () => {
+    // A wildcard genuinely extends to types that do not exist yet, so
+    // saying so is honest here and was not honest on a concrete request.
+    const concrete = summariesOf(render([scope("core.note", "read")])).join(
+      " ",
+    );
+    expect(concrete).not.toContain("anything else");
+
+    const wildcard = summariesOf(render([scope("user.*", "read")])).join(" ");
+    expect(wildcard).toContain("anything else");
+  });
+});
