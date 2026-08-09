@@ -1,5 +1,5 @@
 /**
- * Auth + email preview gallery — a dev-only tool, never deployed.
+ * Marfa UI Viewer — a dev-only tool, never deployed.
  *
  * Boots a tiny standalone server (no database, no app wiring) that renders the
  * real auth page renderers + the real transactional email templates, and serves
@@ -7,7 +7,7 @@
  * light, dark, and system without standing up the full server or clicking
  * through flows. Run with:
  *
- *   pnpm --filter @withmarfa/server auth:gallery
+ *   pnpm --filter @withmarfa/server ui:viewer
  *
  * Then open the printed URL. A top-left section dropdown switches between the
  * Auth pages and the Email templates. The left sidebar lists the screens for the
@@ -28,7 +28,7 @@ import { AUTH_CSS } from "../src/routes/auth-static/auth-css.js";
 import { PASSKEY_JS } from "../src/routes/auth-static/passkey-js.js";
 import { PASSWORD_TOGGLE_JS } from "../src/routes/auth-static/password-toggle-js.js";
 import { SUBMIT_STATE_JS } from "../src/routes/auth-static/submit-state-js.js";
-import { TABS, resolveVariant } from "./auth-gallery-fixtures.js";
+import { TABS, resolveVariant } from "./ui-viewer-fixtures.js";
 
 const app = new Hono();
 
@@ -244,7 +244,7 @@ function renderShell(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Marfa auth gallery</title>
+  <title>Marfa UI Viewer</title>
   <style>
     :root {
       --page: #f5f5f5;
@@ -1315,5 +1315,7 @@ function svgIcon(paths: string): string {
 
 const port = Number(process.env.PORT ?? 8650);
 serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
-  console.log(`Auth gallery running at http://127.0.0.1:${String(info.port)}`);
+  console.log(
+    `Marfa UI Viewer running at http://127.0.0.1:${String(info.port)}`,
+  );
 });
