@@ -357,11 +357,20 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<div class="banner banner--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";
 
-  const title = showDiff ? "Update access" : "Allow access";
+  // Re-consent copy reads as a continuation, not as an app demanding more.
+  //
+  // "wants to change what it can access" was accurate and misleading at once.
+  // The usual reason this screen appears is that Marfa's own type registry
+  // gained something since the last grant, so the app is asking for a new
+  // kind of content that did not exist when the person first approved it.
+  // Phrasing that as the app changing its mind invites a refusal on a
+  // suspicion the situation does not warrant. The wording below is true in
+  // both cases without claiming a cause the server cannot always know.
+  const title = showDiff ? "One more thing" : "Allow access";
   const sub = showDiff
-    ? `<b>${safeClient}</b> wants to change what it can access.`
+    ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
     : `<b>${safeClient}</b> wants to access your space. You can change this anytime in settings.`;
-  const primaryLabel = showDiff ? "Update access" : "Allow access";
+  const primaryLabel = showDiff ? "Continue" : "Allow access";
 
   // Each group's master toggle drives its members; members reflect back as an
   // indeterminate master when partially ticked. Scoped per `.grp` so the

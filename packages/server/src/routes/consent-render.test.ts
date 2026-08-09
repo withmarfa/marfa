@@ -245,8 +245,14 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toContain(">New<");
     expect(html).toContain(">Already allowed<");
     expect(html).toContain(">No longer needed<");
-    expect(html).toContain("Update access");
-    expect(html).toContain("wants to change what it can access");
+    // Re-consent reads as a continuation. "wants to change what it can
+    // access" was accurate and misleading at once: the usual cause is Marfa's
+    // own registry gaining a type since the last grant, so framing it as the
+    // app changing its mind invites a refusal the situation does not warrant.
+    expect(html).toContain("One more thing");
+    expect(html).toContain("You have used");
+    expect(html).toContain("asking for a little more");
+    expect(html).not.toContain("wants to change what it can access");
   });
 
   it("places newly-requested scopes under New and shared scopes under Already allowed", () => {
