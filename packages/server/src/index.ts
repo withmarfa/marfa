@@ -41,7 +41,6 @@ import {
   serializeError,
 } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
-import { checkRedirectAllowlist } from "./routes/redirect-allowlist-check.js";
 import { checkCorsOrigins } from "./routes/cors-origins-check.js";
 import { checkMultiReplica } from "./multi-replica-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
@@ -470,14 +469,6 @@ async function main() {
       }
     }
   }
-
-  // Boot guard: warn loud if hosted mode runs with an empty OAuth redirect
-  // allowlist. The empty case now fails closed at request time, so this is a
-  // warning (the flow is disabled until the var is set), not a hard stop.
-  checkRedirectAllowlist({
-    authMode: config.authMode,
-    allowlist: config.oauthRedirectAllowlist,
-  });
 
   // Boot guard: warn loud if hosted mode runs with an empty CORS allowlist —
   // browser clients would fail their cross-origin API calls with no obvious

@@ -524,7 +524,11 @@ describe("POST /connections/:id/configure — error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /connections/:id/configure", () => {
-  it("redirects to /oauth/start when OAuth tokens are missing", async () => {
+  it("says the connection is not authorized yet, rather than redirecting somewhere unreachable", async () => {
+    // It used to 302 here, to a route registered POST-only that also wants a
+    // bearer credential and a JSON body. Nothing following a redirect sends
+    // any of those, so the old assertion passed while the flow it described
+    // could not run: it read the Location header and never followed it.
     const { connectionId } = await seedGoogleCalendarConnection();
     const res = await request(
       ctx.app,
@@ -532,11 +536,11 @@ describe("GET /connections/:id/configure", () => {
       `/connections/${connectionId}/configure`,
       { key: ctx.adminKey },
     );
-    expect(res.status).toBe(302);
-    const location = res.headers.get("location");
-    expect(location).toBe(
-      `/connections/${encodeURIComponent(connectionId)}/oauth/start`,
-    );
+    expect(res.status).toBe(409);
+    expect(res.headers.get("location")).toBeNull();
+    const html = await res.text();
+    expect(html).toContain("Not authorized yet");
+    expect(html).toContain(`/connections/${connectionId}/oauth/start`);
   });
 
   it("renders the picker when OAuth tokens exist and the fetcher returns calendars", async () => {

@@ -9,14 +9,14 @@ describe("OAuth callback state", () => {
   it("round-trips through sign + verify", () => {
     const state = signOAuthState({
       connection_id: "conn_x",
-      redirect_uri: "https://marfa.so/oauth/callback/google",
+      redirect_uri: "https://marfa.so/oauth/callback",
     });
     const result = verifyOAuthState(state);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.envelope.connection_id).toBe("conn_x");
       expect(result.envelope.redirect_uri).toBe(
-        "https://marfa.so/oauth/callback/google",
+        "https://marfa.so/oauth/callback",
       );
     }
   });

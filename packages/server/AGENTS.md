@@ -289,6 +289,14 @@ One upstream behavior worth knowing: because Marfa configures `prefix.refreshTok
 
 **Scope grammar.** The plugin's `scopes` allowlist is enumerated from `TYPE_REGISTRY.keys()` + `EDGE_TYPE_REGISTRY.keys()` at instance construction (`auth/oauth-provider.ts` → `buildAllowedScopes`). Custom types registered at runtime via `POST /types` are NOT picked up until server restart, an acceptable tradeoff; the plugin's scope-allowlist is static.
 
+## Integration OAuth bootstrap
+
+The other OAuth surface, and the opposite direction: Marfa as a _client_ of an upstream service, establishing the tokens an integration's proxy calls later spend. `routes/oauth-callback.ts` holds both halves.
+
+**One callback URI per deployment**, `<MARFA_AUTH_BASE_URL>/oauth/callback`, derived by `deriveOAuthCallbackUri`. That single string is the whole of what an operator registers with a provider, and `POST /connections/:id/oauth/start` echoes it in its response so it can be copied rather than assembled. Every provider a deployment connects registers the same URI; the AES-GCM state envelope is what tells the resulting redirects apart, and it carries the connection id, the PKCE verifier, the redirect URI itself and the upstream's name.
+
+**The redirect URI is never taken from the caller.** Only one value can ever work — a provider honors a redirect only against the URI on its own OAuth app — so a parameter for it had exactly one correct setting and was an authorization-code interception hole at every other. It was guarded by an allowlist env var that fell to the parameter beside it: `extra_params` was merged over the parameter map _after_ the guard passed, so naming `redirect_uri` inside it rewrote the checked value. The protocol parameters (`response_type`, `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`) are therefore set **last**, after the credential's defaults and the caller's `extra_params`, so nothing supplied can overwrite one. Keep that ordering; it is the whole defense, and it reads as arbitrary style unless you know what it stops.
+
 ## FTS dialect parity
 
 Both dialects index the same set of property fields and respect the same per-type opt-out. The dialect-agnostic helper `extractSearchableText` in `storage/search-text.ts` is the single source of truth for "what text contributes to FTS for this item."

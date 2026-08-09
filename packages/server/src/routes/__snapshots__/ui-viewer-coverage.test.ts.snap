@@ -3229,6 +3229,26 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
 </html>"
 `;
 
+exports[`every gallery variant renders > renders 'connections/connection-configure/not-…' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Not authorized yet</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--confirm" aria-label="Not authorized yet">
+          <h1 class="title">Not authorized yet</h1>
+      <p class="sub">There is nothing to configure until this connection has access to the other service. Start the authorization, open the link it returns, and come back here.</p>
+      <pre>POST /connections/01999a3f-96ad-4ec1-b378-399d4875cfa5/oauth/start</pre>
+    
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'connections/connection-configure/saved' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">

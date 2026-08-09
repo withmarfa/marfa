@@ -137,9 +137,7 @@ describe("isReservedCredentialSource", () => {
 let ctx: TestContext;
 
 beforeAll(async () => {
-  ctx = await createTestContext({
-    oauthRedirectAllowlist: ["http://localhost:0/callback"],
-  });
+  ctx = await createTestContext({});
 });
 
 afterAll(async () => {

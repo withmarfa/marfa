@@ -75,7 +75,6 @@ async function buildCtx(): Promise<Ctx> {
     // window, which the aggregate cap would otherwise trip. The
     // aggregate window has its own dedicated test context.
     rateLimitAggregateMultiplier: 0,
-    oauthRedirectAllowlist: [],
     mcpEnabled: false,
   });
 
@@ -288,7 +287,6 @@ async function buildAggCtx(): Promise<Ctx> {
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
     rateLimitAggregateMultiplier: 2,
-    oauthRedirectAllowlist: [],
     mcpEnabled: false,
   });
 

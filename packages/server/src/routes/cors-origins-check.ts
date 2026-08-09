@@ -13,8 +13,8 @@
  * would be wrong. Keys-mode self-hosts (single-user, typically no browser
  * client) never warn. Test environments skip the check.
  *
- * Mirrors the `checkRedirectAllowlist` boot-guard pattern in
- * `redirect-allowlist-check.ts`.
+ * Mirrors the `senderDomainCheck` boot-guard pattern in
+ * `email/sender-domain-check.ts`.
  */
 import { log } from "../middleware/logger.js";
 

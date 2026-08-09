@@ -103,7 +103,7 @@ export interface InstallInput {
    *   - `kind: "oauth_token"` — created by
    *     `POST /credentials/oauth-provider`. Carries OAuth client config
    *     + encrypted client secret. The connection's OAuth dance reads
-   *     it at `/oauth/callback/:provider`; the proxy reads it for
+   *     it at `/oauth/callback`; the proxy reads it for
    *     refresh.
    *   - `kind: "api_token"` — created by `POST /credentials/api-token`.
    *     Carries upstream base URL + encrypted bearer. The proxy stamps

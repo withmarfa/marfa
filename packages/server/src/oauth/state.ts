@@ -2,11 +2,15 @@
  * OAuth callback state signing.
  *
  * The `state` query param ferries data from `POST /connections/:id/oauth/start`
- * → upstream provider's authorize page → `GET /oauth/callback/:provider`.
+ * → upstream provider's authorize page → `GET /oauth/callback`.
  * The provider treats it as opaque; we use it to carry the
  * `connection_id` and the `redirect_uri` we registered with the
  * provider so the callback can recover both without trusting the
  * caller.
+ *
+ * It also carries the upstream's name. The callback is one fixed URL
+ * shared by every provider a deployment connects, so the envelope is the
+ * only thing that says which one came back.
  *
  * Implementation: AES-256-GCM via the existing `encryptSecret` /
  * `decryptSecret` helpers under a dedicated HKDF domain
@@ -31,6 +35,10 @@ import {
 export interface OAuthStateEnvelope {
   connection_id: string;
   redirect_uri: string;
+  /** The operator's own name for the upstream, from the credential row.
+   *  Optional so an envelope issued before this field existed still
+   *  decodes; the callback falls back to a neutral phrase. */
+  provider_label?: string;
   /** PKCE verifier. Carried through the upstream provider's authorize →
    *  callback redirect inside the encrypted state envelope so the callback
    *  can present it at the token exchange. Optional so an in-flight
@@ -48,6 +56,7 @@ export const DEFAULT_STATE_TTL_MS = 10 * 60 * 1000;
 export function signOAuthState(input: {
   connection_id: string;
   redirect_uri: string;
+  provider_label?: string;
   code_verifier?: string;
   ttl_ms?: number;
   now_ms?: number;
@@ -56,6 +65,9 @@ export function signOAuthState(input: {
   const envelope: OAuthStateEnvelope = {
     connection_id: input.connection_id,
     redirect_uri: input.redirect_uri,
+    ...(input.provider_label !== undefined && {
+      provider_label: input.provider_label,
+    }),
     ...(input.code_verifier !== undefined && {
       code_verifier: input.code_verifier,
     }),

@@ -39,14 +39,14 @@ Handler code reads from `ctx.echo` (TTL + lag window) and from config; it does n
 
 ## OAuth-backed integrations
 
-Manifest declares `oauth_requirements: { <capability>: "proxy" | "leased" }`. Tokens bootstrap via the server's provider-agnostic `GET /oauth/callback/:provider` route; the handler never sees them. To call upstream, use `ctx.marfa.proxyRequest(method, path, body)` against the connection's proxy URL; the server stamps the bearer transparently and refreshes on 401.
+Manifest declares `oauth_requirements: { <capability>: "proxy" | "leased" }`. Tokens bootstrap via the server's provider-agnostic `GET /oauth/callback` route, one fixed URL per deployment that every upstream registers; the handler never sees them. To call upstream, use `ctx.marfa.proxyRequest(method, path, body)` against the connection's proxy URL; the server stamps the bearer transparently and refreshes on 401.
 
 To install:
 
 1. Admin creates a `system.credential` of `kind: oauth_token` carrying the OAuth client config (authorize URL, token URL, client_id, encrypted client_secret) via `POST /credentials/oauth-provider`.
 2. Install passes the credential id via `credential_ref` on `POST /connections/install`; multiple integrations of the same upstream share the credential row.
-3. After install, the consent UI directs the user to `/connections/:id/oauth/start`, which builds the authorize URL.
-4. The provider's redirect lands on `/oauth/callback/<provider>`, exchanges the code, and persists tokens encrypted under `SECRET_INFO.connectionOauthToken`.
+3. After install, `POST /connections/:id/oauth/start` returns the authorize URL to open in a browser, along with the redirect URI it sent, which is the value to register with the provider.
+4. The provider's redirect lands on `/oauth/callback`, exchanges the code, and persists tokens encrypted under `SECRET_INFO.connectionOauthToken`.
 
 ## Token-backed integrations
 

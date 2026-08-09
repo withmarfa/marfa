@@ -6,24 +6,31 @@
  *
  *   - `POST /connections/:id/oauth/start` (admin-gated): builds the
  *     upstream provider's authorize URL with a server-signed `state`
- *     param + the connection's stored client_id + the configured
- *     redirect URI. Returns the URL for the install script (or
+ *     param + the connection's stored client_id + this deployment's
+ *     own callback URI. Returns the URL for the install script (or
  *     consent UI) to open in the user's browser.
  *
- *   - `GET /oauth/callback/:provider` (no auth — the provider's
- *     server-side redirect carries no Marfa session): verifies the
- *     state, exchanges the `code` for tokens at the provider's
- *     token endpoint, encrypts + persists them in
+ *   - `GET /oauth/callback` (no auth — the provider's server-side
+ *     redirect carries no Marfa session): verifies the state,
+ *     exchanges the `code` for tokens at the provider's token
+ *     endpoint, encrypts + persists them in
  *     `storage.connectionOauthTokens`, then renders an HTML success
- *     page (or, if the start request specified one, redirects to a
- *     post-install URL).
+ *     page.
  *
- * The route is provider-agnostic: the `:provider` path segment is
- * informational (audit logs, the success page's wording). The actual
- * provider config (client_id, client_secret, token_url, authorize_url)
- * comes from the `system.credential` referenced by the connection's
- * `credential_ref`. Calendar uses `/oauth/callback/google`; future
- * integrations use their own paths but share this route.
+ * The callback is one fixed URL per deployment, `<base>/oauth/callback`,
+ * and that is the whole of what an operator registers with an upstream
+ * provider. It used to carry a `:provider` path segment, which meant
+ * the server could not know its own redirect URI and took it from the
+ * caller instead — a value only ever correct at one setting, and an
+ * authorization-code interception hole at every other. The segment
+ * carried nothing the callback does not already recover from the signed
+ * state, so it went rather than being derived. Every provider a
+ * deployment connects registers the same URL; the state envelope is what
+ * tells them apart.
+ *
+ * The provider config (client_id, client_secret, token_url,
+ * authorize_url) comes from the `system.credential` referenced by the
+ * connection's `credential_ref`.
  *
  * Why this lives in routes/oauth-callback.ts (not in auth-pages.ts):
  * `auth-pages.ts` covers the Marfa-as-IdP surface (Better Auth + the
@@ -57,6 +64,10 @@ interface OAuthAuthorizeConfig {
   oauth_token_url: string;
   oauth_client_id: string;
   oauth_client_secret: string;
+  /** The operator's own name for this upstream, from the credential row.
+   *  Names the service on the success page, and rides the signed state so
+   *  the callback can say it without a path segment to read it from. */
+  label: string;
   /** Comma-separated default scopes to request when the start request
    *  doesn't override. */
   oauth_default_scope: string | null;
@@ -102,6 +113,7 @@ async function readAuthorizeConfig(
   }
   const credProps = credential.properties as {
     kind?: string;
+    label?: string;
     oauth_provider_config?: {
       oauth_authorize_url?: string;
       oauth_token_url?: string;
@@ -145,6 +157,10 @@ async function readAuthorizeConfig(
       credProps.secret_encrypted,
       SECRET_INFO.connectionOauthToken,
     ),
+    label:
+      typeof credProps.label === "string" && credProps.label.length > 0
+        ? credProps.label
+        : "the other service",
     oauth_default_scope: cfg.oauth_default_scope ?? null,
     authorize_extra_params,
   };
@@ -298,58 +314,29 @@ export interface OAuthCallbackOptions {
 /**
  * Options for `oauthStartRoutes`.
  *
- * `redirectUriAllowlist` — list of redirect_uri values that callers may
- * pass on `POST /connections/:id/oauth/start`. When non-empty, the
- * request's `redirect_uri` must match one entry exactly (string equality
- * after both sides are URL-canonicalized — protocol, host, port, path).
- *
- * `authMode` — the deployment's auth mode. Decides how an EMPTY allowlist
- * is treated:
- *   - `hosted` → fail closed. An empty allowlist rejects every
- *     `redirect_uri`, because an admin-level caller on a multi-space
- *     deployment could otherwise point an integration's authorization code at
- *     an attacker-controlled redirect (authorization-code interception). The
- *     operator MUST set `MARFA_OAUTH_REDIRECT_ALLOWLIST`.
- *   - `keys` → unenforced passthrough. Single-space self-hosts run with no
- *     allowlist by default; the caller is the operator, so there's no
- *     attacker to intercept the code, and forcing the allowlist would break
- *     the out-of-the-box flow.
- * A non-empty allowlist enforces exact/canonical match in both modes.
+ * `authBaseUrl` — this deployment's own public base URL, from
+ * `MARFA_AUTH_BASE_URL`. The redirect URI sent upstream is derived from
+ * it, and is the only value that can ever be right: a provider honours a
+ * redirect only against the URI registered with its own OAuth app, and
+ * that URI is this server's callback.
  */
 export interface OAuthStartOptions {
-  redirectUriAllowlist?: readonly string[];
-  authMode?: "hosted" | "keys";
+  authBaseUrl?: string;
 }
 
-function canonicalizeRedirect(uri: string): string {
-  try {
-    const url = new URL(uri);
-    url.hash = "";
-    url.search = "";
-    let normalized = url.toString();
-    if (normalized.endsWith("/") && url.pathname === "/") {
-      normalized = normalized.slice(0, -1);
-    }
-    return normalized;
-  } catch {
-    return uri;
-  }
-}
+/** The path the callback is mounted at, relative to the deployment root. */
+export const OAUTH_CALLBACK_PATH = "/oauth/callback";
 
-function isRedirectAllowed(
-  candidate: string,
-  allowlist: readonly string[] | undefined,
-  authMode: "hosted" | "keys",
-): boolean {
-  if (!allowlist || allowlist.length === 0) {
-    // Empty allowlist: fail closed on hosted (an unset allowlist on a
-    // multi-space deployment is an open-redirect / authorization-code
-    // interception hole), passthrough on keys-mode self-host (single
-    // operator, no attacker, allowlist optional for convenience).
-    return authMode !== "hosted";
-  }
-  const c = canonicalizeRedirect(candidate);
-  return allowlist.some((entry) => canonicalizeRedirect(entry) === c);
+/**
+ * This deployment's callback URI, which is what an operator registers with
+ * an upstream provider and what every authorize request sends.
+ *
+ * A trailing slash on the configured base would produce a double slash,
+ * which most providers compare as a different string from the one on file
+ * and refuse. Cheap to normalize, expensive to diagnose.
+ */
+export function deriveOAuthCallbackUri(authBaseUrl: string): string {
+  return `${authBaseUrl.replace(/\/+$/, "")}${OAUTH_CALLBACK_PATH}`;
 }
 
 /**
@@ -357,7 +344,6 @@ function isRedirectAllowed(
  * upstream authorize URL (including signed state, PKCE challenge) the
  * install script or consent UI should open in the user's browser. Body:
  *   {
- *     redirect_uri: string,    // exactly the URI registered with the provider
  *     scope?: string,          // overrides oauth_default_scope on the credential
  *     extra_params?: Record<string, string>  // e.g. {access_type: "offline", prompt: "consent"}
  *   }
@@ -371,7 +357,7 @@ export function oauthStartRoutes(
   storage: Storage,
   options: OAuthStartOptions = {},
 ) {
-  const authMode = options.authMode ?? "keys";
+  const redirectUri = deriveOAuthCallbackUri(options.authBaseUrl ?? "");
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     const apiKey = requireAuth(c);
@@ -400,36 +386,9 @@ export function oauthStartRoutes(
       );
     }
     const body: {
-      redirect_uri?: unknown;
       scope?: unknown;
       extra_params?: unknown;
     } = await c.req.json();
-    if (
-      typeof body.redirect_uri !== "string" ||
-      body.redirect_uri.length === 0
-    ) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "redirect_uri is required",
-      );
-    }
-    if (
-      !isRedirectAllowed(
-        body.redirect_uri,
-        options.redirectUriAllowlist,
-        authMode,
-      )
-    ) {
-      const allowlistEmpty =
-        !options.redirectUriAllowlist ||
-        options.redirectUriAllowlist.length === 0;
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        allowlistEmpty
-          ? `redirect_uri "${body.redirect_uri}" rejected: MARFA_OAUTH_REDIRECT_ALLOWLIST is empty and hosted mode fails closed. Set MARFA_OAUTH_REDIRECT_ALLOWLIST to the allowed redirect URIs.`
-          : `redirect_uri "${body.redirect_uri}" is not in MARFA_OAUTH_REDIRECT_ALLOWLIST`,
-      );
-    }
     const config = await readAuthorizeConfig(storage, connection);
     const scope =
       typeof body.scope === "string" && body.scope.length > 0
@@ -441,17 +400,11 @@ export function oauthStartRoutes(
       .digest("base64url");
     const state = signOAuthState({
       connection_id: connectionId,
-      redirect_uri: body.redirect_uri,
+      redirect_uri: redirectUri,
+      provider_label: config.label,
       code_verifier: codeVerifier,
     });
-    const params = new URLSearchParams({
-      response_type: "code",
-      client_id: config.oauth_client_id,
-      redirect_uri: body.redirect_uri,
-      state,
-      code_challenge: codeChallenge,
-      code_challenge_method: "S256",
-    });
+    const params = new URLSearchParams();
     if (scope.length > 0) params.set("scope", scope);
     // Credential defaults go first; caller's extra_params override per-key.
     if (config.authorize_extra_params) {
@@ -470,11 +423,26 @@ export function oauthStartRoutes(
         if (typeof v === "string") params.set(k, v);
       }
     }
+    // The protocol parameters are set LAST, so no caller-supplied key can
+    // overwrite one. Written the other way round, `extra_params` reached
+    // `redirect_uri` and rewrote it after every check had passed — which is
+    // how the allowlist this route used to carry could be walked straight
+    // past by the sibling parameter it sat next to.
+    params.set("response_type", "code");
+    params.set("client_id", config.oauth_client_id);
+    params.set("redirect_uri", redirectUri);
+    params.set("state", state);
+    params.set("code_challenge", codeChallenge);
+    params.set("code_challenge_method", "S256");
     const authorize_url = `${config.oauth_authorize_url}?${params.toString()}`;
     return c.json(
       {
         authorize_url,
         connection_id: connectionId,
+        // Echoed so an operator setting a provider up can read the exact
+        // string to register rather than assembling it from a base URL and
+        // a path, which is the step that produces a mismatch.
+        redirect_uri: redirectUri,
         expires_in_seconds: Math.floor(DEFAULT_STATE_TTL_MS / 1000),
       },
       200,
@@ -484,16 +452,22 @@ export function oauthStartRoutes(
 }
 
 /**
- * `GET /oauth/callback/:provider` — no auth. The provider's
- * redirect carries no Marfa session; we trust the signed `state`
- * param to recover the connection.
+ * `GET /oauth/callback` — no auth. The provider's redirect carries no
+ * Marfa session; we trust the signed `state` param to recover the
+ * connection, and everything else follows from it.
  *
  * Query params: `code`, `state`, optional `error` (RFC 6749 §4.1.2.1).
  *
  * On success: persists tokens via `storage.connectionOauthTokens.upsert`
  * (encrypted under SECRET_INFO.connectionOauthToken) and returns an
  * HTML success page.
+ *
+ * Errors raised before the state verifies cannot name the upstream,
+ * because at that point nothing has told us which one it was. The page
+ * says so rather than inventing a name.
  */
+const UNVERIFIED_PROVIDER = "the other service";
+
 export function oauthCallbackRoutes(
   storage: Storage,
   options: OAuthCallbackOptions = {},
@@ -502,11 +476,23 @@ export function oauthCallbackRoutes(
   const resolveFetch = (): typeof fetch =>
     options.fetch ?? globalThis.fetch.bind(globalThis);
   const r = new Hono<AppEnv>();
-  r.get("/:provider", async (c) => {
-    const provider = c.req.param("provider");
+  r.get("/", async (c) => {
     const code = c.req.query("code");
     const state = c.req.query("state");
     const upstreamError = c.req.query("error");
+
+    // Read the state before branching, so every audit row below names the
+    // connection this callback is about. With no provider segment in the
+    // path there is nothing else to identify a failure by, and the segment
+    // never identified much anyway: it named a vendor, not an attempt.
+    const preview =
+      typeof state === "string" ? verifyOAuthState(state) : undefined;
+    const attemptId = preview?.ok
+      ? preview.envelope.connection_id
+      : "unverified";
+    const provider = preview?.ok
+      ? (preview.envelope.provider_label ?? UNVERIFIED_PROVIDER)
+      : UNVERIFIED_PROVIDER;
 
     if (typeof upstreamError === "string" && upstreamError.length > 0) {
       const desc = c.req.query("error_description") ?? "";
@@ -516,7 +502,7 @@ export function oauthCallbackRoutes(
         space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.upstream_error",
         resource_type: "oauth_callback",
-        resource_id: provider,
+        resource_id: attemptId,
         details: { error: upstreamError, error_description: desc },
       });
       setNoStore(c);
@@ -530,14 +516,14 @@ export function oauthCallbackRoutes(
         400,
       );
     }
-    const stateResult = verifyOAuthState(state);
+    const stateResult = preview ?? verifyOAuthState(state);
     if (!stateResult.ok) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.state_invalid",
         resource_type: "oauth_callback",
-        resource_id: provider,
+        resource_id: attemptId,
         details: { reason: stateResult.reason },
       });
       setNoStore(c);
@@ -579,7 +565,7 @@ export function oauthCallbackRoutes(
         space_id: c.get("apiKey")?.space_id ?? null,
         action: "oauth_callback.state_missing_pkce",
         resource_type: "oauth_callback",
-        resource_id: provider,
+        resource_id: envelope.connection_id,
         details: { connection_id: envelope.connection_id },
       });
       setNoStore(c);
@@ -643,10 +629,10 @@ export function oauthCallbackRoutes(
       action: "oauth_callback.tokens_stored",
       resource_type: "connection",
       resource_id: envelope.connection_id,
-      details: { provider, scopes: exchange.scopes },
+      details: { provider: config.label, scopes: exchange.scopes },
     });
     setNoStore(c);
-    return c.html(renderOAuthCallbackSuccess(provider), 200);
+    return c.html(renderOAuthCallbackSuccess(config.label), 200);
   });
   return r;
 }
