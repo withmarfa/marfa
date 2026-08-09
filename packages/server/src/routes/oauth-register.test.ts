@@ -83,7 +83,10 @@ describe("POST /auth/oauth2/register", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.grant_types).toEqual([DEVICE_CODE_GRANT, "refresh_token"]);
-    expect(body.scope).toBe("core.note:read offline_access");
+    // `offline_access` was named, so it is not added twice; `openid` is what
+    // the ceiling gains, since a session scope missing from a registration is
+    // unrecoverable once the client_id is persisted.
+    expect(body.scope).toBe("core.note:read offline_access openid");
   });
 
   it("registered client is discoverable via the device-flow initiation path", async () => {

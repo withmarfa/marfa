@@ -36,6 +36,7 @@ import { getPermissionBundles } from "../config.js";
 import {
   CLIENT_CREDENTIALS_DEFAULT_SCOPES,
   dcrDefaultScopes,
+  SESSION_CRITICAL_SCOPES,
 } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 
@@ -640,14 +641,14 @@ async function narrowAuthorizeScopes(
   const oauth = storage.oauthProvider;
   if (!oauth) return;
 
-  let ceiling: Set<string> | null;
+  let ceiling: readonly string[] | null;
   try {
     const client = await oauth.getClient(clientId);
     if (!client) return;
     // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null ceiling
     // tracks the live set, and an empty array is a real, empty ceiling that
     // narrows everything away — which case 3 below then declines to act on.
-    ceiling = client.scopes === null ? null : new Set(client.scopes);
+    ceiling = client.scopes;
   } catch (err) {
     log("warn", "oauth authorize scope-narrowing precheck failed", {
       client_id: clientId,
@@ -664,7 +665,7 @@ async function narrowAuthorizeScopes(
       unknownToServer.push(scope);
       continue;
     }
-    if (ceiling && !ceiling.has(scope)) {
+    if (ceiling !== null && !ceiling.includes(scope)) {
       outsideClientCeiling.push(scope);
       continue;
     }
@@ -686,7 +687,7 @@ async function narrowAuthorizeScopes(
   const droppedSessionScopes = [
     ...unknownToServer,
     ...outsideClientCeiling,
-  ].filter((s) => SESSION_CRITICAL_SCOPES.has(s));
+  ].filter((s) => SESSION_CRITICAL.has(s));
   if (droppedSessionScopes.length > 0) {
     log("warn", "oauth authorize: refusing to narrow a session scope", {
       client_id: clientId,
@@ -738,8 +739,13 @@ async function narrowAuthorizeScopes(
  * `openid` is what mints the id_token; without it sign-out cannot build its
  * end-session URL. In both cases the failure surfaces well after the
  * authorization succeeded, naming neither the scope nor the client.
+ *
+ * The set itself is owned by `auth/mint-ceiling.ts`, which also puts these
+ * into every registered ceiling — so refusing to narrow one here can only
+ * ever mean a client named a scope this server does not have, never that
+ * its own registration was minted unable to hold a session.
  */
-const SESSION_CRITICAL_SCOPES = new Set(["openid", "offline_access"]);
+const SESSION_CRITICAL = new Set(SESSION_CRITICAL_SCOPES);
 
 const EXPECTED_AUTHORIZE_ERRORS = new Set([
   "access_denied",
