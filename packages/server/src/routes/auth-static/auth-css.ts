@@ -388,9 +388,19 @@ a {
   color: var(--error-fg);
 }
 
+/* Form controls.
+   Selects and number inputs had no rule at all until a preview put them on
+   screen beside a fully styled button: raw browser widgets in the middle of
+   a designed card, which reads as a different product having leaked in.
+   They share the input treatment below rather than getting their own, so
+   there is one control shape and not three.
+   NB: no backticks anywhere in this file. It is a template literal, and a
+   backtick in a comment ends the string. */
 input[type="email"],
 input[type="password"],
-input[type="text"] {
+input[type="text"],
+input[type="number"],
+select {
   width: 100%;
   /* 16px so iOS Safari doesn't auto-zoom on focus. */
   font-family: inherit;
@@ -405,17 +415,44 @@ input[type="text"] {
     border-color 0.12s var(--ease),
     box-shadow 0.12s var(--ease);
 }
+/* A select keeps the native control for accessibility and mobile pickers,
+   but loses the platform chrome so it sits in the same visual family as the
+   inputs above. The chevron is a background image rather than a pseudo
+   element, because a replaced element cannot host one. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding-right: 34px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' stroke='%23737373' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+}
+
+/* A checkbox outside a styled .chk row still deserves the accent rather
+   than the browser's default blue. */
+input[type="checkbox"] {
+  accent-color: var(--primary);
+}
+
 input::placeholder {
   color: var(--fg-faint);
 }
 input[type="email"]:hover,
 input[type="password"]:hover,
-input[type="text"]:hover {
+input[type="text"]:hover,
+input[type="number"]:hover,
+select:hover {
   border-color: var(--border-strong);
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
-input[type="text"]:focus {
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
   outline: none;
   background: var(--card);
   border-color: var(--fg);
@@ -1281,14 +1318,6 @@ details.disclosure[open] > summary .disclosure__chevron {
   color: var(--fg);
   flex: none;
 }
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-muted);
-}
 
 /* Capability tile — a soft tile describing what an install adds. */
 .captile {
@@ -1530,11 +1559,25 @@ pre {
   min-width: 0;
 }
 
+/* Name and badge on one row. The badge used to sit inside the bold element,
+   which is display:block, so it rode on top of the last character of the
+   name. A flex row with a gap is what actually holds them apart, and the
+   name truncates rather than shoving the badge off the card. */
+.ccard__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .ccard__tt b {
   font-size: 14px;
   font-weight: 600;
-  display: block;
   color: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ccard__badge {
