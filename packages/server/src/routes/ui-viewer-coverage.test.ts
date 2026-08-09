@@ -24,7 +24,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TABS } from "../../scripts/auth-gallery-fixtures.js";
+import { TABS } from "../../scripts/ui-viewer-fixtures.js";
 
 const ROUTES_DIR = fileURLToPath(new URL(".", import.meta.url));
 
@@ -77,7 +77,7 @@ function exportedPageRenderers(): { symbol: string; file: string }[] {
  *  renderers it imports rather than trying to introspect closures. */
 const FIXTURES_SOURCE = readFileSync(
   fileURLToPath(
-    new URL("../../scripts/auth-gallery-fixtures.ts", import.meta.url),
+    new URL("../../scripts/ui-viewer-fixtures.ts", import.meta.url),
   ),
   "utf8",
 );
@@ -124,9 +124,25 @@ describe("every gallery variant renders", () => {
     const html = variant.render();
     expect(typeof html).toBe("string");
     expect(html.length).toBeGreaterThan(100);
+    // Snapshot every page, because structural tests do not see words.
+    //
+    // The consent screen shipped for months telling people an app could
+    // reach their bookmarks, files and media when it had asked for none of
+    // them, and fifty-eight consent tests were green throughout: they
+    // asserted that groups rendered and checkboxes worked, and never once
+    // what the page said. Four more tests in the same batch of work passed
+    // against the defect they were written for.
+    //
+    // This is the cheap general answer. The pages link the stylesheet
+    // rather than inlining it, so a snapshot does not move when the CSS
+    // does; it moves when markup or copy moves, which is exactly when a
+    // human should be reading the diff. It does not judge whether the words
+    // are good. It makes changing them visible, which is the part that kept
+    // failing.
     // Every one is a whole document — the gallery drops each into an iframe,
     // so a fragment renders unstyled and looks like a broken page rather
     // than a broken fixture.
     expect(html.toLowerCase()).toContain("<!doctype html>");
+    expect(html).toMatchSnapshot();
   });
 });
