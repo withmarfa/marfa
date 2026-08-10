@@ -137,6 +137,83 @@ describe("performInstall — happy path", () => {
   });
 });
 
+describe("performInstall — the manifest's declared defaults are written in", () => {
+  // A declared `default` used to be inert: nothing read it on a write, so an
+  // unconfigured key meant whatever each handler decided, and Google
+  // Calendar's two branches came to disagree. Writing the default at install
+  // leaves no unconfigured key for a handler to answer for.
+  function manifestWithDefaults(): ReturnType<typeof manifest> {
+    return {
+      ...manifest(),
+      target_types: ["core.note", "acme.note"],
+      configuration_schema: {
+        target_type: {
+          type: "string",
+          description: "Item type synced notes land as.",
+          from_target_types: true,
+          default: "acme.note",
+        },
+        page_size: {
+          type: "number",
+          description: "Items per page.",
+          default: 50,
+        },
+        label: { type: "string", description: "No default declared." },
+      },
+    };
+  }
+
+  async function installedConfiguration(
+    configuration?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const withDefaults = manifestWithDefaults();
+    const adminKey = (await ctx.storage.keys.list())[0]!;
+    const integration = await ctx.storage.items.create({
+      type: "system.integration",
+      properties: {
+        manifest_name: withDefaults.name,
+        manifest_version: withDefaults.version,
+        publisher: withDefaults.publisher,
+        direction: withDefaults.direction,
+        runtime_compatibility: withDefaults.runtime_compatibility,
+        manifest: withDefaults,
+        registered_at: new Date().toISOString(),
+      },
+    });
+
+    const result = await performInstall(ctx.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      spaceId: undefined,
+      authMode: "keys",
+      integrationItemId: integration.id,
+      manifest: withDefaults,
+      label: "defaults install",
+      ...(configuration ? { configuration } : {}),
+    });
+    const connection = await ctx.storage.items.get(result.connection_id);
+    return (
+      connection?.properties as { configuration: Record<string, unknown> }
+    ).configuration;
+  }
+
+  it("pins a declared default an install did not name", async () => {
+    expect(await installedConfiguration()).toEqual({
+      target_type: "acme.note",
+      page_size: 50,
+    });
+  });
+
+  it("leaves an explicit choice alone", async () => {
+    const configuration = await installedConfiguration({
+      target_type: "core.note",
+    });
+    expect(configuration.target_type).toBe("core.note");
+    // The other declared default still lands: filling one key is not a
+    // reason to skip the rest.
+    expect(configuration.page_size).toBe(50);
+  });
+});
+
 describe("performInstall — compensating writes on activity failure", () => {
   it("rollback closures fire in reverse order when a later step throws", async () => {
     // Drive the rollback path through a stubbed storage. We don't need a

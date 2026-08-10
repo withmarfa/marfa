@@ -334,7 +334,7 @@ describe("handleSchedule — multi-calendar inbound", () => {
     // Both selected calendars swept, not just primary.
     expect(proxyCalls.length).toBe(2);
     expect(proxyCalls[1]?.path).toContain("/calendars/team%40example.com/");
-    // Multi mode's target type, not the primary-only path's core.event.
+    // The manifest's target type, which is now the answer on both branches.
     expect(created.length).toBe(2);
     expect(created.every((c) => c.type === "google.calendar.event")).toBe(true);
   });

@@ -4,6 +4,8 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
+  applyConfigurationDefaults,
+  declaredConfigurationDefault,
   IntegrationManifestSchema,
   parseManifestSchemaMajor,
 } from "./integration-manifest.js";
@@ -298,5 +300,89 @@ describe("Integration manifest JSON Schema artifact", () => {
       JSON.stringify(z.toJSONSchema(IntegrationManifestSchema), null, 2) + "\n";
     const actual = readFileSync(COMMITTED_JSON_SCHEMA_PATH, "utf8");
     expect(actual).toBe(expected);
+  });
+});
+
+describe("applyConfigurationDefaults", () => {
+  const manifest = {
+    configuration_schema: {
+      target_type: {
+        type: "string" as const,
+        description: "Item type synced events land as.",
+        default: "google.calendar.event",
+      },
+      page_size: {
+        type: "number" as const,
+        description: "Items per page.",
+        default: 50,
+      },
+      label: { type: "string" as const, description: "No default declared." },
+    },
+  };
+
+  it("fills in a declared default the caller left out", () => {
+    expect(applyConfigurationDefaults(manifest, {})).toEqual({
+      target_type: "google.calendar.event",
+      page_size: 50,
+    });
+  });
+
+  it("never overrides a value the caller supplied", () => {
+    expect(
+      applyConfigurationDefaults(manifest, { target_type: "core.event" }),
+    ).toMatchObject({ target_type: "core.event" });
+  });
+
+  it("leaves a key with no declared default absent", () => {
+    expect(applyConfigurationDefaults(manifest, {})).not.toHaveProperty(
+      "label",
+    );
+  });
+
+  it("keeps keys the manifest does not declare, so validation can refuse them", () => {
+    // Filling defaults is not the enforcement point. Dropping an undeclared
+    // key here would hide it from the validator that exists to reject it.
+    expect(applyConfigurationDefaults(manifest, { stray: 1 })).toMatchObject({
+      stray: 1,
+    });
+  });
+
+  it("is a no-op for a manifest that declares no configuration", () => {
+    expect(applyConfigurationDefaults({}, { a: 1 })).toEqual({ a: 1 });
+  });
+});
+
+describe("declaredConfigurationDefault", () => {
+  it("reads a string default", () => {
+    expect(
+      declaredConfigurationDefault(
+        {
+          configuration_schema: {
+            target_type: {
+              type: "string",
+              description: "d",
+              default: "core.event",
+            },
+          },
+        },
+        "target_type",
+      ),
+    ).toBe("core.event");
+  });
+
+  it("is undefined for a key with no default, and for a non-string one", () => {
+    const manifest = {
+      configuration_schema: {
+        label: { type: "string" as const, description: "d" },
+        page_size: {
+          type: "number" as const,
+          description: "d",
+          default: 50,
+        },
+      },
+    };
+    expect(declaredConfigurationDefault(manifest, "label")).toBeUndefined();
+    expect(declaredConfigurationDefault(manifest, "page_size")).toBeUndefined();
+    expect(declaredConfigurationDefault(manifest, "absent")).toBeUndefined();
   });
 });

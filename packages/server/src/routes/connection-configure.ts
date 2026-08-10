@@ -31,6 +31,7 @@ import { Hono } from "hono";
 import {
   MarfaError,
   ErrorCode,
+  declaredConfigurationDefault,
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -558,6 +559,15 @@ export function connectionConfigureRoutes(
         : null;
     const priorTargetType =
       typeof cfg.target_type === "string" ? cfg.target_type : null;
+    // The manifest is the one statement of what this integration writes by
+    // default. Falling back to the first offered type keeps the picker
+    // renderable for a manifest that declares none; it is not a preference.
+    // The schema requires at least one target type, so the last fallback is
+    // for the type checker rather than a state a manifest can reach.
+    const declaredTargetType =
+      declaredConfigurationDefault(manifest, "target_type") ??
+      manifest.target_types[0] ??
+      "";
 
     setNoStore(c);
     return c.html(
@@ -565,11 +575,10 @@ export function connectionConfigureRoutes(
         connectionId: id,
         calendars,
         targetTypeChoices: manifest.target_types,
-        defaultTargetType: manifest.target_types.includes(
-          "google.calendar.event",
-        )
-          ? "google.calendar.event"
-          : (manifest.target_types[0] ?? "core.event"),
+        // Read from the manifest, not named here. A hardcoded preference
+        // agrees with the declared default only by coincidence, and the
+        // picker is where an operator learns what the integration intends.
+        defaultTargetType: declaredTargetType,
         prior: {
           selectedCalendarIds: priorSelected,
           defaultWriteCalendarId: priorDefaultWrite,
