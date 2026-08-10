@@ -8,12 +8,15 @@
  *
  * Two things make this harder than iterating a rule:
  *
- * Wall clock, not instants. "Weekly at 09:00" means 09:00 as the calendar
- * shows it, on both sides of a daylight-saving transition, which is a
- * different number of elapsed hours apart. So the rule is expanded in
- * floating time and each result is anchored to an instant afterwards
- * using the series' own zone. Expanding in UTC instead would silently
- * shift every occurrence by an hour for half the year.
+ * Instants in, wall clock in the middle, instants out. A stored start
+ * is an instant: a point in time, carrying no zone of its own however
+ * it happens to be written. But "weekly at 09:00" means 09:00 as the
+ * calendar shows it in the series' own zone, on both sides of a
+ * daylight-saving transition, which is a different number of elapsed
+ * hours apart. So the stored instant is first rendered as the wall
+ * clock it names in that zone, the rule is expanded in that floating
+ * time, and each result is anchored back to an instant. A series with
+ * no zone has no wall clock to keep, so its rule advances in UTC.
  *
  * Exceptions. A moved or edited instance is stored as its own item
  * naming the occurrence it replaces. It shadows that occurrence: the
@@ -26,11 +29,12 @@ import ICAL from "ical.js";
 export interface RecurrenceSeries {
   /** Item id of the series. */
   id: string;
-  /** Wall-clock start, ISO 8601. */
+  /** Start instant, ISO 8601. */
   starts_at: string;
-  /** Wall-clock end, ISO 8601. Optional; absent means a zero-length event. */
+  /** End instant, ISO 8601. Optional; absent means a zero-length event. */
   ends_at?: string;
-  /** IANA zone the wall-clock times are expressed in. */
+  /** IANA zone the series' schedule keeps its wall-clock hour in.
+   *  Absent means the rule advances in UTC from the stored instant. */
   timezone?: string;
   /** RFC 5545 property lines: RRULE, RDATE, EXDATE. */
   recurrence: string[];
@@ -39,7 +43,7 @@ export interface RecurrenceSeries {
 export interface RecurrenceException {
   /** Item id of the stored exception. */
   id: string;
-  /** The start of the occurrence this replaces, ISO 8601. */
+  /** The start instant of the occurrence this replaces, ISO 8601. */
   original_starts_at: string;
 }
 
@@ -59,11 +63,23 @@ export interface Occurrence {
 
 /**
  * Ceiling on how many occurrences one series may contribute to a single
- * window. A daily rule over the maximum window is ~400; anything past
- * this is a per-minute rule or a malformed one, and the caller is told
- * rather than handed a silently short list.
+ * window. Counted against the window the caller asked for, never the
+ * series' history: a daily rule over the maximum window is ~400, so
+ * anything past this is a per-minute rule or a malformed one, and the
+ * caller is told rather than handed a silently short list.
  */
 export const MAX_OCCURRENCES_PER_SERIES = 2000;
+
+/**
+ * Ceiling on rule iterations for one expansion, pre-window skips
+ * included. Expansion always walks from the series start, because the
+ * rule's phase (INTERVAL, BYDAY defaults) is anchored there and cannot
+ * be resumed mid-stream. A daily rule burns one iteration per day and
+ * stays comfortably under this for centuries; a per-minute rule crosses
+ * it in about ten weeks of history, which is the shape this exists to
+ * stop from stalling a read.
+ */
+export const MAX_EXPANSION_ITERATIONS = 100_000;
 
 export class RecurrenceExpansionError extends Error {}
 
@@ -76,17 +92,30 @@ export class RecurrenceExpansionError extends Error {}
  * UTC unless VTIMEZONE definitions are registered, and a Google series
  * carries a zone name rather than a VTIMEZONE block.
  */
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Formatter construction dominates the cost of an offset lookup, and
+ *  one expansion asks about the same zone thousands of times. */
+function zoneFormatter(zone: string): Intl.DateTimeFormat {
+  let formatter = zoneFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    zoneFormatters.set(zone, formatter);
+  }
+  return formatter;
+}
+
 function zoneOffsetMinutes(instant: Date, zone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: zone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instant);
+  const parts = zoneFormatter(zone).formatToParts(instant);
   const at = (type: string): number =>
     Number(parts.find((p) => p.type === type)?.value ?? "0");
   // `hour12: false` renders midnight as 24 in some engines.
@@ -123,6 +152,20 @@ function wallClockToInstant(wall: Date, zone: string | undefined): Date {
   return corrected;
 }
 
+/**
+ * Render an instant as the wall-clock reading it has in `zone`, carried
+ * in a Date's UTC fields so it can feed a floating iCalendar time.
+ *
+ * Exact, unlike the inverse: the offset at a known instant is
+ * unambiguous, so no correction pass is needed.
+ */
+function instantToWallClock(instant: Date, zone: string | undefined): Date {
+  if (!zone) return instant;
+  return new Date(
+    instant.getTime() + zoneOffsetMinutes(instant, zone) * 60_000,
+  );
+}
+
 /** ICAL.Time carries the fields; read them as a naive (floating) Date. */
 function icalTimeToWallClock(time: ICAL.Time): Date {
   return new Date(
@@ -142,8 +185,9 @@ function icalTimeToWallClock(time: ICAL.Time): Date {
  *
  * The stored `recurrence` strings are already RFC 5545 property lines,
  * so reassembling a component from them is a faithful round trip rather
- * than a translation. DTSTART is written without a zone: expansion is
- * floating and the zone is applied to each result afterwards.
+ * than a translation. DTSTART is written without a zone: the stored
+ * instant is rendered as its wall clock in the series zone, expansion
+ * runs floating, and the zone is applied to each result afterwards.
  */
 function buildVevent(series: RecurrenceSeries): ICAL.Component {
   const dtstart = new Date(series.starts_at);
@@ -152,12 +196,26 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
       `Series ${series.id} has an unreadable starts_at`,
     );
   }
+
+  // ical.js parses an EXRULE line and then never reads it, so letting
+  // one through would silently produce the occurrences it was meant to
+  // exclude. Refusing is the honest answer until something applies it.
+  const exrule = series.recurrence.find((line) =>
+    line.trim().toUpperCase().startsWith("EXRULE"),
+  );
+  if (exrule !== undefined) {
+    throw new RecurrenceExpansionError(
+      `Series ${series.id} carries an EXRULE, which is not applied; express exclusions as EXDATE lines`,
+    );
+  }
+
+  const wall = instantToWallClock(dtstart, series.timezone);
   const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
-  const floating = `${pad(dtstart.getUTCFullYear(), 4)}${pad(
-    dtstart.getUTCMonth() + 1,
-  )}${pad(dtstart.getUTCDate())}T${pad(dtstart.getUTCHours())}${pad(
-    dtstart.getUTCMinutes(),
-  )}${pad(dtstart.getUTCSeconds())}`;
+  const floating = `${pad(wall.getUTCFullYear(), 4)}${pad(
+    wall.getUTCMonth() + 1,
+  )}${pad(wall.getUTCDate())}T${pad(wall.getUTCHours())}${pad(
+    wall.getUTCMinutes(),
+  )}${pad(wall.getUTCSeconds())}`;
 
   const lines = [
     "BEGIN:VCALENDAR",
@@ -222,36 +280,78 @@ export function expandSeries(
       : 0;
 
   // Keyed by the instant an exception replaces, so a shadowed occurrence
-  // is recognized however the two were expressed.
+  // is recognized however the two were expressed. Both sides of the
+  // match are instants: the key here, and the re-anchored expansion
+  // result below.
   const shadowed = new Map<number, RecurrenceException>();
   for (const exception of exceptions) {
     const at = new Date(exception.original_starts_at).getTime();
     if (!Number.isNaN(at)) shadowed.set(at, exception);
   }
 
-  const expansion = new ICAL.RecurExpansion({ component: vevent, dtstart });
+  // ical.js raises plain errors out of the expansion machinery for
+  // rules its parser accepted (a missing FREQ, an unreadable UNTIL), so
+  // the constructor and the iterator are guarded the same way the parse
+  // is: every malformed-rule shape surfaces as the expander's own error
+  // type, which the route can attribute to the series.
+  let expansion: ICAL.RecurExpansion;
+  try {
+    expansion = new ICAL.RecurExpansion({ component: vevent, dtstart });
+  } catch (err) {
+    throw new RecurrenceExpansionError(
+      `Series ${series.id} has an unreadable recurrence rule: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
   const occurrences: Occurrence[] = [];
   let next: ICAL.Time | null;
-  let seen = 0;
+  let iterations = 0;
+  let emitted = 0;
 
   // ical.js types `next()` as always returning a Time, but it returns
   // null once the rule is exhausted — a COUNT or UNTIL series ends this
   // way, so the null is the normal termination, not an edge case.
-  const nextOccurrence = (): ICAL.Time | null => expansion.next();
+  const nextOccurrence = (): ICAL.Time | null => {
+    try {
+      return expansion.next();
+    } catch (err) {
+      throw new RecurrenceExpansionError(
+        `Series ${series.id} has an unreadable recurrence rule: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  // Pre-window history is skipped in floating time, before the exact
+  // zone conversion: a wall-clock reading more than a day before the
+  // window start cannot resolve to an instant inside it under any
+  // offset on Earth, and the conversion is the expensive step when a
+  // long-running series has years of history to walk past.
+  const coarseCutoffMs =
+    instantToWallClock(windowStart, series.timezone).getTime() - 86_400_000;
 
   while ((next = nextOccurrence())) {
-    seen += 1;
-    if (seen > MAX_OCCURRENCES_PER_SERIES) {
+    iterations += 1;
+    if (iterations > MAX_EXPANSION_ITERATIONS) {
+      throw new RecurrenceExpansionError(
+        `Series ${series.id} iterates its rule more than ${String(MAX_EXPANSION_ITERATIONS)} times before it reaches the window; the rule is too frequent to expand at read time`,
+      );
+    }
+    const wallClock = icalTimeToWallClock(next);
+    if (wallClock.getTime() < coarseCutoffMs) continue;
+    const startsAt = wallClockToInstant(wallClock, series.timezone);
+    if (startsAt >= windowEnd) break;
+    if (startsAt < windowStart) continue;
+
+    emitted += 1;
+    if (emitted > MAX_OCCURRENCES_PER_SERIES) {
       throw new RecurrenceExpansionError(
         `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
       );
     }
-    const startsAt = wallClockToInstant(
-      icalTimeToWallClock(next),
-      series.timezone,
-    );
-    if (startsAt >= windowEnd) break;
-    if (startsAt < windowStart) continue;
 
     const exception = shadowed.get(startsAt.getTime());
     if (exception) {

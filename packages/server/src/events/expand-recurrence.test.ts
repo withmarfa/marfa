@@ -3,6 +3,13 @@
  * the ways calendars are traditionally wrong: the daylight-saving
  * boundary, the exception that shadows an occurrence, and the rule that
  * would run forever.
+ *
+ * Every fixture stores an instant, offset-bearing where a zone is
+ * involved, because that is what the calendar integration writes and
+ * what the type declares. A test that only ever feeds floating-with-Z
+ * timestamps cannot see the difference between instant and wall-clock
+ * arithmetic, which is exactly the blindness that let the double
+ * conversion ship.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -12,10 +19,12 @@ import {
 } from "./expand-recurrence.js";
 import type { RecurrenceSeries } from "./expand-recurrence.js";
 
+// Tuesday 09:00 Berlin, stored as the instant it names (08:00Z in
+// winter). Berlin moves to summer time on 29 March 2026.
 const weekly = (over: Partial<RecurrenceSeries> = {}): RecurrenceSeries => ({
   id: "series-1",
-  starts_at: "2026-03-03T09:00:00.000Z",
-  ends_at: "2026-03-03T10:00:00.000Z",
+  starts_at: "2026-03-03T09:00:00+01:00",
+  ends_at: "2026-03-03T10:00:00+01:00",
   timezone: "Europe/Berlin",
   recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU"],
   ...over,
@@ -32,17 +41,17 @@ describe("expandSeries", () => {
     ).toEqual([]);
   });
 
-  it("computes the occurrences that start inside the window", () => {
+  it("computes the occurrences that start inside the window, as instants", () => {
     const out = expandSeries(
       weekly(),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-03-25T00:00:00Z"),
     );
-    expect(out.map((o) => o.starts_at.slice(0, 10))).toEqual([
-      "2026-03-03",
-      "2026-03-10",
-      "2026-03-17",
-      "2026-03-24",
+    expect(out.map((o) => o.starts_at)).toEqual([
+      "2026-03-03T08:00:00.000Z",
+      "2026-03-10T08:00:00.000Z",
+      "2026-03-17T08:00:00.000Z",
+      "2026-03-24T08:00:00.000Z",
     ]);
     expect(out.every((o) => o.item_id === "series-1")).toBe(true);
     expect(out.every((o) => o.series_id === "series-1")).toBe(true);
@@ -62,11 +71,15 @@ describe("expandSeries", () => {
   });
 
   it("keeps the wall-clock hour across a daylight-saving transition", () => {
-    // Europe/Berlin moves to summer time on 29 March 2026. A 09:00 local
-    // meeting stays 09:00 local, which is a different UTC hour either
-    // side — expanding in UTC would silently move it.
+    // A 09:00 Berlin meeting stays 09:00 Berlin on both sides of the
+    // transition, which is a different UTC hour either side. The stored
+    // start is the instant of the first occurrence; the zone is what
+    // carries the schedule across the change.
     const out = expandSeries(
-      weekly({ starts_at: "2026-03-24T09:00:00.000Z" }),
+      weekly({
+        starts_at: "2026-03-24T09:00:00+01:00",
+        ends_at: undefined,
+      }),
       new Date("2026-03-20T00:00:00Z"),
       new Date("2026-04-10T00:00:00Z"),
     );
@@ -86,9 +99,29 @@ describe("expandSeries", () => {
     ]);
   });
 
-  it("treats a series with no zone as already an instant", () => {
+  it("expands an offset-bearing start without a zone as a plain instant", () => {
+    // No zone means nothing anchors a wall clock, so the rule advances
+    // in UTC from the stored instant. The offset in the string is
+    // notation, not a zone: +01:00 on the start does not make later
+    // occurrences follow Berlin's summer time.
     const out = expandSeries(
-      weekly({ timezone: undefined }),
+      weekly({ timezone: undefined, ends_at: undefined }),
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-12T00:00:00Z"),
+    );
+    expect(out.map((o) => o.starts_at)).toEqual([
+      "2026-03-03T08:00:00.000Z",
+      "2026-03-10T08:00:00.000Z",
+    ]);
+  });
+
+  it("treats a Z-suffixed start with no zone as already an instant", () => {
+    const out = expandSeries(
+      weekly({
+        starts_at: "2026-03-03T09:00:00.000Z",
+        ends_at: undefined,
+        timezone: undefined,
+      }),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-03-12T00:00:00Z"),
     );
@@ -98,10 +131,29 @@ describe("expandSeries", () => {
     ]);
   });
 
-  it("honours EXDATE, so a removed occurrence is simply absent", () => {
+  it("honors EXDATE against the series' own wall clock", () => {
+    // The stored EXDATE names 09:00 on 10 March in the series zone,
+    // which is the shape Google writes for a zoned series.
     const out = expandSeries(
       weekly({
-        timezone: undefined,
+        recurrence: [
+          "RRULE:FREQ=WEEKLY;BYDAY=TU",
+          "EXDATE;TZID=Europe/Berlin:20260310T090000",
+        ],
+      }),
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-25T00:00:00Z"),
+    );
+    expect(out.map((o) => o.starts_at)).toEqual([
+      "2026-03-03T08:00:00.000Z",
+      "2026-03-17T08:00:00.000Z",
+      "2026-03-24T08:00:00.000Z",
+    ]);
+  });
+
+  it("honors a floating EXDATE the same way", () => {
+    const out = expandSeries(
+      weekly({
         recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU", "EXDATE:20260310T090000"],
       }),
       new Date("2026-03-01T00:00:00Z"),
@@ -114,28 +166,39 @@ describe("expandSeries", () => {
     ]);
   });
 
-  it("honours RDATE, so an added occurrence appears off-rule", () => {
+  it("honors RDATE, so an added occurrence appears off-rule", () => {
     const out = expandSeries(
       weekly({
-        timezone: undefined,
         recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU", "RDATE:20260305T090000"],
       }),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-03-12T00:00:00Z"),
     );
-    expect(out.map((o) => o.starts_at.slice(0, 10))).toEqual([
-      "2026-03-03",
-      "2026-03-05",
-      "2026-03-10",
+    expect(out.map((o) => o.starts_at)).toEqual([
+      "2026-03-03T08:00:00.000Z",
+      "2026-03-05T08:00:00.000Z",
+      "2026-03-10T08:00:00.000Z",
     ]);
+  });
+
+  it("refuses EXRULE rather than silently not applying it", () => {
+    // ical.js parses EXRULE and then ignores it, so accepting the line
+    // would over-produce occurrences with no error anywhere. Refusing is
+    // the honest answer until something actually applies it.
+    expect(() =>
+      expandSeries(
+        weekly({
+          recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU", "EXRULE:FREQ=MONTHLY"],
+        }),
+        new Date("2026-03-01T00:00:00Z"),
+        new Date("2026-03-25T00:00:00Z"),
+      ),
+    ).toThrow(/EXRULE/);
   });
 
   it("stops at COUNT rather than running to the window edge", () => {
     const out = expandSeries(
-      weekly({
-        timezone: undefined,
-        recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=2"],
-      }),
+      weekly({ recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=2"] }),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-06-01T00:00:00Z"),
     );
@@ -143,43 +206,109 @@ describe("expandSeries", () => {
   });
 
   it("lets an exception shadow the occurrence it replaces", () => {
+    // The exception's original start is stored offset-bearing, exactly
+    // as the calendar integration writes it. It has to meet the
+    // expanded occurrence on the instant they share.
     const out = expandSeries(
-      weekly({ timezone: undefined }),
+      weekly(),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-03-25T00:00:00Z"),
-      [{ id: "moved-1", original_starts_at: "2026-03-10T09:00:00.000Z" }],
+      [{ id: "moved-1", original_starts_at: "2026-03-10T09:00:00+01:00" }],
     );
     const shadowed = out.find((o) => o.replaces !== undefined);
     expect(shadowed?.item_id).toBe("moved-1");
-    expect(shadowed?.replaces).toBe("2026-03-10T09:00:00.000Z");
+    expect(shadowed?.replaces).toBe("2026-03-10T08:00:00.000Z");
     // Exactly one entry for that slot: the replacement, not both.
     expect(
-      out.filter((o) => o.starts_at === "2026-03-10T09:00:00.000Z"),
+      out.filter((o) => o.starts_at === "2026-03-10T08:00:00.000Z"),
     ).toHaveLength(1);
+  });
+
+  it("shadows across the daylight-saving boundary too", () => {
+    // The occurrence after the transition sits at a different UTC hour
+    // than the series start. A shadow key derived from the wrong side of
+    // the conversion misses exactly here.
+    const out = expandSeries(
+      weekly(),
+      new Date("2026-03-25T00:00:00Z"),
+      new Date("2026-04-08T00:00:00Z"),
+      [{ id: "moved-2", original_starts_at: "2026-03-31T09:00:00+02:00" }],
+    );
+    const shadowed = out.find((o) => o.replaces !== undefined);
+    expect(shadowed?.item_id).toBe("moved-2");
+    expect(shadowed?.replaces).toBe("2026-03-31T07:00:00.000Z");
   });
 
   it("ignores an exception that names an occurrence outside the window", () => {
     const out = expandSeries(
-      weekly({ timezone: undefined }),
+      weekly(),
       new Date("2026-03-01T00:00:00Z"),
       new Date("2026-03-09T00:00:00Z"),
-      [{ id: "moved-1", original_starts_at: "2026-03-17T09:00:00.000Z" }],
+      [{ id: "moved-1", original_starts_at: "2026-03-17T09:00:00+01:00" }],
     );
     expect(out.every((o) => o.replaces === undefined)).toBe(true);
   });
 
-  it("refuses a window a rule would flood, rather than truncating it", () => {
+  it("counts the cap against the window, not the series' history", () => {
+    // A daily meeting running since 2021 contributes seven occurrences
+    // to a seven-day window. Its age is not a reason to refuse.
+    const out = expandSeries(
+      weekly({
+        starts_at: "2021-01-04T09:00:00+01:00",
+        ends_at: undefined,
+        recurrence: ["RRULE:FREQ=DAILY"],
+      }),
+      new Date("2026-08-10T00:00:00Z"),
+      new Date("2026-08-17T00:00:00Z"),
+    );
+    expect(out).toHaveLength(7);
+  });
+
+  it("refuses a window a rule would flood, naming the window", () => {
+    expect(() =>
+      expandSeries(
+        weekly({ recurrence: ["RRULE:FREQ=MINUTELY"] }),
+        new Date("2026-03-03T08:00:00Z"),
+        new Date("2026-03-31T00:00:00Z"),
+      ),
+    ).toThrow(/in this window/);
+    expect(MAX_OCCURRENCES_PER_SERIES).toBeGreaterThan(400);
+  });
+
+  it("refuses a rule too frequent to even reach the window", () => {
+    // A per-minute rule five years old would iterate millions of times
+    // before the window opens. That is refused with its own reason
+    // rather than blamed on the window.
     expect(() =>
       expandSeries(
         weekly({
-          timezone: undefined,
+          starts_at: "2021-01-04T09:00:00+01:00",
           recurrence: ["RRULE:FREQ=MINUTELY"],
         }),
-        new Date("2026-03-03T09:00:00Z"),
-        new Date("2026-03-31T00:00:00Z"),
+        new Date("2026-08-10T00:00:00Z"),
+        new Date("2026-08-11T00:00:00Z"),
+      ),
+    ).toThrow(/before it reaches the window/);
+  });
+
+  it("refuses a rule missing its frequency instead of crashing", () => {
+    expect(() =>
+      expandSeries(
+        weekly({ recurrence: ["RRULE:INTERVAL=2"] }),
+        new Date("2026-03-01T00:00:00Z"),
+        new Date("2026-03-25T00:00:00Z"),
       ),
     ).toThrow(RecurrenceExpansionError);
-    expect(MAX_OCCURRENCES_PER_SERIES).toBeGreaterThan(400);
+  });
+
+  it("refuses a rule with an unreadable UNTIL instead of crashing", () => {
+    expect(() =>
+      expandSeries(
+        weekly({ recurrence: ["RRULE:FREQ=WEEKLY;UNTIL=garbage"] }),
+        new Date("2026-03-01T00:00:00Z"),
+        new Date("2026-03-25T00:00:00Z"),
+      ),
+    ).toThrow(RecurrenceExpansionError);
   });
 
   it("refuses an unreadable rule instead of returning an empty day", () => {

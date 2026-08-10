@@ -10756,7 +10756,7 @@
           "Items"
         ],
         "summary": "List event occurrences in a window",
-        "description": "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. The window is required and bounded — a request wider than the cap, or one a rule would flood, is refused rather than silently trimmed.",
+        "description": "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. The window is required and bounded — a request wider than the cap is refused rather than silently trimmed. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
         "security": [
           {
             "bearerAuth": []
@@ -10991,6 +10991,24 @@
                         "from",
                         "to"
                       ]
+                    },
+                    "series_errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "item_id",
+                          "message"
+                        ]
+                      }
                     }
                   },
                   "required": [
@@ -11002,7 +11020,7 @@
             }
           },
           "400": {
-            "description": "Missing, unreadable, inverted, or over-long window; unreadable recurrence rule; or a window one series would flood",
+            "description": "Missing, unreadable, inverted, or over-long window",
             "content": {
               "application/json": {
                 "schema": {
