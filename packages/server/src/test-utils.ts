@@ -704,3 +704,152 @@ export async function runBulkActionAsync(
     ...(finalJob.result ? { result: finalJob.result } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Reading a server-sent-events stream in a test
+// ---------------------------------------------------------------------------
+
+/**
+ * Ceiling for a read that waits on a condition.
+ *
+ * Deliberately below the server package's `testTimeout` of 60s. The two used
+ * to be equal, so vitest's timer always won the race and the diagnostic below
+ * could never print: every failure surfaced as a bare `Test timed out in
+ * 60000ms`, naming neither the condition nor what had been read. A ceiling is
+ * only useful if it is reached first.
+ *
+ * With `until` this is a ceiling rather than a cost. The read returns the
+ * moment its condition holds, so a healthy run never spends it, and reaching
+ * it means either a real defect or a machine too loaded to schedule the
+ * stream. Neither is a reason to make the budget the assertion.
+ */
+export const SSE_READ_CEILING_MS = 20_000;
+
+/** Window for a read that is proving something did NOT arrive. */
+const SSE_ABSENCE_WINDOW_MS = 500;
+
+const DEADLINE = Symbol("sse-read-deadline");
+
+/** What `ReadableStreamDefaultReader.read()` resolves to. Named locally
+ *  because the DOM lib that declares it is not in this package's tsconfig. */
+interface StreamChunk {
+  done: boolean;
+  value?: Uint8Array;
+}
+
+export interface SseReadOptions {
+  /**
+   * Stop as soon as this holds. An unmet condition throws rather than
+   * returning partial text, because the caller's next assertion is usually
+   * that something is absent, and absence is trivially true of a stream that
+   * delivered nothing.
+   */
+  until?: (text: string) => boolean;
+  /**
+   * Wait for the server to close the stream, and throw if it does not.
+   * Supersedes `until`, which stops at a frame — and a terminal frame is
+   * only terminal if the close actually follows it, which a read that stops
+   * at the frame never observes.
+   */
+  untilClosed?: boolean;
+  /**
+   * Read the whole window, then require this of what arrived. Absence
+   * assertions use it to prove they were reading a live stream: "no
+   * `catchup_too_old` arrived" says nothing if nothing arrived at all.
+   */
+  requireSeen?: (text: string) => boolean;
+  /** Override the budget. Defaults to the ceiling with `until`, and to the
+   *  short absence window without it. */
+  timeoutMs?: number;
+}
+
+/**
+ * Read an SSE response body until a condition holds or the budget runs out.
+ *
+ * Shared rather than per-suite because the two hand-rolled copies this
+ * replaces had drifted into different signatures, different return shapes and
+ * different failure semantics, and both carried the same defect.
+ */
+export async function readSse(
+  res: Response,
+  opts: SseReadOptions = {},
+): Promise<{ text: string; closed: boolean }> {
+  const { until, requireSeen } = opts;
+  const untilClosed = opts.untilClosed === true;
+  const timeoutMs =
+    opts.timeoutMs ??
+    ((until ?? untilClosed) ? SSE_READ_CEILING_MS : SSE_ABSENCE_WINDOW_MS);
+  if (res.body === null) throw new Error("SSE response carried no body");
+
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let closed = false;
+  let satisfied = false;
+  const deadline = Date.now() + timeoutMs;
+
+  // One read outstanding at a time, and the same promise is awaited again
+  // rather than replaced. Issuing a second `read()` while the first is still
+  // pending is what used to lose chunks: a reader fulfils queued reads in
+  // arrival order, so the next chunk went to the abandoned read, whose
+  // resolve landed on a promise the loop had already settled and walked away
+  // from. On an idle machine the first read wins every race and nothing is
+  // ever abandoned, which is why this only ever failed under CI load.
+  let pending: Promise<StreamChunk> | undefined;
+
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    pending ??= reader
+      .read()
+      .catch((): StreamChunk => ({ done: true, value: undefined }));
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      pending,
+      new Promise<typeof DEADLINE>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(DEADLINE);
+        }, remaining);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (result === DEADLINE) break;
+
+    pending = undefined;
+    if (result.done) {
+      closed = true;
+      break;
+    }
+    if (result.value) {
+      text += decoder.decode(result.value, { stream: true });
+      if (!untilClosed && until?.(text) === true) {
+        satisfied = true;
+        break;
+      }
+    }
+  }
+
+  try {
+    await reader.cancel();
+  } catch {
+    // Already closed; nothing to release.
+  }
+
+  if (untilClosed && !closed) {
+    throw new Error(
+      `SSE stream stayed open for ${String(timeoutMs)}ms; read so far: ${JSON.stringify(text)}`,
+    );
+  }
+  if (!untilClosed && until !== undefined && !satisfied) {
+    throw new Error(
+      `SSE read did not reach its condition within ${String(timeoutMs)}ms; read so far: ${JSON.stringify(text)}`,
+    );
+  }
+  if (requireSeen !== undefined && !requireSeen(text)) {
+    throw new Error(
+      `SSE read cannot prove it was reading a live stream within ${String(timeoutMs)}ms; read: ${JSON.stringify(text)}`,
+    );
+  }
+  return { text, closed };
+}
