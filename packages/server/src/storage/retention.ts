@@ -7,6 +7,7 @@ import type {
 } from "./interface.js";
 import type { SpaceConfig } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
+import { logJobTickFailure } from "./job-tick.js";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -64,6 +65,7 @@ export interface SpaceFanout {
 export class TrashPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private items: ItemStore,
@@ -75,11 +77,13 @@ export class TrashPurger {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 5_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -137,9 +141,7 @@ export class TrashPurger {
         });
       }
     } catch (err) {
-      log("error", "Trash purge error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Trash purge", err, this.stopped);
     }
   }
 }
@@ -160,6 +162,7 @@ export class TrashPurger {
 export class AuthSessionCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private store: AuthSessionStore,
@@ -169,11 +172,13 @@ export class AuthSessionCleaner {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 10_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -201,9 +206,7 @@ export class AuthSessionCleaner {
         log("info", "Auth session cleanup", { deleted });
       }
     } catch (err) {
-      log("error", "Auth session cleanup error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Auth session cleanup", err, this.stopped);
     }
   }
 }
@@ -238,6 +241,7 @@ export class AuthSessionCleaner {
 export class PendingDeletePurger {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private storage: Storage,
@@ -248,11 +252,13 @@ export class PendingDeletePurger {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 15_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -305,9 +311,7 @@ export class PendingDeletePurger {
         });
       }
     } catch (err) {
-      log("error", "Pending-delete purge error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Pending-delete purge", err, this.stopped);
     }
   }
 }
@@ -325,6 +329,7 @@ export class PendingDeletePurger {
 export class RateLimitWindowCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private storage: Storage,
@@ -334,11 +339,13 @@ export class RateLimitWindowCleaner {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -365,9 +372,7 @@ export class RateLimitWindowCleaner {
         log("info", "Rate-limit window cleanup", { deleted });
       }
     } catch (err) {
-      log("error", "Rate-limit window cleanup error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Rate-limit window cleanup", err, this.stopped);
     }
   }
 }
@@ -399,6 +404,7 @@ export class RateLimitWindowCleaner {
 export class DcrClientCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private storage: Storage,
@@ -409,11 +415,13 @@ export class DcrClientCleaner {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 25_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -451,9 +459,7 @@ export class DcrClientCleaner {
         });
       }
     } catch (err) {
-      log("error", "DCR client cleanup error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("DCR client cleanup", err, this.stopped);
     }
   }
 }
@@ -485,6 +491,7 @@ export class DcrClientCleaner {
 export class RuntimeCredentialReaper {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   /** Post-revocation retention before hard delete. Fixed rather than
    *  env-tunable: the window exists for operator inspection, not policy. */
@@ -501,11 +508,13 @@ export class RuntimeCredentialReaper {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 30_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -569,9 +578,7 @@ export class RuntimeCredentialReaper {
         log("info", "Runtime credential reap", counts);
       }
     } catch (err) {
-      log("error", "Runtime credential reap error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Runtime credential reap", err, this.stopped);
     }
   }
 }
