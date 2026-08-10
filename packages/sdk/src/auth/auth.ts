@@ -192,6 +192,27 @@ export class MarfaAuth {
 
     const endpoints = await discoverEndpoints(this.issuer, this.fetch);
     const client = { client_id: this.clientId };
+    // The callback parameters have to come from the library's own validator.
+    // It brands the object it returns and the grant request refuses anything
+    // unbranded, so there is no way to skip the response check by handing it
+    // a set of parameters assembled here. It also verifies `iss` against the
+    // discovered issuer, which is the mix-up defense a hand-assembled bag of
+    // parameters silently omits.
+    let callbackParameters: URLSearchParams;
+    try {
+      callbackParameters = oauth.validateAuthResponse(
+        endpoints.as,
+        client,
+        url.searchParams,
+        pending.state,
+      );
+    } catch (err) {
+      throw new OAuthError(
+        "invalid_request",
+        err instanceof Error ? err.message : "Invalid authorization response",
+      );
+    }
+
     // The exchange is the library's: it builds the form-encoded body,
     // applies `none` client authentication for a public client, and
     // validates the response against RFC 6749 rather than trusting the
@@ -201,7 +222,7 @@ export class MarfaAuth {
       endpoints.as,
       client,
       oauth.None(),
-      new URLSearchParams({ code }),
+      callbackParameters,
       pending.redirectUri,
       pending.verifier,
       {
