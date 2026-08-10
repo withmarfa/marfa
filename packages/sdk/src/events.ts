@@ -22,10 +22,17 @@
  *    every event in the gap. The only correct response is to re-read state and
  *    resume from nothing, so this surfaces as its own callback rather than an
  *    error the caller is likely to swallow.
- *  - **The cursor must advance on every framed `id:`, not on delivery.** If
- *    the handler throws, the cursor still has to hold the last event actually
- *    received, or a reconnect replays or skips depending on which side of the
- *    failure it was updated.
+ *  - **The cursor advances when a frame is accounted for, not when it
+ *    arrives.** A frame is accounted for once `onEvent` has resolved, or once
+ *    the subscriber has decided not to deliver it: an empty payload, or one
+ *    that would not parse and was reported instead. A frame whose handler
+ *    rejected is not accounted for, so a reconnect replays it.
+ *
+ *    That makes delivery at-least-once, and the asymmetry is what decides it:
+ *    a caller who wants at-most-once writes a `try`/`catch` inside their
+ *    handler, one line, visible where they read it. A caller who wants
+ *    at-least-once out of an at-most-once subscriber cannot express it at all,
+ *    because the cursor has already moved by the time they see the failure.
  */
 
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
@@ -68,8 +75,13 @@ export interface SubscribeOptions {
    * everything since. Omit to receive only events from now on.
    */
   lastEventId?: string;
-  /** Called for each event, in stream order. Awaited before the next is read,
-   *  so a slow handler applies backpressure rather than interleaving. */
+  /**
+   * Called for each event, in stream order. Awaited before the next frame is
+   * read, so a slow handler applies backpressure rather than interleaving,
+   * and awaited before the cursor advances, so a handler that rejects has its
+   * event replayed on the next connection. Catch inside the handler if you
+   * would rather drop it.
+   */
   onEvent: (
     event: MarfaEvent,
     eventId: string | undefined,
@@ -83,8 +95,13 @@ export interface SubscribeOptions {
    * being passed over in silence.
    */
   onCatchupTooOld?: (info: CatchupTooOld) => void;
-  /** Called on a connection or parse failure. The subscription reconnects
-   *  afterwards unless `reconnect` is false or the signal has aborted. */
+  /**
+   * Called on a connection failure, on a handler that rejected, and on a
+   * frame whose payload would not parse. The first two reconnect afterwards
+   * unless `reconnect` is false or the signal has aborted; an unparseable
+   * frame is skipped and the same connection carries on, because replaying it
+   * could only fail in the same place.
+   */
   onError?: (error: unknown) => void;
   /** Reconnect with exponential backoff. `false` stops at the first failure.
    *  Defaults to enabled. */
@@ -103,7 +120,7 @@ export interface Subscription {
   closed: Promise<void>;
   /** Stops the subscription. Idempotent. */
   close: () => void;
-  /** The most recent event id seen. Persist it to resume later. */
+  /** The most recent event id accounted for. Persist it to resume later. */
   readonly lastEventId: string | undefined;
 }
 
@@ -230,6 +247,15 @@ export function subscribeToEvents(
     let retryMs = initialRetryMs;
 
     while (!stopped()) {
+      // Where the cursor stood when this attempt began, so the backoff can be
+      // reset on progress rather than on connect. A connection that opened,
+      // delivered nothing and died is not evidence the endpoint is healthy;
+      // one that moved the cursor is.
+      const cursorAtConnect = lastEventId;
+      const acknowledge = (id: string | undefined): void => {
+        if (id !== undefined) lastEventId = id;
+      };
+
       try {
         const headers: Record<string, string> = { Accept: "text/event-stream" };
         if (lastEventId !== undefined) headers["Last-Event-ID"] = lastEventId;
@@ -247,21 +273,37 @@ export function subscribeToEvents(
         }
 
         onOpen?.();
-        // A connection that opened is evidence the endpoint is healthy, so the
-        // next failure starts from the bottom of the backoff again. Without
-        // this a long-lived stream that reconnects once an hour would still be
-        // waiting the maximum delay after weeks of uptime.
-        retryMs = initialRetryMs;
 
         const terminal = await readStream(response.body, {
           onFrame: async (frame) => {
-            if (frame.id !== undefined) lastEventId = frame.id;
             if (frame.event === "catchup_too_old") {
+              // Not acknowledged: the cursor is about to be thrown away, and
+              // pointing it at the frame that said it was unusable would be
+              // the one value guaranteed to fail again.
               return JSON.parse(frame.data) as CatchupTooOld;
             }
-            if (frame.data === "") return undefined;
-            const parsed = JSON.parse(frame.data) as MarfaEvent;
-            await onEvent(parsed, frame.id);
+
+            if (frame.data !== "") {
+              let parsed: MarfaEvent;
+              try {
+                parsed = JSON.parse(frame.data) as MarfaEvent;
+              } catch (err) {
+                // A payload that will not parse now will not parse on a
+                // replay either, so leaving the cursor behind it means
+                // reconnecting into the same failure for ever. Report it and
+                // move past it: skipping one unreadable frame is recoverable,
+                // and a stream that can never advance is not.
+                onError?.(err);
+                acknowledge(frame.id);
+                return undefined;
+              }
+              // Awaited before the cursor moves. A handler that rejects
+              // leaves the cursor behind this frame, so the reconnect
+              // replays it.
+              await onEvent(parsed, frame.id);
+            }
+
+            acknowledge(frame.id);
             return undefined;
           },
         });
@@ -291,6 +333,7 @@ export function subscribeToEvents(
       }
 
       if (stopped()) return;
+      if (lastEventId !== cursorAtConnect) retryMs = initialRetryMs;
       await sleep(jitter(retryMs), controller.signal);
       retryMs = Math.min(retryMs * 2, maxRetryMs);
     }
