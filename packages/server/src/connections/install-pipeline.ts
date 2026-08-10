@@ -43,6 +43,7 @@
  */
 import { randomBytes } from "node:crypto";
 import {
+  applyConfigurationDefaults,
   ErrorCode,
   MarfaError,
   validateConnectionConfiguration,
@@ -125,11 +126,16 @@ export interface InstallInput {
   credentialRef?: string;
   /**
    * Optional initial `properties.configuration` seed for the new
-   * connection. The install-pipeline always creates the connection with
-   * an empty `configuration: {}`; this seed merges over that empty
-   * default, letting server-side install paths (admin install via
+   * connection. It merges over the manifest's declared defaults, which the
+   * pipeline writes in for every key this seed leaves out, letting
+   * server-side install paths (admin install via
    * `POST /connections/install`) pre-populate per-connection knobs that
    * would otherwise require a follow-on `PATCH /items/:id` round-trip.
+   *
+   * An omitted key is therefore answered by the manifest rather than left
+   * for a handler to answer. It used to be left, and Google Calendar's two
+   * resolution branches came to disagree about what an unconfigured
+   * connection writes.
    *
    * Motivating case: `upstream_base_url_override` so a connection
    * sharing the shared google.* OAuth credential can point at a
@@ -243,10 +249,16 @@ export async function performInstall(
     status: "active" as const,
     granted_at: now,
     integration_ref: input.integrationItemId,
-    // Seed from optional install-time configuration; falls back to the
-    // empty default. The bag stays free-form — per-integration install
-    // contracts validate their own keys.
-    configuration: input.configuration ?? {},
+    // Seed from optional install-time configuration, with the manifest's
+    // declared defaults filled in for anything the caller left out. Writing
+    // them here rather than resolving them on each read is what stops a
+    // handler inventing its own answer for an unconfigured key: there is no
+    // unconfigured key left to invent one for. The bag stays free-form
+    // beyond that — per-integration install contracts validate their own.
+    configuration: applyConfigurationDefaults(
+      manifest,
+      input.configuration ?? {},
+    ),
     direction: manifest.direction,
     triggers: manifest.triggers,
     runtime_status: "healthy" as const,

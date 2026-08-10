@@ -3,7 +3,7 @@
  *
  * Builds ConnectionContext inline. Mocks ctx.marfa entirely (no
  * real HTTP). Tests cover:
- *   - Inbound: events.list response → core.event upsert + cursor advance
+ *   - Inbound: events.list response → target-type upsert + cursor advance
  *   - Inbound: multi-page response → every page ingested, sync token stored
  *   - Inbound: sweep past the page brake parks and resumes a page token
  *   - Inbound: cancelled event → trashed transition on the mapped Marfa item
@@ -17,6 +17,7 @@
  *   - Outbound: 4xx upstream → ack (accept-partial)
  */
 import { describe, it, expect } from "vitest";
+import { GOOGLE_CALENDAR_MANIFEST } from "./manifest.js";
 import {
   createCursorStore,
   createActivitySink,
@@ -229,6 +230,82 @@ const SAMPLE_INBOUND = {
   ],
   nextSyncToken: "sync_after_first_pull",
 };
+
+describe("Google Calendar handlers — the type a connection writes", () => {
+  // The type a connection writes is the most consequential thing about its
+  // corpus, and it used to be decided by which branch ran. A connection with
+  // no selection wrote core.event; the moment the picker saved one, the same
+  // connection wrote google.calendar.event, leaving one logical corpus split
+  // across two types with no way back.
+  it("writes the manifest's declared type when nothing is configured", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: { kind: "integration", configuration: {} },
+      },
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(2);
+    expect(created.every((c) => c.type === "google.calendar.event")).toBe(true);
+    expect(
+      GOOGLE_CALENDAR_MANIFEST.configuration_schema?.target_type?.default,
+    ).toBe("google.calendar.event");
+  });
+
+  it("writes the configured type when the install names one", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: { target_type: "core.event" },
+        },
+      },
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(2);
+    expect(created.every((c) => c.type === "core.event")).toBe(true);
+  });
+
+  it("does not change type when a connection gains a calendar selection", async () => {
+    // The same connection, before and after the picker saves. This is the
+    // transition that used to flip the type under an existing corpus.
+    const withoutSelection = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: { kind: "integration", configuration: {} },
+      },
+    });
+    await handleSchedule(withoutSelection.ctx, SCHEDULE_MSG());
+
+    const withSelection = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: { selected_calendar_ids: ["primary"] },
+        },
+      },
+    });
+    await handleSchedule(withSelection.ctx, SCHEDULE_MSG());
+
+    expect(withoutSelection.created.map((c) => c.type)).toEqual(
+      withSelection.created.map((c) => c.type),
+    );
+  });
+});
 
 describe("Google Calendar handlers — inbound (schedule)", () => {
   it("upserts events on first run, advances syncToken, records mappings", async () => {

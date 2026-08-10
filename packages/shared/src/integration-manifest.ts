@@ -284,6 +284,50 @@ export interface ConfigurationIssue {
  * is being established, so a missing required key is a refusal) from a
  * partial update (only the supplied keys are judged).
  */
+/**
+ * Fill in the defaults a manifest declares for keys the caller left out.
+ *
+ * A declared `default` used to be inert. Nothing consulted it on a write, so
+ * it described the integration's intent while every code path decided for
+ * itself what an unconfigured connection meant — and Google Calendar's two
+ * branches came to disagree, one writing `core.event` and the other
+ * `google.calendar.event` for the same install. Applying the default when
+ * the connection is created makes the manifest the single statement of what
+ * a connection writes, and makes an in-code fallback unreachable rather than
+ * merely discouraged.
+ *
+ * Applied at install rather than at read time on purpose: a value written
+ * into `configuration` is visible to the operator and stays put, whereas a
+ * default resolved on every read silently changes what an existing
+ * connection writes the moment the manifest changes.
+ */
+export function applyConfigurationDefaults(
+  manifest: Pick<IntegrationManifest, "configuration_schema">,
+  configuration: Record<string, unknown>,
+): Record<string, unknown> {
+  const declared = manifest.configuration_schema ?? {};
+  const filled: Record<string, unknown> = { ...configuration };
+  for (const [key, spec] of Object.entries(declared)) {
+    if (spec.default !== undefined && filled[key] === undefined) {
+      filled[key] = spec.default;
+    }
+  }
+  return filled;
+}
+
+/**
+ * The default a manifest declares for one key, when it declares one of the
+ * expected shape. Surfaces that render a choice read it here rather than
+ * hardcoding a value that agrees with the manifest only by coincidence.
+ */
+export function declaredConfigurationDefault(
+  manifest: Pick<IntegrationManifest, "configuration_schema">,
+  key: string,
+): string | undefined {
+  const value = manifest.configuration_schema?.[key]?.default;
+  return typeof value === "string" ? value : undefined;
+}
+
 export function validateConnectionConfiguration(
   manifest: Pick<IntegrationManifest, "configuration_schema" | "target_types">,
   configuration: Record<string, unknown>,

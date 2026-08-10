@@ -11,12 +11,13 @@
  *       - Else compute `(external_id, content_hash)`. If
  *         echo.shouldSkipReactive(...) → skip (we wrote this
  *         ourselves recently).
- *       - Else upsert as `core.event`. Record the mapping in
- *         the cursor.
+ *       - Else upsert as the connection's configured target type.
+ *         Record the mapping in the cursor.
  *     Follow `nextPageToken` through every page of the sweep and
  *     store the `nextSyncToken` the final page carries.
  *
- * - ITEM-EVENT (outbound, fires on Marfa `core.event` mutations):
+ * - ITEM-EVENT (outbound, fires on mutations of the types this
+ *   integration targets):
  *     - The reactive bridge already filters self-events; double-check
  *       defensively against `cycle`.
  *     - If we're inside the lag window for this external_id,
@@ -60,7 +61,25 @@ import {
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
-import { CALENDAR_API_BASE, DEFAULT_CALENDAR_ID } from "./manifest.js";
+import { declaredConfigurationDefault } from "@withmarfa/shared";
+import {
+  CALENDAR_API_BASE,
+  DEFAULT_CALENDAR_ID,
+  GOOGLE_CALENDAR_MANIFEST,
+} from "./manifest.js";
+
+/**
+ * The target type an unconfigured connection writes, read from the manifest
+ * rather than restated so the two cannot drift.
+ *
+ * Only reachable for a connection installed before the manifest's declared
+ * defaults were written into `configuration` at install time. Every new
+ * install carries an explicit `target_type`, so this is a floor for old rows
+ * rather than a decision made here.
+ */
+const DEFAULT_TARGET_TYPE =
+  declaredConfigurationDefault(GOOGLE_CALENDAR_MANIFEST, "target_type") ??
+  "google.calendar.event";
 
 const CURSOR_KEY = "main";
 
@@ -103,9 +122,9 @@ interface PerCalendarCursor {
 
 /**
  * Normalized view of the connection's `properties.configuration` for
- * the handler. Single mode (no `selected_calendar_ids`) syncs a single
- * primary calendar and writes as `core.event`. Multi mode honors the
- * install-time picker selections.
+ * the handler. Single mode (no `selected_calendar_ids`) syncs the primary
+ * calendar; multi mode honors the install-time picker selections. Mode
+ * decides which calendars are read, and nothing else.
  */
 interface ConnectionConfig {
   mode: "single" | "multi";
@@ -113,8 +132,10 @@ interface ConnectionConfig {
   default_write_calendar_id: string;
   /** All calendars to sync from. Single-entry array in single mode. */
   selected_calendar_ids: string[];
-  /** Target type for inbound items. `core.event` in single mode; configurable
-   *  in multi (default `google.calendar.event`). */
+  /** Target type for inbound items, as the manifest declares it. Not a
+   *  function of mode: a connection moves between single and multi, and a
+   *  target type that moved with it would split one corpus across two types
+   *  with no way back. */
   target_type: string;
 }
 
@@ -234,20 +255,22 @@ async function resolveConnectionConfig(
         mode: "multi",
         selected_calendar_ids: selected,
         default_write_calendar_id: defaultWrite ?? firstSelected,
-        target_type: targetType ?? "google.calendar.event",
+        target_type: targetType ?? DEFAULT_TARGET_TYPE,
       },
     };
   }
 
   // No selection: the primary calendar, which is what an install that
-  // configures nothing asks for.
+  // configures nothing asks for. The target type is the manifest's, the same
+  // as the branch above: this one used to answer `core.event`, so the same
+  // connection wrote one type until the picker saved and the other after.
   return {
     ok: true,
     config: {
       mode: "single",
       selected_calendar_ids: [DEFAULT_CALENDAR_ID],
       default_write_calendar_id: DEFAULT_CALENDAR_ID,
-      target_type: targetType ?? "core.event",
+      target_type: targetType ?? DEFAULT_TARGET_TYPE,
     },
   };
 }

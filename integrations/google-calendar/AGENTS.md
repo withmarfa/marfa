@@ -11,8 +11,12 @@ will follow the same conventions.
 - Target types: `core.event` AND `google.calendar.event`. The
   install pipeline grants the runtime credential write permission
   on both; the user picks at install which is actually written
-  (default `google.calendar.event` for upstream fidelity;
-  `core.event` for cross-app interop).
+  (`google.calendar.event` for upstream fidelity, `core.event` for
+  cross-app interop). The manifest declares the default, and the
+  install pipeline writes it into `configuration`, so every
+  connection carries an explicit answer rather than relying on one
+  the handler picks. Which calendars a connection reads never
+  changes the type it writes.
 
 ## OAuth scopes
 
@@ -42,9 +46,12 @@ Driven by `connection.properties.configuration`:
   has been minted; enables push notifications via `channels.watch`.
 
 Set via the install-time picker at `GET /connections/:id/configure`.
-Without configuration the handler runs in single-primary-calendar
-mode — the default for an uninstalled-picker connection and the
-safety net for `core.event` writes.
+Without a selection the handler runs in single-primary-calendar
+mode, which is what an install that configures nothing asks for.
+Mode decides which calendars are read and nothing else: the single
+branch used to answer `core.event` while the multi branch answered
+`google.calendar.event`, so opening the picker once flipped what a
+connection wrote and split one corpus across two types.
 
 ## Cursor shape
 
