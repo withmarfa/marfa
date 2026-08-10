@@ -14,12 +14,12 @@
     },
     "starts_at": {
       "type": "string",
-      "description": "Start time",
+      "description": "The instant the event starts, ISO 8601. An instant carries no zone of its own however it is written; the timezone field is what anchors the event's wall-clock hour.",
       "format": "datetime"
     },
     "ends_at": {
       "type": "string",
-      "description": "End time",
+      "description": "The instant the event ends, ISO 8601.",
       "format": "datetime"
     },
     "duration": {
@@ -63,11 +63,11 @@
     },
     "timezone": {
       "type": "string",
-      "description": "IANA time zone the event's wall-clock times are expressed in, e.g. Europe/Berlin. Required for a recurring series to expand correctly across a daylight-saving transition."
+      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC."
     },
     "original_starts_at": {
       "type": "string",
-      "description": "For an event that replaces one occurrence of a series, the start time of the occurrence it replaces. Its series is named by a parent-of edge.",
+      "description": "For an event that replaces one occurrence of a series, the start instant of the occurrence it replaces. Its series is named by a parent-of edge.",
       "format": "datetime"
     }
   },

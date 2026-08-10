@@ -21,6 +21,11 @@ interface OccurrenceRow {
   replaces?: string;
 }
 
+interface SeriesError {
+  item_id: string;
+  message: string;
+}
+
 beforeAll(async () => {
   ctx = await createTestContext();
   // A member credential, not an admin: reading your own calendar is the
@@ -58,15 +63,22 @@ async function occurrences(
   from: string,
   to: string,
   extra = "",
-): Promise<{ status: number; rows: OccurrenceRow[] }> {
+): Promise<{ status: number; rows: OccurrenceRow[]; errors: SeriesError[] }> {
   const res = await request(
     ctx.app,
     "GET",
     `/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${extra}`,
     { key: memberKey },
   );
-  const body = (await res.json()) as { data?: OccurrenceRow[] };
-  return { status: res.status, rows: body.data ?? [] };
+  const body = (await res.json()) as {
+    data?: OccurrenceRow[];
+    series_errors?: SeriesError[];
+  };
+  return {
+    status: res.status,
+    rows: body.data ?? [],
+    errors: body.series_errors ?? [],
+  };
 }
 
 describe("GET /occurrences", () => {
@@ -205,16 +217,158 @@ describe("GET /occurrences", () => {
     expect(status).toBe(400);
   });
 
-  it("refuses a rule that would flood the window", async () => {
-    await createEvent({
+  it("returns a zoned series at the instants its zone names, across the daylight-saving change", async () => {
+    // Stored exactly as the calendar integration writes it: an
+    // offset-bearing instant plus the series zone alongside.
+    const id = await createEvent({
+      title: "Berlin standup",
+      starts_at: "2026-03-24T09:00:00+01:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU"],
+    });
+    const { status, rows } = await occurrences(
+      "2026-03-20T00:00:00Z",
+      "2026-04-10T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    const mine = rows.filter((r) => r.item.id === id);
+    // 09:00 Berlin is 08:00Z before the 29 March transition, 07:00Z after.
+    expect(mine.map((r) => r.starts_at)).toEqual([
+      "2026-03-24T08:00:00.000Z",
+      "2026-03-31T07:00:00.000Z",
+      "2026-04-07T07:00:00.000Z",
+    ]);
+  });
+
+  it("shows a moved occurrence of a zoned series once, at its new time", async () => {
+    const seriesId = await createEvent({
+      title: "Zoned review",
+      starts_at: "2026-10-05T14:00:00+02:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    // The 12 October instance moved to the next day.
+    const movedId = await createEvent({
+      title: "Zoned review (moved)",
+      starts_at: "2026-10-13T09:00:00+02:00",
+      original_starts_at: "2026-10-12T14:00:00+02:00",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const { rows } = await occurrences(
+      "2026-10-01T00:00:00Z",
+      "2026-10-20T00:00:00Z",
+    );
+    const mine = rows.filter(
+      (r) => r.series_id === seriesId || r.item.id === movedId,
+    );
+    // The moved item appears exactly once, at its own time; the slot it
+    // left is not shown as a ghost.
+    const moved = mine.filter((r) => r.item.id === movedId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.starts_at).toBe("2026-10-13T07:00:00.000Z");
+    expect(moved[0]?.replaces).toBe("2026-10-12T12:00:00.000Z");
+    expect(
+      mine.filter((r) => r.starts_at === "2026-10-12T12:00:00.000Z"),
+    ).toHaveLength(0);
+  });
+
+  it("still shows an exception whose original slot is outside the window", async () => {
+    const seriesId = await createEvent({
+      title: "November series",
+      starts_at: "2026-11-02T10:00:00+01:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    // The 2 November instance moved forward into December: its original
+    // slot sits outside the window below, but the item itself is in it.
+    const movedId = await createEvent({
+      title: "November review (moved far)",
+      starts_at: "2026-12-04T10:00:00+01:00",
+      original_starts_at: "2026-11-02T10:00:00+01:00",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const { rows } = await occurrences(
+      "2026-12-01T00:00:00Z",
+      "2026-12-10T00:00:00Z",
+    );
+    const moved = rows.filter((r) => r.item.id === movedId);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.starts_at).toBe("2026-12-04T09:00:00.000Z");
+  });
+
+  it("counts a series' contribution against the window, not its history", async () => {
+    // A daily meeting running since 2021 contributes seven rows to a
+    // seven-day window; its age alone must not fail the read.
+    const id = await createEvent({
+      title: "Old daily standup",
+      starts_at: "2021-01-04T09:00:00+01:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=DAILY"],
+    });
+    const { status, rows, errors } = await occurrences(
+      "2027-02-01T00:00:00Z",
+      "2027-02-08T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    expect(rows.filter((r) => r.item.id === id)).toHaveLength(7);
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(0);
+  });
+
+  it("reports a series that floods the window and keeps the rest of the calendar", async () => {
+    const floodId = await createEvent({
       title: "Every minute",
       starts_at: "2026-09-01T00:00:00.000Z",
       recurrence: ["RRULE:FREQ=MINUTELY"],
     });
-    const { status } = await occurrences(
+    const okId = await createEvent({
+      title: "September one-off",
+      starts_at: "2026-09-10T12:00:00.000Z",
+    });
+    const { status, rows, errors } = await occurrences(
       "2026-09-01T00:00:00Z",
       "2026-09-30T00:00:00Z",
     );
-    expect(status).toBe(400);
+    expect(status).toBe(200);
+    expect(rows.some((r) => r.item.id === okId)).toBe(true);
+    const mine = errors.filter((e) => e.item_id === floodId);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.message).toContain("in this window");
+  });
+
+  it("reports a malformed rule against its series and keeps the rest of the calendar", async () => {
+    const badId = await createEvent({
+      title: "Rule with no frequency",
+      starts_at: "2027-04-01T09:00:00.000Z",
+      recurrence: ["RRULE:INTERVAL=2"],
+    });
+    const okId = await createEvent({
+      title: "April one-off",
+      starts_at: "2027-04-02T12:00:00.000Z",
+    });
+    const { status, rows, errors } = await occurrences(
+      "2027-04-01T00:00:00Z",
+      "2027-04-05T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    expect(rows.some((r) => r.item.id === okId)).toBe(true);
+    expect(errors.filter((e) => e.item_id === badId)).toHaveLength(1);
   });
 });
