@@ -28,6 +28,16 @@ import type { Collection } from "@tanstack/db";
 import type { Item } from "@withmarfa/shared";
 import type { MarfaClient } from "../client.js";
 import type { ConflictStrategy } from "../conflict.js";
+import { collect, paginate } from "../pagination.js";
+
+/**
+ * Default ceiling on a replica's size.
+ *
+ * Chosen to be far above any single-player type and far below what would
+ * wedge a browser tab, so it only ever fires on a replica of something that
+ * was never going to work as a local copy.
+ */
+export const DEFAULT_REPLICA_MAX_ITEMS = 50_000;
 
 export interface ReplicaOptions {
   /** Marfa type to replicate, e.g. `core.note`. */
@@ -42,6 +52,13 @@ export interface ReplicaOptions {
   conflict?: ConflictStrategy;
   /** Page size for the initial read. */
   pageSize?: number;
+  /**
+   * Most items the replica will hold. A replica keeps the whole type in
+   * memory, so this is the size of the thing being loaded into the page,
+   * and a walk that ran past it reports through `onError` rather than
+   * filling the tab. Defaults to `DEFAULT_REPLICA_MAX_ITEMS`.
+   */
+  maxItems?: number;
   /**
    * Called when the replica had to discard and reload — the cursor aged
    * out of the server's retention window. Surfaced rather than swallowed
@@ -84,7 +101,11 @@ export function createReplicaCollection(
   client: MarfaClient,
   options: ReplicaOptions,
 ): ReplicaCollection {
-  const { type, pageSize = 200 } = options;
+  const {
+    type,
+    pageSize = 200,
+    maxItems = DEFAULT_REPLICA_MAX_ITEMS,
+  } = options;
   let stopStream: (() => void) | null = null;
   let restart: (() => void) | null = null;
 
@@ -156,18 +177,20 @@ export function createReplicaCollection(
 
         void (async () => {
           try {
-            let cursor: string | undefined;
-            const seen: Item[] = [];
-            for (;;) {
-              const page = await client.items.list({
-                type,
-                limit: pageSize,
-                ...(cursor ? { cursor } : {}),
-              });
-              seen.push(...page.data);
-              if (!page.has_more || !page.cursor) break;
-              cursor = page.cursor;
-            }
+            // Built from the primitive rather than from `items.listAll`,
+            // which would be the same walk: the replica reaches for one
+            // client method and saying so keeps the seam narrow enough to
+            // stand in for.
+            const seen = await collect(
+              paginate((cursor) =>
+                client.items.list({
+                  type,
+                  limit: pageSize,
+                  ...(cursor ? { cursor } : {}),
+                }),
+              ),
+              { maxItems },
+            );
 
             if (cancel.signal.aborted) return;
             begin();

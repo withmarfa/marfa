@@ -219,4 +219,53 @@ describe("createReplicaCollection", () => {
     expect(titles(replica.values())).not.toContain("a bookmark");
     replica.utils.stop();
   });
+
+  it("reports rather than fills the page when the type outgrows its ceiling", async () => {
+    // A replica holds the whole type in memory, so the interesting failure
+    // is a type that was never going to fit. Silently holding the first N
+    // rows would leave a UI showing a subset it believes is everything.
+    const rows: Item[] = Array.from({ length: 4 }, (_, i) => ({
+      ...({} as Item),
+      id: `row-${String(i)}`,
+      properties: { title: `row ${String(i)}` },
+    }));
+
+    let cursorsSeen = 0;
+    const pagedClient = {
+      items: {
+        list: ({ cursor }: { cursor?: string } = {}) => {
+          const start = cursor ? Number(cursor) : 0;
+          cursorsSeen += 1;
+          return Promise.resolve({
+            data: rows.slice(start, start + 2),
+            cursor: start + 2 < rows.length ? String(start + 2) : null,
+            has_more: start + 2 < rows.length,
+          });
+        },
+      },
+    } as unknown as typeof fx.client;
+
+    const errors: unknown[] = [];
+    const replica = createReplicaCollection(pagedClient, {
+      type: "core.note",
+      pageSize: 2,
+      maxItems: 3,
+      subscribe: () => ({
+        closed: Promise.resolve(),
+        close: () => undefined,
+        lastEventId: undefined,
+      }),
+      onError: (err) => errors.push(err),
+    });
+
+    await replica.preload();
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).name).toBe("PageLimitExceededError");
+    // It walked far enough to know the set was bigger, then stopped.
+    expect(cursorsSeen).toBe(2);
+    // And it is still ready, so a consumer sees an empty replica plus an
+    // error rather than waiting on a promise that never settles.
+    expect([...replica.values()]).toHaveLength(0);
+    replica.utils.stop();
+  });
 });

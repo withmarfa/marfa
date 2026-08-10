@@ -56,6 +56,7 @@ import {
   type ConflictAutoMergeListener,
 } from "./conflict.js";
 import { pollUntilTerminal } from "./poll.js";
+import { paginate } from "./pagination.js";
 import {
   subscribeToEvents,
   type SubscribeOptions,
@@ -775,6 +776,41 @@ export class MarfaClient {
       );
     },
 
+    /**
+     * Every item matching the filters, across as many pages as it takes.
+     *
+     * Lazy: one page is in flight at a time and a consumer that breaks out
+     * stops the walk. Pass `limit` to size the pages; `cursor` is the walk's
+     * own business and is not accepted here. Wrap in `collect` when an array
+     * is genuinely wanted, which is where the ceiling gets named.
+     */
+    listAll: (filters?: Omit<ListFilters, "cursor">): AsyncIterable<Item> =>
+      paginate((cursor) =>
+        this.items.list({ ...filters, ...(cursor ? { cursor } : {}) }),
+      ),
+
+    /** `listAll` with metadata hydrated inline. */
+    listAllWithMetadata: (
+      filters?: Omit<ListFilters, "include" | "cursor">,
+    ): AsyncIterable<ItemWithMetadata> =>
+      paginate((cursor) =>
+        this.items.listWithMetadata({
+          ...filters,
+          ...(cursor ? { cursor } : {}),
+        }),
+      ),
+
+    /** `listAll` with extension namespaces hydrated inline. */
+    listAllWithExtensions: (
+      filters?: Omit<ListFilters, "include" | "cursor">,
+    ): AsyncIterable<ItemWithExtensions> =>
+      paginate((cursor) =>
+        this.items.listWithExtensions({
+          ...filters,
+          ...(cursor ? { cursor } : {}),
+        }),
+      ),
+
     update: async (
       id: string,
       properties: Record<string, unknown>,
@@ -1408,6 +1444,39 @@ export class MarfaClient {
         },
       );
     },
+
+    /** Every edge matching the filters, across as many pages as it takes. */
+    listAll: (filters?: {
+      edge_type?: string | string[];
+      limit?: number;
+    }): AsyncIterable<Edge> =>
+      paginate((cursor) =>
+        this.edges.list({ ...filters, ...(cursor ? { cursor } : {}) }),
+      ),
+
+    /** Every outbound edge from `sourceId`, across as many pages as it takes. */
+    listAllFromSource: (
+      sourceId: string,
+      filters?: { edge_type?: string | string[]; limit?: number },
+    ): AsyncIterable<Edge> =>
+      paginate((cursor) =>
+        this.edges.listFromSource(sourceId, {
+          ...filters,
+          ...(cursor ? { cursor } : {}),
+        }),
+      ),
+
+    /** Every inbound edge targeting `targetId`, across as many pages as it takes. */
+    listAllToTarget: (
+      targetId: string,
+      filters?: { edge_type?: string | string[]; limit?: number },
+    ): AsyncIterable<Edge> =>
+      paginate((cursor) =>
+        this.edges.listToTarget(targetId, {
+          ...filters,
+          ...(cursor ? { cursor } : {}),
+        }),
+      ),
 
     /** Custom edge-type registration + listing. */
     types: {
