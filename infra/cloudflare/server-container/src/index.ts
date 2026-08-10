@@ -1,6 +1,10 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
 import { serveThroughContainer } from "./cold-start.js";
+import { rollIfStale } from "./roll.js";
+
+/** Durable-object storage key holding the image the instance started under. */
+const RUNNING_IMAGE_KEY = "running_image";
 
 /**
  * Worker front for the Marfa server running on Cloudflare Containers.
@@ -33,6 +37,10 @@ interface Env {
   // kept resident instead of scaling to zero — see the warm policy on the
   // container class below.
   MARFA_CONTAINER_WARM?: string;
+  // The image reference this Worker was deployed to front. The Worker rolls
+  // atomically; the container does not, so this is how a running instance
+  // learns it is stale. See `roll.ts`.
+  MARFA_EXPECTED_IMAGE?: string;
   // Plain vars (wrangler [vars]).
   BLOB_BACKEND?: string;
   MARFA_AUTH_BASE_URL?: string;
@@ -184,13 +192,35 @@ export class MarfaServerContainer extends Container<Env> {
   override async onActivityExpired(): Promise<void> {
     await this.destroy();
   }
+
+  /**
+   * Called by the Worker before it serves. Reached over RPC because the
+   * recorded tag lives in this instance's own storage, which the Worker
+   * cannot see.
+   */
+  async ensureDeployedBuild(expectedImage: string | undefined): Promise<void> {
+    await rollIfStale(
+      this,
+      {
+        get: () => this.ctx.storage.get<string>(RUNNING_IMAGE_KEY),
+        set: (tag) => this.ctx.storage.put(RUNNING_IMAGE_KEY, tag),
+      },
+      expectedImage,
+    );
+  }
 }
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const container = getContainer(env.MARFA_SERVER);
+    // Before the wake, not after: a stale instance has to be gone before
+    // `startAndWaitForPorts` can bring the deployed image up in its place.
+    // The request is then served by the new build after a cold start rather
+    // than refused.
+    await container.ensureDeployedBuild(env.MARFA_EXPECTED_IMAGE);
     // The waiting and the error shaping live in `cold-start.ts` so they can be
     // tested without the Workers runtime; this stays the thin binding it looks
     // like.
-    return serveThroughContainer(request, getContainer(env.MARFA_SERVER));
+    return serveThroughContainer(request, container);
   },
 };
