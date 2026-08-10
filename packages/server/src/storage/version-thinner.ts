@@ -6,6 +6,7 @@ import {
   type ResolvedPolicy,
 } from "./version-thinning.js";
 import { log } from "../middleware/logger.js";
+import { logJobTickFailure } from "./job-tick.js";
 
 const BATCH_SIZE = 100;
 const DELETE_CHUNK_SIZE = 200;
@@ -13,6 +14,7 @@ const DELETE_CHUNK_SIZE = 200;
 export class VersionThinner {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     private versionStore: VersionStore,
@@ -22,11 +24,13 @@ export class VersionThinner {
   ) {}
 
   start(): void {
+    this.stopped = false;
     this.startupTimeout = setTimeout(() => void this.poll(), 5_000);
     this.interval = setInterval(() => void this.poll(), this.intervalMs);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
@@ -47,9 +51,7 @@ export class VersionThinner {
         await this.doPoll();
       }
     } catch (err) {
-      log("error", "Version thinning error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logJobTickFailure("Version thinning", err, this.stopped);
     }
   }
 

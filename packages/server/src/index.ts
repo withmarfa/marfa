@@ -11,6 +11,7 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { withStartupWait } from "./storage/startup-wait.js";
+import { logJobTickFailure } from "./storage/job-tick.js";
 import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
@@ -162,6 +163,13 @@ async function main() {
     );
   }
 
+  // Declared ahead of the jobs rather than beside `shutdown()` because the
+  // two inline cleanups below close over it: a sweep that loses its pool
+  // because the process is going away is a cancellation, not a failure, and
+  // this is the only thing that tells the two apart. Every other background
+  // job carries the same flag on itself.
+  let shuttingDown = false;
+
   const auditFanout: SpaceFanout | undefined = storage.spaces
     ? { spaces: storage.spaces, configField: "audit_retention_days" }
     : undefined;
@@ -183,13 +191,17 @@ async function main() {
       unitMs: 3_600_000,
       sweep: (retention, spaceId) =>
         storage.eventLog.cleanup(retention, spaceId),
-    }).then((deleted) => {
-      if (deleted > 0)
-        log(
-          "info",
-          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
-        );
-    });
+    })
+      .then((deleted) => {
+        if (deleted > 0)
+          log(
+            "info",
+            `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
+          );
+      })
+      .catch((err: unknown) => {
+        logJobTickFailure("Event-log cleanup", err, shuttingDown);
+      });
   };
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
   const eventLogCleanupInterval = setInterval(
@@ -205,13 +217,17 @@ async function main() {
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
       sweep: (retention, spaceId) => storage.audit.cleanup(retention, spaceId),
-    }).then((deleted) => {
-      if (deleted > 0)
-        log(
-          "info",
-          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-space overrides honored)`,
-        );
-    });
+    })
+      .then((deleted) => {
+        if (deleted > 0)
+          log(
+            "info",
+            `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-space overrides honored)`,
+          );
+      })
+      .catch((err: unknown) => {
+        logJobTickFailure("Audit cleanup", err, shuttingDown);
+      });
   };
   const auditCleanupDelay = setTimeout(runAuditCleanup, 5_000);
   const auditCleanupInterval = setInterval(
@@ -496,7 +512,6 @@ async function main() {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
 
-  let shuttingDown = false;
   const shutdown = (): void => {
     // A second signal must not restart the sequence. The platform sends
     // SIGTERM and then, shortly after, SIGKILL; some supervisors send SIGTERM
