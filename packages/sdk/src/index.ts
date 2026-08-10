@@ -31,6 +31,10 @@ export type {
   SecureStorage,
 } from "./client.js";
 
+// Pagination
+export { paginate, collect, PageLimitExceededError } from "./pagination.js";
+export type { PageFetcher, CollectOptions } from "./pagination.js";
+
 // Errors
 export {
   MarfaError,

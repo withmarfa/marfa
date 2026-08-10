@@ -7,6 +7,7 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 - `src/client.ts` — the `MarfaClient` class. Each API surface lives in a nested object: `client.items`, `client.metadata`, `client.edges`, `client.blobs`, `client.types`, `client.keys`, `client.webhooks`, `client.connections`, `client.spaces`, `client.admin`, `client.auth`, `client.profile`. Wire types come from `@withmarfa/shared`; the SDK adds ergonomic input/output types where convenient.
 - `src/transport.ts` — `HttpTransport` wrapping `fetch` with auth, timeout, and JSON encoding/decoding. Tests inject a custom `fetch` to drive an in-process Hono app.
 - `src/conflict.ts` — auto-merge / manual / callback conflict resolution for `client.items.update` (`auto` is the default; auto strategy resolves non-conflicting fields, surfaces real conflicts via `keep_both_copies` sibling items per the schema's merge_policy).
+- `src/pagination.ts` — `paginate` (stream a cursor-paginated endpoint) and `collect` (drain one into an array, up to a ceiling the caller names). The `listAll*` methods on the client are one-line wrappers over `paginate`; nothing else re-implements the walk.
 - `src/errors.ts` — typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
 - `src/define-type.ts` — `defineType()` authoring helper. No-op at runtime; constrains the input to a structurally-valid `TypeSchema` at compile time.
 - `src/webhooks.ts` — inbound webhook signature verification (`verifyWebhookSignature`).
