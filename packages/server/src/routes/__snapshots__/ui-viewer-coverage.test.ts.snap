@@ -3221,7 +3221,7 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
 <label class="field"><span class="field-name">since_days</span><span class="field-desc">How far back to look on the first run.</span><input type="number" name="since_days" value="30"></label>
 <label class="field"><span class="field-name">target_type</span><span class="field-desc">Which type new items are written as.</span><select name="target_type"><option value="readwise.highlight">readwise.highlight</option><option value="core.highlight">core.highlight</option></select></label>
 <label class="field"><span class="field-name">tags</span><span class="field-desc">Tags applied to every item this connection creates.</span><input type="text" name="tags" value="" placeholder="comma-separated"></label>
-        <button type="submit">Save configuration</button>
+        <button type="submit" class="btn btn--primary">Save configuration</button>
       </form>
     
   </main>

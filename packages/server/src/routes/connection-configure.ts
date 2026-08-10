@@ -261,7 +261,7 @@ export function renderGenericConfigureForm(
     bodyHtml: `      <h1 class="title">Configure ${esc(manifest.name)}</h1>
       <form method="post" action="/connections/${esc(connectionId)}/configure">
         ${rows}
-        <button type="submit">Save configuration</button>
+        <button type="submit" class="btn btn--primary">Save configuration</button>
       </form>
     `,
   });
