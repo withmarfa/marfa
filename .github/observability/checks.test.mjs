@@ -23,6 +23,7 @@ import {
   SAMPLE_INTERVAL_MS,
   MAX_SAMPLE_SPREAD_MS,
 } from "./probes.mjs";
+import { waitForDeployedBuild, healthUrlFor } from "./deploy-gate.mjs";
 import {
   evaluateService,
   servicesFromRows,
@@ -1029,5 +1030,153 @@ describe("what the run records and what it says", () => {
       beat: { emitted: true },
     });
     assert.match(lines.join("\n"), /predate the trigger marker/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The deploy gate
+//
+// `wrangler deploy` returning zero says the Worker rolled. It says nothing
+// about the container behind it, which has its own replacement rules — so the
+// pipeline used to end while the previous build was still answering, and
+// nothing measured the gap.
+// ---------------------------------------------------------------------------
+
+/** A fetch stand-in answering with each health payload in turn. */
+function healthSequence(payloads) {
+  let i = 0;
+  return () => {
+    const payload = payloads[Math.min(i, payloads.length - 1)];
+    i += 1;
+    if (typeof payload === "number") {
+      return Promise.resolve({
+        ok: false,
+        status: payload,
+        text: () => Promise.resolve("Error proxying request to container"),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(payload)),
+    });
+  };
+}
+
+/** A clock that advances by the interval every time the gate sleeps. */
+function fakeClock(intervalMs) {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: (ms) => {
+      now += ms ?? intervalMs;
+      return Promise.resolve();
+    },
+  };
+}
+
+describe("waitForDeployedBuild", () => {
+  test("returns as soon as the deployed build answers, and reports the window", async () => {
+    const clock = fakeClock(5_000);
+    const result = await waitForDeployedBuild(
+      "https://example.test/health",
+      "abc1234",
+      {
+        fetch: healthSequence([
+          { status: "ok", version: { sha: "old0000" } },
+          { status: "ok", version: { sha: "old0000" } },
+          { status: "ok", version: { sha: "abc1234" } },
+        ]),
+        ...clock,
+      },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.attempts, 3);
+    // Two sleeps at 5s. The number is the point: it is what the pipeline
+    // prints, so the roll window is measured on every deploy rather than once.
+    assert.equal(result.rollWindowMs, 10_000);
+  });
+
+  test("fails with the build it kept seeing when the roll never happens", async () => {
+    // The stranded-container case. Silence here would read as success, which
+    // is exactly how the previous build kept serving unnoticed.
+    const clock = fakeClock(5_000);
+    const result = await waitForDeployedBuild(
+      "https://example.test/health",
+      "abc1234",
+      {
+        fetch: healthSequence([{ status: "ok", version: { sha: "old0000" } }]),
+        budgetMs: 20_000,
+        ...clock,
+      },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.lastSeen, "old0000");
+  });
+
+  test("names the failure when nothing is behind the edge", async () => {
+    const clock = fakeClock(5_000);
+    const result = await waitForDeployedBuild(
+      "https://example.test/health",
+      "abc1234",
+      { fetch: healthSequence([503]), budgetMs: 10_000, ...clock },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.lastFailure.kind, "instance-not-running");
+  });
+
+  test("survives a request that throws rather than answering", async () => {
+    const clock = fakeClock(5_000);
+    const result = await waitForDeployedBuild(
+      "https://example.test/health",
+      "abc1234",
+      {
+        fetch: () => Promise.reject(new Error("ECONNRESET")),
+        budgetMs: 10_000,
+        ...clock,
+      },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.lastFailure.kind, "unreachable");
+  });
+
+  test("reports a build that is serving but degraded rather than hiding it", async () => {
+    // A 200 with a downed database is still an outage. The gate passes,
+    // because the deploy did land, and says so.
+    const clock = fakeClock(5_000);
+    const result = await waitForDeployedBuild(
+      "https://example.test/health",
+      "abc1234",
+      {
+        fetch: healthSequence([
+          {
+            status: "degraded",
+            version: { sha: "abc1234" },
+            components: { database: { status: "down", error: "no route" } },
+          },
+        ]),
+        ...clock,
+      },
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(result.degraded.some((line) => line.includes("database")));
+  });
+});
+
+describe("healthUrlFor", () => {
+  test("resolves each deployed environment to the surface the watchdog probes", () => {
+    // Shared with the watchdog on purpose: a gate that checked a different URL
+    // than the alarm would pass a deploy the alarm then screams about.
+    assert.equal(healthUrlFor("staging"), "https://staging.marfa.so/health");
+    assert.equal(healthUrlFor("prod"), "https://api.marfa.so/health");
+  });
+
+  test("refuses an environment nothing declares", () => {
+    assert.throws(() => healthUrlFor("nowhere"), /no server surface/);
   });
 });

@@ -204,3 +204,19 @@ jobs:
           # locally, hiding the gap).
           export PATH="$PWD/infra/cloudflare/server-container/node_modules/.bin:$PWD/node_modules/.bin:$PATH"
           ./infra/cloudflare/scripts/deploy-server-container.sh "$ENVIRONMENT"
+
+      # `wrangler deploy` returning zero says the Worker rolled. It says
+      # nothing about the container behind it, which is a separate deployable
+      # with its own replacement rules -- so this pipeline used to end while
+      # the previous build was still answering every request, and nothing
+      # measured the gap.
+      #
+      # Polling is also what completes the roll: the container stands down
+      # when it notices its image is stale, and it can only notice on a
+      # request. The window it prints is the measurement the deploy discipline
+      # was missing.
+      - name: Wait for the new build to be serving
+        env:
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: node .github/observability/deploy-gate.mjs
