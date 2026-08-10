@@ -114,7 +114,7 @@ export function classifyFailure(status, body) {
  * ok. A 200 with a downed database is still an outage; the status code alone
  * is not the whole signal.
  */
-function inspectHealthPayload(body) {
+export function inspectHealthPayload(body) {
   let payload;
   try {
     payload = JSON.parse(body);
