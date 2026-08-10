@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
+  readSse,
   request,
   TEST_API_KEY_SALT,
   type TestContext,
@@ -50,88 +51,6 @@ async function mintSpaceKey(
     spaceId,
   );
   return raw;
-}
-
-/**
- * Drain an SSE response until `until` holds, or the ceiling is reached.
- *
- * The wait is for the item this test expects to see; the ceiling only bounds a
- * stream that never delivers it. A fixed 750ms window made the test a bet on
- * scheduling instead, and losing it reported
- * `expected ': connected\n\n' to contain '<id>'` — which reads as an RLS
- * failure and is not one.
- *
- * The negative half of the assertion is unaffected. Returning as soon as space
- * A's item arrives can only reduce what has been read, so space B's id being
- * absent here means it was absent over a shorter window, never a longer one.
- *
- * The ceiling is deliberately generous, because with an `until` predicate it is
- * a ceiling and not a cost: the loop returns the moment the event arrives, so a
- * healthy run never spends it. It is only reached when the event does not come,
- * which is either a real defect worth waiting to be sure of, or the CI pool
- * running the whole matrix on a shared machine. At 15 seconds the second case
- * was reached twice in consecutive runs while the same test passed locally in
- * under a second, and nothing about the invariant under test is a timing
- * property.
- */
-const SSE_READ_CEILING_MS = 60_000;
-
-async function readSse(
-  res: Response,
-  until?: (text: string) => boolean,
-  timeoutMs = SSE_READ_CEILING_MS,
-): Promise<{ text: string }> {
-  expect(res.body).not.toBeNull();
-  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let satisfied = false;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    const tick = new Promise<{ value?: Uint8Array; done: boolean }>(
-      (resolve) => {
-        const t = setTimeout(
-          () => {
-            resolve({ done: false });
-          },
-          Math.min(remaining, 50),
-        );
-        reader
-          .read()
-          .then((r) => {
-            clearTimeout(t);
-            resolve(r);
-          })
-          .catch(() => {
-            resolve({ done: true });
-          });
-      },
-    );
-    const { value, done } = await tick;
-    if (done) break;
-    if (value) text += decoder.decode(value, { stream: true });
-    if (until?.(text) === true) {
-      satisfied = true;
-      break;
-    }
-  }
-  try {
-    await reader.cancel();
-  } catch {
-    /* stream already closed */
-  }
-  // An unmet predicate has to be loud. The caller's next assertion is
-  // usually that something is ABSENT, and absence is trivially true of a
-  // stream that delivered nothing — so returning partial text here would
-  // convert a read that never happened into a passing isolation check.
-  if (until !== undefined && !satisfied) {
-    throw new Error(
-      `SSE read did not reach its condition within ${String(timeoutMs)}ms; read so far: ${JSON.stringify(text)}`,
-    );
-  }
-  return { text };
 }
 
 describe.skipIf(!isPg)("streaming RLS cross-space regression (PG only)", () => {
@@ -250,7 +169,9 @@ describe.skipIf(!isPg)("streaming RLS cross-space regression (PG only)", () => {
       },
     });
     expect(res.status).toBe(200);
-    const { text } = await readSse(res, (t) => t.includes(itemAId));
+    const { text } = await readSse(res, {
+      until: (t) => t.includes(itemAId),
+    });
     expect(text).toContain(itemAId);
     // The smoking gun: space B's item id must NEVER appear in
     // space A's SSE replay. The event_log row carries the payload

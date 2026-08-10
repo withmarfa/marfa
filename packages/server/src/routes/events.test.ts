@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 import { parseEventLogRetentionHours } from "../config.js";
@@ -42,83 +42,6 @@ async function createNote(body = "hello"): Promise<bigint> {
   return maxBigInt(after.map((e) => e.id));
 }
 
-/**
- * Read an SSE response body in chunks until either `want` event lines
- * are observed, the stream closes, or a short timeout elapses. Returns
- * the raw text accumulated plus a `closed` flag. Tests use this rather
- * than reading to end-of-stream because the SSE endpoint is intended
- * to stay open — we bound the wait explicitly.
- */
-/**
- * Drain an SSE response.
- *
- * Pass `until` whenever the test is waiting for something to arrive: the read
- * returns the moment the predicate holds, so the ceiling only bounds a stream
- * that never delivers. Without it the helper waited its full budget every
- * time, which made the budget a bet on scheduling — a 500ms window that a busy
- * machine misses, reported as `expected ': connected\n\n' to contain 'id: 3'`.
- * That reads as a defect in the event pipeline and is not one.
- *
- * Omit `until` only when asserting an absence, where a deadline is the whole
- * mechanism and has to stay short enough to keep the test quick but long
- * enough that a late arrival still fails it.
- */
-async function readSse(
-  res: Response,
-  opts: { timeoutMs?: number; until?: (text: string) => boolean } = {},
-): Promise<{ text: string; closed: boolean }> {
-  // With `until` the budget is a ceiling, not a cost — the loop returns as
-  // soon as the event lands, so a healthy run never spends it. Raised from
-  // 15s after the sibling streaming suite hit that ceiling twice in
-  // consecutive CI runs while passing locally in under a second.
-  const timeoutMs = opts.timeoutMs ?? (opts.until ? 60_000 : 500);
-  expect(res.body).not.toBeNull();
-  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let closed = false;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    const tick = new Promise<{ value?: Uint8Array; done: boolean }>(
-      (resolve) => {
-        const t = setTimeout(
-          () => {
-            resolve({ done: false });
-          },
-          Math.min(remaining, 50),
-        );
-        reader
-          .read()
-          .then((r) => {
-            clearTimeout(t);
-            resolve(r);
-          })
-          .catch(() => {
-            clearTimeout(t);
-            resolve({ done: true });
-          });
-      },
-    );
-    const r = await tick;
-    if (r.done) {
-      closed = true;
-      break;
-    }
-    if (r.value) {
-      text += decoder.decode(r.value, { stream: true });
-      if (opts.until?.(text) === true) break;
-    }
-  }
-  try {
-    await reader.cancel();
-  } catch {
-    /* ignore */
-  }
-  return { text, closed };
-}
-
 /** Parse an SSE frame looking for a named event. */
 function findEvent(
   sse: string,
@@ -156,9 +79,12 @@ describe("GET /events — catchup_too_old", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 
-    const { text, closed } = await readSse(res, {
-      until: (t) => findEvent(t, "catchup_too_old") !== null,
-    });
+    // Waits for the close rather than for the frame. Terminal is a claim
+    // about what the server does *after* emitting, and a read that stopped at
+    // the frame never observed it: the old assertion allowed "closed, or no
+    // item. frames followed", and the second half held of a stream nobody had
+    // read to the end.
+    const { text, closed } = await readSse(res, { untilClosed: true });
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
     expect(frame!.id).toBe(String(eventId));
@@ -172,10 +98,12 @@ describe("GET /events — catchup_too_old", () => {
     expect(BigInt(payload.min_retained_id) >= 1n).toBe(true);
     expect(payload.requested).toBe("0");
 
-    // Terminal: the stream should have closed after emitting. Either the
-    // server already closed (closed=true) or at least no live events
-    // followed the control frame in the observation window.
-    expect(closed || !text.includes("item.")).toBe(true);
+    // Terminal means the server closes the stream after emitting. The old
+    // form allowed either that or "no item. frames followed", and the second
+    // half is trivially true of a stream that delivered nothing, so a read
+    // returning early satisfied it without observing anything.
+    expect(closed).toBe(true);
+    expect(text).not.toContain("item.");
   });
 
   it("replays normally when Last-Event-ID is within retention", async () => {
@@ -202,7 +130,13 @@ describe("GET /events — catchup_too_old", () => {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
-    const { text } = await readSse(res, { timeoutMs: 200 });
+    // `requireSeen` is what makes the absence mean something: the stream
+    // opens with a `: connected` comment, so a window that saw it was
+    // genuinely reading, and one that saw nothing fails loudly rather than
+    // satisfying the assertion by delivering nothing.
+    const { text } = await readSse(res, {
+      requireSeen: (t) => t.startsWith(": connected\n\n"),
+    });
     expect(findEvent(text, "catchup_too_old")).toBeNull();
   });
 
@@ -211,7 +145,12 @@ describe("GET /events — catchup_too_old", () => {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
-    const { text } = await readSse(res, { timeoutMs: 100 });
+    // Waits on the comment rather than betting that 100ms is long enough to
+    // schedule the stream, which is the same wall-clock bet the replay tests
+    // were losing under load.
+    const { text } = await readSse(res, {
+      until: (t) => t.startsWith(": connected\n\n"),
+    });
     expect(text.startsWith(": connected\n\n")).toBe(true);
   });
 
@@ -227,7 +166,9 @@ describe("GET /events — catchup_too_old", () => {
         headers: { "Last-Event-ID": "5" },
       });
       expect(res.status).toBe(200);
-      const { text } = await readSse(res, { timeoutMs: 200 });
+      const { text } = await readSse(res, {
+        requireSeen: (t) => t.startsWith(": connected\n\n"),
+      });
       expect(findEvent(text, "catchup_too_old")).toBeNull();
     } finally {
       await fresh.cleanup();
