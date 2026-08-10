@@ -218,7 +218,12 @@ The server does **not** migrate on boot. The hosted Cloudflare Containers deploy
   - prod direct: `NEON_DATABASE_URL_PROD`
   - staging pooled (app secret): `NEON_DATABASE_URL_POOLED_STAGING` → fallback `NEON_DATABASE_URL_POOLED_MARFA`
   - prod pooled (app secret): `NEON_DATABASE_URL_POOLED_PROD`
-- **Ordering caveat for constraint-tightening migrations.** Migrate-then-deploy is safe for additive / backward-compatible migrations (the common case). A migration that **tightens** a constraint (e.g. a new UNIQUE index) must not pre-date the code that keeps the data satisfying it — ship the code change in an earlier deploy than the tightening migration, so the constraint only lands once nothing writes a violating row. The pipeline can't detect this; it's per-migration authoring discipline.
+- **Forced roll.** The Worker rolls atomically on `wrangler deploy`; the container does not. It is replaced when it idles out for a whole `sleepAfter` window, and any request renews that window, so a build nobody can use stays resident precisely because its failing clients keep retrying. `MARFA_EXPECTED_IMAGE` carries the deployed tag into the Worker, and the first request that finds it disagreeing with the tag the instance started under stands the instance down (`server-container/src/roll.ts`). The `deploy` job then polls `/health` until it reports the deployed SHA and prints `roll_window_seconds`, so every deploy measures its own window rather than assuming one (`.github/observability/deploy-gate.mjs`).
+- **Ordering rule: the tolerant side ships first, and the tolerant side is always the code.** An additive migration needs no ordering thought, which is the common case. When a change does need it, work out which side has to accept both the old and the new shape, and put that side in an earlier deploy. A migration can never be that side: it lands in one step and holds no opinion about what it meets.
+  - **Tightening a constraint** (a new UNIQUE index, a new NOT NULL). The migration is intolerant, so the code that stops writing violating rows deploys first and the migration follows once nothing produces a row it would reject.
+  - **A shape the running build cannot read** (`text` → `jsonb`, a renamed column). The _old build_ is intolerant, so deploy a reader that accepts both shapes, then migrate, then drop the tolerance in a third deploy. Expand and contract.
+
+  This still applies now the roll is forced. Migrations run in an earlier job, so the old build serves the migrated schema for the length of the deploy job plus one request. The pipeline can't detect either case; it's per-migration authoring discipline.
 
 ## OpenAPI
 
