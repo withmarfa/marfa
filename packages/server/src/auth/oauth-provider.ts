@@ -72,6 +72,27 @@ interface HookCtxLite {
 const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 
 /**
+ * Namespaces whose members the static registry never enumerates: an app's
+ * own runtime types (`user.*`, `app.*`) and the connected-service
+ * namespaces. A type or edge type in one of these is registered per space
+ * at runtime, so it does not exist when the allowed-scope set is built and
+ * cannot be named concretely in a grant. The namespace wildcard is the only
+ * thing that can name it, which is why these stay requestable while
+ * deliberately staying out of the default consent bundle: the default grant
+ * is the curated, per-type-narrowable content set, and these appear only
+ * when an app opts into them.
+ */
+export const CUSTOM_TYPE_NAMESPACES = [
+  "user",
+  "app",
+  "google",
+  "raindrop",
+  "readwise",
+  "todoist",
+  "withmarfa",
+] as const;
+
+/**
  * Build the complete list of scope literals the plugin will accept.
  * Includes OIDC literals + every concrete `<type>:<verb>` from the type
  * registry + every `edge.<edgeType>:<verb>` from the edge registry + the
@@ -114,20 +135,10 @@ export function buildAllowedScopes(
     // for them explicitly) but are deliberately NOT in the default consent
     // bundle — the default grant is the curated, per-type-narrowable content
     // set, so these only appear when an app opts into them.
-    "user.*:read",
-    "user.*:write",
-    "app.*:read",
-    "app.*:write",
-    "google.*:read",
-    "google.*:write",
-    "raindrop.*:read",
-    "raindrop.*:write",
-    "readwise.*:read",
-    "readwise.*:write",
-    "todoist.*:read",
-    "todoist.*:write",
-    "withmarfa.*:read",
-    "withmarfa.*:write",
+    ...CUSTOM_TYPE_NAMESPACES.flatMap((ns) => [
+      `${ns}.*:read`,
+      `${ns}.*:write`,
+    ]),
   ]);
 
   // Item type scopes: `<typeId>:read|write` for every registered type.
@@ -144,6 +155,20 @@ export function buildAllowedScopes(
   }
   out.add("edge.*:read");
   out.add("edge.*:write");
+
+  // Namespace wildcards for edge types the static registry never
+  // enumerates, for exactly the reason the item-type namespaces above
+  // exist: a custom edge type is registered per space at runtime, so it
+  // does not exist when this set is built and can never be named
+  // concretely in a grant. Without these the only expressible scope for a
+  // space's own relation edges is the global `edge.*`, which grants every
+  // edge type on the instance — so an app asking narrowly was silently
+  // narrowed to nothing and its relation writes were refused, while an app
+  // asking for everything worked.
+  for (const namespace of CUSTOM_TYPE_NAMESPACES) {
+    out.add(`edge.${namespace}.*:read`);
+    out.add(`edge.${namespace}.*:write`);
+  }
 
   // Metadata sub-resource scopes.
   for (const sub of METADATA_SUBRESOURCES) {

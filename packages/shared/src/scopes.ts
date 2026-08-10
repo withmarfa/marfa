@@ -301,9 +301,52 @@ export function metadataPermissionCovers(
 }
 
 /**
+ * Resolves the effective permission for an edge type against an
+ * `edge_permissions` map, by the same precedence `resolveTypePermission`
+ * applies to item types: an exact identifier outranks every pattern, then
+ * the longest matching namespace wildcard, then the global `*`.
+ *
+ * Namespace wildcards matter here for a reason that does not arise on the
+ * item side. A custom edge type is registered per space at runtime, so it
+ * cannot be named in any list built before the request — `edge.user.*` is
+ * the only expression that reaches a space's own relation edges short of
+ * the global wildcard, which grants every edge type on the instance.
+ * Resolving exact ids alone meant such a grant was issued and reported and
+ * then matched nothing, so the narrow ask failed where the total ask
+ * worked.
+ */
+function resolveEdgePermission(
+  perms: Record<string, "read" | "write">,
+  edgeType: string,
+): "read" | "write" | undefined {
+  const exact = perms[edgeType];
+  if (exact !== undefined) return exact;
+
+  let best: "read" | "write" | undefined;
+  let bestLength = 0;
+  for (const [pattern, permission] of Object.entries(perms)) {
+    if (pattern === "*") {
+      if (bestLength === 0) best = permission;
+      continue;
+    }
+    const root = subtreeWildcardRoot(pattern);
+    if (root === null) continue;
+    // Parent-inclusive, as everywhere else a `.*` pattern is resolved:
+    // `user.*` covers `user` itself as well as `user.blocks`.
+    if (edgeType !== root && !edgeType.startsWith(`${root}.`)) continue;
+    if (root.length > bestLength) {
+      best = permission;
+      bestLength = root.length;
+    }
+  }
+  return best;
+}
+
+/**
  * Checks whether an edge_permissions map covers the required verb on a
- * specific edge type. Wildcard (`*`) matches any edge type. `write`
- * implies `read`. Called from the auth middleware at edge-route entry.
+ * specific edge type. Wildcard (`*`) matches any edge type, and a namespace
+ * wildcard (`user.*`) matches that namespace. `write` implies `read`.
+ * Called from the auth middleware at edge-route entry.
  */
 export function edgePermissionCovers(
   perms: Record<string, "read" | "write"> | undefined,
@@ -311,15 +354,9 @@ export function edgePermissionCovers(
   requiredOp: "read" | "write",
 ): boolean {
   if (!perms) return false;
-  const specific = perms[edgeType];
-  if (specific === "write" || (specific === "read" && requiredOp === "read")) {
-    return true;
-  }
-  const wildcard = perms["*"];
-  if (wildcard === "write" || (wildcard === "read" && requiredOp === "read")) {
-    return true;
-  }
-  return false;
+  const resolved = resolveEdgePermission(perms, edgeType);
+  if (resolved === "write") return true;
+  return resolved === "read" && requiredOp === "read";
 }
 
 // ---------------------------------------------------------------------------
