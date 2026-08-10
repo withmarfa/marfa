@@ -90,6 +90,23 @@ export interface ReplicaUtils {
 type ReplicaCollection = Collection<Item, string, ReplicaUtils>;
 
 /**
+ * Whether a change event should remove its item from the replica.
+ *
+ * The replica mirrors the server's default list, which returns every
+ * lifecycle state except `trashed`. So an explicit deletion removes, a
+ * transition into `trashed` removes, and every other event — a create, an
+ * edit, a restore, an archive — upserts. Inferring this from the event
+ * name alone missed the trashing transition: it arrives as a
+ * `state_changed`, which the replica had been upserting, so a trashed item
+ * stayed on screen until the next full read quietly dropped it, and two
+ * clients of the same data disagreed about what existed.
+ */
+function removesFromReplica(event: { type: string; item: Item }): boolean {
+  if (event.type === "item.deleted") return true;
+  return event.item.state === "trashed";
+}
+
+/**
  * Build a replica collection for one Marfa type.
  *
  * The collection is live from the moment it is created: it performs its
@@ -153,10 +170,7 @@ export function createReplicaCollection(
             // Edge events carry no item, and a replica of a type has
             // nothing to do with them.
             if (!("item" in event)) return;
-            const kind =
-              event.type === "item.deleted"
-                ? ("delete" as const)
-                : ("upsert" as const);
+            const kind = removesFromReplica(event) ? "delete" : "upsert";
             if (!initialReadDone) {
               buffered.push({ kind, item: event.item });
               return;
@@ -228,11 +242,16 @@ export function createReplicaCollection(
     onUpdate: async ({ transaction }) => {
       for (const mutation of transaction.mutations) {
         const item = mutation.modified;
-        await client.items.update(
-          item.id,
-          { properties: item.properties },
-          { conflict: options.conflict ?? "auto" },
-        );
+        // `update` takes the properties directly; wrapping them in a
+        // `{ properties }` object writes a nested junk key and changes
+        // nothing the caller named. The expected version is the one the
+        // replica last synced (the pre-edit value), so a server that
+        // moved underneath is a real conflict the strategy can resolve
+        // rather than a silent last-write-wins.
+        await client.items.update(item.id, item.properties, {
+          conflict: options.conflict ?? "auto",
+          expectedVersion: mutation.original.version,
+        });
       }
     },
     onDelete: async ({ transaction }) => {
