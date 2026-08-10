@@ -724,7 +724,7 @@ export function createApp(
   // same connectionOauthTokens row the proxy reads.
   app.route(
     "/connections",
-    oauthStartRoutes(storage, { authBaseUrl: config.authBaseUrl }),
+    oauthStartRoutes(storage, { authBaseUrl: config.authBaseUrl, auth }),
   );
   app.route("/oauth/callback", oauthCallbackRoutes(storage));
   // Leased bearer tokens — issuance + revoke + list under
@@ -741,7 +741,14 @@ export function createApp(
       integrationRuntime: config.integrationRuntime ?? "local",
     }),
   );
-  app.route("/connections", connectionConfigureRoutes(storage));
+  app.route(
+    "/connections",
+    connectionConfigureRoutes(storage, {
+      auth,
+      corsOrigins: config.corsOrigins,
+      authBaseUrl: config.authBaseUrl,
+    }),
+  );
   app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));

@@ -57,6 +57,8 @@ import {
   type OAuthStateEnvelope,
 } from "../oauth/state.js";
 import { setNoStore } from "./no-store.js";
+import type { MarfaAuth } from "../auth/instance.js";
+import { resolveSpaceAdminCaller } from "./_space-caller.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface OAuthAuthorizeConfig {
@@ -322,6 +324,9 @@ export interface OAuthCallbackOptions {
  */
 export interface OAuthStartOptions {
   authBaseUrl?: string;
+  /** The identity layer, so the browser front door below can accept the
+   *  session a person already has. */
+  auth?: MarfaAuth;
 }
 
 /** The path the callback is mounted at, relative to the deployment root. */
@@ -337,6 +342,59 @@ export const OAUTH_CALLBACK_PATH = "/oauth/callback";
  */
 export function deriveOAuthCallbackUri(authBaseUrl: string): string {
   return `${authBaseUrl.replace(/\/+$/, "")}${OAUTH_CALLBACK_PATH}`;
+}
+
+/**
+ * Build the upstream authorize URL for a connection: signed state, PKCE
+ * challenge, the credential's defaults, and this deployment's one callback
+ * URI. Shared by the JSON start endpoint and the browser front door so the
+ * two cannot construct different requests for the same connection.
+ */
+async function buildAuthorizeUrl(
+  storage: Storage,
+  connection: Item,
+  connectionId: string,
+  redirectUri: string,
+  overrides: { scope?: string; extraParams?: Record<string, string> } = {},
+): Promise<string> {
+  const config = await readAuthorizeConfig(storage, connection);
+  const scope =
+    overrides.scope !== undefined && overrides.scope.length > 0
+      ? overrides.scope
+      : (config.oauth_default_scope ?? "");
+  const codeVerifier = randomBytes(32).toString("base64url"); // 43 chars, within RFC 7636 §4.1 range
+  const codeChallenge = createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+  const state = signOAuthState({
+    connection_id: connectionId,
+    redirect_uri: redirectUri,
+    provider_label: config.label,
+    code_verifier: codeVerifier,
+  });
+  const params = new URLSearchParams();
+  if (scope.length > 0) params.set("scope", scope);
+  // Credential defaults go first; caller overrides win per-key.
+  if (config.authorize_extra_params) {
+    for (const [k, v] of Object.entries(config.authorize_extra_params)) {
+      params.set(k, v);
+    }
+  }
+  for (const [k, v] of Object.entries(overrides.extraParams ?? {})) {
+    params.set(k, v);
+  }
+  // The protocol parameters are set LAST, so no caller-supplied key can
+  // overwrite one. Written the other way round, `extra_params` reached
+  // `redirect_uri` and rewrote it after every check had passed — which is
+  // how the allowlist this route used to carry could be walked straight
+  // past by the sibling parameter it sat next to.
+  params.set("response_type", "code");
+  params.set("client_id", config.oauth_client_id);
+  params.set("redirect_uri", redirectUri);
+  params.set("state", state);
+  params.set("code_challenge", codeChallenge);
+  params.set("code_challenge_method", "S256");
+  return `${config.oauth_authorize_url}?${params.toString()}`;
 }
 
 /**
@@ -389,52 +447,29 @@ export function oauthStartRoutes(
       scope?: unknown;
       extra_params?: unknown;
     } = await c.req.json();
-    const config = await readAuthorizeConfig(storage, connection);
-    const scope =
-      typeof body.scope === "string" && body.scope.length > 0
-        ? body.scope
-        : (config.oauth_default_scope ?? "");
-    const codeVerifier = randomBytes(32).toString("base64url"); // 43 chars, within RFC 7636 §4.1 range
-    const codeChallenge = createHash("sha256")
-      .update(codeVerifier)
-      .digest("base64url");
-    const state = signOAuthState({
-      connection_id: connectionId,
-      redirect_uri: redirectUri,
-      provider_label: config.label,
-      code_verifier: codeVerifier,
-    });
-    const params = new URLSearchParams();
-    if (scope.length > 0) params.set("scope", scope);
-    // Credential defaults go first; caller's extra_params override per-key.
-    if (config.authorize_extra_params) {
-      for (const [k, v] of Object.entries(config.authorize_extra_params)) {
-        params.set(k, v);
-      }
-    }
+    const overrides: { scope?: string; extraParams?: Record<string, string> } =
+      {};
+    if (typeof body.scope === "string") overrides.scope = body.scope;
     if (
       typeof body.extra_params === "object" &&
       body.extra_params !== null &&
       !Array.isArray(body.extra_params)
     ) {
+      const extra: Record<string, string> = {};
       for (const [k, v] of Object.entries(
         body.extra_params as Record<string, unknown>,
       )) {
-        if (typeof v === "string") params.set(k, v);
+        if (typeof v === "string") extra[k] = v;
       }
+      overrides.extraParams = extra;
     }
-    // The protocol parameters are set LAST, so no caller-supplied key can
-    // overwrite one. Written the other way round, `extra_params` reached
-    // `redirect_uri` and rewrote it after every check had passed — which is
-    // how the allowlist this route used to carry could be walked straight
-    // past by the sibling parameter it sat next to.
-    params.set("response_type", "code");
-    params.set("client_id", config.oauth_client_id);
-    params.set("redirect_uri", redirectUri);
-    params.set("state", state);
-    params.set("code_challenge", codeChallenge);
-    params.set("code_challenge_method", "S256");
-    const authorize_url = `${config.oauth_authorize_url}?${params.toString()}`;
+    const authorize_url = await buildAuthorizeUrl(
+      storage,
+      connection,
+      connectionId,
+      redirectUri,
+      overrides,
+    );
     return c.json(
       {
         authorize_url,
@@ -447,6 +482,49 @@ export function oauthStartRoutes(
       },
       200,
     );
+  });
+
+  /**
+   * `GET /connections/:id/oauth/start` — the same flow as a front door.
+   *
+   * The POST above answers with a URL, which is right for a script and wrong
+   * for a person: it needs a caller that can read JSON and then navigate,
+   * which a browser following a link is not. This redirects straight to the
+   * provider, so the consent screen and the configuration surface can link to
+   * authorization rather than describing it.
+   *
+   * It takes no parameters. Everything the POST accepts is either the
+   * credential's own configuration or a caller override, and a front door
+   * reachable by following a link should not let the link decide what is
+   * asked for.
+   */
+  r.get("/:id/oauth/start", async (c) => {
+    const caller = await resolveSpaceAdminCaller(
+      c,
+      storage,
+      options.auth,
+      "OAuth start requires admin or platform credential",
+    );
+    if (caller instanceof Response) return caller;
+    const connectionId = c.req.param("id");
+    const connection = await storage.items.get(connectionId, caller.spaceId);
+    if (connection?.type !== "system.connection") {
+      throw new MarfaError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Connection ${connectionId} not found`,
+      );
+    }
+    const authorizeUrl = await buildAuthorizeUrl(
+      storage,
+      connection,
+      connectionId,
+      redirectUri,
+    );
+    // No-store: the URL carries a one-shot signed state and a PKCE
+    // challenge, so a cached redirect sends a second visitor into a flow
+    // whose verifier belongs to the first.
+    setNoStore(c);
+    return c.redirect(authorizeUrl, 302);
   });
   return r;
 }

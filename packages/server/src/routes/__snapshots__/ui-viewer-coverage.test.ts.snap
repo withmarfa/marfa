@@ -3241,8 +3241,8 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
 <body>
   <main class="card card--confirm" aria-label="Not authorized yet">
           <h1 class="title">Not authorized yet</h1>
-      <p class="sub">There is nothing to configure until this connection has access to the other service. Start the authorization, open the link it returns, and come back here.</p>
-      <pre>POST /connections/01999a3f-96ad-4ec1-b378-399d4875cfa5/oauth/start</pre>
+      <p class="sub">There is nothing to configure until this connection has access to the other service.</p>
+      <a href="/connections/01999a3f-96ad-4ec1-b378-399d4875cfa5/oauth/start" class="btn btn--primary">Authorize this connection</a>
     
   </main>
 </body>

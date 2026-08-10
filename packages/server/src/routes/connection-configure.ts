@@ -20,8 +20,10 @@
  *     and renders a success page that links to the connection's runtime
  *     view.
  *
- * Auth: `requireSpaceAdmin` on both verbs, matching the install routes.
- * Space scoping flows through `apiKey.space_id`; cross-space probes
+ * Auth: a bearer token OR a Better Auth session on both verbs, matching the
+ * install surface one step earlier in the same flow. A browser navigation
+ * carries no bearer, and these pages exist to be opened by a person.
+ * Space scoping flows through the resolved caller's space; cross-space probes
  * 404-cloak via the space-bounded item read.
  *
  * The route is mounted at `/connections` so it sits alongside the JSON
@@ -35,7 +37,12 @@ import {
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireSpaceAdmin } from "../middleware/auth.js";
+import type { MarfaAuth } from "../auth/instance.js";
+import {
+  buildAllowedOrigins,
+  isCrossOriginPost,
+  resolveSpaceAdminCaller,
+} from "./_space-caller.js";
 import type { Storage } from "../storage/interface.js";
 import type { ConfigurationFieldSpec, Item } from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
@@ -301,20 +308,18 @@ export function parseGenericConfigurePayload(
  * Shown when a connection reaches its configuration screen before the
  * upstream OAuth dance has run, so there is nothing yet to configure.
  *
- * This used to redirect to `/connections/:id/oauth/start`, a route
- * registered POST-only that wants a bearer credential and a JSON body.
- * Nothing following a redirect sends any of those, so the flow it pointed
- * at could never run and the redirect only replaced one dead end with a
- * quieter one. The endpoint is named here rather than jumped to, because
- * the reader of this surface is the operator who calls it.
+ * This once redirected to a POST-only endpoint wanting a bearer credential
+ * and a JSON body, which nothing following a redirect sends, so the page then
+ * named the endpoint instead of jumping to it. There is a browser front door
+ * now, so the page can do what it always wanted to: send the person on.
  */
 export function renderConnectionNotAuthorized(connectionId: string): string {
   return renderAuthLayout({
     title: "Not authorized yet",
     centered: true,
     bodyHtml: `      <h1 class="title">Not authorized yet</h1>
-      <p class="sub">There is nothing to configure until this connection has access to the other service. Start the authorization, open the link it returns, and come back here.</p>
-      <pre>POST /connections/${esc(connectionId)}/oauth/start</pre>
+      <p class="sub">There is nothing to configure until this connection has access to the other service.</p>
+      <a href="/connections/${esc(connectionId)}/oauth/start" class="btn btn--primary">Authorize this connection</a>
     `,
   });
 }
@@ -455,6 +460,14 @@ export type CalendarListFetcher = (args: {
 
 export interface ConnectionConfigureOptions {
   fetchCalendars?: CalendarListFetcher;
+  /** The identity layer, when the deployment has one. Absent leaves these
+   *  surfaces bearer-only, which is what a keys-mode self-host gets. */
+  auth?: MarfaAuth;
+  /** Operator CORS origins, for the cross-origin guard on the form post. */
+  corsOrigins?: readonly string[];
+  /** Issuer URL, whose origin is where a post from a page this server
+   *  rendered comes from. */
+  authBaseUrl?: string;
 }
 
 export function connectionConfigureRoutes(
@@ -462,6 +475,12 @@ export function connectionConfigureRoutes(
   options: ConnectionConfigureOptions = {},
 ) {
   const r = new Hono<AppEnv>();
+  const allowedOrigins = buildAllowedOrigins(
+    options.corsOrigins ?? [],
+    options.authBaseUrl,
+  );
+
+  const FORBIDDEN = "Space admin authority required to configure a connection";
 
   // Default fetcher does the proxy call out-of-process. Tests typically
   // override via `options.fetchCalendars` so the GET path renders
@@ -472,8 +491,14 @@ export function connectionConfigureRoutes(
     (async () => []);
 
   r.get("/:id/configure", async (c) => {
-    const apiKey = requireSpaceAdmin(c);
-    const spaceId = apiKey.space_id;
+    const caller = await resolveSpaceAdminCaller(
+      c,
+      storage,
+      options.auth,
+      FORBIDDEN,
+    );
+    if (caller instanceof Response) return caller;
+    const spaceId = caller.spaceId;
     const id = c.req.param("id");
 
     const connection = await storage.items.get(id, spaceId);
@@ -589,8 +614,22 @@ export function connectionConfigureRoutes(
   });
 
   r.post("/:id/configure", async (c) => {
-    const apiKey = requireSpaceAdmin(c);
-    const spaceId = apiKey.space_id;
+    // This post makes a durable write from a page a browser rendered, so it
+    // carries the same origin fence the consent decision does rather than
+    // resting on `SameSite=Lax` alone like the other session-gated posts. A
+    // missing origin still passes: a same-origin form post may send neither
+    // header.
+    if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
+      return c.text("Cross-origin configuration change rejected", 403);
+    }
+    const caller = await resolveSpaceAdminCaller(
+      c,
+      storage,
+      options.auth,
+      FORBIDDEN,
+    );
+    if (caller instanceof Response) return caller;
+    const spaceId = caller.spaceId;
     const id = c.req.param("id");
 
     const connection = await storage.items.get(id, spaceId);
@@ -649,7 +688,7 @@ export function connectionConfigureRoutes(
           spaceId,
         );
         void storage.audit.log({
-          key_id: apiKey.id,
+          key_id: caller.apiKeyId,
           client_ip: c.get("clientIp") ?? null,
           space_id: spaceId ?? null,
           action: "connection.configure",
@@ -715,7 +754,7 @@ export function connectionConfigureRoutes(
     await storage.items.update(id, { properties: newProps }, spaceId);
 
     void storage.audit.log({
-      key_id: apiKey.id,
+      key_id: caller.apiKeyId,
       client_ip: c.get("clientIp") ?? null,
       space_id: spaceId ?? null,
       action: "connection.configure",

@@ -93,6 +93,7 @@ import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
+import { buildAllowedOrigins, isCrossOriginPost } from "./_space-caller.js";
 import {
   findRegisteredResponseRedirect,
   hasAddedResponseParam,
@@ -167,37 +168,16 @@ interface ConsentRouteDeps {
  * `undefined` for an unparseable value so a misconfigured base URL doesn't
  * throw inside the request path — the allowlist simply omits it.
  */
-function originOf(url: string): string | undefined {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Resolve the request's effective origin for the CSRF check: the `Origin`
- * header when present, else the origin of the `Referer` URL. Returns
- * `undefined` when neither is present (a same-origin form POST may omit
- * both) or when `Referer` is unparseable.
- */
-function requestOrigin(headers: Headers): string | undefined {
-  const origin = headers.get("origin");
-  if (origin) return origin;
-  const referer = headers.get("referer");
-  if (referer) return originOf(referer);
-  return undefined;
-}
-
 export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   // Origin allowlist for the consent decision CSRF guard: every operator
   // CORS origin plus the auth issuer's own origin (a same-origin POST from
   // the rendered consent page). Built once at construction.
-  const allowedOrigins = new Set<string>(deps.corsOrigins);
-  const baseOrigin = originOf(deps.authBaseUrl);
-  if (baseOrigin) allowedOrigins.add(baseOrigin);
+  const allowedOrigins = buildAllowedOrigins(
+    deps.corsOrigins,
+    deps.authBaseUrl,
+  );
 
   // ----- GET /auth/authorize (consent page render) -----
   app.get("/authorize", async (c) => {
@@ -574,8 +554,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // missing Origin/Referer is allowed through — a same-origin form POST may
     // omit both, and better-auth rejects null-origin form POSTs at the proxy
     // hop — so we only reject a *present, non-allowlisted* origin.
-    const origin = requestOrigin(c.req.raw.headers);
-    if (origin && !allowedOrigins.has(origin)) {
+    if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
       return c.text("Cross-origin consent decision rejected", 403);
     }
 
