@@ -104,7 +104,9 @@ Three jobs run on GitHub-hosted `ubuntu-latest`:
 
 Building natively on a hosted amd64 runner is what makes this reliable: it has no dependency on a local Docker daemon and no slow cross-arch emulation. Required GitHub config (secrets + vars) is listed in the workflow header.
 
-After a roll, the container cycles asynchronously — the public host may serve the old warm instance for ~15–20s. Poll a cache-busted `/.well-known/openid-configuration` until it reflects the new build before declaring the deploy done.
+The `deploy` job ends by polling `/health` until it reports the deployed SHA, then printing `roll_window_seconds`. That is the deploy's own measurement of how long the old build kept serving, and a stall fails the job rather than passing quietly, so there is nothing left to check by hand afterwards.
+
+The container is replaced by the first request that finds the running image disagreeing with the tag the Worker was deployed to front, so that first request is what completes the deploy. It still sees the old build; every request after it sees the new one.
 
 ### Local build (fallback)
 
