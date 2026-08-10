@@ -21,9 +21,15 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 
 ## Testing
 
-`pnpm test` runs `client.test.ts` against an in-process Hono server (uses `@withmarfa/server`'s `createApp` directly). Bootstrap admin key is created over the `/keys` HTTP path so the test exercises the full server, not a mock.
+The suite runs against an in-process Hono server (uses `@withmarfa/server`'s `createApp` directly), not a mock: bootstrap admin keys are created over the `/keys` HTTP path so tests exercise the full server. It spans the client surface, the auth helpers, and the local replica.
 
-When a test depends on a server-side change, rebuild `@withmarfa/shared` and `@withmarfa/server` first (`pnpm --filter @withmarfa/shared build`) so the SDK picks up the new dist.
+Run it from the repository root, which resolves the workspace project correctly:
+
+```bash
+pnpm exec vitest run --project @withmarfa/sdk
+```
+
+The replica tests need the optional `@tanstack/db` peer installed. When a test depends on a server-side change, rebuild `@withmarfa/shared` and `@withmarfa/server` first (`pnpm --filter @withmarfa/shared build`) so the SDK picks up the new dist.
 
 ## Build
 

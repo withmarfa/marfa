@@ -206,6 +206,174 @@ describe("createReplicaCollection", () => {
     replica.utils.stop();
   });
 
+  it("persists an edit through the replica as the field change, not a nested copy", async () => {
+    // The write path the replica exists to provide, driven against a real
+    // server. The bug this guards: the payload was wrapped one level too
+    // deep, so the edit landed in a junk `properties` key, the real field
+    // was untouched, and the transaction still resolved as persisted.
+    const created = await fx.client.items.create({
+      type: "core.note",
+      properties: { title: "before edit", body: "keep" },
+    });
+
+    const replica = createReplicaCollection(fx.client, { type: "core.note" });
+    await replica.preload();
+    await until(
+      "loaded the item to edit",
+      () => titles(replica.values()).includes("before edit"),
+      () => titles(replica.values()),
+    );
+
+    const tx = replica.update(created.id, (draft) => {
+      draft.properties.title = "after edit";
+    });
+    await tx.isPersisted.promise;
+
+    // The server row carries the edited title and nothing nested.
+    const stored = await fx.client.items.get(created.id);
+    expect(stored.properties.title).toBe("after edit");
+    expect(stored.properties.body).toBe("keep");
+    expect(stored.properties).not.toHaveProperty("properties");
+
+    replica.utils.stop();
+  });
+
+  it("persists a delete through the replica", async () => {
+    const created = await fx.client.items.create({
+      type: "core.note",
+      properties: { title: "delete me", body: "x" },
+    });
+    const replica = createReplicaCollection(fx.client, { type: "core.note" });
+    await replica.preload();
+    await until(
+      "loaded the item to delete",
+      () => titles(replica.values()).includes("delete me"),
+      () => titles(replica.values()),
+    );
+
+    const tx = replica.delete(created.id);
+    await tx.isPersisted.promise;
+
+    await expect(fx.client.items.get(created.id)).rejects.toThrow();
+    replica.utils.stop();
+  });
+
+  it("declares the version it expected so a conflict can fire", async () => {
+    // The conflict option is inert unless the write declares the version
+    // it expected: without it the client re-reads the current version
+    // immediately before writing, so last-write-wins and the strategy
+    // never runs. Injecting the client makes the wire shape observable
+    // rather than racing two live replicas against a converging stream.
+    let updateArgs: {
+      id: string;
+      properties: Record<string, unknown>;
+      options: { expectedVersion?: number; conflict?: string } | undefined;
+    } | null = null;
+
+    const seeded = {
+      ...({} as Item),
+      id: "seed-1",
+      type: "core.note",
+      version: 7,
+      properties: { title: "seed", body: "base" },
+    } as Item;
+
+    const recordingClient = {
+      items: {
+        list: () =>
+          Promise.resolve({ data: [seeded], cursor: null, has_more: false }),
+        update: (
+          id: string,
+          properties: Record<string, unknown>,
+          options: { expectedVersion?: number; conflict?: string },
+        ) => {
+          updateArgs = { id, properties, options };
+          return Promise.resolve({ ...seeded, ...{ properties }, version: 8 });
+        },
+      },
+    } as unknown as typeof fx.client;
+
+    const replica = createReplicaCollection(recordingClient, {
+      type: "core.note",
+      conflict: "manual",
+      subscribe: () => ({
+        closed: Promise.resolve(),
+        close: () => undefined,
+        lastEventId: undefined,
+      }),
+    });
+    await replica.preload();
+    await until(
+      "loaded the seeded row",
+      () => titles(replica.values()).includes("seed"),
+      () => titles(replica.values()),
+    );
+
+    const tx = replica.update("seed-1", (draft) => {
+      draft.properties.body = "edited";
+    });
+    await tx.isPersisted.promise;
+
+    expect(updateArgs).not.toBeNull();
+    // The properties reach update directly, never wrapped in a nested
+    // `properties` key.
+    expect(updateArgs!.properties).not.toHaveProperty("properties");
+    expect(updateArgs!.properties.body).toBe("edited");
+    // The expected version is the one the replica last synced, so the
+    // server can see a row that moved underneath.
+    expect(updateArgs!.options?.expectedVersion).toBe(7);
+    expect(updateArgs!.options?.conflict).toBe("manual");
+
+    replica.utils.stop();
+  });
+
+  it("removes a trashed item from the replica as a fresh read would", async () => {
+    // Trashing publishes a state-change event, not a deletion, and the
+    // server's default list excludes trashed items. A replica that upserts
+    // every non-deletion event kept the trashed row on screen until the
+    // next full read silently dropped it, so two clients disagreed about
+    // what existed.
+    const created = await fx.client.items.create({
+      type: "core.note",
+      properties: { title: "to be trashed", body: "x" },
+    });
+    const replica = createReplicaCollection(fx.client, { type: "core.note" });
+    await replica.preload();
+    await until(
+      "loaded the item before trashing",
+      () => titles(replica.values()).includes("to be trashed"),
+      () => titles(replica.values()),
+    );
+
+    await fx.client.items.transition(created.id, "trashed");
+    await until(
+      "dropped the trashed item",
+      () => !titles(replica.values()).includes("to be trashed"),
+      () => titles(replica.values()),
+    );
+    replica.utils.stop();
+  });
+
+  it("keeps an archived item in the replica, matching the default list", async () => {
+    const created = await fx.client.items.create({
+      type: "core.note",
+      properties: { title: "to be archived", body: "x" },
+    });
+    const replica = createReplicaCollection(fx.client, { type: "core.note" });
+    await replica.preload();
+    await until(
+      "loaded the item before archiving",
+      () => titles(replica.values()).includes("to be archived"),
+      () => titles(replica.values()),
+    );
+
+    await fx.client.items.transition(created.id, "archived");
+    // Give the stream a chance to wrongly drop it.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(titles(replica.values())).toContain("to be archived");
+    replica.utils.stop();
+  });
+
   it("replicates one type only, so an unrelated write does not appear", async () => {
     const replica = createReplicaCollection(fx.client, { type: "core.note" });
     await replica.preload();
