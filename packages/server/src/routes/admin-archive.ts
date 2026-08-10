@@ -32,6 +32,9 @@ import type { BlobBackend } from "../storage/blob-backend.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
+import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 
 const MAX_ARCHIVE_ITEMS = 5000;
@@ -120,6 +123,10 @@ const restoreArchiveRoute = createRoute({
             duplicates: z.number(),
             edges_imported: z.number(),
             edges_skipped: z.number(),
+            /** Why edges were skipped, keyed by reason. A silent skip and a
+             *  refused one are different signals, and a bare count cannot
+             *  tell an operator which they got. */
+            edges_skipped_reasons: z.record(z.string(), z.number()),
             blobs_imported: z.number(),
             custom_types_registered: z.number(),
             custom_types_skipped: z.number(),
@@ -166,6 +173,88 @@ const restoreArchiveRoute = createRoute({
   },
 });
 
+interface PendingBlob {
+  hash: string;
+  mimeType: string;
+  data: Buffer;
+}
+
+interface BlobRestore {
+  /** Take back exactly what this restore wrote, and nothing that was
+   *  already there. */
+  undo(): Promise<void>;
+}
+
+/**
+ * Write an archive's blobs, remembering which bytes and which rows this
+ * request created.
+ *
+ * The per-hash lock is the same one `POST /blobs` takes, and for the same
+ * reason: content addressing means two spaces can be writing identical bytes
+ * at once, so `exists` and the write have to be one step or the request that
+ * is refused deletes the other's committed blob.
+ */
+async function restoreArchiveBlobs(
+  storage: Storage,
+  blobBackend: BlobBackend,
+  pending: readonly PendingBlob[],
+  spaceId: string,
+): Promise<BlobRestore> {
+  const wroteBytes: string[] = [];
+  const wroteRows: string[] = [];
+
+  for (const blob of pending) {
+    await withBlobUploadLock(blob.hash, async () => {
+      if (!(await blobBackend.exists(blob.hash))) {
+        await blobBackend.put(blob.hash, blob.data, blob.mimeType);
+        wroteBytes.push(blob.hash);
+      }
+      if ((await storage.blobs.get(blob.hash, spaceId)) === null) {
+        await storage.blobs.register(
+          blob.hash,
+          blob.mimeType,
+          blob.data.length,
+          blob.hash,
+          spaceId,
+        );
+        wroteRows.push(blob.hash);
+      }
+    });
+  }
+
+  return {
+    undo: async () => {
+      for (const hash of wroteRows) {
+        try {
+          await storage.blobs.remove(hash, spaceId);
+        } catch (err) {
+          log("error", "blob.row_orphaned_after_refused_restore", {
+            hash,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      for (const hash of wroteBytes) {
+        await withBlobUploadLock(hash, async () => {
+          try {
+            // Another space may have registered these same bytes in the
+            // meantime, and content addressing means its row describes the
+            // file this request happens to have written. Deleting then would
+            // break a blob nobody refused.
+            if ((await storage.blobs.getAcrossSpaces(hash)) !== null) return;
+            await blobBackend.delete(hash);
+          } catch (err) {
+            log("error", "blob.orphaned_after_refused_restore", {
+              hash,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }
+    },
+  };
+}
+
 export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -182,7 +271,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const itemLines: string[] = [];
     const edgeLines: string[] = [];
     const typeLines: string[] = [];
-    const blobUploads: Promise<void>[] = [];
+    const pendingBlobs: { hash: string; mimeType: string; data: Buffer }[] = [];
     let blobCount = 0;
     // Resolve the space under which the archive will be restored.
     // Space-bound admins use their own space; platform admins (no
@@ -266,19 +355,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
                 const mimeType =
                   manifest?.blobs[hash]?.mime_type ??
                   "application/octet-stream";
-                blobUploads.push(
-                  blobBackend
-                    .put(hash, buf, mimeType)
-                    .then(() =>
-                      storage.blobs.register(
-                        hash,
-                        mimeType,
-                        buf.length,
-                        hash,
-                        restoreSpaceId,
-                      ),
-                    ),
-                );
+                pendingBlobs.push({ hash, mimeType, data: buf });
               }
             }
           }
@@ -321,8 +398,6 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         `Archive manifest.space_id "${manifestSpaceId}" does not match restore space "${restoreSpaceId}". Platform admins must pass target_space_id matching the source.`,
       );
     }
-
-    await Promise.all(blobUploads);
 
     // Items and blobs restore into the same resolved space. The
     // empty-string sentinel is a blobs-table convention only; the items
@@ -388,107 +463,179 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       spaceId,
     );
 
-    const result = await storage.runInTransaction(async () => {
-      let imported = 0;
-      let duplicates = 0;
-      let edgesImported = 0;
-      let edgesSkipped = 0;
+    // Blobs land only once every refusal above has passed. They used to be
+    // written as the tar was read, which put bytes AND `blobs` rows into the
+    // target space ahead of the space-mismatch refusal, the count caps and
+    // the type-conflict refusal — so an archive this route went on to reject
+    // had already mutated the space's blob store and the quota those rows
+    // count toward. They are still outside the transaction, because a
+    // rollback cannot reach a filesystem or an object store; what changes is
+    // that this request now takes back exactly what it wrote.
+    const blobs = await restoreArchiveBlobs(
+      storage,
+      blobBackend,
+      pendingBlobs,
+      restoreSpaceId,
+    );
 
-      // Ids an edge endpoint may resolve against without a storage
-      // lookup: every id this restore just wrote, plus ids that
-      // collided — a collision means the restore space already holds
-      // that exact id, so edges naming it still land correctly.
-      const resolvableIds = new Set<string>();
+    let result;
+    try {
+      result = await storage.runInTransaction(async () => {
+        let imported = 0;
+        let duplicates = 0;
+        let edgesImported = 0;
+        let edgesSkipped = 0;
+        const edgesSkippedReasons: Record<string, number> = {};
+        const skipEdge = (reason: string): void => {
+          edgesSkipped++;
+          edgesSkippedReasons[reason] = (edgesSkippedReasons[reason] ?? 0) + 1;
+        };
 
-      for (const { item, metadata: meta } of items) {
-        const archiveId = typeof item.id === "string" ? item.id : undefined;
-        try {
-          const created = await storage.items.create(
+        // Ids an edge endpoint may resolve against without a storage
+        // lookup: every id this restore just wrote, plus ids that
+        // collided — a collision means the restore space already holds
+        // that exact id, so edges naming it still land correctly.
+        const resolvableIds = new Set<string>();
+
+        for (const { item, metadata: meta } of items) {
+          const archiveId = typeof item.id === "string" ? item.id : undefined;
+          try {
+            const created = await storage.items.create(
+              {
+                ...(archiveId !== undefined && { id: archiveId }),
+                type: item.type as string,
+                properties: (item.properties ?? {}) as Record<string, unknown>,
+                state: item.state as ItemState | undefined,
+                tier: item.tier as Tier | undefined,
+                timestamp: item.timestamp as string | undefined,
+                source: item.source as string | undefined,
+                source_id: item.source_id as string | undefined,
+                device: item.device as string | undefined,
+                capture_latitude: item.capture_latitude as number | undefined,
+                capture_longitude: item.capture_longitude as number | undefined,
+                tags: archiveTags(meta),
+              },
+              spaceId,
+            );
+            imported++;
+            resolvableIds.add(created.id);
+
+            for (const [namespace, data] of Object.entries(
+              archiveExtensions(meta),
+            )) {
+              await storage.metadata.setExtension(created.id, namespace, data);
+            }
+          } catch (err) {
+            if (
+              err instanceof MarfaError &&
+              (err.code === ErrorCode.DUPLICATE_SOURCE ||
+                err.code === ErrorCode.CONFLICT)
+            ) {
+              duplicates++;
+              // A duplicate leaves the existing row untouched — its tags
+              // and extensions are the live state, not the archive's.
+              if (err.code === ErrorCode.CONFLICT && archiveId !== undefined) {
+                resolvableIds.add(archiveId);
+              }
+            } else {
+              throw err;
+            }
+          }
+        }
+
+        // Second pass, after every item the archive carries exists: an
+        // edge restores only when both endpoints resolve in the restore
+        // space, so a partial or hand-edited archive cannot plant a
+        // reference to an item that is not there.
+        const endpointResolves = async (id: string): Promise<boolean> =>
+          resolvableIds.has(id) ||
+          (await storage.items.get(id, spaceId)) !== null;
+
+        for (const edge of edges) {
+          const sourceId = edge.source_id;
+          const targetId = edge.target_id;
+          const edgeType = edge.edge_type;
+          if (
+            typeof sourceId !== "string" ||
+            typeof targetId !== "string" ||
+            typeof edgeType !== "string"
+          ) {
+            skipEdge("malformed");
+            continue;
+          }
+          if (
+            !(await endpointResolves(sourceId)) ||
+            !(await endpointResolves(targetId))
+          ) {
+            skipEdge("endpoint_missing");
+            continue;
+          }
+          const edgeId = typeof edge.id === "string" ? edge.id : undefined;
+          if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
+            // Already present under the same id — a re-restore, not an error.
+            skipEdge("already_present");
+            continue;
+          }
+          // An archive is a file someone can hand you, and replaying it
+          // through the raw insert meant a hand-edited one could plant edges
+          // of an unregistered type, or edges violating every constraint the
+          // enforcer exists to apply, past checks the API refuses at. It is
+          // validated exactly the way `POST /edges` validates, one edge at a
+          // time: the batch entry point throws on its first violation, which
+          // would cost the whole restore over one bad line, and this route's
+          // contract is to skip and count.
+          //
+          // Custom edge types resolve because the archive's own registrations
+          // are replayed before this loop runs.
+          try {
+            await assertEdgesCanBeCreated(
+              storage.edges,
+              storage.items,
+              [
+                {
+                  source_id: sourceId,
+                  target_id: targetId,
+                  edge_type: edgeType,
+                },
+              ],
+              { space_id: spaceId },
+            );
+          } catch (err) {
+            if (err instanceof MarfaError) {
+              skipEdge(err.code);
+              continue;
+            }
+            throw err;
+          }
+          await storage.edges.createRaw(
             {
-              ...(archiveId !== undefined && { id: archiveId }),
-              type: item.type as string,
-              properties: (item.properties ?? {}) as Record<string, unknown>,
-              state: item.state as ItemState | undefined,
-              tier: item.tier as Tier | undefined,
-              timestamp: item.timestamp as string | undefined,
-              source: item.source as string | undefined,
-              source_id: item.source_id as string | undefined,
-              device: item.device as string | undefined,
-              capture_latitude: item.capture_latitude as number | undefined,
-              capture_longitude: item.capture_longitude as number | undefined,
-              tags: archiveTags(meta),
+              ...(edgeId !== undefined && { id: edgeId }),
+              source_id: sourceId,
+              target_id: targetId,
+              edge_type: edgeType,
+              properties: (edge.properties ?? {}) as Record<string, unknown>,
             },
             spaceId,
           );
-          imported++;
-          resolvableIds.add(created.id);
-
-          for (const [namespace, data] of Object.entries(
-            archiveExtensions(meta),
-          )) {
-            await storage.metadata.setExtension(created.id, namespace, data);
-          }
-        } catch (err) {
-          if (
-            err instanceof MarfaError &&
-            (err.code === ErrorCode.DUPLICATE_SOURCE ||
-              err.code === ErrorCode.CONFLICT)
-          ) {
-            duplicates++;
-            // A duplicate leaves the existing row untouched — its tags
-            // and extensions are the live state, not the archive's.
-            if (err.code === ErrorCode.CONFLICT && archiveId !== undefined) {
-              resolvableIds.add(archiveId);
-            }
-          } else {
-            throw err;
-          }
+          edgesImported++;
         }
-      }
 
-      // Second pass, after every item the archive carries exists: an
-      // edge restores only when both endpoints resolve in the restore
-      // space, so a partial or hand-edited archive cannot plant a
-      // reference to an item that is not there.
-      const endpointResolves = async (id: string): Promise<boolean> =>
-        resolvableIds.has(id) ||
-        (await storage.items.get(id, spaceId)) !== null;
-
-      for (const edge of edges) {
-        const sourceId = edge.source_id;
-        const targetId = edge.target_id;
-        const edgeType = edge.edge_type;
-        if (
-          typeof sourceId !== "string" ||
-          typeof targetId !== "string" ||
-          typeof edgeType !== "string" ||
-          !(await endpointResolves(sourceId)) ||
-          !(await endpointResolves(targetId))
-        ) {
-          edgesSkipped++;
-          continue;
-        }
-        const edgeId = typeof edge.id === "string" ? edge.id : undefined;
-        if (edgeId !== undefined && (await storage.edges.get(edgeId))) {
-          // Already present under the same id — a re-restore, not an error.
-          edgesSkipped++;
-          continue;
-        }
-        await storage.edges.createRaw(
-          {
-            ...(edgeId !== undefined && { id: edgeId }),
-            source_id: sourceId,
-            target_id: targetId,
-            edge_type: edgeType,
-            properties: (edge.properties ?? {}) as Record<string, unknown>,
-          },
-          spaceId,
-        );
-        edgesImported++;
-      }
-
-      return { imported, duplicates, edgesImported, edgesSkipped };
-    });
+        return {
+          imported,
+          duplicates,
+          edgesImported,
+          edgesSkipped,
+          edgesSkippedReasons,
+        };
+      });
+    } catch (err) {
+      // The write is what this request did; the rollback is what the database
+      // did. Nothing sweeps a blob whose restore was refused, so the undo is
+      // the only thing that keeps a failed restore from leaving the space
+      // permanently larger.
+      await blobs.undo();
+      throw err;
+    }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -501,6 +648,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         duplicates: result.duplicates,
         edges_imported: result.edgesImported,
         edges_skipped: result.edgesSkipped,
+        edges_skipped_reasons: result.edgesSkippedReasons,
         blobs_imported: blobCount,
         custom_types_registered: typeResult.typesRegistered,
         custom_types_skipped: typeResult.typesSkipped,
@@ -517,6 +665,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         duplicates: result.duplicates,
         edges_imported: result.edgesImported,
         edges_skipped: result.edgesSkipped,
+        edges_skipped_reasons: result.edgesSkippedReasons,
         blobs_imported: blobCount,
         custom_types_registered: typeResult.typesRegistered,
         custom_types_skipped: typeResult.typesSkipped,
