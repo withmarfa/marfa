@@ -45,11 +45,82 @@ export const MAX_WINDOW_DAYS = 400;
 export const MAX_OCCURRENCES = 5000;
 
 /**
+ * Rows read per page while gathering the events to expand.
+ *
+ * 200 because that is the storage layer's own ceiling — `items.list`
+ * silently clamps any larger `limit`. This route previously asked for
+ * 1000 and read one page, so it saw 200 events and reported the result
+ * as the whole calendar: a space's 201st event simply was not on it.
+ * Naming the real number here is what stops the next reader believing
+ * the request.
+ */
+const EVENT_PAGE_SIZE = 200;
+
+/**
+ * Ceiling on how many event rows one request will read.
+ *
+ * A window cannot narrow the read: a rule written in 2019 produces
+ * occurrences in 2026, so every series has to be considered whatever the
+ * window is, and the stored times are not comparable in SQL — they are
+ * instants written in whatever offset their upstream used, so a string
+ * comparison against the window would order `+01:00` against `Z`
+ * wrongly. Until a normalized instant column exists this route reads the
+ * calendar and filters in memory, and the only honest bound is a loud one.
+ *
+ * It refuses rather than truncating, matching `MAX_OCCURRENCES`. Reading
+ * one page and stopping is what this replaces: it returned 200 with an
+ * incomplete calendar, which is the failure a person cannot see.
+ */
+export const MAX_EVENTS_SCANNED = 20000;
+
+/**
  * Types whose items this route reads. Anything declaring the event
  * shape belongs here; `compatible_with` is what makes the Google type
  * readable through the same fields.
  */
 const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
+
+/**
+ * Every active event of the named types in the space, walked page by
+ * page rather than one page deep.
+ *
+ * The ceiling is a parameter rather than a closed-over constant so it is
+ * reachable: a backstop nothing can drive is a backstop nobody knows the
+ * shape of, and the sibling `MAX_OCCURRENCES` cap sat untested for
+ * exactly that reason. It refuses rather than trimming — the single-page
+ * read this replaces answered 200 with a calendar missing whatever sat
+ * past row 200, which is the failure a person cannot see.
+ */
+export async function gatherEventItems(
+  storage: Storage,
+  spaceId: string | undefined,
+  types: readonly string[],
+  maxScanned: number,
+): Promise<Item[]> {
+  const items: Item[] = [];
+  for (const type of types) {
+    let cursor: string | undefined;
+    do {
+      const page = await storage.items.list({
+        spaceId,
+        type,
+        state: "active",
+        limit: EVENT_PAGE_SIZE,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      items.push(...page.data);
+      if (items.length > maxScanned) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `This space holds more than ${String(maxScanned)} events; the calendar cannot be assembled in one read`,
+          { max_events_scanned: maxScanned },
+        );
+      }
+      cursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+    } while (cursor !== undefined);
+  }
+  return items;
+}
 
 const OccurrenceSchema = z.object({
   starts_at: z.string(),
@@ -212,32 +283,43 @@ export function occurrenceRoutes(storage: Storage) {
       );
     }
 
-    const items: Item[] = [];
-    for (const type of wanted) {
-      const page = await storage.items.list({
-        spaceId,
-        type,
-        state: "active",
-        limit: 1000,
-      });
-      items.push(...page.data);
-    }
+    const items = await gatherEventItems(
+      storage,
+      spaceId,
+      wanted,
+      MAX_EVENTS_SCANNED,
+    );
 
     // An exception names its series through parent-of, so the series is
     // resolved from the edge rather than from a property: the property
     // would be a second, drift-prone copy of the same fact.
+    //
+    // Batched, because the per-item form issued one query per exception
+    // and an exception is an ordinary shape — a calendar where several
+    // hundred meetings have each been moved once is a busy calendar, not
+    // a pathological one.
+    const exceptionItems = items.filter(
+      (item) => stringProp(item, "original_starts_at") !== undefined,
+    );
     const exceptionsBySeries = new Map<string, RecurrenceException[]>();
-    for (const item of items) {
-      const originalStartsAt = stringProp(item, "original_starts_at");
-      if (originalStartsAt === undefined) continue;
-      const parents = await storage.edges.listToTarget(item.id, {
-        edge_type: "parent-of",
-      });
-      const seriesId = parents.data[0]?.source_id;
-      if (seriesId === undefined) continue;
-      const list = exceptionsBySeries.get(seriesId) ?? [];
-      list.push({ id: item.id, original_starts_at: originalStartsAt });
-      exceptionsBySeries.set(seriesId, list);
+    if (exceptionItems.length > 0) {
+      const parentsByException = await storage.edges.listToTargetsBatched(
+        exceptionItems.map((item) => item.id),
+        // One parent is all a `parent-of` exception has; asking for a
+        // second would only widen what a malformed graph could return.
+        1,
+      );
+      for (const item of exceptionItems) {
+        const originalStartsAt = stringProp(item, "original_starts_at");
+        if (originalStartsAt === undefined) continue;
+        const seriesId = (parentsByException.get(item.id) ?? []).find(
+          (edge) => edge.edge_type === "parent-of",
+        )?.source_id;
+        if (seriesId === undefined) continue;
+        const list = exceptionsBySeries.get(seriesId) ?? [];
+        list.push({ id: item.id, original_starts_at: originalStartsAt });
+        exceptionsBySeries.set(seriesId, list);
+      }
     }
 
     const byId = new Map(items.map((item) => [item.id, item]));
