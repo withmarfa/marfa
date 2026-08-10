@@ -39,6 +39,7 @@ import {
   SESSION_CRITICAL_SCOPES,
 } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
+import { serverAddedResponseParam } from "./redirect-params.js";
 
 /**
  * Minimal context shape we read off `hooks.after` matchers + handlers.
@@ -827,13 +828,29 @@ function logAuthorizeOutcome(ctx: HookCtxLite): void {
     const error = params.get("error");
     if (!error) return;
 
-    // A redirect carrying BOTH a code and an error is a success landing on a
-    // client whose own registered `redirect_uri` contains `?error=` in its
-    // query — registration does not forbid one. Without this guard every
-    // successful sign-in through such a client would emit a refusal carrying
-    // an error code of the registrant's choosing, which is a way to drown the
-    // signal in noise precisely when it matters.
-    if (params.get("code")) return;
+    // A redirect can carry both an error and a code, and only one of them is
+    // ever the server's. A client may register a redirect URI whose own query
+    // contains either parameter, registration does not forbid it, and dynamic
+    // client registration is unauthenticated.
+    //
+    // So the presence of `code` decides nothing: read that way, a client that
+    // registers `?code=` silences every genuine refusal it receives, which is
+    // a false negative on exactly the counter a sign-in outage is measured by.
+    // Read the other way, a client that registers `?error=` turns every one of
+    // its successful sign-ins into a refusal carrying an error code of its own
+    // choosing. Diffing against what was registered keys the decision on the
+    // one thing the client cannot supply: whether the server added it.
+    if (
+      serverAddedResponseParam(
+        typeof ctx.query?.redirect_uri === "string"
+          ? ctx.query.redirect_uri
+          : null,
+        location,
+        "code",
+      )
+    ) {
+      return;
+    }
 
     const description = params.get("error_description");
     const expected = EXPECTED_AUTHORIZE_ERRORS.has(error);

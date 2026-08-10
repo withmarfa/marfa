@@ -109,20 +109,88 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   throw new Error("session_token cookie not found");
 }
 
-function authorizeUrl(clientId: string, scope: string, extra = ""): string {
+function authorizeUrl(
+  clientId: string,
+  scope: string,
+  extra = "",
+  redirectUri = CALLBACK,
+): string {
   const challenge = createHash("sha256")
     .update(randomBytes(32).toString("base64url"))
     .digest("base64url");
   const params = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
-    redirect_uri: CALLBACK,
+    redirect_uri: redirectUri,
     scope,
     state: "obs-state",
     code_challenge: challenge,
     code_challenge_method: "S256",
   });
   return `/auth/oauth2/authorize?${params.toString()}${extra}`;
+}
+
+/** Register a client whose redirect URI carries a fixed query of its own.
+ *  Registration does not forbid one and dynamic registration is open, so
+ *  this is a shape a stranger can create. */
+async function seedClientWithRedirect(
+  c: TestContext,
+  redirectUri: string,
+  scopes: readonly string[] | null,
+): Promise<string> {
+  const clientId = `obs-${randomBytes(5).toString("hex")}`;
+  const oauth = c.storage.oauthProvider;
+  if (!oauth) throw new Error("storage.oauthProvider missing");
+  await oauth.createClient({
+    clientId,
+    name: "Fixed-Query Redirect Client",
+    isPublic: true,
+    grantTypes: ["authorization_code"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "none",
+    scopes: scopes === null ? null : [...scopes],
+    redirectUris: [redirectUri],
+    postLogoutRedirectUris: [ORIGIN + "/"],
+    referenceId: null,
+  });
+  return clientId;
+}
+
+/**
+ * Run the first-consent dance so a later authorize issues a code straight to
+ * the client's callback. That second request is the only path that reaches
+ * the guard at all: without a standing consent row the plugin redirects to
+ * the consent page instead, where no top-level `error` is ever visible.
+ */
+async function grantConsent(
+  c: TestContext,
+  clientId: string,
+  cookie: string,
+  redirectUri: string,
+  scope: string,
+): Promise<void> {
+  const res = await request(
+    c.app,
+    "GET",
+    authorizeUrl(clientId, scope, "", redirectUri),
+    { headers: { cookie } },
+  );
+  expect(res.status).toBe(302);
+  const location = res.headers.get("location") ?? "";
+  expect(location).toContain("/auth/authorize?");
+  const signedQuery = location.slice(location.indexOf("?") + 1);
+
+  const decision = await request(c.app, "POST", "/auth/authorize/decision", {
+    form: {
+      accept: "true",
+      oauth_query: signedQuery,
+      scopes: scope.split(" "),
+    },
+    headers: { cookie, origin: ORIGIN },
+  });
+  expect(decision.status).toBe(302);
+  const callback = new URL(decision.headers.get("location") ?? "");
+  expect(callback.searchParams.get("code")).toBeTruthy();
 }
 
 describe("authorize failures are observable", () => {
@@ -227,53 +295,66 @@ describe("authorize failures are observable", () => {
     const cookie = await signInUser(ctx, "obs-poison@example.com");
 
     // Registration does not forbid a query on a redirect URI, and
-    // unauthenticated dynamic registration is on. Without the code guard,
-    // every successful sign-in through such a client emits a refusal
-    // carrying an error code of the registrant's choosing — a way to drown
-    // the signal in noise precisely when it matters.
+    // unauthenticated dynamic registration is on. Without the guard, every
+    // successful sign-in through such a client emits a refusal carrying an
+    // error code of the registrant's choosing — a way to drown the signal in
+    // noise precisely when it matters.
     const poisoned = `${CALLBACK}?error=invalid_scope&error_description=chosen`;
-    const clientId = `obs-${randomBytes(5).toString("hex")}`;
-    const oauth = ctx.storage.oauthProvider;
-    if (!oauth) throw new Error("storage.oauthProvider missing");
-    await oauth.createClient({
-      clientId,
-      name: "Poisoned Redirect Client",
-      isPublic: true,
-      grantTypes: ["authorization_code"],
-      responseTypes: ["code"],
-      tokenEndpointAuthMethod: "none",
-      scopes: null,
-      redirectUris: [poisoned],
-      postLogoutRedirectUris: [ORIGIN + "/"],
-      referenceId: null,
-    });
+    const clientId = await seedClientWithRedirect(ctx, poisoned, null);
 
-    const challenge = createHash("sha256")
-      .update(randomBytes(32).toString("base64url"))
-      .digest("base64url");
-    const params = new URLSearchParams({
-      response_type: "code",
-      client_id: clientId,
-      redirect_uri: poisoned,
-      scope: "openid",
-      state: "poison",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    });
+    // Consent first. A client with no standing grant is redirected to the
+    // consent page, where the request never reaches its own callback and no
+    // top-level `error` exists to be misread — so an assertion made on that
+    // path runs against an empty line set and holds no matter what the guard
+    // does.
+    await grantConsent(ctx, clientId, cookie, poisoned, "openid");
+
     const lines = captureLogs();
     const res = await request(
       ctx.app,
       "GET",
-      `/auth/oauth2/authorize?${params.toString()}`,
+      authorizeUrl(clientId, "openid", "", poisoned),
       { headers: { cookie } },
     );
-    expect(res.status).toBe(302);
 
-    // Whatever the outcome, a line here must not carry the registrant's
-    // chosen error code as though the server had produced it.
-    for (const line of authorizeLines(lines)) {
-      expect(line.data?.error_description).not.toBe("chosen");
-    }
+    expect(res.status).toBe(302);
+    const target = new URL(res.headers.get("location") ?? "");
+    // Proves the branch was reached: a code was issued to the client's own
+    // callback, alongside the `error` the client registered there.
+    expect(target.searchParams.get("code")).toBeTruthy();
+    expect(target.searchParams.get("error")).toBe("invalid_scope");
+
+    expect(authorizeLines(lines)).toHaveLength(0);
+  });
+
+  it("does not let a client that registers code= silence its own refusals", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "obs-silencer@example.com");
+
+    // The inverse of the case above, and the more dangerous one: reading the
+    // mere presence of `code` hands any registrant a switch for this signal.
+    // Register a callback carrying one and every genuine refusal goes
+    // unlogged, which is a false negative on exactly the counter a total
+    // sign-in outage is measured by.
+    const silencing = `${CALLBACK}?code=fixed`;
+    const clientId = await seedClientWithRedirect(ctx, silencing, []);
+
+    const lines = captureLogs();
+    const res = await request(
+      ctx.app,
+      "GET",
+      authorizeUrl(clientId, "openid core.note:read", "", silencing),
+      { headers: { cookie } },
+    );
+
+    expect(res.status).toBe(302);
+    const target = new URL(res.headers.get("location") ?? "");
+    expect(target.searchParams.get("error")).toBe("invalid_scope");
+    expect(target.searchParams.get("code")).toBe("fixed");
+
+    const logged = authorizeLines(lines);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.data?.error_code).toBe("invalid_scope");
   });
 
   it("separates the two by error code, not by whether one happened", async () => {

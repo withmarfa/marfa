@@ -269,6 +269,62 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
  * them here is that "every writer is covered" would be false, and a guard
  * that overstates its reach is worse than one that states its edge.
  */
+/**
+ * The text of the object literal starting at `open`, balanced across nesting
+ * and blind to braces inside strings.
+ *
+ * The scan used to slice a fixed 1200 characters instead. That held only by
+ * luck: the seed script's `scopes:` already sat 880 characters in behind an
+ * explanatory comment, so three more lines of prose would have moved it out
+ * of the window and the guard would have gone quiet without anything failing.
+ */
+function objectLiteralAt(source: string, open: number): string {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (quote !== null) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return source.slice(open);
+}
+
+/**
+ * Every scope value written by a `createClient` call in this source, in order.
+ *
+ * Two things the previous scan could not do. It located a call with `indexOf`,
+ * so a second call in the same file was invisible; and it recognized two
+ * receiver spellings from a mutually exclusive pair, so a file whose first hit
+ * was one spelling never had the other looked for. A third spelling already
+ * existed in the tree. Matching on the method rather than the receiver means
+ * there is no list to fall behind.
+ */
+function scopeWritersIn(source: string): string[] {
+  const written: string[] = [];
+  const calls = /\.createClient\(\s*\{/g;
+  let match: RegExpExecArray | null;
+  while ((match = calls.exec(source)) !== null) {
+    const open = source.indexOf("{", match.index);
+    const scopes = /scopes:\s*([^,\n]+)/.exec(objectLiteralAt(source, open));
+    // A call written on one line ends the property with the object's own
+    // brace rather than a comma, so the capture runs on into it. Left in,
+    // `null }` reads as a ceiling and the guard fails on a call that writes
+    // none.
+    const value = scopes?.[1]?.replace(/[\s})]+$/, "");
+    if (value !== undefined && value !== "null") written.push(value);
+  }
+  return written;
+}
+
 /** Every `.ts` under a directory, tests excluded. */
 function walkTypeScript(dir: string): string[] {
   const out: string[] = [];
@@ -284,9 +340,12 @@ function walkTypeScript(dir: string): string[] {
 }
 
 describe("call sites that persist a client scope ceiling", () => {
-  const DOORS: { file: string; justification: string }[] = [
+  // `writers` is the number of ceiling-writing calls the file is allowed, so
+  // a second one appearing inside a file that is already named still fails.
+  const DOORS: { file: string; writers: number; justification: string }[] = [
     {
       file: "src/routes/oauth-register.ts",
+      writers: 1,
       justification:
         "Dynamic client registration. The array is the ceiling the third-party " +
         "client asked for and a security boundary — not a copy of ours, and " +
@@ -303,20 +362,49 @@ describe("call sites that persist a client scope ceiling", () => {
       ...walkTypeScript(join(root, "scripts")),
     ];
 
-    const persisting: string[] = [];
+    const persisting: [string, number][] = [];
     for (const abs of sources) {
-      const source = readFileSync(abs, "utf8");
-      let from = source.indexOf("oauthProvider.createClient({");
-      if (from < 0) from = source.indexOf("oauth.createClient({");
-      if (from < 0) continue;
-      const call = source.slice(from, from + 1200);
-      const match = /scopes:\s*([^,\n]+)/.exec(call);
-      if (match && match[1]?.trim() !== "null") {
-        persisting.push(relative(root, abs).split(sep).join("/"));
+      const written = scopeWritersIn(readFileSync(abs, "utf8"));
+      if (written.length > 0) {
+        persisting.push([
+          relative(root, abs).split(sep).join("/"),
+          written.length,
+        ]);
       }
     }
 
-    expect(persisting.sort()).toEqual(DOORS.map((d) => d.file).sort());
+    const byFile = (a: [string, number], b: [string, number]): number =>
+      a[0].localeCompare(b[0]);
+    expect(persisting.sort(byFile)).toEqual(
+      DOORS.map((d): [string, number] => [d.file, d.writers]).sort(byFile),
+    );
+  });
+
+  it("sees a second call in a file, not just the first", () => {
+    const source = `
+      await oauthProvider.createClient({ clientId: "a", scopes: null });
+      await oauthProvider.createClient({ clientId: "b", scopes: ["core.note:read"] });
+    `;
+    expect(scopeWritersIn(source)).toEqual(['["core.note:read"]']);
+  });
+
+  it("sees a receiver spelling it has never been told about", () => {
+    // A third spelling already exists in this tree. Matching on the method
+    // means the scan cannot fall behind a list of receivers.
+    const source = `store.oauth.provider.createClient({ scopes: ["x:read"] });`;
+    expect(scopeWritersIn(source)).toEqual(['["x:read"]']);
+  });
+
+  it("reads past an options object longer than any fixed window", () => {
+    const padding = `      // ${"prose ".repeat(40)}\n`.repeat(8);
+    const source = `oauth.createClient({\n${padding}  scopes: ["late:read"],\n});`;
+    expect(source.length).toBeGreaterThan(1200);
+    expect(scopeWritersIn(source)).toEqual(['["late:read"]']);
+  });
+
+  it("is not fooled by a brace inside a string", () => {
+    const source = `oauth.createClient({ name: "a } b", scopes: ["s:read"] });`;
+    expect(scopeWritersIn(source)).toEqual(['["s:read"]']);
   });
 
   it("every named door carries a reason", () => {
