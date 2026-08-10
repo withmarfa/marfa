@@ -18,14 +18,13 @@
  * caller. Listing/get is admin-or-platform.
  */
 import { Hono } from "hono";
-import type { Context } from "hono";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
+import { resolveSpaceAdminCaller } from "./_space-caller.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
@@ -352,72 +351,18 @@ export function integrationRoutes(
   // Dual auth path (browser session OR Bearer): the install consent
   // screen is designed for human navigation, so a BetterAuth session
   // cookie is sufficient. Operator / test / CLI callers still go via a
-  // Bearer-resolved api_key. `resolveInstallCaller` returns the caller's
-  // space scope + an apiKeyId for the audit trail, or a Response on
-  // unauthenticated browser navigations (302 to sign-in), or throws
-  // 401 when an `Authorization` header was presented but didn't
-  // resolve (the API-client failure shape).
+  // Bearer-resolved api_key. The rule lives in `_space-caller.ts`,
+  // shared with the configuration surface one step further along the
+  // same flow.
   // ---------------------------------------------------------------------
 
-  interface InstallCaller {
-    /** Stable id for the audit trail. For Bearer callers: the api_keys
-     *  row id. For session callers: `auth_user:<userId>` so operator
-     *  queries can recognize session-backed installs. */
-    apiKeyId: string;
-    /** Space scope — `undefined` for platform-admin Bearer callers,
-     *  the user's space for session callers, the key's space for
-     *  ordinary Bearer callers. */
-    spaceId: string | undefined;
-  }
-
-  async function resolveInstallCaller(
-    c: Context<AppEnv>,
-  ): Promise<InstallCaller | Response> {
-    const apiKey = c.get("apiKey");
-    if (apiKey) {
-      // An install mints a runtime credential from the target manifest,
-      // so it hands out authority the caller may not itself hold —
-      // `auth/mint-ceiling.ts` bounds every mint by the authority of the
-      // principal that authorized it. Every sibling agrees: install via
-      // `/connections/install`, configure and uninstall are all
-      // space-admin. The session branch below is a different principal
-      // (the account holder approving a connection for their own space)
-      // and keeps its own rules.
-      if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          "Space admin authority required to install an integration",
-        );
-      }
-      return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
-    }
-    if (auth) {
-      const session = await auth.getSession(c.req.raw.headers);
-      if (session) {
-        const spaceId = await resolveSpaceIdForAuthUser(
-          storage,
-          session.user.id,
-        );
-        return {
-          apiKeyId: `auth_user:${session.user.id}`,
-          spaceId,
-        };
-      }
-    }
-    // Authorization header rejected → 401. No header → redirect to sign-in with return_to.
-    if (c.req.header("authorization")) {
-      throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
-    }
-    const url = new URL(c.req.url);
-    const returnTo = `${url.pathname}${url.search}`;
-    return c.redirect(
-      `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
-      302,
-    );
-  }
-
   htmlRouter.get("/:id/install", async (c) => {
-    const caller = await resolveInstallCaller(c);
+    const caller = await resolveSpaceAdminCaller(
+      c,
+      storage,
+      auth,
+      "Space admin authority required to install an integration",
+    );
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
     const item = await storage.items.get(id, caller.spaceId, {
@@ -472,7 +417,12 @@ export function integrationRoutes(
   });
 
   htmlRouter.post("/:id/install", async (c) => {
-    const caller = await resolveInstallCaller(c);
+    const caller = await resolveSpaceAdminCaller(
+      c,
+      storage,
+      auth,
+      "Space admin authority required to install an integration",
+    );
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
     const item = await storage.items.get(id, caller.spaceId, {

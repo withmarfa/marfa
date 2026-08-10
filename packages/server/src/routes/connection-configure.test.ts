@@ -17,7 +17,12 @@
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+  waitForAudit,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   parseConfigurePayload,
@@ -315,7 +320,10 @@ async function seedGoogleCalendarConnection(
 }
 
 describe("POST /connections/:id/configure — auth gate", () => {
-  it("rejects unauthenticated requests with 401", async () => {
+  it("sends a caller with no credential to sign in, with a way back", async () => {
+    // These pages exist to be opened by a person, and a person who has
+    // simply not signed in yet gets a dead end from a 401. The API-client
+    // shape is unchanged and covered by the next case.
     const { connectionId } = await seedGoogleCalendarConnection();
     const res = await request(
       ctx.app,
@@ -329,7 +337,49 @@ describe("POST /connections/:id/configure — auth gate", () => {
         },
       },
     );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/auth/sign-in?return_to=");
+    expect(decodeURIComponent(location)).toContain(
+      `/connections/${connectionId}/configure`,
+    );
+  });
+
+  it("still answers 401 to a bearer that does not resolve", async () => {
+    const { connectionId } = await seedGoogleCalendarConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/configure`,
+      {
+        key: "marfa_k1_not_a_real_key",
+        form: {
+          selected_calendar_ids: "primary",
+          default_write_calendar_id: "primary",
+          target_type: "google.calendar.event",
+        },
+      },
+    );
     expect(res.status).toBe(401);
+  });
+
+  it("rejects a form post from an origin the deployment does not allow", async () => {
+    const { connectionId } = await seedGoogleCalendarConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/configure`,
+      {
+        key: ctx.adminKey,
+        headers: { origin: "https://not-this-deployment.example" },
+        form: {
+          selected_calendar_ids: "primary",
+          default_write_calendar_id: "primary",
+          target_type: "google.calendar.event",
+        },
+      },
+    );
+    expect(res.status).toBe(403);
   });
 
   it("rejects member keys with 403", async () => {
@@ -598,5 +648,173 @@ describe("GET /connections/:id/configure", () => {
     expect(html).toContain("oblix.cyzr@gmail.com");
     expect(html).toContain("Team");
     expect(html).toContain("Configure Google Calendar");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A browser can open these pages
+//
+// The surface a person meets right after connecting an integration, and the
+// one place the platform asks them to make a choice about their own data. It
+// had been built, styled, previewed and snapshotted, and a browser could not
+// open it: every test drove it with a bearer, which is why they all passed.
+// ---------------------------------------------------------------------------
+
+describe("the configuration surface answers a browser session", () => {
+  let sessionCtx: TestContext;
+  const ORIGIN = "http://localhost:0";
+  let counter = 0;
+
+  beforeAll(async () => {
+    sessionCtx = await createTestContext({ authAllowSignup: true });
+  });
+
+  afterAll(async () => {
+    await sessionCtx.cleanup();
+  });
+
+  async function signIn(email: string): Promise<string> {
+    const password = "correct horse battery";
+    const up = await request(sessionCtx.app, "POST", "/auth/sign-up/email", {
+      body: { email, password, name: "Test User" },
+      headers: { origin: ORIGIN },
+    });
+    if (up.status !== 200) {
+      throw new Error(`sign-up failed ${String(up.status)}`);
+    }
+    await markEmailVerified(sessionCtx.storage, email);
+    const inRes = await request(sessionCtx.app, "POST", "/auth/sign-in/email", {
+      body: { email, password },
+      headers: { origin: ORIGIN },
+    });
+    if (inRes.status !== 200) {
+      throw new Error(`sign-in failed ${String(inRes.status)}`);
+    }
+    for (const part of (inRes.headers.get("set-cookie") ?? "").split(
+      /,\s*(?=[a-zA-Z0-9_-]+=)/,
+    )) {
+      const head = part.split(";")[0];
+      if (head?.includes("session_token")) return head;
+    }
+    throw new Error("session_token cookie not found");
+  }
+
+  /** An integration declaring a configuration contract, so the generic form
+   *  renders without needing an upstream OAuth dance first. */
+  function configurableManifest(name: string): Record<string, unknown> {
+    return {
+      name,
+      version: "1.0.0",
+      publisher: "Acme",
+      description: "configurable test integration",
+      direction: "read",
+      triggers: [{ type: "manual" }],
+      target_types: ["core.note"],
+      runtime_compatibility: ["hosted"],
+      configuration_schema: {
+        folder: { type: "string", description: "Folder to read from." },
+      },
+      bidirectional_handling: {
+        echo_ttl_seconds: 60,
+        lag_window_seconds: 60,
+        tombstone_mapping: "ignore",
+        partial_write_mode: "accept-partial",
+      },
+      oauth_requirements: {},
+      webhook_verification: { method: "hmac-sha256" },
+      manifest_schema_version: "1.2.0",
+    };
+  }
+
+  /** Install through the browser flow, so the connection lands in the
+   *  session user's own space rather than an admin key's. */
+  async function installAsBrowser(
+    cookie: string,
+    name: string,
+  ): Promise<string> {
+    const registered = await request(sessionCtx.app, "POST", "/integrations", {
+      key: sessionCtx.adminKey,
+      body: { manifest: configurableManifest(name) },
+    });
+    expect(registered.status).toBe(201);
+    const { id } = (await registered.json()) as { id: string };
+
+    const installed = await sessionCtx.app.request(
+      `/integrations/${id}/install`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: ORIGIN,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          decision: "approve",
+          label: "Browser-Installed",
+        }).toString(),
+      },
+    );
+    expect(installed.status).toBe(200);
+
+    const connections = await sessionCtx.storage.items.list({
+      type: "system.connection",
+    });
+    const connection = connections.data.find(
+      (item) =>
+        (item.properties as { integration_ref?: string }).integration_ref ===
+        id,
+    );
+    if (!connection) throw new Error("installed connection not found");
+    return connection.id;
+  }
+
+  it("renders the configuration form to a signed-in browser with no bearer", async () => {
+    counter += 1;
+    const cookie = await signIn(`configure-get-${String(counter)}@example.com`);
+    const connectionId = await installAsBrowser(
+      cookie,
+      `acme.configurable-get-${String(counter)}`,
+    );
+
+    const res = await sessionCtx.app.request(
+      `/connections/${connectionId}/configure`,
+      { headers: { cookie } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain(`action="/connections/${connectionId}/configure"`);
+  });
+
+  it("accepts the form that page renders, from the same session", async () => {
+    counter += 1;
+    const cookie = await signIn(
+      `configure-post-${String(counter)}@example.com`,
+    );
+    const connectionId = await installAsBrowser(
+      cookie,
+      `acme.configurable-post-${String(counter)}`,
+    );
+
+    const res = await sessionCtx.app.request(
+      `/connections/${connectionId}/configure`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: ORIGIN,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ folder: "Inbox" }).toString(),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const connection = await sessionCtx.storage.items.get(connectionId);
+    expect(
+      (connection?.properties as { configuration?: Record<string, unknown> })
+        .configuration,
+    ).toMatchObject({ folder: "Inbox" });
   });
 });
