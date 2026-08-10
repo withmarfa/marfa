@@ -93,6 +93,11 @@ import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
+import {
+  findRegisteredResponseRedirect,
+  hasAddedResponseParam,
+  isRegisteredResponseRedirect,
+} from "../auth/redirect-params.js";
 import { publish } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 
@@ -980,129 +985,6 @@ function isRegisteredRedirectUri(
  *                     request outright
  */
 type ProxyOutcome = "code" | "client_error" | "interaction" | "rejected";
-
-// These are the query parameters this OAuth Provider implementation adds
-// to a registered redirect URI. They are removed from both sides during
-// callback matching: a client may already have one in its registered URI,
-// and the provider replaces or appends the response value. Removing any
-// other parameter would let a callback with missing or changed fixed
-// registration data pass as the registered URI.
-const OAUTH_RESPONSE_PARAMS = new Set([
-  "code",
-  "error",
-  "error_description",
-  "iss",
-  "state",
-]);
-
-/**
- * Match a returned OAuth callback to a registered redirect URI while
- * ignoring only the response parameters the authorization server adds.
- *
- * `URL.origin` cannot represent native custom schemes (it is the literal
- * string `"null"` for all of them), so scheme, authority, and path are
- * compared directly. Fixed registered query parameters remain load-bearing:
- * both URLs must contain the same non-response key/value multiset after the
- * OAuth response fields are removed from each side.
- */
-function isRegisteredResponseRedirect(
-  registeredRedirectUris: readonly string[],
-  candidate: string,
-): boolean {
-  return (
-    findRegisteredResponseRedirect(registeredRedirectUris, candidate) !==
-    undefined
-  );
-}
-
-function findRegisteredResponseRedirect(
-  registeredRedirectUris: readonly string[],
-  candidate: string,
-): URL | undefined {
-  let returned: URL;
-  try {
-    returned = new URL(candidate);
-  } catch {
-    return undefined;
-  }
-
-  for (const entry of registeredRedirectUris) {
-    let registered: URL;
-    try {
-      registered = new URL(entry);
-    } catch {
-      continue;
-    }
-
-    const loopback =
-      registered.hostname === "127.0.0.1" ||
-      registered.hostname === "::1" ||
-      registered.hostname === "[::1]";
-    if (
-      registered.protocol !== returned.protocol ||
-      registered.username !== returned.username ||
-      registered.password !== returned.password ||
-      registered.hostname !== returned.hostname ||
-      (!loopback && registered.port !== returned.port) ||
-      registered.pathname !== returned.pathname ||
-      registered.hash !== returned.hash
-    ) {
-      continue;
-    }
-
-    const registeredQuery = [...registered.searchParams.entries()]
-      .filter(([key]) => !OAUTH_RESPONSE_PARAMS.has(key))
-      .sort(compareQueryEntry);
-    const returnedQuery = [...returned.searchParams.entries()]
-      .filter(([key]) => !OAUTH_RESPONSE_PARAMS.has(key))
-      .sort(compareQueryEntry);
-    if (queryEntriesEqual(registeredQuery, returnedQuery)) return registered;
-  }
-  return undefined;
-}
-
-function compareQueryEntry(
-  a: readonly [string, string],
-  b: readonly [string, string],
-): number {
-  return a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0]);
-}
-
-function queryEntriesEqual(
-  a: readonly (readonly [string, string])[],
-  b: readonly (readonly [string, string])[],
-): boolean {
-  return (
-    a.length === b.length &&
-    a.every(([key, value], index) => {
-      const other = b[index];
-      return other?.[0] === key && other[1] === value;
-    })
-  );
-}
-
-/**
- * Did the provider add or replace a response parameter rather than merely
- * preserve a fixed value from the registered URI? This distinction matters
- * when, for example, an error callback retains a fixed `code` query pair:
- * that pair must not turn the error into a successful-code outcome.
- */
-function hasAddedResponseParam(
-  registered: URL,
-  returned: URL,
-  key: string,
-): boolean {
-  const registeredCounts = new Map<string, number>();
-  for (const value of registered.searchParams.getAll(key)) {
-    registeredCounts.set(value, (registeredCounts.get(value) ?? 0) + 1);
-  }
-  for (const value of returned.searchParams.getAll(key)) {
-    const remaining = registeredCounts.get(value) ?? 0;
-    if (remaining === 0) return true;
-    registeredCounts.set(value, remaining - 1);
-  }
-  return false;
-}
 
 function classifyProxyOutcome(
   response: Response,
