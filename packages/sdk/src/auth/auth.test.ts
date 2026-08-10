@@ -103,6 +103,139 @@ describe("MarfaAuth", () => {
     expect(obj.state).toBe(parsed.searchParams.get("state"));
   });
 
+  it("handleCallback exchanges the code and persists a session", async () => {
+    // Nothing drove this path before, which is how it came to be broken: the
+    // library brands the parameters its own validator returns and refuses any
+    // other object, so the exchange threw a TypeError on every real callback
+    // while every test still passed.
+    const issuer = "http://localhost:8602";
+    const storage = new InMemoryTokenStorage();
+    const tokenRequests: URLSearchParams[] = [];
+
+    const fetchImpl: typeof globalThis.fetch = (input, init) => {
+      const target = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url,
+      );
+      if (target.pathname.startsWith("/.well-known")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: `${issuer}/auth`,
+              authorization_endpoint: `${issuer}/auth/oauth2/authorize`,
+              token_endpoint: `${issuer}/auth/oauth2/token`,
+              device_authorization_endpoint: `${issuer}/auth/device`,
+              authorization_response_iss_parameter_supported: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      // The library hands fetch a URLSearchParams body rather than a
+      // pre-encoded string, so read it as one.
+      const body = init?.body;
+      tokenRequests.push(
+        body instanceof URLSearchParams
+          ? body
+          : new URLSearchParams(typeof body === "string" ? body : ""),
+      );
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "at-1",
+            refresh_token: "rt-1",
+            token_type: "bearer",
+            expires_in: 3600,
+            scope: "core.note:read",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    };
+
+    const auth = new MarfaAuth({
+      issuer,
+      clientId: "test-client",
+      redirectUri: "http://localhost:5173/auth/callback",
+      scopes: ["core.note:read"],
+      storage,
+      fetch: fetchImpl,
+    });
+
+    const authorizeUrl = new URL(await auth.buildAuthorizeUrl());
+    const state = authorizeUrl.searchParams.get("state") ?? "";
+    const provider = await auth.handleCallback(
+      `http://localhost:5173/auth/callback?code=the-code&state=${state}&iss=${encodeURIComponent(`${issuer}/auth`)}`,
+    );
+
+    // The exchange actually happened, carrying the code and the verifier.
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]?.get("code")).toBe("the-code");
+    expect(tokenRequests[0]?.get("code_verifier")).toBeTruthy();
+    expect(await provider.getAccessToken()).toBe("at-1");
+    // The pending record is spent, so a replayed callback cannot reuse it.
+    expect(
+      await storage.get("marfa.auth.pending:http://localhost:8602:test-client"),
+    ).toBeNull();
+  });
+
+  it("refuses a callback whose issuer is not the one discovered", async () => {
+    // The mix-up defense the library's validator provides and a hand-built
+    // parameter bag omits: a code minted by a different authorization server
+    // must not be exchanged against this one's token endpoint.
+    const issuer = "http://localhost:8602";
+    const storage = new InMemoryTokenStorage();
+    let exchanged = false;
+
+    const fetchImpl: typeof globalThis.fetch = (input) => {
+      const target = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url,
+      );
+      if (target.pathname.startsWith("/.well-known")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: `${issuer}/auth`,
+              authorization_endpoint: `${issuer}/auth/oauth2/authorize`,
+              token_endpoint: `${issuer}/auth/oauth2/token`,
+              device_authorization_endpoint: `${issuer}/auth/device`,
+              authorization_response_iss_parameter_supported: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      exchanged = true;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+
+    const auth = new MarfaAuth({
+      issuer,
+      clientId: "test-client",
+      redirectUri: "http://localhost:5173/auth/callback",
+      scopes: ["core.note:read"],
+      storage,
+      fetch: fetchImpl,
+    });
+
+    const authorizeUrl = new URL(await auth.buildAuthorizeUrl());
+    const state = authorizeUrl.searchParams.get("state") ?? "";
+
+    await expect(
+      auth.handleCallback(
+        `http://localhost:5173/auth/callback?code=the-code&state=${state}&iss=${encodeURIComponent("https://attacker.example/auth")}`,
+      ),
+    ).rejects.toMatchObject({ name: "OAuthError" });
+    expect(exchanged).toBe(false);
+  });
+
   it("restore() returns null when no session exists", async () => {
     const storage = new InMemoryTokenStorage();
     const auth = new MarfaAuth({
