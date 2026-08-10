@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { expandBundlesToScopes, TYPE_REGISTRY } from "@withmarfa/shared";
-import { buildAllowedScopes } from "./oauth-provider.js";
+import {
+  expandBundlesToScopes,
+  TYPE_REGISTRY,
+  EDGE_TYPE_REGISTRY,
+} from "@withmarfa/shared";
+import {
+  buildAllowedScopes,
+  CUSTOM_TYPE_NAMESPACES,
+} from "./oauth-provider.js";
 import {
   DEFAULT_PERMISSION_BUNDLES,
   loadPermissionBundles,
@@ -29,11 +36,113 @@ describe("buildAllowedScopes", () => {
     expect(scopes.has("user.*:write")).toBe(true);
   });
 
+  it("offers a namespace wildcard for custom edge types, which are never enumerable", () => {
+    // A custom edge type is registered per space at runtime, so it cannot
+    // be in this set and cannot be named concretely in a grant. Without a
+    // namespace wildcard the only expressible scope for a space's own
+    // relation edges is the global `edge.*`, so an app asking narrowly is
+    // silently narrowed to nothing while an app asking for everything
+    // works — the exact inversion of what scopes are for.
+    const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
+    expect(scopes.has("edge.user.*:read")).toBe(true);
+    expect(scopes.has("edge.user.*:write")).toBe(true);
+    expect(scopes.has("edge.app.*:write")).toBe(true);
+  });
+
+  it("offers the same namespaces for edges as for item types", () => {
+    // The two halves drifted once: item types gained the runtime
+    // namespaces and edge types were left with concrete core ids plus the
+    // global wildcard.
+    const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
+    const itemNamespaces = [...scopes]
+      .filter((s) => /^[a-z]+\.\*:write$/.test(s))
+      .map((s) => s.slice(0, s.indexOf(".")))
+      // `core` enumerates its members, so it needs no wildcard twin, and
+      // `edge` is the edge half's own prefix rather than a namespace in it.
+      .filter((ns) => ns !== "core" && ns !== "edge");
+    expect(itemNamespaces.length).toBeGreaterThan(0);
+    for (const ns of itemNamespaces) {
+      expect(scopes.has(`edge.${ns}.*:write`)).toBe(true);
+      expect(scopes.has(`edge.${ns}.*:read`)).toBe(true);
+    }
+  });
+
   it("still enumerates concrete registry + OIDC scopes", () => {
     const scopes = buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES);
     expect(scopes).toContain("core.note:read");
     expect(scopes).toContain("edge.*:write");
     expect(scopes).toContain("openid");
+  });
+});
+
+describe("permission bundles bind to the type registry", () => {
+  // Asserting the bundles against `buildAllowedScopes` cannot fail: the
+  // builder unions the bundle scopes into the set it returns, so the
+  // obvious guard is true by construction. It was true on the day a bundle
+  // naming a deleted type took hosted sign-in down for every client. This
+  // resolves each bundle scope against the registries themselves instead.
+  const NON_TYPE_LITERALS = new Set([
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "metadata:read",
+    "metadata:write",
+    "metadata.types:read",
+    "metadata.types:write",
+    "metadata.edge_types:read",
+    "metadata.edge_types:write",
+  ]);
+  const runtimeNamespaces = new Set<string>(
+    CUSTOM_TYPE_NAMESPACES.map((ns) => `${ns}.`),
+  );
+
+  it("names only types and edge types that exist", () => {
+    const unresolved: string[] = [];
+    for (const literal of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
+      if (NON_TYPE_LITERALS.has(literal)) continue;
+      const pattern = literal.split(":")[0] ?? "";
+      // A wildcard names a namespace rather than a member, so it resolves
+      // when anything in the registry sits under it — or when it is one of
+      // the runtime namespaces the registry deliberately never enumerates.
+      if (pattern === "*") continue;
+      if (pattern.startsWith("edge.")) {
+        const edgePattern = pattern.slice("edge.".length);
+        if (edgePattern.endsWith("*")) continue;
+        if (!EDGE_TYPE_REGISTRY.has(edgePattern)) unresolved.push(literal);
+        continue;
+      }
+      if (pattern.endsWith("*")) {
+        const prefix = pattern.slice(0, -1);
+        const known = [...TYPE_REGISTRY.keys()].some((t) =>
+          t.startsWith(prefix),
+        );
+        if (!known && !runtimeNamespaces.has(prefix)) unresolved.push(literal);
+        continue;
+      }
+      if (!TYPE_REGISTRY.has(pattern)) unresolved.push(literal);
+    }
+    expect(unresolved).toEqual([]);
+  });
+
+  it("fails when a bundle names a type the registry does not have", () => {
+    // The guard above is only worth having if it discriminates, so this
+    // drives the exact data condition that caused the outage: a bundle
+    // referencing a type that has been deleted from the registry.
+    const stale = [
+      {
+        id: "stale",
+        label: "Stale",
+        description: "A bundle naming a type the registry no longer has",
+        default_on: false,
+        scopes: ["core.media.podcast:read"],
+      },
+    ];
+    const unresolved = expandBundlesToScopes(stale).filter((literal) => {
+      const pattern = literal.split(":")[0] ?? "";
+      return !TYPE_REGISTRY.has(pattern);
+    });
+    expect(unresolved).toEqual(["core.media.podcast:read"]);
   });
 });
 

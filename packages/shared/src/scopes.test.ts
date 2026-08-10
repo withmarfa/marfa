@@ -441,6 +441,77 @@ describe("edgePermissionCovers", () => {
       true,
     );
   });
+
+  // A namespace wildcard is the only way to name a custom edge type, which
+  // is registered per space at runtime and so cannot appear in any scope
+  // list built ahead of the request. Resolving exact ids and the bare `*`
+  // alone means the map can hold a pattern that never matches anything: the
+  // grant is issued, the token reports it, and the write is still refused.
+  it("resolves a namespace wildcard the way item-type patterns do", () => {
+    expect(
+      edgePermissionCovers({ "user.*": "write" }, "user.blocks", "write"),
+    ).toBe(true);
+    expect(
+      edgePermissionCovers({ "user.*": "read" }, "user.blocks", "read"),
+    ).toBe(true);
+    expect(
+      edgePermissionCovers({ "user.*": "read" }, "user.blocks", "write"),
+    ).toBe(false);
+  });
+
+  it("keeps a namespace wildcard inside its namespace", () => {
+    expect(
+      edgePermissionCovers({ "user.*": "write" }, "app.blocks", "read"),
+    ).toBe(false);
+    // Not a prefix match on the raw string: `users.blocks` is a different
+    // namespace that merely starts with the same letters.
+    expect(
+      edgePermissionCovers({ "user.*": "write" }, "users.blocks", "read"),
+    ).toBe(false);
+  });
+
+  it("covers the namespace root itself, matching parent-inclusive patterns", () => {
+    // `core.media.*` covers `core.media` on the item side, and a grant list
+    // that disagreed with the permission map about the root would admit a
+    // token whose own reported scopes say otherwise.
+    expect(edgePermissionCovers({ "user.*": "write" }, "user", "write")).toBe(
+      true,
+    );
+  });
+
+  // The three stages are individually covered above, and each was green
+  // while the whole chain was broken: parsing accepted `edge.user.*:write`,
+  // projection stored it, and matching then failed to resolve it, so a
+  // token that reported the scope was refused the write. Only a test
+  // spanning all three sees that.
+  it("carries a granted namespace scope through to the write decision", () => {
+    const granted = ["edge.user.*:write", "edge.parent-of:write"];
+    const perms = scopesToEdgePermissions(granted);
+    expect(perms).toEqual({ "user.*": "write", "parent-of": "write" });
+    // A relation edge type this space registered at runtime.
+    expect(edgePermissionCovers(perms, "user.blocks", "write")).toBe(true);
+    expect(edgePermissionCovers(perms, "parent-of", "write")).toBe(true);
+    // And nothing wider came along for the ride.
+    expect(edgePermissionCovers(perms, "in-collection", "read")).toBe(false);
+  });
+
+  it("lets the more specific pattern win, so a narrow entry can pin a wide one", () => {
+    // Longest-prefix precedence, as `resolveTypePermission` applies it: an
+    // author writing these two together means "write everywhere except the
+    // user namespace, which is read-only".
+    const perms = { "*": "write", "user.*": "read" } as const;
+    expect(edgePermissionCovers(perms, "user.blocks", "write")).toBe(false);
+    expect(edgePermissionCovers(perms, "user.blocks", "read")).toBe(true);
+    expect(edgePermissionCovers(perms, "about", "write")).toBe(true);
+    // An exact id outranks every pattern, in either direction.
+    expect(
+      edgePermissionCovers(
+        { "user.*": "read", "user.blocks": "write" },
+        "user.blocks",
+        "write",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("metadataPermissionCovers", () => {
