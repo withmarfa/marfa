@@ -79,6 +79,11 @@ export const MetadataSchema = z.object({
 export const ItemWithMetadataSchema = z.object({
   item: ItemSchema,
   metadata: MetadataSchema,
+  /** Present only on the natural-key re-sync of an item the user has
+   *  trashed: the request was accepted and deliberately wrote nothing.
+   *  Absent everywhere else, so a caller reading it as a boolean sees
+   *  the distinction rather than having to infer it from the state. */
+  acknowledged: z.boolean().optional(),
 });
 
 export const VersionSchema = z.object({

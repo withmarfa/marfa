@@ -537,7 +537,9 @@ CREATE INDEX IF NOT EXISTS \`idx_inbound_webhooks_connection_id\` ON \`inbound_w
 
 CREATE INDEX IF NOT EXISTS \`idx_items_created_at\` ON \`items\` (\`created_at\`);
 
-CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\` ON \`items\` (\`source\`,\`source_id\`) WHERE source IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\`
+  ON \`items\` (COALESCE(\`space_id\`, ''), \`source\`, \`source_id\`)
+  WHERE source IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS \`idx_items_state\` ON \`items\` (\`state\`);
 

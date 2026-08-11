@@ -102,7 +102,7 @@
         },
         "responses": {
           "200": {
-            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve a non-trashed item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry.",
+            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve an item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry. When the resolved item has been trashed the response carries `acknowledged: true` and nothing is written: the deletion stands, and the re-sync is accepted rather than refused forever.",
             "content": {
               "application/json": {
                 "schema": {
@@ -283,6 +283,9 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -475,6 +478,9 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -1131,6 +1137,9 @@
                                   "tags",
                                   "extensions"
                                 ]
+                              },
+                              "acknowledged": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -2078,6 +2087,9 @@
                               "tags",
                               "extensions"
                             ]
+                          },
+                          "acknowledged": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -2467,6 +2479,9 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -3038,6 +3053,9 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -3359,6 +3377,9 @@
                         "tags",
                         "extensions"
                       ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
                     }
                   },
                   "required": [

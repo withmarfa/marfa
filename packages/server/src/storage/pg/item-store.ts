@@ -227,11 +227,18 @@ export class PgItemStore implements ItemStore {
       // search-vector UPDATE blocks on the parent INSERT's lock.
       return pgRequestContext.run({ tx }, async () => {
         if (input.source && input.source_id) {
+          // The space predicate is unconditional. A conditional one meant
+          // a caller with no space (platform admin, single-space
+          // self-host) deduped against every space's rows, so the same
+          // call that collided for one caller silently reached across
+          // spaces for another. A space-less caller belongs to the
+          // null-space bucket and is deduped against that, matching the
+          // index's own COALESCE.
           const dedupConditions = [
             eq(items.source, input.source),
             eq(items.source_id, input.source_id),
+            spaceId ? eq(items.space_id, spaceId) : isNull(items.space_id),
           ];
-          if (spaceId) dedupConditions.push(eq(items.space_id, spaceId));
           const [existing] = await tx
             .select({ id: items.id })
             .from(items)
