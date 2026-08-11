@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,13 @@ import { TextEnrichmentSweeper } from "./sweeper.js";
 import { EXTRACTOR_VERSION } from "./extract.js";
 import type { OcrEngine } from "./ocr.js";
 
+/**
+ * Each test gets its own context, deliberately. The sweeper sweeps the
+ * whole table, so a shared item pool makes every count an at-least-one
+ * assertion — and an at-least-one assertion cannot catch a sweep that
+ * processed the wrong items alongside the right ones. Isolation is what
+ * lets every count below be exact.
+ */
 let ctx: TestContext;
 
 const fixture = (name: string): Promise<Buffer> =>
@@ -90,11 +97,17 @@ async function readItem(id: string): Promise<Record<string, unknown>> {
   return data.item.properties;
 }
 
-beforeAll(async () => {
+/** The signature the default-config sweeper stamps, for direct store reads. */
+const DEFAULT_SIGNATURE = JSON.stringify({
+  max_blob_bytes: 20 * 1024 * 1024,
+  ocr: false,
+});
+
+beforeEach(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(async () => {
+afterEach(async () => {
   await ctx.cleanup();
 });
 
@@ -106,7 +119,7 @@ describe("extraction", () => {
     const id = await createFileItem(await seedBlob(bytes, mime), mime);
 
     const result = await sweeper().runOnce();
-    expect(result.extracted).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({ extracted: 1, skipped: 0, failed: 0 });
 
     const props = await readItem(id);
     expect(String(props.extracted_text)).toContain("quokkadocx");
@@ -133,7 +146,8 @@ describe("extraction", () => {
       { width: 1700, height: 2200 },
     );
 
-    await sweeper({ ocr }).runOnce();
+    const result = await sweeper({ ocr }).runOnce();
+    expect(result).toEqual({ extracted: 1, skipped: 0, failed: 0 });
 
     const props = await readItem(id);
     expect(props.extracted_text).toBe("subtype marker text");
@@ -149,7 +163,11 @@ describe("extraction", () => {
       body: { properties: { title: "a title the user set" } },
     });
 
-    await sweeper().runOnce();
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
 
     const props = await readItem(id);
     expect(props.title).toBe("a title the user set");
@@ -162,10 +180,8 @@ describe("extraction", () => {
     await createFileItem(await seedBlob(bytes, "text/plain"), "text/plain");
     const s = sweeper();
 
-    const first = await s.runOnce();
-    expect(first.extracted).toBeGreaterThanOrEqual(1);
-    const second = await s.runOnce();
-    expect(second.extracted).toBe(0);
+    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 0 });
   });
 
   it("re-extracts when the blob is replaced", async () => {
@@ -173,7 +189,11 @@ describe("extraction", () => {
       await seedBlob(Buffer.from("before quokkabefore"), "text/plain"),
       "text/plain",
     );
-    await sweeper().runOnce();
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
     expect(String((await readItem(id)).extracted_text)).toContain(
       "quokkabefore",
     );
@@ -187,8 +207,11 @@ describe("extraction", () => {
       body: { properties: { blob_ref: replacement } },
     });
 
-    const again = await sweeper().runOnce();
-    expect(again.extracted).toBeGreaterThanOrEqual(1);
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
     expect(String((await readItem(id)).extracted_text)).toContain(
       "quokkaafter",
     );
@@ -200,8 +223,8 @@ describe("extraction", () => {
       "text/plain",
     );
     const s = sweeper();
-    await s.runOnce();
-    expect((await s.runOnce()).extracted).toBe(0);
+    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 0 });
 
     const row = await ctx.storage.enrichment.get(id);
     expect(row).not.toBeNull();
@@ -210,7 +233,52 @@ describe("extraction", () => {
       extractor_version: EXTRACTOR_VERSION - 1,
     });
 
-    expect((await s.runOnce()).extracted).toBeGreaterThanOrEqual(1);
+    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+  });
+
+  it("does not write text for a blob the item no longer references", async () => {
+    // The blob is replaced mid-extraction. The sweeper re-reads before it
+    // writes, so the stale text is discarded, nothing is recorded, and the
+    // next pass extracts the replacement.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+    );
+    const replacement = await seedBlob(
+      Buffer.from("replacement quokkanew"),
+      "text/plain",
+    );
+
+    let release!: (text: string) => void;
+    const gate = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const ocr = new FakeOcr(() => gate);
+    const s = sweeper({ ocr });
+
+    const run = s.runOnce();
+    // Wait for extraction to begin, then re-point the item while the OCR
+    // "recognition" is still in flight.
+    await expect.poll(() => ocr.calls).toBe(1);
+    await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: {
+        properties: { blob_ref: replacement, mime_type: "text/plain" },
+      },
+    });
+    release("stale text from the old blob");
+
+    expect(await run).toEqual({ extracted: 0, skipped: 1, failed: 0 });
+    expect((await readItem(id)).extracted_text).toBeUndefined();
+    // Nothing recorded for the aborted write, so the next pass extracts
+    // the replacement blob.
+    expect(await ctx.storage.enrichment.get(id)).toBeNull();
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(String((await readItem(id)).extracted_text)).toContain("quokkanew");
   });
 });
 
@@ -223,7 +291,7 @@ describe("skips", () => {
     );
 
     const result = await sweeper({ maxBlobBytes: 4 }).runOnce();
-    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({ extracted: 0, skipped: 1, failed: 0 });
 
     expect((await readItem(id)).extracted_text).toBeUndefined();
     const row = await ctx.storage.enrichment.get(id);
@@ -231,20 +299,73 @@ describe("skips", () => {
     expect(row?.error).toContain("size limit");
   });
 
-  it("records an unsupported type once and never offers it again", async () => {
+  it("reconsiders a size-ceiling skip when the ceiling is raised", async () => {
+    // A skip is terminal only under the configuration that made it: the
+    // raised ceiling changes the config signature and the row re-offers.
     const id = await createFileItem(
-      await seedBlob(Buffer.from("not readable"), "video/mp4"),
-      "video/mp4",
+      await seedBlob(Buffer.from("reconsidered quokkaceiling"), "text/plain"),
+      "text/plain",
     );
+
+    expect(await sweeper({ maxBlobBytes: 4 }).runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(String((await readItem(id)).extracted_text)).toContain(
+      "quokkaceiling",
+    );
+  });
+
+  it("reconsiders an image skipped while OCR was off once it is on", async () => {
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+    );
+
+    expect(await sweeper({ ocr: null }).runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
+    expect((await ctx.storage.enrichment.get(id))?.error).toBe(
+      "unsupported type",
+    );
+
+    const ocr = new FakeOcr(() => Promise.resolve("now readable"));
+    expect(await sweeper({ ocr }).runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    expect((await readItem(id)).extracted_text).toBe("now readable");
+  });
+
+  it("records an unsupported type without touching the blob", async () => {
+    // The bytes are gone from the backend, so reaching for them would
+    // surface as a missing-bytes failure. The MIME gate runs first: the
+    // recorded reason is the type, not the absent read it never made.
+    const ref = await seedBlob(Buffer.from("not readable"), "video/mp4");
+    const id = await createFileItem(ref, "video/mp4");
+    await ctx.blobBackend.delete(ref);
     const s = sweeper();
 
-    await s.runOnce();
-    expect((await ctx.storage.enrichment.get(id))?.status).toBe("skipped");
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 1, failed: 0 });
+    const row = await ctx.storage.enrichment.get(id);
+    expect(row?.status).toBe("skipped");
+    expect(row?.error).toBe("unsupported type");
 
+    // Same configuration, so the row stays parked.
     const candidates = await ctx.storage.enrichment.listCandidates(
       EXTRACTOR_VERSION,
       3,
       100,
+      DEFAULT_SIGNATURE,
     );
     expect(candidates.map((c) => c.item_id)).not.toContain(id);
   });
@@ -260,6 +381,7 @@ describe("skips", () => {
       EXTRACTOR_VERSION,
       3,
       100,
+      DEFAULT_SIGNATURE,
     );
     expect(candidates.map((c) => c.item_id)).not.toContain(id);
   });
@@ -270,7 +392,11 @@ describe("skips", () => {
       "text/plain",
     );
 
-    await sweeper().runOnce();
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
 
     expect((await readItem(id)).extracted_text).toBeUndefined();
     expect((await ctx.storage.enrichment.get(id))?.status).toBe("skipped");
@@ -286,21 +412,50 @@ describe("failures", () => {
     );
     const s = sweeper({ ocr, maxAttempts: 2 });
 
-    await s.runOnce();
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
     expect((await ctx.storage.enrichment.get(id))?.attempts).toBe(1);
-    await s.runOnce();
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
     expect((await ctx.storage.enrichment.get(id))?.attempts).toBe(2);
 
     const row = await ctx.storage.enrichment.get(id);
     expect(row?.status).toBe("failed");
     expect(row?.error).toContain("engine exploded");
 
-    const candidates = await ctx.storage.enrichment.listCandidates(
-      EXTRACTOR_VERSION,
-      2,
-      100,
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 0 });
+  });
+
+  it("grants a replaced blob a fresh retry budget", async () => {
+    // Attempts count against one generation of content. Before the reset,
+    // a file that had used its budget on an old blob got its first attempt
+    // on the new one recorded as already past the cap.
+    const ocr = new FakeOcr(() => Promise.reject(new Error("engine exploded")));
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
     );
-    expect(candidates.map((c) => c.item_id)).not.toContain(id);
+    const s = sweeper({ ocr, maxAttempts: 2 });
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
+    expect((await ctx.storage.enrichment.get(id))?.attempts).toBe(2);
+
+    // A different image lands in the same item slot.
+    const replacement = await seedBlob(
+      Buffer.concat([await fixture("sample.png"), Buffer.from([0])]),
+      "image/png",
+    );
+    await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { properties: { blob_ref: replacement } },
+    });
+
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
+    const row = await ctx.storage.enrichment.get(id);
+    // First attempt against the new content, not third against the item.
+    expect(row?.attempts).toBe(1);
+    expect(row?.blob_ref).toBe(replacement);
+    // And the fresh budget is real: the second attempt still runs.
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
+    expect((await ctx.storage.enrichment.get(id))?.attempts).toBe(2);
   });
 
   it("terminates the OCR worker when an item overruns its budget", async () => {
@@ -314,10 +469,8 @@ describe("failures", () => {
     );
 
     const result = await sweeper({ ocr, itemTimeoutMs: 50 }).runOnce();
-    expect(result.failed).toBeGreaterThanOrEqual(1);
-    // Every overrun terminates the worker: the batch may carry retryable
-    // failures left by earlier cases, and each one has to be cleaned up.
-    expect(ocr.terminated).toBe(result.failed);
+    expect(result).toEqual({ extracted: 0, skipped: 0, failed: 1 });
+    expect(ocr.terminated).toBe(1);
     const row = await ctx.storage.enrichment.get(id);
     expect(row?.status).toBe("failed");
     expect(row?.error).toContain("timed out");
@@ -334,7 +487,11 @@ describe("failures", () => {
     );
     const ocr = new FakeOcr(() => Promise.reject(new Error("nope")));
 
-    await sweeper({ ocr }).runOnce();
+    expect(await sweeper({ ocr }).runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 1,
+    });
 
     expect(String((await readItem(good)).extracted_text)).toContain(
       "quokkasurvive",
@@ -342,17 +499,24 @@ describe("failures", () => {
     expect((await ctx.storage.enrichment.get(bad))?.status).toBe("failed");
   });
 
-  it("skips an item whose bytes have gone", async () => {
-    const bytes = Buffer.from("bytes about to vanish quokkavanish");
+  it("retries an item whose bytes were not there yet", async () => {
+    // A missing read is transient — a blob write that had not landed, a
+    // flaky backend — and must not be parked the way an unreadable MIME
+    // is. It fails, retries, and succeeds once the bytes appear.
+    const bytes = Buffer.from("late-arriving bytes quokkalate");
     const ref = await seedBlob(bytes, "text/plain");
     const id = await createFileItem(ref, "text/plain");
     await ctx.blobBackend.delete(ref);
+    const s = sweeper();
 
-    await sweeper().runOnce();
-
+    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 1 });
     const row = await ctx.storage.enrichment.get(id);
-    expect(row?.status).toBe("skipped");
+    expect(row?.status).toBe("failed");
     expect(row?.error).toContain("bytes missing");
+
+    await ctx.blobBackend.put(ref, bytes, "text/plain");
+    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+    expect(String((await readItem(id)).extracted_text)).toContain("quokkalate");
   });
 });
 
@@ -366,6 +530,6 @@ describe("batching", () => {
     }
     const s = sweeper({ batchSize: 2 });
     const result = await s.runOnce();
-    expect(result.extracted + result.skipped + result.failed).toBe(2);
+    expect(result).toEqual({ extracted: 2, skipped: 0, failed: 0 });
   });
 });

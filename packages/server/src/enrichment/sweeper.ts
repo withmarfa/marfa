@@ -3,7 +3,7 @@ import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import type { OcrEngine } from "./ocr.js";
-import { EXTRACTOR_VERSION, extractText } from "./extract.js";
+import { EXTRACTOR_VERSION, extractText, isEnrichableMime } from "./extract.js";
 
 export interface TextEnrichmentSweeperOptions {
   storage: Storage;
@@ -52,6 +52,21 @@ export class TextEnrichmentSweeper {
     }
   }
 
+  /**
+   * The configuration a skip is decided under. Written onto every state
+   * row; the candidate query re-offers skipped rows whose stamp differs,
+   * so raising the size ceiling or enabling image reading reconsiders
+   * what those settings parked. Fields are limited to what changes a
+   * skip/no-skip decision — text truncation changes output, which is what
+   * `EXTRACTOR_VERSION` bumps are for.
+   */
+  private get configSignature(): string {
+    return JSON.stringify({
+      max_blob_bytes: this.opts.maxBlobBytes,
+      ocr: this.opts.ocr !== null,
+    });
+  }
+
   /** Test entry point — processes one batch and reports what it did. */
   async runOnce(): Promise<{
     extracted: number;
@@ -63,6 +78,7 @@ export class TextEnrichmentSweeper {
       EXTRACTOR_VERSION,
       this.opts.maxAttempts,
       this.opts.batchSize,
+      this.configSignature,
     );
 
     let extracted = 0;
@@ -90,28 +106,66 @@ export class TextEnrichmentSweeper {
   }): Promise<"extracted" | "skipped" | "failed"> {
     const { storage, blobs } = this.opts;
     const prior = await storage.enrichment.get(candidate.item_id);
-    const attempts = (prior?.attempts ?? 0) + 1;
+    // Attempts count against one generation of content: a new blob or a
+    // bumped extractor is a fresh start, not attempt N+1 of the old one.
+    // Carrying the count across generations meant the first attempt on
+    // genuinely new content could already be past the cap.
+    const sameGeneration =
+      prior !== null &&
+      prior.blob_ref === candidate.blob_ref &&
+      prior.extractor_version === EXTRACTOR_VERSION;
+    const attempts = sameGeneration ? prior.attempts + 1 : 1;
 
-    const recordSkip = async (error: string) => {
+    const record = async (
+      status: "skipped" | "failed" | "done",
+      error: string | null,
+    ) => {
       await storage.enrichment.upsert({
         item_id: candidate.item_id,
         space_id: candidate.space_id,
         blob_ref: candidate.blob_ref,
         extractor_version: EXTRACTOR_VERSION,
-        status: "skipped",
+        status,
+        attempts,
+        error,
+        config_signature: this.configSignature,
+      });
+    };
+    // Terminal for this content under this configuration: re-offered only
+    // when the blob, the extractor, or the configuration changes.
+    const recordSkip = (error: string) => record("skipped", error);
+    // Transient: the world was not in the shape the candidate row claimed
+    // (a blob write not yet landed, a flaky backend read). Recorded as
+    // `failed` so the retry budget re-offers it, unlike a skip — a
+    // permanent parking is the wrong answer to a temporary miss.
+    const recordTransient = async (error: string) => {
+      await record("failed", error);
+      log("warn", "Text enrichment failed", {
+        item_id: candidate.item_id,
         attempts,
         error,
       });
     };
 
     try {
+      // Cheapest gate first: a MIME no reader can handle costs nothing —
+      // no metadata lookup, no byte read. With OCR off, images land here.
+      if (
+        !isEnrichableMime(candidate.mime_type, {
+          ocrAvailable: this.opts.ocr !== null,
+        })
+      ) {
+        await recordSkip("unsupported type");
+        return "skipped";
+      }
+
       const meta = await storage.blobs.get(
         candidate.blob_ref,
         candidate.space_id ?? "",
       );
       if (!meta) {
-        await recordSkip("blob metadata missing");
-        return "skipped";
+        await recordTransient("blob metadata missing");
+        return "failed";
       }
       // Size gate before the read, so an oversized blob costs a metadata
       // lookup rather than its own bytes in memory.
@@ -122,8 +176,8 @@ export class TextEnrichmentSweeper {
 
       const bytes = await blobs.get(candidate.blob_ref);
       if (!bytes) {
-        await recordSkip("blob bytes missing");
-        return "skipped";
+        await recordTransient("blob bytes missing");
+        return "failed";
       }
 
       const outcome = await this.extractWithTimeout(bytes, candidate.mime_type);
@@ -134,24 +188,31 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
 
-      const updated = await storage.items.update(
+      // Re-read before writing: extraction can take most of a minute, and
+      // both the write and the bookkeeping must describe the item as it is
+      // now, not as the candidate row had it. A gone or re-pointed item
+      // gets nothing recorded — the next tick sees the current shape.
+      const fresh = await storage.items.get(
         candidate.item_id,
-        { properties: { extracted_text: outcome.text } },
         candidate.space_id ?? undefined,
       );
-      // A conflict response means the item moved under us (or vanished).
-      // Nothing to record against a row that is no longer the one we read.
+      if (!fresh) return "skipped";
+      if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
+
+      const updated = await storage.items.update(
+        candidate.item_id,
+        {
+          properties: { extracted_text: outcome.text },
+          version: fresh.version,
+        },
+        candidate.space_id ?? undefined,
+      );
+      // A conflict response means the item moved between the re-read and
+      // the write. Nothing recorded: the row is re-offered next tick and
+      // judged against whatever the item has become.
       if (!("id" in updated)) return "skipped";
 
-      await storage.enrichment.upsert({
-        item_id: candidate.item_id,
-        space_id: candidate.space_id,
-        blob_ref: candidate.blob_ref,
-        extractor_version: EXTRACTOR_VERSION,
-        status: "done",
-        attempts,
-        error: null,
-      });
+      await record("done", null);
 
       const metadata = await storage.metadata.get(candidate.item_id);
       await publish({
@@ -163,21 +224,11 @@ export class TextEnrichmentSweeper {
       return "extracted";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await storage.enrichment
-        .upsert({
-          item_id: candidate.item_id,
-          space_id: candidate.space_id,
-          blob_ref: candidate.blob_ref,
-          extractor_version: EXTRACTOR_VERSION,
-          status: "failed",
-          attempts,
-          error: message.slice(0, 500),
-        })
-        .catch(() => {
-          // The item may have been deleted mid-extraction, taking the FK
-          // target with it. Losing the bookkeeping row for a gone item is
-          // the correct outcome.
-        });
+      await record("failed", message.slice(0, 500)).catch(() => {
+        // The item may have been deleted mid-extraction, taking the FK
+        // target with it. Losing the bookkeeping row for a gone item is
+        // the correct outcome.
+      });
       log("warn", "Text enrichment failed", {
         item_id: candidate.item_id,
         attempts,

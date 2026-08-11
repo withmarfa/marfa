@@ -310,7 +310,8 @@ CREATE TABLE IF NOT EXISTS public.enrichment_state (
     status text NOT NULL,
     attempts integer DEFAULT 0 NOT NULL,
     error text,
-    updated_at text NOT NULL
+    updated_at text NOT NULL,
+    config_signature text
 );
 
 CREATE TABLE IF NOT EXISTS public.event_log (
@@ -1149,6 +1150,8 @@ CREATE INDEX IF NOT EXISTS idx_inbound_webhook_events_pending ON public.inbound_
 CREATE INDEX IF NOT EXISTS idx_inbound_webhooks_connection_id ON public.inbound_webhooks USING btree (connection_id);
 
 CREATE INDEX IF NOT EXISTS idx_items_created_at ON public.items USING btree (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_items_enrichment_candidates ON public.items USING btree (updated_at) WHERE (((type = 'core.file'::text) OR (type ~~ 'core.file.%'::text)) AND (state <> 'trashed'::text) AND ((properties ->> 'blob_ref'::text) IS NOT NULL));
 
 CREATE INDEX IF NOT EXISTS idx_items_search_vector ON public.items USING gin (search_vector);
 

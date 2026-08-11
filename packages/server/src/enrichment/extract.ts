@@ -20,12 +20,23 @@ export type ExtractOutcome =
   | { kind: "unsupported" }
   | { kind: "empty" };
 
-export function isEnrichableMime(mime: string): boolean {
+/**
+ * Whether a declared MIME can yield text under the current configuration.
+ * The sweeper consults this before touching blob metadata or bytes, so an
+ * unreadable file costs nothing. `ocrAvailable` matters because an image
+ * is only readable when an engine is configured — with OCR off, image
+ * mimes are unsupported and must be recorded that way up front rather
+ * than after their bytes have been fetched.
+ */
+export function isEnrichableMime(
+  mime: string,
+  opts: { ocrAvailable: boolean },
+): boolean {
   const bare = mime.split(";")[0]?.trim().toLowerCase() ?? "";
   return (
     TEXT_MIMES.has(bare) ||
     bare in OFFICE_MIME_TO_FILE_TYPE ||
-    OCR_MIMES.has(bare)
+    (opts.ocrAvailable && OCR_MIMES.has(bare))
   );
 }
 

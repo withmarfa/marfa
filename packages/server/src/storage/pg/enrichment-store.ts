@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type {
   EnrichmentCandidate,
   EnrichmentStateInput,
@@ -15,6 +15,7 @@ export class PgEnrichmentStore implements EnrichmentStore {
     extractorVersion: number,
     maxAttempts: number,
     limit: number,
+    configSignature: string,
   ): Promise<EnrichmentCandidate[]> {
     const blobRef = sql<string>`${items.properties}->>'blob_ref'`;
     const rows = await this.db
@@ -29,8 +30,13 @@ export class PgEnrichmentStore implements EnrichmentStore {
       .leftJoin(enrichmentState, eq(enrichmentState.item_id, items.id))
       .where(
         and(
-          or(eq(items.type, "core.file"), like(items.type, "core.file.%")),
-          ne(items.state, "trashed"),
+          // Literals, not bound parameters, and textually identical to
+          // idx_items_enrichment_candidates' predicate: the planner only
+          // uses a partial index when the query provably implies its
+          // predicate, and a bound parameter defeats the proof under a
+          // generic plan.
+          sql`(${items.type} = 'core.file' OR ${items.type} LIKE 'core.file.%')`,
+          sql`${items.state} <> 'trashed'`,
           sql`${blobRef} IS NOT NULL`,
           or(
             isNull(enrichmentState.item_id),
@@ -39,6 +45,13 @@ export class PgEnrichmentStore implements EnrichmentStore {
             and(
               eq(enrichmentState.status, "failed"),
               lt(enrichmentState.attempts, maxAttempts),
+            ),
+            // A skip is terminal only under the configuration that made
+            // it. IS DISTINCT FROM, so pre-column NULL rows re-offer once
+            // and get stamped.
+            and(
+              eq(enrichmentState.status, "skipped"),
+              sql`${enrichmentState.config_signature} IS DISTINCT FROM ${configSignature}`,
             ),
           ),
         ),
@@ -73,6 +86,7 @@ export class PgEnrichmentStore implements EnrichmentStore {
       status: state.status,
       attempts: state.attempts,
       error: state.error ?? null,
+      config_signature: state.config_signature ?? null,
       updated_at: new Date().toISOString(),
     };
     await this.db

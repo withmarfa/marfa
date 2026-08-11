@@ -34,18 +34,25 @@ describe("mime dispatch", () => {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "image/png",
     ]) {
-      expect(isEnrichableMime(mime), mime).toBe(true);
+      expect(isEnrichableMime(mime, { ocrAvailable: true }), mime).toBe(true);
     }
   });
 
   it("ignores parameters and case on the way in", () => {
-    expect(isEnrichableMime("TEXT/PLAIN; charset=utf-8")).toBe(true);
+    expect(
+      isEnrichableMime("TEXT/PLAIN; charset=utf-8", { ocrAvailable: true }),
+    ).toBe(true);
   });
 
   it("disclaims what it cannot read", () => {
     for (const mime of ["video/mp4", "application/zip", "application/x-tar"]) {
-      expect(isEnrichableMime(mime), mime).toBe(false);
+      expect(isEnrichableMime(mime, { ocrAvailable: true }), mime).toBe(false);
     }
+  });
+
+  it("disclaims images when no OCR engine is configured", () => {
+    expect(isEnrichableMime("image/png", { ocrAvailable: false })).toBe(false);
+    expect(isEnrichableMime("text/plain", { ocrAvailable: false })).toBe(true);
   });
 });
 
