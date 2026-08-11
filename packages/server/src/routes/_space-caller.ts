@@ -14,16 +14,22 @@
  * minted. It resolves that person's space rather than reading one off a key.
  */
 import type { Context } from "hono";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, ROLE_RANK } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
 
 export interface SpaceCaller {
   /** Audit identity. `auth_user:<id>` when a session authorized the call. */
   apiKeyId: string;
+  /**
+   * The space this call acts on. Never `undefined` for a session caller:
+   * downstream, an absent space is not "no space" but "no space filter",
+   * so a caller whose space could not be resolved is refused rather than
+   * handed the platform tier. A bearer caller may still be space-less,
+   * because a platform credential legitimately is.
+   */
   spaceId: string | undefined;
 }
 
@@ -53,8 +59,33 @@ export async function resolveSpaceAdminCaller(
   if (auth) {
     const session = await auth.getSession(c.req.raw.headers);
     if (session) {
-      const spaceId = await resolveSpaceIdForAuthUser(storage, session.user.id);
-      return { apiKeyId: `auth_user:${session.user.id}`, spaceId };
+      // No users store means keys mode: a single-space self-host, where
+      // there is no per-user space model to resolve against and no role
+      // to read. A space-less caller there is not unscoped authority, it
+      // is the only space the instance has. Hosted mode is the case
+      // below, and the two must not share an answer.
+      if (!storage.users) {
+        return { apiKeyId: `auth_user:${session.user.id}`, spaceId: undefined };
+      }
+      // Being signed in is not authority. The bearer branch above has
+      // always required space-admin rank; this branch required only a
+      // session, so any member of a space could install an integration
+      // or rewrite its configuration by opening the page. Sign-up
+      // provisions the account holder as `space_admin`, so an ordinary
+      // owner is unaffected — what this refuses is a member of someone
+      // else's space, and a session with no space record at all.
+      const user = await storage.users.getByAuthUserId(session.user.id);
+      if (!user || ROLE_RANK[user.role] < ROLE_RANK.space_admin) {
+        throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
+      }
+      // An unresolved space is refused, never passed on. See `SpaceCaller`.
+      if (!user.space_id) {
+        throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
+      }
+      return {
+        apiKeyId: `auth_user:${session.user.id}`,
+        spaceId: user.space_id,
+      };
     }
   }
   if (c.req.header("authorization")) {
