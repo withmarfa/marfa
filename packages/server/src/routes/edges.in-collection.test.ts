@@ -53,6 +53,20 @@ async function createItem(type: string): Promise<string> {
   return data.item.id;
 }
 
+/** Media types carry `title`, unlike the note/collection shapes above. */
+async function createMedia(type: string, title: string): Promise<string> {
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.adminKey,
+    body: { type, properties: { title } },
+  });
+  expect(
+    res.status,
+    `POST /items ${type} -> ${String(res.status)}: ${await res.clone().text()}`,
+  ).toBe(201);
+  const data = (await res.json()) as ItemResponse;
+  return data.item.id;
+}
+
 async function joinCollection(
   memberId: string,
   collectionId: string,
@@ -193,10 +207,57 @@ describe("in-collection refusals", () => {
     // The declarative target constraint catches this one, not the nesting rule.
     expect(data.error.details?.constraint).toBeUndefined();
   });
+
+  it("refuses every container type as a member, not just user.collection", async () => {
+    // The membership edge accepts three container families as targets. The
+    // nesting refusal must track that same list: a guard covering only one
+    // of them lets the other two nest, which is how two series once held
+    // each other.
+    const series = await createMedia("core.media.series", "Signal Hill");
+    const album = await createMedia("core.media.album", "Low Tide");
+    const collection = await createItem(COLLECTION_TYPE);
+
+    for (const [source, target, label] of [
+      [series, collection, "series in collection"],
+      [album, collection, "album in collection"],
+      [collection, series, "collection in series"],
+      [album, series, "album in series"],
+      [series, album, "series in album"],
+    ] as const) {
+      const res = await joinCollection(source, target);
+      expect(res.status, label).toBe(400);
+      const data = (await res.json()) as ErrorResponse;
+      expect(data.error.details?.constraint, label).toBe("nesting");
+    }
+  });
+
+  it("cannot close a two-node containment cycle", async () => {
+    // The exact shape driven against a live server while the guard was
+    // narrow: series A in series B landed, then series B in series A landed,
+    // and the two answered "where does this sit" with each other. With the
+    // refusal derived from the target list, neither direction can start.
+    const a = await createMedia("core.media.series", "Ouroboros A");
+    const b = await createMedia("core.media.series", "Ouroboros B");
+    expect((await joinCollection(a, b)).status).toBe(400);
+    expect((await joinCollection(b, a)).status).toBe(400);
+  });
 });
 
 describe("in-collection deletion", () => {
-  it("leaves members alone when the collection is deleted", async () => {
+  // A single-item GET answers 200 for a trashed item too, so "still responds"
+  // proves nothing about cascade. The discriminating fact is the member's
+  // state: orphan semantics mean deleting the container must not move the
+  // member out of `active`.
+  async function stateOf(id: string): Promise<string> {
+    const res = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { state: string } };
+    return data.item.state;
+  }
+
+  it("leaves members active when the collection is deleted", async () => {
     const member = await createItem("core.note");
     const collection = await createItem(COLLECTION_TYPE);
     expect((await joinCollection(member, collection)).status).toBe(201);
@@ -206,27 +267,41 @@ describe("in-collection deletion", () => {
     });
     expect(del.status).toBe(200);
 
-    const survivor = await request(ctx.app, "GET", `/items/${member}`, {
+    expect(await stateOf(member)).toBe("active");
+  });
+
+  it("leaves members active when the collection is purged outright", async () => {
+    // The hard-delete path is the one that actually removes edge rows, so it
+    // is where a wrongly-cascading implementation would take the member too.
+    const member = await createItem("core.note");
+    const collection = await createItem(COLLECTION_TYPE);
+    expect((await joinCollection(member, collection)).status).toBe(201);
+
+    await request(ctx.app, "DELETE", `/items/${collection}`, {
       key: ctx.adminKey,
     });
-    expect(survivor.status).toBe(200);
+    const purge = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${collection}/purge`,
+      { key: ctx.adminKey },
+    );
+    expect(purge.status).toBe(200);
+
+    expect(await stateOf(member)).toBe("active");
+
+    // The membership edge went with its container; the member did not.
+    const edges = await request(ctx.app, "GET", `/items/${member}/edges`, {
+      key: ctx.adminKey,
+    });
+    const data = (await edges.json()) as { data: { edge_type: string }[] };
+    expect(data.data.filter((e) => e.edge_type === "in-collection")).toEqual(
+      [],
+    );
   });
 });
 
 describe("in-collection media membership", () => {
-  async function createMedia(type: string, title: string): Promise<string> {
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: { type, properties: { title } },
-    });
-    expect(
-      res.status,
-      `POST /items ${type} -> ${String(res.status)}: ${await res.clone().text()}`,
-    ).toBe(201);
-    const data = (await res.json()) as ItemResponse;
-    return data.item.id;
-  }
-
   it("joins an episode to its series", async () => {
     const series = await createMedia("core.media.series", "Signal Hill");
     const episode = await createMedia("core.media.episode", "Pilot");
@@ -249,19 +324,28 @@ describe("in-collection media membership", () => {
     expect(res.status).toBe(201);
   });
 
-  it("orphans, never deletes, episodes when their series is deleted", async () => {
+  it("orphans, never deletes, episodes when their series is purged", async () => {
+    // State-checked, not just "GET answers": a trashed episode also answers
+    // 200, so the old shape passed even under a cascading delete. Purge is
+    // the path that removes edge rows, so it is where a wrong cascade would
+    // take the episode with the series.
     const series = await createMedia("core.media.series", "Signal Hill");
     const episode = await createMedia("core.media.episode", "Finale");
     expect((await joinCollection(episode, series)).status).toBe(201);
 
-    const del = await request(ctx.app, "DELETE", `/items/${series}`, {
+    await request(ctx.app, "DELETE", `/items/${series}`, {
       key: ctx.adminKey,
     });
-    expect(del.status).toBe(200);
+    const purge = await request(ctx.app, "DELETE", `/items/${series}/purge`, {
+      key: ctx.adminKey,
+    });
+    expect(purge.status).toBe(200);
 
     const survivor = await request(ctx.app, "GET", `/items/${episode}`, {
       key: ctx.adminKey,
     });
     expect(survivor.status).toBe(200);
+    const data = (await survivor.json()) as { item: { state: string } };
+    expect(data.item.state).toBe("active");
   });
 });
