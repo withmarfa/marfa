@@ -12,6 +12,13 @@ export class SqliteCoordinationStore implements CoordinationStore {
     return fn();
   }
 
+  withLongLivedJobLock<T>(
+    _name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
+    return fn();
+  }
+
   /**
    * No-op. `runInTransaction` opens `BEGIN IMMEDIATE`, which takes SQLite's
    * single write lock for the whole transaction, so writers in one process

@@ -1,6 +1,17 @@
 import { sql } from "drizzle-orm";
 import type { CoordinationStore } from "../interface.js";
 import type { PgClient, PgDb } from "./connection.js";
+import { reserveWithTimeout } from "./reserve-timeout.js";
+import { log } from "../../middleware/logger.js";
+
+/**
+ * How long a job tick waits for a session-pool slot before skipping.
+ * The pool is shared with streams, so exhaustion is a real state, and a
+ * background tick queued behind it indefinitely is worse than a missed
+ * tick: every caller of `withJobLock` already treats `undefined` as
+ * "not this time".
+ */
+const JOB_LOCK_RESERVE_TIMEOUT_MS = 5_000;
 
 /**
  * Postgres-backed coordination via advisory locks.
@@ -71,6 +82,8 @@ export class PgCoordinationStore implements CoordinationStore {
     private client: PgClient,
     private db: PgDb,
     private sessionClient: PgClient = client,
+    private jobHolderClient: PgClient = sessionClient,
+    private reserveTimeoutMs: number = JOB_LOCK_RESERVE_TIMEOUT_MS,
   ) {}
 
   /**
@@ -102,8 +115,53 @@ export class PgCoordinationStore implements CoordinationStore {
     name: string,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
+    return this.tryLockOn(this.sessionClient, name, fn);
+  }
+
+  /**
+   * The permanent holder's variant. Reserves from the dedicated
+   * single-connection client, so the one lock held for the process
+   * lifetime never subtracts a slot from the pool streams and job
+   * ticks share — the drainer once quietly took a fifth of it. No
+   * reservation timeout: nothing else reserves from that client, so a
+   * wait here means the same process is already holding it, which the
+   * try-lock below answers honestly.
+   */
+  async withLongLivedJobLock<T>(
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
     const key = `marfa:${name}`;
-    const conn = await this.sessionClient.reserve();
+    const conn = await this.jobHolderClient.reserve();
+    return this.runUnderTryLock(conn, key, fn);
+  }
+
+  private async tryLockOn<T>(
+    client: PgClient,
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
+    const key = `marfa:${name}`;
+    const conn = await reserveWithTimeout(client, this.reserveTimeoutMs);
+    if (conn === null) {
+      // The pool is exhausted — most plausibly by concurrent streams.
+      // A skipped tick retries on its own timer; the proxy-refresh
+      // caller falls back to its in-process single-flight. Waiting in
+      // the queue instead would add this caller to the pileup.
+      log("warn", "job lock skipped: session pool exhausted", {
+        job: name,
+        waited_ms: this.reserveTimeoutMs,
+      });
+      return undefined;
+    }
+    return this.runUnderTryLock(conn, key, fn);
+  }
+
+  private async runUnderTryLock<T>(
+    conn: Awaited<ReturnType<PgClient["reserve"]>>,
+    key: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
     try {
       // session-scoped-by-design: a try-lock that never waits, held on a
       // reserved connection for a background job that can run for minutes.

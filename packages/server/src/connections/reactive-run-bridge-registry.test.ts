@@ -2303,11 +2303,12 @@ describe("bridge — unmapped integration handling", () => {
     );
     await createConnection({ integrationRef: integrationId });
 
-    const realWithJobLock = ctx.storage.coordination.withJobLock.bind(
-      ctx.storage.coordination,
-    );
+    const realWithLongLivedJobLock =
+      ctx.storage.coordination.withLongLivedJobLock.bind(
+        ctx.storage.coordination,
+      );
     let elections = 0;
-    ctx.storage.coordination.withJobLock = async <T>(
+    ctx.storage.coordination.withLongLivedJobLock = async <T>(
       name: string,
       fn: () => Promise<T>,
     ): Promise<T | undefined> => {
@@ -2316,7 +2317,7 @@ describe("bridge — unmapped integration handling", () => {
         // The first ask is refused, exactly as an orphaned lock refuses it.
         if (elections === 1) return undefined;
       }
-      return realWithJobLock(name, fn);
+      return realWithLongLivedJobLock(name, fn);
     };
 
     const sent: string[] = [];
@@ -2358,7 +2359,7 @@ describe("bridge — unmapped integration handling", () => {
         ),
       ).not.toHaveLength(0);
     } finally {
-      ctx.storage.coordination.withJobLock = realWithJobLock;
+      ctx.storage.coordination.withLongLivedJobLock = realWithLongLivedJobLock;
       await bridge!.stop();
     }
   });

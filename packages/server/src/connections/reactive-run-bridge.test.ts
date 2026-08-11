@@ -8,6 +8,7 @@ import type { Storage } from "../storage/interface.js";
 const STORAGE_STUB = {
   coordination: {
     withJobLock: () => Promise.resolve(undefined),
+    withLongLivedJobLock: () => Promise.resolve(undefined),
   },
 } as unknown as Storage;
 

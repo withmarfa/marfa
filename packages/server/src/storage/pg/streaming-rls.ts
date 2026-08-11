@@ -2,6 +2,28 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
 import type { PgClient, PgDb } from "./connection.js";
 import { pgRequestContext, type PgTxContext } from "./request-context.js";
+import { reserveWithTimeout } from "./reserve-timeout.js";
+
+/**
+ * The stream pool had no free slot within the reservation window. Typed so
+ * the routes can answer a clean 503 before any rows rather than queueing
+ * the request behind an exhausted pool indefinitely — each active stream
+ * holds one slot for its lifetime, so exhaustion is an ordinary state on a
+ * busy instance, not a fault.
+ */
+export class StreamPoolExhaustedError extends Error {
+  constructor(waitedMs: number) {
+    super(
+      `no streaming connection became available within ${String(waitedMs)}ms`,
+    );
+    this.name = "StreamPoolExhaustedError";
+  }
+}
+
+/** How long a stream request waits for a slot before 503ing. Long enough
+ *  to ride out a burst of stream turnover, short enough that a client is
+ *  told to retry rather than left hanging. */
+const STREAM_RESERVE_TIMEOUT_MS = 5_000;
 
 /**
  * Session-level RLS for streaming routes (`/events`, `/export`).
@@ -49,10 +71,13 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * genuinely isolated and nothing leaks onto the app pool. There is NO pool
  * isolation when this runs on a transaction-mode pooled client.
  *
- * **Trade-off:** each active stream consumes one pool slot. Today's
- * pool size is 10 (`pg/connection.ts`) — bottleneck is real only at
- * 10+ concurrent streams per server instance. Watch in staging; if it
- * bites, partition into a dedicated streaming sub-pool.
+ * **Trade-off:** each active stream consumes one slot of the dedicated
+ * session pool, which is capped at 5 (`pg/connection.ts`) and shared
+ * with short-hold job-lock ticks — the process-lifetime drainer holds a
+ * client of its own and takes none of these. A reservation that cannot
+ * be served within the timeout fails as `StreamPoolExhaustedError`, and
+ * the routes answer 503, so exhaustion degrades loudly instead of
+ * queueing requests forever.
  *
  * **Connection-cleanup invariant.** The cleanup function is exposed
  * separately from the setup so callers that drive their own stream
@@ -101,8 +126,11 @@ export interface StreamRlsContext {
 export async function acquireStreamRls(
   client: PgClient,
   spaceId: string,
+  options?: { reserveTimeoutMs?: number },
 ): Promise<StreamRlsContext> {
-  const reserved = await client.reserve();
+  const timeoutMs = options?.reserveTimeoutMs ?? STREAM_RESERVE_TIMEOUT_MS;
+  const reserved = await reserveWithTimeout(client, timeoutMs);
+  if (reserved === null) throw new StreamPoolExhaustedError(timeoutMs);
   try {
     // Session-level (`false` = not LOCAL) — persists for the reserved
     // connection's lifetime, including across nested storage transactions.

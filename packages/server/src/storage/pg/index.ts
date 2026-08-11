@@ -61,15 +61,13 @@ export async function createPgStorage(
     poolMode?: DbPoolMode;
   },
 ): Promise<Storage> {
-  const { db, baseDb, client, sessionClient, close } = await createConnection(
-    connectionString,
-    {
+  const { db, baseDb, client, sessionClient, jobHolderClient, close } =
+    await createConnection(connectionString, {
       maxPoolSize: options?.maxPoolSize,
       skipBootstrap: options?.skipBootstrap,
       directConnectionString: options?.directConnectionString,
       poolMode: options?.poolMode,
-    },
-  );
+    });
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(db, client);
@@ -144,7 +142,12 @@ export async function createPgStorage(
     // RLS-bypassed (better-auth manages its own context).
     accountLifecycle: new PgAccountLifecycleStore(baseDb),
     settings: new PgSettingsStore(db),
-    coordination: new PgCoordinationStore(client, db, sessionClient),
+    coordination: new PgCoordinationStore(
+      client,
+      db,
+      sessionClient,
+      jobHolderClient,
+    ),
     // Async substrate for bulk_action. Wired on the wrapped instance so
     // RLS scopes its space_id reads/writes per request; the worker runs
     // outside a request and bypasses RLS via the unwrapped path on

@@ -253,6 +253,12 @@ export enum ErrorCode {
    */
   EMAIL_TRANSPORT_NOT_CONFIGURED = "email_transport_not_configured",
   /**
+   * Every streaming connection slot is in use and none freed within the
+   * reservation window. Retryable by definition: streams end and slots
+   * free, so a client seeing this backs off and asks again.
+   */
+  STREAM_CAPACITY_EXHAUSTED = "stream_capacity_exhausted",
+  /**
    * The transport returned a non-retryable failure (4xx from
    * Cloudflare Email, permanent SMTP rejection). Distinct from a
    * transient failure (5xx / 429 / network) which the route handler
@@ -352,6 +358,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
+  [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

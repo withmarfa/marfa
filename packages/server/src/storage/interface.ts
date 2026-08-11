@@ -1967,6 +1967,19 @@ export interface CoordinationStore {
    */
   withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
   /**
+   * `withJobLock` for the one caller whose `fn` runs for the process
+   * lifetime rather than a tick — the reactive-run bridge's drainer
+   * election. Separated because a permanent holder is capacity
+   * subtracted from whatever pool serves it: on Postgres this reserves
+   * from a dedicated single-connection client so a drainer can never
+   * crowd out streams or job ticks. Same contract otherwise: `undefined`
+   * when another instance holds the lock.
+   */
+  withLongLivedJobLock<T>(
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined>;
+  /**
    * Acquire a named lock, waiting rather than skipping when another caller
    * holds it. Connection mint and uninstall use this to serialize lifecycle
    * decisions across server instances; unlike a background-job lock, either
