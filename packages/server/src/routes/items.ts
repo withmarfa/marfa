@@ -21,6 +21,7 @@ import {
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../storage/merge-properties.js";
+import { log } from "../middleware/logger.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -1738,6 +1739,12 @@ export function itemRoutes(storage: Storage) {
     // that case. Consumers must treat every neighbour-derived view as
     // incomplete when this is set and page the per-type edge/backref endpoints.
     let neighborsTruncated = false;
+    // How many neighbours the caller may not read. Omitting them is right —
+    // a neighbour outside the caller's scope must never leak — but omitting
+    // them *silently* made a partial neighbourhood indistinguishable from a
+    // complete one. An app missing an edge scope rendered a ticket with none
+    // of its relations and looked correct doing it.
+    let neighborsOmitted = 0;
     if (includeNeighbors) {
       // The 1-hop neighborhood: the far-end items of the edge blocks present
       // in this response — outbound targets always, inbound sources when
@@ -1766,16 +1773,37 @@ export function itemRoutes(storage: Storage) {
       } else {
         const found = await storage.items.getMany(ids, tid);
         const visible: Item[] = [];
+        // Kept apart because they mean different things to whoever reads the
+        // log: a type the credential lacks is a scope to widen, an edge whose
+        // far end is gone is a repair.
+        const unreadableTypes = new Set<string>();
+        let unresolved = 0;
         for (const nid of ids) {
           const neighbor = found.get(nid);
-          if (!neighbor) continue;
+          if (!neighbor) {
+            unresolved += 1;
+            continue;
+          }
+          // The reserved namespace is not the caller's business and its
+          // absence is not a permission answer, so it is not counted.
           if (neighbor.type.startsWith("system.")) continue;
           try {
             checkTypeAccess(apiKey, neighbor.type, "read");
           } catch {
+            unreadableTypes.add(neighbor.type);
+            neighborsOmitted += 1;
             continue;
           }
           visible.push(neighbor);
+        }
+        if (neighborsOmitted > 0 || unresolved > 0) {
+          log("warn", "neighbors omitted from item read", {
+            item_id: id,
+            key_id: apiKey?.id,
+            omitted_unreadable: neighborsOmitted,
+            omitted_unresolved: unresolved,
+            unreadable_types: [...unreadableTypes],
+          });
         }
         const metaList = await storage.metadata.getMany(
           visible.map((n) => n.id),
@@ -1797,7 +1825,11 @@ export function itemRoutes(storage: Storage) {
         metadata: filterMetadataForCaller(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
         ...(neighbors !== undefined
-          ? { neighbors, neighbors_truncated: neighborsTruncated }
+          ? {
+              neighbors,
+              neighbors_truncated: neighborsTruncated,
+              neighbors_omitted: neighborsOmitted,
+            }
           : {}),
         ...(includeVersions && versions ? { versions } : {}),
       },
