@@ -19,6 +19,7 @@ function rowToUser(row: typeof users.$inferSelect): User {
     handle: row.handle,
     auth_user_id: row.auth_user_id,
     role: row.role as User["role"],
+    timezone: row.timezone,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -50,6 +51,7 @@ export class SqliteUserStore implements UserStore {
       handle: input.handle ?? null,
       auth_user_id: input.auth_user_id ?? null,
       role: input.role ?? "member",
+      timezone: null,
       created_at: now,
       updated_at: now,
     };
@@ -95,6 +97,7 @@ export class SqliteUserStore implements UserStore {
     if (patch.first_name !== undefined) set.first_name = patch.first_name;
     if (patch.last_name !== undefined) set.last_name = patch.last_name;
     if (patch.bio !== undefined) set.bio = patch.bio;
+    if (patch.timezone !== undefined) set.timezone = patch.timezone;
     if (patch.avatar_blob_hash !== undefined) {
       set.avatar_blob_hash = patch.avatar_blob_hash;
     }

@@ -45,6 +45,10 @@ export const users = sqliteTable(
      *  lands. Gates `requireSpaceAdmin` / `requireAdmin` routes for
      *  OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
+    /** IANA zone the account keeps its own clock in. A default and a
+     *  display preference: it answers "what is on today" for a caller
+     *  that names no zone, and never anchors a recurrence. */
+    timezone: text("timezone"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },

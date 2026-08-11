@@ -331,3 +331,54 @@ describe("expandSeries", () => {
     ).toThrow(RecurrenceExpansionError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The account time zone is a default and a display preference. It is never
+// what a rule advances in: a person moving country does not reschedule their
+// calendar, and two people reading one shared series must see one answer.
+//
+// The failure mode is ambient rather than explicit — nothing has to *pass*
+// the reader's zone in for the expansion to pick it up, because a date
+// derived without naming a zone gets the process's. So the check is that the
+// same series expands identically under two very different ambient zones.
+// ---------------------------------------------------------------------------
+
+describe("expansion is anchored to the series zone, not the reader's", () => {
+  /** Runs `fn` with the process ambient zone set to `zone`. */
+  function underAmbientZone<T>(zone: string, fn: () => T): T {
+    const previous = process.env.TZ;
+    process.env.TZ = zone;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  }
+
+  const series = {
+    id: "series-ambient",
+    // A weekly 09:00 Berlin meeting spanning the spring transition, which
+    // is where a zone mistake stops being invisible.
+    starts_at: "2026-03-25T09:00:00+01:00",
+    ends_at: "2026-03-25T10:00:00+01:00",
+    timezone: "Europe/Berlin",
+    recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=4"],
+  };
+  const from = new Date("2026-03-01T00:00:00Z");
+  const to = new Date("2026-04-30T00:00:00Z");
+
+  it("gives the same instants east and west of the event zone", () => {
+    const auckland = underAmbientZone("Pacific/Auckland", () =>
+      expandSeries(series, from, to).map((o) => o.starts_at),
+    );
+    const losAngeles = underAmbientZone("America/Los_Angeles", () =>
+      expandSeries(series, from, to).map((o) => o.starts_at),
+    );
+    expect(auckland).toEqual(losAngeles);
+    // And the wall clock is the one the series states, across the
+    // transition: the instant moves, the local hour does not.
+    expect(auckland[0]).toBe("2026-03-25T08:00:00.000Z");
+    expect(auckland[1]).toBe("2026-04-01T07:00:00.000Z");
+  });
+});

@@ -27,6 +27,7 @@ import {
   ErrorCode,
   isValidHandle,
   isReservedHandle,
+  isValidTimeZone,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -50,6 +51,7 @@ const ProfileSchema = z.object({
   avatar_url: z.string(),
   email: z.string(),
   email_verified: z.boolean(),
+  timezone: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
   account_holder_item_id: z.string().optional(),
@@ -63,6 +65,10 @@ const UpdateProfileSchema = z.object({
   first_name: z.string().max(64).nullable().optional(),
   last_name: z.string().max(64).nullable().optional(),
   bio: z.string().max(280).nullable().optional(),
+  // Validated as an IANA identifier rather than capped as a string: a zone
+  // that does not resolve fails on every later read that formats a date in
+  // it, a long way from the write that accepted it.
+  timezone: z.string().nullable().optional(),
 });
 
 // Avatar upload constraints — stricter than the generic /blobs route.
@@ -281,6 +287,7 @@ interface ResolvedProfile {
   avatar_url: string;
   email: string;
   email_verified: boolean;
+  timezone: string | null;
   created_at: string;
   updated_at: string;
   account_holder_item_id?: string;
@@ -306,6 +313,7 @@ function buildProfile(
     last_name: string | null;
     bio: string | null;
     avatar_blob_hash: string | null;
+    timezone: string | null;
     created_at: string;
     updated_at: string;
   },
@@ -324,6 +332,7 @@ function buildProfile(
     avatar_url,
     email: authEmail?.email ?? "",
     email_verified: authEmail?.email_verified ?? false,
+    timezone: user.timezone,
     created_at: user.created_at,
     updated_at: user.updated_at,
     ...(accountHolderItemId
@@ -483,6 +492,7 @@ export function profileRoutes(
       first_name?: string | null;
       last_name?: string | null;
       bio?: string | null;
+      timezone?: string | null;
     } = {};
     let hasFieldUpdate = false;
     if (body.first_name !== undefined) {
@@ -495,6 +505,20 @@ export function profileRoutes(
     }
     if (body.bio !== undefined) {
       profilePatch.bio = body.bio;
+      hasFieldUpdate = true;
+    }
+    if (body.timezone !== undefined) {
+      // Refused at the write rather than coped with at every read: a zone
+      // the runtime cannot resolve throws inside whatever formats a date in
+      // it, which is a long way from the request that stored it.
+      if (body.timezone !== null && !isValidTimeZone(body.timezone)) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "`timezone` must be an IANA time zone identifier, e.g. Europe/Berlin",
+          { field: "timezone", value: body.timezone },
+        );
+      }
+      profilePatch.timezone = body.timezone;
       hasFieldUpdate = true;
     }
     if (hasFieldUpdate) {

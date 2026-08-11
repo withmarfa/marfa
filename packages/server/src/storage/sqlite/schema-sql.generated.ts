@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS \`users\` (
 	\`provider_id\` text NOT NULL,
 	"space_id" text NOT NULL,
 	\`created_at\` text NOT NULL,
-	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`role\` text NOT NULL DEFAULT 'member',
+	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`role\` text NOT NULL DEFAULT 'member', \`timezone\` text,
 	FOREIGN KEY ("space_id") REFERENCES "spaces"(\`id\`) ON UPDATE no action ON DELETE no action
 );
 

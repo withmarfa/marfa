@@ -394,3 +394,40 @@ export function filterExtensionsByPermission(
   }
   return filtered;
 }
+
+/**
+ * True when the runtime's own zone database resolves `value` as an IANA zone.
+ *
+ * Asking Intl is the check rather than matching a pattern against a list,
+ * because the question is whether *this* runtime can render an instant in the
+ * zone. A name that looks well-formed but does not resolve fails far from the
+ * write that accepted it: every read that formats a date in it throws.
+ *
+ * Two things Intl accepts are refused here. A bare offset (`+02:00`,
+ * `Etc/GMT+2`) keeps no wall clock across a daylight-saving change, which is
+ * the whole reason an account states a zone rather than an offset. And a
+ * miscased spelling (`europe/berlin`) resolves fine but makes two strings
+ * name one zone, so a later equality test against a stored series zone
+ * silently disagrees.
+ *
+ * Aliases are deliberately accepted as written. `Asia/Kolkata` and
+ * `Europe/Kyiv` are what upstream calendars send, and this runtime's ICU
+ * canonicalizes them to `Asia/Calcutta` and `Europe/Kiev`. Storing the
+ * canonical form would hand a user back a zone name they did not choose and
+ * would round-trip a different string than the one an integration wrote.
+ */
+export function isValidTimeZone(value: string): boolean {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (value === "UTC") return true;
+  // `Region/City`, optionally with a further segment (`America/Argentina/
+  // Salta`). Leading capital per segment is what excludes the miscased forms.
+  if (!/^[A-Z][A-Za-z_-]*(\/[A-Z][A-Za-z0-9_+-]*)+$/.test(value)) return false;
+  // `Etc/GMT+5` passes the shape test and is an offset, not a zone.
+  if (value.startsWith("Etc/GMT")) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
