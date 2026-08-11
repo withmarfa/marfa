@@ -131,14 +131,17 @@ export async function sqliteDeleteAccountCascade(
       }
     }
 
+    await storage.audit.redactForUser(authUserId);
+
+    // Written AFTER the sweep — the sweep matches on resource_id, so a row
+    // written before it is rewritten to the sentinel like any other. Order
+    // is what makes this the one row that keeps its details payload.
     await storage.audit.log({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,
       details: { space_id: spaceId, redacted: false },
     });
-
-    await storage.audit.redactForUser(authUserId);
 
     await tx.delete(auth_user).where(eq(auth_user.id, authUserId)).run();
 
