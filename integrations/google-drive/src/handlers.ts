@@ -62,11 +62,11 @@ const CURSOR_KEY = "main";
 /** Initial-sync page size. Drive v3 caps at 1000. */
 const FILES_PAGE_SIZE = 100;
 
-/** Initial-sync hard cap on pages to prevent runaway against a
- *  huge Drive on first connect. A throwaway test account has a few
- *  test files; production deployments would want this configurable
- *  via `connection.properties.configuration.initial_sync_max_files`. */
-const INITIAL_SYNC_PAGE_LIMIT = 50;
+/** Default ceiling on files the first full sync ingests, guarding
+ *  against a runaway seed on a huge Drive. Overridable per connection
+ *  via the declared `initial_sync_max_files` configuration key; the
+ *  page walk derives its bound from this and the page size. */
+const DEFAULT_INITIAL_SYNC_MAX_FILES = 5_000;
 
 interface DriveCursor {
   /** Drive file id → Marfa item id. */
@@ -99,6 +99,8 @@ interface ConnectionConfig {
    *  pending a separate ticket. Typed as `string` because `glob:`
    *  is open-ended. */
   download_mode: string;
+  /** Ceiling on files the first full sync ingests. */
+  initial_sync_max_files: number;
   /** Per-file size ceiling (bytes) for `all-files` mode. Files over
    *  this skip the byte ingest and land as `google.drive.file`
    *  without a `blob_ref`. Default 25 MB — see
@@ -147,6 +149,13 @@ async function resolveConnectionConfig(
       cfg.inbound_webhook_url.length > 0
         ? cfg.inbound_webhook_url
         : null;
+    const initialSyncRaw = cfg.initial_sync_max_files;
+    const initialSyncMaxFiles =
+      typeof initialSyncRaw === "number" &&
+      Number.isFinite(initialSyncRaw) &&
+      initialSyncRaw > 0
+        ? Math.floor(initialSyncRaw)
+        : DEFAULT_INITIAL_SYNC_MAX_FILES;
     const maxFileSizeRaw = cfg.max_file_size_bytes;
     const maxFileSize =
       typeof maxFileSizeRaw === "number" &&
@@ -157,6 +166,7 @@ async function resolveConnectionConfig(
     return {
       target_type: targetType,
       download_mode: downloadMode,
+      initial_sync_max_files: initialSyncMaxFiles,
       max_file_size_bytes: maxFileSize,
       inbound_webhook_url: inboundUrl,
     };
@@ -164,6 +174,7 @@ async function resolveConnectionConfig(
     return {
       target_type: DEFAULT_TARGET_TYPE,
       download_mode: "metadata",
+      initial_sync_max_files: DEFAULT_INITIAL_SYNC_MAX_FILES,
       max_file_size_bytes: DEFAULT_MAX_FILE_SIZE_BYTES,
       inbound_webhook_url: null,
     };
@@ -420,8 +431,12 @@ async function initialFilesListSweep(
   const blobs = emptyBlobOutcomes();
   let pageToken: string | undefined;
   let pages = 0;
+  const pageLimit = Math.max(
+    1,
+    Math.ceil(config.initial_sync_max_files / FILES_PAGE_SIZE),
+  );
 
-  while (pages < INITIAL_SYNC_PAGE_LIMIT) {
+  while (pages < pageLimit) {
     const params = new URLSearchParams();
     params.set("pageSize", String(FILES_PAGE_SIZE));
     params.set("q", "trashed=false");

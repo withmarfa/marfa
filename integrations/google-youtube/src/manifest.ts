@@ -56,10 +56,6 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
       description: "Item type synced videos land as.",
       from_target_types: true,
     },
-    cron: {
-      type: "string",
-      description: "Poll cadence override, cron syntax.",
-    },
     materialise_playlists: {
       type: "boolean",
       description: "Whether playlists land as items joined to their videos.",

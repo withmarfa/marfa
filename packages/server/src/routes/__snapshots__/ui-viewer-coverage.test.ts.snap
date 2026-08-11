@@ -3415,6 +3415,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
     </details>
 
     
+    
 
     <form method="POST" action="/integrations/01999a3f-0000-4ec1-b378-000000000001/install">
       
@@ -3422,6 +3423,131 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
         <span class="field__label">Connection label</span>
         <input type="text" name="label" value="google.calendar 1.4.0">
       </label>
+      
+      <div class="actions">
+        <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
+        <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>
+      </div>
+    </form>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'connections/install-consent/consent-c…' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install withmarfa.rss-watcher</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Install withmarfa.rss-watcher">
+    
+    <div class="apphead">
+      <span class="logo" aria-hidden="true">W</span>
+      <div>
+        <div class="row__title">withmarfa.rss-watcher</div>
+        <div class="row__meta">Marfa integration</div>
+      </div>
+    </div>
+    <p class="sub">Polls a feed and lands new entries as bookmarks.</p>
+
+    <p class="lsec">Adds to your space</p>
+    <div class="captile">
+      <div class="captile__t">Calendar events</div>
+      <div class="captile__d">Brought into your space.</div>
+    </div>
+
+    <details class="disclosure">
+      <summary><span class="disclosure__chevron" aria-hidden="true"></span> Details</summary>
+      <div class="disclosure__body">
+        <p class="disclosure__micro">Kind of content</p>
+        <div class="codefield">google.calendar.event</div>
+        <p class="disclosure__micro">Permissions</p>
+        <div class="codefield">google.calendar.event:write</div>
+        <p class="disclosure__micro">Direction</p>
+        <div class="codefield">Brings content in. It reads from the other service and writes what it finds into your space.</div>
+        
+        
+      </div>
+    </details>
+
+    
+    
+
+    <form method="POST" action="/integrations/01999a3f-0000-4ec1-b378-000000000002/install">
+      
+      <label class="field" style="margin-top:16px">
+        <span class="field__label">Connection label</span>
+        <input type="text" name="label" value="withmarfa.rss-watcher 1.0.0">
+      </label>
+      <p class="lsec" style="margin-top:16px">Configuration</p><label class="field"><span class="field-name">feed_url *</span><span class="field-desc">The Atom or RSS feed to poll.</span><input type="text" name="config_feed_url" value="" required></label>
+      <div class="actions">
+        <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
+        <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>
+      </div>
+    </form>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'connections/install-consent/consent-c…' 2`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install withmarfa.rss-watcher</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Install withmarfa.rss-watcher">
+    
+    <div class="apphead">
+      <span class="logo" aria-hidden="true">W</span>
+      <div>
+        <div class="row__title">withmarfa.rss-watcher</div>
+        <div class="row__meta">Marfa integration</div>
+      </div>
+    </div>
+    <p class="sub">Polls a feed and lands new entries as bookmarks.</p>
+
+    <p class="lsec">Adds to your space</p>
+    <div class="captile">
+      <div class="captile__t">Calendar events</div>
+      <div class="captile__d">Brought into your space.</div>
+    </div>
+
+    <details class="disclosure">
+      <summary><span class="disclosure__chevron" aria-hidden="true"></span> Details</summary>
+      <div class="disclosure__body">
+        <p class="disclosure__micro">Kind of content</p>
+        <div class="codefield">google.calendar.event</div>
+        <p class="disclosure__micro">Permissions</p>
+        <div class="codefield">google.calendar.event:write</div>
+        <p class="disclosure__micro">Direction</p>
+        <div class="codefield">Brings content in. It reads from the other service and writes what it finds into your space.</div>
+        
+        
+      </div>
+    </details>
+
+    
+    <div class="banner banner--error" role="alert">&quot;feed_url&quot; is required</div>
+
+    <form method="POST" action="/integrations/01999a3f-0000-4ec1-b378-000000000002/install">
+      
+      <label class="field" style="margin-top:16px">
+        <span class="field__label">Connection label</span>
+        <input type="text" name="label" value="withmarfa.rss-watcher 1.0.0">
+      </label>
+      <p class="lsec" style="margin-top:16px">Configuration</p><label class="field"><span class="field-name">feed_url *</span><span class="field-desc">The Atom or RSS feed to poll.</span><input type="text" name="config_feed_url" value="" required></label>
       <div class="actions">
         <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
         <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>

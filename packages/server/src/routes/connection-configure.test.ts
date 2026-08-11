@@ -35,8 +35,26 @@ import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 
 let ctx: TestContext;
 
+/**
+ * The real shipped google-calendar manifest, loaded at runtime. A
+ * computed specifier because the file sits outside this package's
+ * rootDir, which `tsc` refuses on a static import; Vitest resolves and
+ * transforms it fine. A fixture shaped by hand drifted from the
+ * integration once, and the behavior these tests protect keyed on
+ * details the copy no longer had.
+ */
+let GOOGLE_CALENDAR_MANIFEST: Record<string, unknown>;
+
 beforeAll(async () => {
   ctx = await createTestContext();
+  const manifestPath = new URL(
+    "../../../../integrations/google-calendar/src/manifest.ts",
+    import.meta.url,
+  ).href;
+  const manifestModule = (await import(manifestPath)) as {
+    GOOGLE_CALENDAR_MANIFEST: Record<string, unknown>;
+  };
+  GOOGLE_CALENDAR_MANIFEST = manifestModule.GOOGLE_CALENDAR_MANIFEST;
 });
 
 afterAll(async () => {
@@ -234,48 +252,13 @@ async function seedGoogleCalendarConnection(
         publisher: "google",
         direction: "both",
         runtime_compatibility: ["hosted", "local"],
+        // The real shipped manifest, not a lookalike: a fixture shaped by
+        // hand drifted from the integration once, and the behavior these
+        // tests protect keyed on details the copy no longer had. The name
+        // override exists for the cases that need a non-calendar identity.
         manifest: {
-          name: opts.manifestName ?? "google.calendar",
-          version: "0.1.0",
-          publisher: "google",
-          description: "test",
-          direction: "both",
-          target_types: ["core.event", "google.calendar.event"],
-          triggers: [{ type: "manual" }],
-          runtime_compatibility: ["hosted", "local"],
-          bidirectional_handling: {
-            echo_ttl_seconds: 60,
-            lag_window_seconds: 60,
-            tombstone_mapping: "state-trashed",
-            partial_write_mode: "accept-partial",
-          },
-          oauth_requirements: { calendar: "proxy" },
-          webhook_verification: { method: "hmac-sha256" },
-          manifest_schema_version: "1.2.0",
-          configuration_schema: {
-            target_type: {
-              type: "string",
-              description: "Item type synced events land as.",
-              from_target_types: true,
-            },
-            selected_calendar_ids: {
-              type: "string_array",
-              description: "Calendars included in the sync.",
-            },
-            default_write_calendar_id: {
-              type: "string",
-              description: "Calendar that receives events created in Marfa.",
-            },
-            mode: {
-              type: "string",
-              description: "Whether one calendar or several are synced.",
-              values: ["single", "multi"],
-            },
-            inbound_webhook_url: {
-              type: "string",
-              description: "Push receipt URL for the watch channel.",
-            },
-          },
+          ...GOOGLE_CALENDAR_MANIFEST,
+          ...(opts.manifestName !== undefined && { name: opts.manifestName }),
         },
         registered_at: new Date().toISOString(),
       },
@@ -493,7 +476,7 @@ describe("POST /connections/:id/configure — error paths", () => {
         key: ctx.adminKey,
         form: {
           target_type: "google.calendar.event",
-          mode: "single",
+          default_write_calendar_id: "primary",
         },
       },
     );
@@ -504,7 +487,7 @@ describe("POST /connections/:id/configure — error paths", () => {
     ).configuration;
     expect(cfg).toMatchObject({
       target_type: "google.calendar.event",
-      mode: "single",
+      default_write_calendar_id: "primary",
     });
   });
 
@@ -518,7 +501,9 @@ describe("POST /connections/:id/configure — error paths", () => {
       `/connections/${connectionId}/configure`,
       {
         key: ctx.adminKey,
-        form: { mode: "sideways" },
+        // from_target_types pins target_type to the manifest's own list, so
+        // a value outside it is the declared-contract violation.
+        form: { target_type: "acme.not-a-target" },
       },
     );
     expect(res.status).toBe(400);
@@ -816,5 +801,92 @@ describe("the configuration surface answers a browser session", () => {
       (connection?.properties as { configuration?: Record<string, unknown> })
         .configuration,
     ).toMatchObject({ folder: "Inbox" });
+  });
+
+  it("offers a required key's field on the install screen and refuses an empty submit with the form, not a bare 400", async () => {
+    counter += 1;
+    const cookie = await signIn(
+      `configure-required-${String(counter)}@example.com`,
+    );
+    const manifest = configurableManifest("acme.required");
+    (
+      manifest.configuration_schema as Record<string, Record<string, unknown>>
+    ).feed_url = {
+      type: "string",
+      description: "The feed to poll.",
+      required: true,
+    };
+    const registered = await request(sessionCtx.app, "POST", "/integrations", {
+      key: sessionCtx.adminKey,
+      body: { manifest },
+    });
+    expect(registered.status).toBe(201);
+    const { id } = (await registered.json()) as { id: string };
+
+    // The install screen renders the declared contract as form fields —
+    // previously the form sent no configuration at all, so an integration
+    // with a required key could not be installed from its own page.
+    const page = await sessionCtx.app.request(`/integrations/${id}/install`, {
+      headers: { cookie },
+    });
+    expect(page.status).toBe(200);
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain('name="config_feed_url"');
+    expect(pageHtml).toContain("The feed to poll.");
+
+    // Submitting without the required value gets the form back with the
+    // refusal named, not a dead-end JSON 400 behind the Install button.
+    const refused = await sessionCtx.app.request(
+      `/integrations/${id}/install`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: ORIGIN,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          decision: "approve",
+          label: "Required-Key",
+        }).toString(),
+      },
+    );
+    expect(refused.status).toBe(400);
+    const refusedHtml = await refused.text();
+    expect(refusedHtml).toContain('name="config_feed_url"');
+    expect(refusedHtml).toContain("required");
+
+    // With the value supplied the install lands, and the connection
+    // carries the configuration the form collected.
+    const installed = await sessionCtx.app.request(
+      `/integrations/${id}/install`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: ORIGIN,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          decision: "approve",
+          label: "Required-Key",
+          config_feed_url: "https://example.com/feed.xml",
+        }).toString(),
+      },
+    );
+    expect(installed.status).toBe(200);
+    const connections = await sessionCtx.storage.items.list({
+      type: "system.connection",
+    });
+    const connection = connections.data.find(
+      (item) =>
+        (item.properties as { integration_ref?: string }).integration_ref ===
+        id,
+    );
+    expect(connection).toBeDefined();
+    expect(
+      (connection?.properties as { configuration?: Record<string, unknown> })
+        .configuration,
+    ).toMatchObject({ feed_url: "https://example.com/feed.xml" });
   });
 });

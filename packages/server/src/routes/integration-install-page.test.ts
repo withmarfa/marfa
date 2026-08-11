@@ -151,3 +151,45 @@ describe("renderInstallConsentScreen — empty manifest", () => {
     expect(html).toContain(`name="decision" value="approve"`);
   });
 });
+
+describe("renderInstallConsentScreen — configuration fields", () => {
+  const manifestWithConfig = {
+    ...BASE_MANIFEST,
+    configuration_schema: {
+      feed_url: {
+        type: "string",
+        description: "The Atom or RSS feed to poll.",
+        required: true,
+      },
+    },
+  };
+
+  it("renders declared configuration as prefixed form fields", () => {
+    const html = renderInstallConsentScreen({
+      ...BASE_PARAMS,
+      manifest: manifestWithConfig,
+    });
+    // The prefix is what keeps a manifest key from colliding with the
+    // form's own label / decision / credential_ref fields.
+    expect(html).toContain('name="config_feed_url"');
+    expect(html).toContain("The Atom or RSS feed to poll.");
+    expect(html).toContain("Configuration");
+  });
+
+  it("omits the configuration section when the manifest declares none", () => {
+    const html = renderInstallConsentScreen(BASE_PARAMS);
+    expect(html).not.toContain("config_");
+  });
+
+  it("threads a refusal and the submitted values back into the form", () => {
+    const html = renderInstallConsentScreen({
+      ...BASE_PARAMS,
+      manifest: manifestWithConfig,
+      configurationValues: { feed_url: "https://example.com/feed.xml" },
+      errorMessage: '"feed_url" is required',
+    });
+    expect(html).toContain("banner--error");
+    expect(html).toContain("&quot;feed_url&quot; is required");
+    expect(html).toContain('value="https://example.com/feed.xml"');
+  });
+});

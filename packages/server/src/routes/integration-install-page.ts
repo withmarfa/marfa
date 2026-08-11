@@ -19,6 +19,7 @@
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
+import { renderConfigurationFields } from "./connection-configure.js";
 import { escapeHtml } from "./auth-html.js";
 
 interface ConsentParams {
@@ -29,6 +30,14 @@ interface ConsentParams {
   summary: string;
   direction: "read" | "write" | "both";
   manifest: Record<string, unknown>;
+  /**
+   * Values to pre-fill the configuration fields with — the user's own
+   * submission, threaded back when validation refuses it so nothing they
+   * typed is lost. Empty on first render.
+   */
+  configurationValues?: Record<string, unknown>;
+  /** Validation refusal from a previous submit, rendered as a banner. */
+  errorMessage?: string;
   /**
    * Optional pre-arm: id of a same-space `system.credential` of
    * `kind: oauth_token` the caller wants the install to reuse. When
@@ -241,6 +250,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
     </details>
 
     ${renderCredentialHint(params)}
+    ${params.errorMessage ? `<div class="banner banner--error" role="alert">${escapeHtml(params.errorMessage)}</div>` : ""}
 
     <form method="POST" action="/integrations/${escapeHtml(params.integrationId)}/install">
       ${renderCredentialRefInput(params)}
@@ -248,6 +258,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
         <span class="field__label">Connection label</span>
         <input type="text" name="label" value="${escapeHtml(`${params.manifestName} ${params.manifestVersion}`)}">
       </label>
+      ${renderInstallConfiguration(params)}
       <div class="actions">
         <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
         <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>
@@ -268,6 +279,37 @@ function renderCredentialHint(params: ConsentParams): string {
   if (!params.credentialRefHint) return "";
   const label = params.credentialRefLabel ?? params.credentialRefHint;
   return `<div class="banner banner--warn" role="note">Reusing existing OAuth credential: <strong>${escapeHtml(label)}</strong>. The install skips the credential-bootstrap step and reuses this one for the upstream OAuth flow.</div>`;
+}
+
+/**
+ * The manifest's declared configuration, rendered inside the install form
+ * so an integration whose contract requires a value can be installed from
+ * its own consent screen — previously the form sent no configuration at
+ * all, and a required key with no default made this page a dead end with
+ * a bare 400 behind the Install button. Field names carry the
+ * `config_` prefix so a manifest key can never collide with the form's
+ * own fields.
+ */
+export const INSTALL_CONFIG_FIELD_PREFIX = "config_";
+
+function renderInstallConfiguration(params: ConsentParams): string {
+  const manifest = params.manifest as {
+    configuration_schema?: Record<string, unknown>;
+  };
+  if (
+    !manifest.configuration_schema ||
+    Object.keys(manifest.configuration_schema).length === 0
+  ) {
+    return "";
+  }
+  const fields = renderConfigurationFields(
+    params.manifest as unknown as Parameters<
+      typeof renderConfigurationFields
+    >[0],
+    params.configurationValues ?? {},
+    { namePrefix: INSTALL_CONFIG_FIELD_PREFIX },
+  );
+  return `<p class="lsec" style="margin-top:16px">Configuration</p>${fields}`;
 }
 
 /** Hidden form field that carries the pre-arm through to the POST

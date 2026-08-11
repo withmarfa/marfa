@@ -18,10 +18,6 @@ export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
       description: "The Atom or RSS feed to poll.",
       required: true,
     },
-    cron: {
-      type: "string",
-      description: "Poll cadence override, cron syntax.",
-    },
   },
   publisher: "withmarfa",
   description:

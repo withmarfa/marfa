@@ -63,11 +63,6 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
       type: "string",
       description: "Calendar that receives events created in Marfa.",
     },
-    mode: {
-      type: "string",
-      description: "Whether one calendar or several are synced.",
-      values: ["single", "multi"],
-    },
     inbound_webhook_url: {
       type: "string",
       description:

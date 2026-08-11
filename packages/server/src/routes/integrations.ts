@@ -20,6 +20,7 @@
 import { Hono } from "hono";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { ConfigurationFieldSpec } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -27,7 +28,11 @@ import type { MarfaAuth } from "../auth/instance.js";
 import { resolveSpaceAdminCaller } from "./_space-caller.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { renderInstallConsentScreen } from "./integration-install-page.js";
+import {
+  INSTALL_CONFIG_FIELD_PREFIX,
+  renderInstallConsentScreen,
+} from "./integration-install-page.js";
+import { parseGenericConfigurePayload } from "./connection-configure.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { publish } from "../pubsub.js";
 import { renderAuthLayout } from "./auth-layout.js";
@@ -450,20 +455,78 @@ export function integrationRoutes(
       return c.html(renderInstallDeniedPage());
     }
 
-    const installed = await performInstall(storage, salt, {
-      apiKeyId: caller.apiKeyId,
-      spaceId: caller.spaceId,
-      authMode: c.get("config").authMode,
-      clientIp: c.get("clientIp") ?? null,
-      integrationItemId: id,
-      manifest: props.manifest,
-      label:
-        labelOverride.trim() ||
-        `${props.manifest_name} ${props.manifest_version}`,
-      ...(credentialRefOverride !== undefined
-        ? { credentialRef: credentialRefOverride }
-        : {}),
-    });
+    // The form's configuration fields carry a prefix so a manifest key can
+    // never collide with `label` / `decision` / `credential_ref`; strip it
+    // and coerce the strings back to the declared types.
+    const manifestShape = props.manifest as {
+      configuration_schema?: Record<string, ConfigurationFieldSpec>;
+    };
+    const configForm = Object.fromEntries(
+      Object.entries(formData)
+        .filter(([key]) => key.startsWith(INSTALL_CONFIG_FIELD_PREFIX))
+        .map(([key, value]) => [
+          key.slice(INSTALL_CONFIG_FIELD_PREFIX.length),
+          value,
+        ]),
+    );
+    const configuration = parseGenericConfigurePayload(
+      configForm,
+      manifestShape.configuration_schema ?? {},
+    );
+
+    let installed;
+    try {
+      installed = await performInstall(storage, salt, {
+        apiKeyId: caller.apiKeyId,
+        spaceId: caller.spaceId,
+        authMode: c.get("config").authMode,
+        clientIp: c.get("clientIp") ?? null,
+        integrationItemId: id,
+        manifest: props.manifest,
+        label:
+          labelOverride.trim() ||
+          `${props.manifest_name} ${props.manifest_version}`,
+        configuration,
+        ...(credentialRefOverride !== undefined
+          ? { credentialRef: credentialRefOverride }
+          : {}),
+      });
+    } catch (err) {
+      // A configuration the contract refuses re-renders the form with the
+      // refusal and the user's values intact — behind the Install button a
+      // bare 400 is a dead end with nothing to correct.
+      if (
+        err instanceof MarfaError &&
+        err.code === ErrorCode.VALIDATION_ERROR
+      ) {
+        const issues = (
+          err.details as
+            | { issues?: { key: string; message: string }[] }
+            | undefined
+        )?.issues;
+        const message = issues?.length
+          ? issues.map((i) => i.message).join(". ")
+          : err.message;
+        return c.html(
+          renderInstallConsentScreen({
+            integrationId: id,
+            manifestName: props.manifest_name,
+            manifestVersion: props.manifest_version,
+            publisher: props.publisher,
+            summary: props.summary ?? "",
+            direction: props.direction,
+            manifest: props.manifest,
+            configurationValues: configuration,
+            errorMessage: message,
+            ...(credentialRefOverride !== undefined
+              ? { credentialRefHint: credentialRefOverride }
+              : {}),
+          }),
+          400,
+        );
+      }
+      throw err;
+    }
 
     // Same pubsub publish as the JSON install route — the bridge needs it to discover new connections.
     const connection = await storage.items.get(
