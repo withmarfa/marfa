@@ -37,8 +37,16 @@
  *   - the token response names exactly the narrowed set
  *   - a request in which nothing is grantable still fails `invalid_scope`
  *   - an empty-array ceiling is a real ceiling, not an absent one
- *   - a request carrying no `scope` at all is left alone
+ *   - an omitted `scope` defaults to the live part of the ceiling, not to
+ *     the stale stored snapshot
  *   - a client with no ceiling tracks the live allowlist
+ *
+ * What the user cannot be shown: the consent page never learns which
+ * literals were dropped. The plugin's authorize endpoint validates its
+ * query with a stripping schema, so no custom parameter survives into the
+ * signed redirect the page renders from, and an unsigned parameter is
+ * exactly what that page must never trust. The token response's `scope`
+ * field and the server logs are the two honest channels.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -429,9 +437,39 @@ describe("authorize scope narrowing", () => {
     expect(result.description).toContain("offline_access");
   });
 
-  it("leaves a request carrying no scope parameter alone", async () => {
+  it("defaults an omitted scope to the live part of the ceiling", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const cookie = await signInUser(ctx, "narrow-noscope@example.com");
+    // A ceiling holding a scope for a deleted type. The plugin defaults an
+    // omitted `scope` to this stored snapshot, which would put the dead
+    // literal in front of the user at consent and inside the grant after.
+    const clientId = await seedClient(ctx, [
+      "openid",
+      "core.note:read",
+      RETIRED_SCOPE,
+    ]);
+
+    const { challenge } = pkcePair();
+    const res = await beginAuthorize(
+      ctx,
+      clientId,
+      undefined,
+      cookie,
+      challenge,
+    );
+
+    expect(res.status).toBe(302);
+    const { outcome, signedQuery } = classifyAuthorize(res);
+    expect(outcome).toBe("consent");
+    const signed = new URLSearchParams(signedQuery ?? "");
+    const carried = (signed.get("scope") ?? "").split(" ").filter(Boolean);
+    expect(carried.sort()).toEqual(["core.note:read", "openid"]);
+    expect(carried).not.toContain(RETIRED_SCOPE);
+  });
+
+  it("leaves an omitted scope alone when the ceiling is fully live", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-noscope-live@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
     const { challenge } = pkcePair();
@@ -443,11 +481,14 @@ describe("authorize scope narrowing", () => {
       challenge,
     );
 
-    // The plugin defaults the grant to the client's own set. There is
-    // nothing to intersect, and writing a scope in would invent a request
-    // the client never made.
+    // Nothing to drop, so nothing is rewritten.
     expect(res.status).toBe(302);
-    expect(classifyAuthorize(res).outcome).toBe("consent");
+    const { outcome, signedQuery } = classifyAuthorize(res);
+    expect(outcome).toBe("consent");
+    const carried = (new URLSearchParams(signedQuery ?? "").get("scope") ?? "")
+      .split(" ")
+      .filter(Boolean);
+    expect(carried.sort()).toEqual(["core.note:read", "openid"]);
   });
 
   it("a client with no stored ceiling tracks the live allowlist", async () => {

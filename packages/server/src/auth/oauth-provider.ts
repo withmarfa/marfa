@@ -631,19 +631,31 @@ function normalizeResourceParameter(
  * what the client is registered for, so an unsatisfiable literal is dropped
  * instead of failing the authorization.
  *
- * **It refuses to narrow in three cases, each deliberately leaving the
+ * **It refuses to narrow in two cases, each deliberately leaving the
  * plugin's own `invalid_scope` to fire:**
  *
- *  1. **No `scope` parameter.** The plugin then defaults the grant to
- *     `client.scopes ?? opts.scopes`; there is nothing to intersect, and
- *     writing a value in would invent a request the client never made.
- *  2. **The client cannot be resolved.** An unknown or unreadable client is
+ *  1. **The client cannot be resolved.** An unknown or unreadable client is
  *     the plugin's refusal to make, and narrowing against a ceiling we
  *     failed to read would be guessing at authority.
- *  3. **The intersection is empty.** An emptied `scope` reaches a consent
+ *  2. **The intersection is empty.** An emptied `scope` reaches a consent
  *     screen with nothing on it, which the decision handler treats as a
  *     denial — a confusing dead-end swapped for a clear one. A request in
  *     which nothing at all is grantable is a genuine `invalid_scope`.
+ *
+ * A request with **no `scope` parameter** is narrowed too. The plugin
+ * defaults that grant to the client's stored ceiling, which is a
+ * registration-time snapshot — deferring to it asks the user to approve
+ * scopes for types that no longer exist. The default request the client
+ * makes by omission is "everything I am registered for", and the honest
+ * reading of that today is the ceiling intersected with what this server
+ * can still grant.
+ *
+ * The dropped literals reach the client on the token response's `scope`
+ * field and the operator through the logs below. They cannot reach the
+ * consent page: the plugin's authorize endpoint validates its query with a
+ * stripping schema, so no custom parameter survives into the signed
+ * redirect the page renders from, and an unsigned parameter is exactly
+ * what the page must never trust. The machine channel is the honest one.
  *
  * A read failure fails open (log, return) so a transient database blip
  * degrades to the pre-existing behaviour rather than breaking sign-in.
@@ -655,11 +667,6 @@ async function narrowAuthorizeScopes(
 ): Promise<void> {
   const query = ctx.query;
   if (!query || typeof query !== "object") return;
-
-  const rawScope = query.scope;
-  if (typeof rawScope !== "string") return;
-  const requested = rawScope.split(" ").filter((s) => s.length > 0);
-  if (requested.length === 0) return;
 
   const clientId = query.client_id;
   if (typeof clientId !== "string" || clientId.length === 0) return;
@@ -673,12 +680,44 @@ async function narrowAuthorizeScopes(
     if (!client) return;
     // Mirrors the plugin's own `client.scopes ?? opts.scopes`: a null ceiling
     // tracks the live set, and an empty array is a real, empty ceiling that
-    // narrows everything away — which case 3 below then declines to act on.
+    // narrows everything away — which case 2 below then declines to act on.
     ceiling = client.scopes;
   } catch (err) {
     log("warn", "oauth authorize scope-narrowing precheck failed", {
       client_id: clientId,
       error: err,
+    });
+    return;
+  }
+
+  const rawScope = query.scope;
+  const requested =
+    typeof rawScope === "string"
+      ? rawScope.split(" ").filter((s) => s.length > 0)
+      : [];
+  if (requested.length === 0) {
+    // No scope named. With no stored ceiling the plugin already defaults to
+    // the live allowlist; with one, spell out the request the omission
+    // means — the ceiling minus what this server can no longer grant — so
+    // a stale snapshot cannot put dead scopes in front of the user.
+    if (ceiling === null || ceiling.length === 0) return;
+    const grantable = ceiling.filter((s) => liveScopes.has(s));
+    const dead = ceiling.filter((s) => !liveScopes.has(s));
+    if (dead.length === 0) return;
+    if (grantable.length === 0) {
+      // An entirely dead ceiling: nothing honest to write, so leave the
+      // plugin's own behavior in place and say so.
+      log("warn", "oauth authorize: stored client ceiling is entirely dead", {
+        client_id: clientId,
+        ceiling,
+      });
+      return;
+    }
+    query.scope = grantable.join(" ");
+    log("info", "oauth authorize: defaulted scope to the live ceiling", {
+      client_id: clientId,
+      dropped_scopes: dead,
+      granted_scopes: grantable,
     });
     return;
   }
