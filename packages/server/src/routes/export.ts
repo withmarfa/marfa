@@ -14,6 +14,7 @@ import type { ItemState } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { SourceFilterSettings } from "../storage/filter-sql.js";
@@ -462,9 +463,13 @@ async function handleArchiveExport(
         customEdgeTypeCount += 1;
       }
 
-      // Blob metadata lookup uses space_id; single-space self-hosts pass "" as the instance-wide sentinel.
+      // A space-less export is a platform admin's, and its items came from
+      // every space — so the blob lookup has to reach every space too. It
+      // used to ask the instance-wide `""` bucket instead, where none of
+      // those hashes live, and the archive recorded `blob_count: 0` while
+      // reporting success. The same rule the read routes use.
       for (const hash of blobHashes) {
-        const record = await storage.blobs.get(hash, spaceId ?? "");
+        const record = await resolveBlobForSpace(storage, spaceId, hash);
         if (record) {
           blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
         }
