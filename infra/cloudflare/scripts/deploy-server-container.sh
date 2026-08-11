@@ -42,9 +42,10 @@
 #
 # One thing the printout cannot tell you: the container reads `envVars` ONCE at
 # launch, so changing them and redeploying the Worker does not move a running
-# container. It keeps the old values until it next restarts. Staging sleeps
-# after 2m idle and cycles on its own; a warm or busy environment needs an
-# image roll to force it.
+# container. It keeps the old values until it next restarts. An environment on
+# a short idle window cycles on its own soon enough not to notice; one held
+# resident by a long window, by warm, or by steady traffic needs an image roll
+# to force it.
 #
 # Migrate-before-deploy (canonical ordering: migrate-then-deploy):
 #   Unless SKIP_MIGRATE=1, this runs pending Drizzle migrations against the
@@ -193,13 +194,16 @@ fi
 # both dimensions:
 #
 #   basic       1/4 vCPU   1 GiB   4 GB
-#   standard-1  1/2 vCPU   4 GiB   8 GB   <- what both environments were on
+#   standard-1  1/2 vCPU   4 GiB   8 GB
 #
 # Dropping to basic quarters the memory bill and halves the vCPU allocation.
 # Measured cost of that halving on this image: app startup 6s -> 15s, read p50
-# 250ms -> 400ms. Whether that trade is worth taking differs per environment,
-# so it is set in the per-env blocks below rather than shared here — a shared
-# assignment would run first and silently win over their `:-` defaults.
+# 250ms -> 400ms, and latency under concurrent writes stops being steady enough
+# to measure against. Whether that trade is worth taking differs per
+# environment — an environment nobody watches should take it, one that hosts
+# timing-sensitive verification should not — so it is set in the per-env blocks
+# below rather than shared here. A shared assignment would run first and
+# silently win over their `:-` defaults.
 # Load-bearing, not a capacity choice. The OAuth consent flows serialize their
 # writes to a user's standing grant through an in-process mutex, which only
 # covers one process. Raise this and a permission the user just revoked can
@@ -284,24 +288,38 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   # separate PostHog projects (the container's NODE_ENV is "production" on both,
   # so the OTel bootstrap can't derive this).
   export V_OTEL_ENVIRONMENT="staging"
-  # Aggressive scale-to-zero on staging: idle awake-time is the dominant driver
-  # of Neon compute, and staging's free budget is the one that keeps lapsing.
-  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-2m}"
-  # Staging is a test target with no interactive users, so the cold-start cost
-  # of the smaller preset (app startup 6s -> 15s) is one nobody experiences,
-  # while the memory saving is the same 4x it would be anywhere. Measured peak
-  # working set is 188 MiB, so 1 GiB still leaves five times headroom; the
-  # `load:extreme` profile seeds twelve thousand items and is the one thing
-  # worth watching if it is ever run here.
-  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-basic}"
+  # Long idle window, deliberately, while heavy delivery runs against staging.
+  # Staging is driven in bursts — an agent session, a verification battery, a
+  # conformance sweep — separated by a few minutes of thinking time. At a
+  # two-minute window it was resident about fifteen percent of the day, so most
+  # requests opened by paying a cold start. An hour holds the instance across a
+  # working session while still scaling to zero overnight and on quiet days,
+  # which is where the saving came from in the first place. Costs well under a
+  # dollar a month over the shorter window. Warm (below) would be an order of
+  # magnitude more and buys nothing beyond this during hours nobody works.
+  # Shorten this again when staging stops carrying daily delivery.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-1h}"
+  # Sized for verification rather than for idling. The smaller preset was right
+  # while staging only had to answer requests, and is wrong now that
+  # timing-sensitive work runs here. Measured against the real image with a live
+  # database: read p50 0.40s against 0.25s, app startup 15s against 6s, and a
+  # quarter vCPU leaves latency under concurrent writes variable enough that a
+  # test measuring it cannot separate a regression from a busy container. That
+  # ambiguity costs more than the instance does — it has already stalled a
+  # concurrency verification that had to be abandoned mid-run. Sizing up also
+  # retires the standing caveat on the smaller shape, whose five-times headroom
+  # over the measured 188 MiB peak had never been tested against the
+  # `load:extreme` profile and its twelve thousand items.
+  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-standard-1}"
   # Deliberate warm policy — OFF by default (opt-in). Warm keeps the single
   # instance resident so the first request after an idle gap never pays a cold
   # start (staging backs the Tickets responsiveness surface). COST: an always-on
   # container bills continuously — provisioned memory + disk for the whole
   # resident window plus its managing Durable Object (~$12.50/mo floor), on the
-  # order of tens of dollars/month per instance. Off = scale-to-zero on the 2m
-  # timer above, so an untouched env costs ~nothing. Set V_CONTAINER_WARM=true
-  # to opt a genuinely latency-sensitive env back in.
+  # order of tens of dollars/month per instance. Off = scale-to-zero on the idle
+  # timer above, so an untouched env costs ~nothing. Reach for a longer idle
+  # window before reaching for this: it buys the same experience during the
+  # hours anyone is working, and stops billing when they are not.
   export V_CONTAINER_WARM="${V_CONTAINER_WARM:-false}"
   export V_RUNTIME_CONTROL_URL="https://runtime-staging.marfa.so"
   export V_S3_BUCKET="marfa-blobs-staging"
