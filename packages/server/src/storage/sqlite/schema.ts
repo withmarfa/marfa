@@ -83,8 +83,14 @@ export const items = sqliteTable(
     index("idx_items_state").on(table.state),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_timestamp").on(table.timestamp),
+    // Provenance identity is per space: two spaces syncing the same
+    // integration against the same upstream record are two corpora, not
+    // one. COALESCE rather than a plain (space_id, source, source_id)
+    // composite because `space_id` is nullable and NULL never equals NULL
+    // in a unique index, which would stop deduping the null-space bucket
+    // entirely — every row on a single-space self-host.
     uniqueIndex("idx_items_source_dedup")
-      .on(table.source, table.source_id)
+      .on(sql`COALESCE(${table.space_id}, '')`, table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
   ],
 );

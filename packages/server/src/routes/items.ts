@@ -150,9 +150,12 @@ const createItemRoute = createRoute({
       },
       description:
         "Item updated via natural-key upsert. Returned when both `source` " +
-        "(stamped from the credential) and request `source_id` resolve a " +
-        "non-trashed item in the caller's space — the request is treated " +
-        "as an idempotent re-sync of the upstream entry.",
+        "(stamped from the credential) and request `source_id` resolve an " +
+        "item in the caller's space — the request is treated as an " +
+        "idempotent re-sync of the upstream entry. When the resolved item " +
+        "has been trashed the response carries `acknowledged: true` and " +
+        "nothing is written: the deletion stands, and the re-sync is " +
+        "accepted rather than refused forever.",
     },
     201: {
       content: {
@@ -1123,11 +1126,24 @@ export function itemRoutes(storage: Storage) {
     // (replace-by-edge-type). Fields only meaningful at create time (id,
     // state, device, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
-      const existing = await storage.items.findBySourceId(
+      // Including trashed rows, deliberately. `findBySourceId` hides them,
+      // which sent a re-sync of a mirror the user had deleted into the
+      // create path, where `create`'s own dedup pre-check — which does not
+      // filter state — found the same row and refused with a 409. That 409
+      // never clears: the row stays trashed, so every subsequent sync
+      // fails the same way and the integration is wedged on one item.
+      const existing = await storage.items.findBySourceIdIncludingTrashed(
         stampedSource,
         body.source_id,
         spaceId,
       );
+      if (existing?.state === "trashed") {
+        // The user deleted this. Reviving it would overturn that decision
+        // silently, and refusing forever is the bug being fixed, so the
+        // sync is acknowledged and nothing is written or published.
+        const metadata = await storage.metadata.get(existing.id);
+        return c.json({ item: existing, metadata, acknowledged: true }, 200);
+      }
       if (existing) {
         // Authorize the update against the row it lands on, not the body
         // that addressed it. Every gate above ran on `type`, which the
