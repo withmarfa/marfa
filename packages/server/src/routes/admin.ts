@@ -604,6 +604,80 @@ export interface AdminRoutesOptions {
   apiKeySalt: string;
 }
 
+const deleteAccountRoute = createRoute({
+  operationId: "adminDeleteAccount",
+  method: "post",
+  path: "/accounts/{id}/delete",
+  tags: ["Admin"],
+  summary: "Delete an account and everything it owns, immediately",
+  description:
+    "Operator-initiated account deletion. Runs the same cascade the grace-window purger runs — space rows, credentials, sessions, grants, and the audit-trail redaction — but now, with no grace window. The body's `confirm` must be the account's email address, spelled exactly; the mismatch refusal is the fat-finger gate on an action with no undo.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string().describe("The account's auth user id."),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            confirm: z
+              .string()
+              .min(1)
+              .describe(
+                "The account's email address, exactly. Refused otherwise.",
+              ),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ deleted: z.literal(true) }),
+        },
+      },
+      description: "The account and everything it owned are gone.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "`confirm` does not name this account's email address, or this deployment has no user accounts.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description:
+        "Another deletion of this account is in progress, or the account changed state mid-delete.",
+    },
+  },
+});
+
 export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -896,6 +970,75 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       details: { purged_count: purgedCount, run_at: runAt },
     });
     return c.json({ purged_count: purgedCount, run_at: runAt }, 200);
+  });
+
+  router.openapi(deleteAccountRoute, async (c) => {
+    const actor = requireAdmin(c);
+    const { id } = c.req.valid("param");
+    const { confirm } = c.req.valid("json");
+
+    const lifecycle = storage.accountLifecycle;
+    if (!lifecycle) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "This deployment has no user accounts to delete",
+      );
+    }
+    // The confirm value resolves to an account, and that account must be
+    // the one the path names — checking both directions is what makes a
+    // pasted-wrong id and a pasted-wrong email each fail loudly.
+    const byEmail = await lifecycle.getAccountLifecycleByEmail(confirm);
+    if (byEmail?.auth_user_id !== id) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "confirm must be the account's email address, exactly",
+      );
+    }
+
+    // The purger's own per-account lock, so an operator delete and a
+    // grace-window purge of the same account serialize rather than racing.
+    // Inside it: mark, then cascade with a cutoff just past the mark, so
+    // the cascade's own FOR-UPDATE re-check ("pending and due") passes for
+    // exactly this marking and still refuses if anything else moved the
+    // account in between.
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.parse(nowIso) + 1_000).toISOString();
+    const outcome = await storage.coordination.withJobLock(
+      `account-delete:${id}`,
+      async () => {
+        await lifecycle.markPendingDeletion(id, nowIso);
+        return storage.deleteAccountCascade(id, cutoffIso);
+      },
+    );
+    if (outcome === undefined) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        "Another deletion of this account is already in progress",
+      );
+    }
+    if (!outcome) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        "The account changed state while the delete was running; nothing was deleted",
+      );
+    }
+
+    // The cascade wrote its own in-transaction `auth.account.hard_deleted`
+    // row, which survives the redaction sweep. This one records WHO: an
+    // operator-initiated deletion is a different event from a grace-window
+    // purge, and the operator's key id is the fact worth keeping. Awaited,
+    // unlike the fire-and-forget auth rows: the store swallows write
+    // failures internally, so this cannot throw, and an operator deletion
+    // should not answer before its own trail is durable.
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      space_id: null,
+      key_id: actor.id,
+      action: "admin.account.deleted",
+      resource_type: "account",
+      resource_id: id,
+    });
+    return c.json({ deleted: true as const }, 200);
   });
 
   return router;
