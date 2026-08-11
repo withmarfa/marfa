@@ -73,6 +73,10 @@ const SYSTEM_FIELDS = new Set([
   "device",
   "version",
   "id",
+  // The provenance path a client stored the item under. Filterable so a
+  // prefix query can express "everything under this folder" — the path is
+  // the only hierarchy the model has, since folders are not items.
+  "source_id",
 ]);
 
 const COMPARISON_OPS = new Set<ComparisonOp>([

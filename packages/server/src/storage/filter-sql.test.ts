@@ -43,6 +43,30 @@ describe("filterToRawSql", () => {
       expect(result.params).toEqual(["core.media%"]);
     });
 
+    it("generates a source_id prefix clause against the real column", () => {
+      const expr = parseFilter('source_id starts_with "Notes/"');
+      const result = filterToRawSql(expr, "sqlite", "i");
+      // The column name is interpolated rather than bound, so this asserts
+      // the allowlist and the schema agree on the spelling.
+      expect(result.clause).toBe("i.source_id LIKE ? ESCAPE '\\'");
+      expect(result.params).toEqual(["Notes/%"]);
+    });
+
+    it("generates the same source_id prefix clause on pg", () => {
+      const expr = parseFilter('source_id starts_with "Notes/"');
+      const result = filterToRawSql(expr, "pg", "i");
+      expect(result.clause).toBe("i.source_id LIKE $1 ESCAPE '\\'");
+      expect(result.params).toEqual(["Notes/%"]);
+    });
+
+    it("escapes LIKE metacharacters in a source_id prefix", () => {
+      // A path really can contain these; unescaped they would silently
+      // widen the folder query into a wildcard.
+      const expr = parseFilter('source_id starts_with "100%_real/"');
+      const result = filterToRawSql(expr, "sqlite", "i");
+      expect(result.params).toEqual(["100\\%\\_real/%"]);
+    });
+
     it("generates property string equality", () => {
       const expr = parseFilter('properties.author eq "Orwell"');
       const result = filterToRawSql(expr, "sqlite", "i");

@@ -96,6 +96,16 @@ export const items = sqliteTable(
     uniqueIndex("idx_items_source_dedup")
       .on(sql`COALESCE(${table.space_id}, '')`, table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
+    // Serves the folder query: a folder is a path prefix, so
+    // `source_id starts_with 'Notes/'` is a range scan within a space.
+    // `COLLATE NOCASE` is the counterpart to the Postgres side's
+    // `text_pattern_ops` — an index only serves a prefix match when its
+    // collation matches the one the match uses, and SQLite's LIKE is
+    // case-insensitive over ASCII. Under a BINARY index the planner declines
+    // the range and scans the whole space.
+    index("idx_items_source_id_prefix")
+      .on(table.space_id, sql`${table.source_id} COLLATE NOCASE`)
+      .where(sql`source_id IS NOT NULL`),
     // Serves the enrichment candidate query, which runs on a timer forever
     // and must cost nothing once a corpus is extracted. Partial: only file
     // items with a blob are ever candidates, ordered as the query reads

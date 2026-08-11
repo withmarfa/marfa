@@ -546,6 +546,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\`
   ON \`items\` (COALESCE(\`space_id\`, ''), \`source\`, \`source_id\`)
   WHERE source IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS "idx_items_source_id_prefix"
+  ON "items" ("space_id", "source_id" COLLATE NOCASE)
+  WHERE "source_id" IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS \`idx_items_state\` ON \`items\` (\`state\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_items_timestamp\` ON \`items\` (\`timestamp\`);
