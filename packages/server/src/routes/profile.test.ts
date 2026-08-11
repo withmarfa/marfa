@@ -257,6 +257,7 @@ interface ProfileBody {
   avatar_url: string;
   email: string;
   email_verified: boolean;
+  timezone: string | null;
   account_holder_item_id?: string;
 }
 
@@ -614,5 +615,114 @@ describe("placeholder helpers", () => {
     const a = renderPlaceholderSvg("alice");
     const b = renderPlaceholderSvg("alice");
     expect(b).toBe(a);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Account time zone
+//
+// Nothing recorded where an account lives, so "what is on today" had no
+// answer the server could give: two callers in different zones asking the
+// same account the same question got different days back. It is a default
+// and a display preference only — a recurring series keeps its own zone,
+// and the account's never anchors a rule.
+// ---------------------------------------------------------------------------
+
+describe("account time zone", () => {
+  let hosted: HostedContext;
+
+  beforeAll(async () => {
+    hosted = await createHostedContext();
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  it("starts unset rather than guessed", async () => {
+    const u = await provisionUser(hosted, {
+      handle: "tzunset",
+      email: "tzunset@example.com",
+    });
+    const res = await request(hosted.app, "GET", "/profile/me", {
+      key: u.apiKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ProfileBody;
+    // Present as a field, null as a value: a guessed zone is worse than
+    // no zone, because a caller cannot tell it was guessed.
+    expect(body.timezone).toBeNull();
+  });
+
+  it("round-trips an IANA zone", async () => {
+    const u = await provisionUser(hosted, {
+      handle: "tzset",
+      email: "tzset@example.com",
+    });
+    const patched = await request(hosted.app, "PATCH", "/profile/me", {
+      key: u.apiKey,
+      body: { timezone: "Europe/Berlin" },
+    });
+    expect(patched.status, await patched.clone().text()).toBe(200);
+    expect(((await patched.json()) as ProfileBody).timezone).toBe(
+      "Europe/Berlin",
+    );
+
+    const read = await request(hosted.app, "GET", "/profile/me", {
+      key: u.apiKey,
+    });
+    expect(((await read.json()) as ProfileBody).timezone).toBe("Europe/Berlin");
+  });
+
+  it("refuses a zone the platform cannot resolve", async () => {
+    // A zone that does not resolve is not a cosmetic problem: every read
+    // that renders a date in it would throw, far from the write that
+    // accepted it.
+    const u = await provisionUser(hosted, {
+      handle: "tzbad",
+      email: "tzbad@example.com",
+    });
+    for (const timezone of ["Mars/Olympus", "GMT+2", "", "europe/berlin"]) {
+      const res = await request(hosted.app, "PATCH", "/profile/me", {
+        key: u.apiKey,
+        body: { timezone },
+      });
+      expect(res.status, `accepted ${JSON.stringify(timezone)}`).toBe(400);
+    }
+  });
+
+  it("can be cleared back to unset", async () => {
+    const u = await provisionUser(hosted, {
+      handle: "tzclear",
+      email: "tzclear@example.com",
+    });
+    await request(hosted.app, "PATCH", "/profile/me", {
+      key: u.apiKey,
+      body: { timezone: "America/New_York" },
+    });
+    const cleared = await request(hosted.app, "PATCH", "/profile/me", {
+      key: u.apiKey,
+      body: { timezone: null },
+    });
+    expect(cleared.status).toBe(200);
+    expect(((await cleared.json()) as ProfileBody).timezone).toBeNull();
+  });
+
+  it("leaves the zone alone when a PATCH does not name it", async () => {
+    const u = await provisionUser(hosted, {
+      handle: "tzkeep",
+      email: "tzkeep@example.com",
+    });
+    await request(hosted.app, "PATCH", "/profile/me", {
+      key: u.apiKey,
+      body: { timezone: "Pacific/Auckland" },
+    });
+    const other = await request(hosted.app, "PATCH", "/profile/me", {
+      key: u.apiKey,
+      body: { bio: "unrelated" },
+    });
+    expect(((await other.json()) as ProfileBody).timezone).toBe(
+      "Pacific/Auckland",
+    );
   });
 });

@@ -30,6 +30,7 @@ function fakeUser(over: Partial<User>): User {
     bio: null,
     avatar_blob_hash: null,
     provider: "credential",
+    timezone: null,
     provider_id: "p1",
     space_id: "space-1",
     handle: "someone",

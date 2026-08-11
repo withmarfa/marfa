@@ -11728,6 +11728,10 @@
                     "email_verified": {
                       "type": "boolean"
                     },
+                    "timezone": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -11746,6 +11750,7 @@
                     "avatar_url",
                     "email",
                     "email_verified",
+                    "timezone",
                     "created_at",
                     "updated_at"
                   ]
@@ -11868,6 +11873,10 @@
                     "type": "string",
                     "nullable": true,
                     "maxLength": 280
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "nullable": true
                   }
                 }
               }
@@ -11907,6 +11916,10 @@
                     "email_verified": {
                       "type": "boolean"
                     },
+                    "timezone": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -11925,6 +11938,7 @@
                     "avatar_url",
                     "email",
                     "email_verified",
+                    "timezone",
                     "created_at",
                     "updated_at"
                   ]
@@ -12148,6 +12162,10 @@
                     "email_verified": {
                       "type": "boolean"
                     },
+                    "timezone": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -12166,6 +12184,7 @@
                     "avatar_url",
                     "email",
                     "email_verified",
+                    "timezone",
                     "created_at",
                     "updated_at"
                   ]
@@ -12338,6 +12357,10 @@
                     "email_verified": {
                       "type": "boolean"
                     },
+                    "timezone": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "created_at": {
                       "type": "string"
                     },
@@ -12356,6 +12379,7 @@
                     "avatar_url",
                     "email",
                     "email_verified",
+                    "timezone",
                     "created_at",
                     "updated_at"
                   ]

@@ -481,7 +481,8 @@ CREATE TABLE IF NOT EXISTS public.users (
     bio text,
     avatar_blob_hash text,
     auth_user_id text,
-    role text DEFAULT 'member'::text NOT NULL
+    role text DEFAULT 'member'::text NOT NULL,
+    timezone text
 );
 
 CREATE TABLE IF NOT EXISTS public.versions (

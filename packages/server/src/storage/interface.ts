@@ -916,6 +916,7 @@ export interface UpdateProfileInput {
   last_name?: string | null;
   bio?: string | null;
   avatar_blob_hash?: string | null;
+  timezone?: string | null;
 }
 
 export interface UserStore {

@@ -1130,6 +1130,12 @@ export interface User {
    *  `requireAdmin`) whether the request arrives via API key or OAuth
    *  bearer. */
   role: MarfaRole;
+  /** IANA zone the account keeps its own clock in, or NULL when unstated.
+   *  A default and a display preference: it is what answers "what is on
+   *  today" for a caller that names no zone. It never anchors a
+   *  recurrence — a series expands in its own `timezone`, so an account
+   *  moving country does not reschedule its calendar. */
+  timezone: string | null;
   created_at: string;
   updated_at: string;
 }
