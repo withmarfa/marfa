@@ -9,9 +9,12 @@ import { log } from "../../middleware/logger.js";
  * The pool is shared with streams, so exhaustion is a real state, and a
  * background tick queued behind it indefinitely is worse than a missed
  * tick: every caller of `withJobLock` already treats `undefined` as
- * "not this time".
+ * "not this time". Generous on purpose — a loaded machine can hold every
+ * slot for whole seconds at a time, and a background tick that skips on
+ * an ordinary spike trades a real run for nothing. Request-path callers
+ * pass their own tighter budget per call.
  */
-const JOB_LOCK_RESERVE_TIMEOUT_MS = 5_000;
+const JOB_LOCK_RESERVE_TIMEOUT_MS = 15_000;
 
 /**
  * Postgres-backed coordination via advisory locks.
@@ -114,8 +117,14 @@ export class PgCoordinationStore implements CoordinationStore {
   async withJobLock<T>(
     name: string,
     fn: () => Promise<T>,
+    options?: { reserveTimeoutMs?: number },
   ): Promise<T | undefined> {
-    return this.tryLockOn(this.sessionClient, name, fn);
+    return this.tryLockOn(
+      this.sessionClient,
+      name,
+      fn,
+      options?.reserveTimeoutMs,
+    );
   }
 
   /**
@@ -140,9 +149,11 @@ export class PgCoordinationStore implements CoordinationStore {
     client: PgClient,
     name: string,
     fn: () => Promise<T>,
+    reserveTimeoutMs?: number,
   ): Promise<T | undefined> {
     const key = `marfa:${name}`;
-    const conn = await reserveWithTimeout(client, this.reserveTimeoutMs);
+    const timeoutMs = reserveTimeoutMs ?? this.reserveTimeoutMs;
+    const conn = await reserveWithTimeout(client, timeoutMs);
     if (conn === null) {
       // The pool is exhausted — most plausibly by concurrent streams.
       // A skipped tick retries on its own timer; the proxy-refresh
@@ -150,7 +161,7 @@ export class PgCoordinationStore implements CoordinationStore {
       // the queue instead would add this caller to the pileup.
       log("warn", "job lock skipped: session pool exhausted", {
         job: name,
-        waited_ms: this.reserveTimeoutMs,
+        waited_ms: timeoutMs,
       });
       return undefined;
     }

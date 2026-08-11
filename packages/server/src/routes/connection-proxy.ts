@@ -505,6 +505,10 @@ async function withRefreshLock<T>(
     const result = await storage.coordination.withJobLock(
       `connection-refresh:${connectionId}`,
       fn,
+      // Tight budget: this sits on the request path, and the fallback
+      // below is strictly better than the caller waiting out the
+      // background default.
+      { reserveTimeoutMs: 2_000 },
     );
     if (result === undefined) {
       // Another instance held the lock. Run our own attempt — the in-
