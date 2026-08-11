@@ -35,5 +35,7 @@ export {
   ALL_TYPES,
   ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
+  ALL_TYPE_IDS,
 } from "../generated/type-registry.js";
+export type { PlatformTypeId } from "../generated/type-registry.js";
 export { ALL_EDGE_TYPES } from "../generated/edge-type-registry.js";

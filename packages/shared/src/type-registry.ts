@@ -3,6 +3,7 @@ import {
   ALL_TYPES,
   ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
+  ALL_TYPE_IDS,
   RESERVED_ITEM_FIELDS,
   validateTypeSchema as validateTypeSchemaShape,
 } from "@withmarfa/types";
@@ -14,6 +15,7 @@ import type {
   ItemState,
   MergePolicy,
   MergeStrategy,
+  PlatformTypeId,
   SchemaValidationIssue,
   TypeSchema,
   TypeSchemaValidationResult,
@@ -32,12 +34,17 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
+  PlatformTypeId,
   SchemaValidationIssue,
   TypeSchema,
   TypeSchemaValidationResult,
   VersionPolicy,
 };
-export { ALL_TYPES, ALL_INTEGRATION_TYPES, ALL_SYSTEM_TYPES };
+// `ALL_TYPE_IDS` and `PlatformTypeId` are the compile-time half of the
+// registry: a consumer that keys a map or a switch by type id declares it
+// `satisfies Partial<Record<PlatformTypeId, …>>` and a deleted identifier
+// becomes a type error in that repository's own typecheck.
+export { ALL_TYPES, ALL_INTEGRATION_TYPES, ALL_SYSTEM_TYPES, ALL_TYPE_IDS };
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)

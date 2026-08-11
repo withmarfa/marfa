@@ -312,6 +312,21 @@ for (const schema of systemTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
+// The identifier set as literal types, so a consumer that keys a map or a
+// switch by type id can be checked by the compiler rather than by whoever
+// remembers to look. Four sibling repositories carried maps naming types
+// this package had already deleted; nothing failed, because a plain
+// `Record<string, …>` cannot tell a live identifier from a dead one.
+const allTypeIds = [...coreTypes, ...integrationTypes, ...systemTypes]
+  .map((schema) => schema.id)
+  .sort();
+lines.push("export const ALL_TYPE_IDS = [");
+for (const id of allTypeIds) lines.push(`  ${quote(id)},`);
+lines.push("] as const;");
+lines.push("");
+lines.push("export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];");
+lines.push("");
+
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");

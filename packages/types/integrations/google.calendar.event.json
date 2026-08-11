@@ -2,7 +2,7 @@
   "id": "google.calendar.event",
   "label": "Google Calendar Event",
   "description": "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar integration can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
-  "version": 1,
+  "version": 2,
   "compatible_with": ["core.event"],
   "fields": {
     "title": {
@@ -25,11 +25,15 @@
     },
     "timezone": {
       "type": "string",
-      "description": "IANA timezone identifier (e.g. \"Europe/London\"). Set on timed events; omitted on all-day events."
+      "description": "IANA timezone identifier (e.g. \"Europe/London\") from Calendar `start.timeZone`. Set on timed events; omitted on all-day events. This is the start zone; `end_timezone` carries `end.timeZone` when Calendar reports a different one."
+    },
+    "end_timezone": {
+      "type": "string",
+      "description": "IANA timezone from Calendar `end.timeZone`, carried when it differs from `timezone`. Calendar exposes the two separately and offers the choice in its own interface, so collapsing them loses a fact the user entered."
     },
     "all_day": {
       "type": "boolean",
-      "description": "True when the event is an all-day event (Calendar `start.date` instead of `start.dateTime`)."
+      "description": "True when the event is an all-day event (Calendar `start.date` instead of `start.dateTime`). The declared answer, not an inference from whether `starts_at` happens to carry a time."
     },
     "place": {
       "type": "string",
@@ -74,7 +78,7 @@
     "recurrence": {
       "type": "array",
       "items_type": "string",
-      "description": "RRULE / EXRULE / RDATE / EXDATE strings (Calendar `recurrence`). Carried verbatim so the series round-trips, and read by the occurrence expansion."
+      "description": "RRULE / RDATE / EXDATE strings (Calendar `recurrence`). Carried verbatim so the series round-trips, and read by the occurrence expansion. EXRULE is deprecated in RFC 5545 and the expander refuses it outright rather than accepting a line it would silently not apply."
     },
     "recurring_event_id": {
       "type": "string",

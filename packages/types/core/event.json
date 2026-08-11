@@ -2,7 +2,7 @@
   "id": "core.event",
   "label": "Event",
   "description": "Something that happens at a time.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "title": {
       "type": "string",
@@ -45,7 +45,7 @@
     },
     "precision": {
       "type": "enum",
-      "description": "Temporal precision",
+      "description": "How much of the start instant is actually known, for an event dated from memory or from a source that gave only a year. Narrows an instant that exists; it does not say the event has no instant, which is what all_day says.",
       "enum_values": ["year", "month", "day", "time"]
     },
     "status": {
@@ -61,9 +61,17 @@
       "items_type": "string",
       "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored."
     },
+    "all_day": {
+      "type": "boolean",
+      "description": "True when the event occupies whole days rather than a span of time. A whole day has no instant, so a reader must take the calendar date from starts_at read in timezone and never re-derive it in the reader's own zone, which is how an all-day event ends up on the wrong day for anyone further west. Absent or false means the event has real start and end instants."
+    },
     "timezone": {
       "type": "string",
-      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC."
+      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone."
+    },
+    "end_timezone": {
+      "type": "string",
+      "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule."
     },
     "original_starts_at": {
       "type": "string",
