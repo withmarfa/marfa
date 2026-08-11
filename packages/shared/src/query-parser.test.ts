@@ -569,5 +569,34 @@ describe("parseFilter", () => {
         column: "id",
       });
     });
+
+    it("parses source_id as a system field, so a folder is queryable", () => {
+      expect(
+        parseFilter('source_id eq "Notes/first.md"').conditions[0]?.field,
+      ).toEqual({ kind: "system", column: "source_id" });
+    });
+
+    it("parses the prefix form a folder query is expressed as", () => {
+      const parsed = parseFilter('source_id starts_with "Notes/"');
+      expect(parsed.conditions[0]).toEqual({
+        field: { kind: "system", column: "source_id" },
+        op: "starts_with",
+        value: "Notes/",
+      });
+    });
+
+    it("keeps source_id distinct from source", () => {
+      // Two different columns whose names differ by three characters, one of
+      // which is the credential's provenance and the other the path within
+      // it. Reading the wrong one returns a plausible, wrong answer.
+      expect(parseFilter('source eq "sync"').conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "source",
+      });
+      expect(parseFilter('source_id eq "sync"').conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "source_id",
+      });
+    });
   });
 });

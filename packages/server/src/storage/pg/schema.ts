@@ -115,6 +115,14 @@ export const items = pgTable(
     uniqueIndex("idx_items_source_dedup")
       .on(sql`COALESCE(${table.space_id}, '')`, table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
+    // Serves the folder query: a folder is a path prefix, so
+    // `source_id starts_with 'Notes/'` is a range scan within a space.
+    // `text_pattern_ops` is load-bearing — a btree under a non-C collation
+    // sorts in an order the pattern match does not walk, so the default
+    // opclass cannot serve LIKE at all.
+    index("idx_items_source_id_prefix")
+      .on(table.space_id, sql`${table.source_id} text_pattern_ops`)
+      .where(sql`source_id IS NOT NULL`),
     // GIN index on the materialized tsvector. Drizzle-kit emits a
     // standard `CREATE INDEX ... USING gin` statement for this.
     index("idx_items_search_vector").using("gin", table.search_vector),

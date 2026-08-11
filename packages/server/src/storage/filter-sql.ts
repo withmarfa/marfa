@@ -49,6 +49,7 @@ interface ItemsTableRef {
   state: unknown;
   type: unknown;
   source: unknown;
+  source_id: unknown;
   timestamp: unknown;
   created_at: unknown;
   updated_at: unknown;
@@ -73,6 +74,7 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
     state: table.state,
     type: table.type,
     source: table.source,
+    source_id: table.source_id,
     timestamp: table.timestamp,
     created_at: table.created_at,
     updated_at: table.updated_at,
