@@ -14,6 +14,7 @@
  * covered by export.space-scoping.test.ts.
  */
 
+import { createHash } from "node:crypto";
 import { createGunzip, createGzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, afterAll } from "vitest";
@@ -392,5 +393,108 @@ describe("export → restore round trip", () => {
 
     const unfiltered = await readEdgeLines(`/export?target_space_id=${space}`);
     expect(unfiltered).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The platform admin's own export, which is the one that carried no bytes.
+//
+// A space-less export spans every space, so its blob lookup has to as well.
+// It asked the instance-wide `""` bucket instead — where none of those
+// hashes live — and the manifest recorded `blob_count: 0` while the response
+// reported success. The archive work exists to stop exactly that: an export
+// that looks like it worked and cannot restore what it claims to hold.
+//
+// Driven by restoring into an empty space and reading the bytes back,
+// because reading the manifest is what let this survive: the count agreed
+// with the (empty) blob set it was counting.
+// ---------------------------------------------------------------------------
+
+describe("a platform-level export", () => {
+  it("carries the bytes from every space it spans", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+    const spaceA = `t-pa-${Math.random().toString(36).slice(2, 8)}`;
+    const spaceB = `t-pb-${Math.random().toString(36).slice(2, 8)}`;
+
+    const bytesA = Buffer.from("space A's file, and its exact contents");
+    const bytesB = Buffer.from("space B's file — different bytes entirely");
+    const hashes = new Map<string, string>();
+    for (const [space, bytes] of [
+      [spaceA, bytesA],
+      [spaceB, bytesB],
+    ] as const) {
+      const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      await source.blobBackend.put(hash, bytes, "text/plain");
+      await source.storage.blobs.register(
+        hash,
+        "text/plain",
+        bytes.length,
+        hash,
+        space,
+      );
+      await source.storage.items.create(
+        {
+          type: "core.file",
+          properties: {
+            title: `${space} attachment`,
+            blob_ref: hash,
+            mime_type: "text/plain",
+            size: bytes.length,
+          },
+          source: "pa-seed",
+        },
+        space,
+      );
+      hashes.set(space, hash);
+    }
+
+    // No `target_space_id`: the platform admin's whole-instance export.
+    const exportRes = await request(
+      source.app,
+      "GET",
+      "/export?format=archive",
+      { key: source.adminKey },
+    );
+    expect(exportRes.status).toBe(200);
+    const archive = Buffer.from(await exportRes.arrayBuffer());
+    const entries = await extractArchive(archive);
+
+    // The bytes are in the archive, and they are the right bytes. Asserting
+    // presence alone would pass on an archive that packed two empty files.
+    const hashA = hashes.get(spaceA)!;
+    const hashB = hashes.get(spaceB)!;
+    expect(
+      entries.get(`blobs/${hashA}`),
+      "no bytes packed for the first space",
+    ).toBeDefined();
+    expect(
+      entries.get(`blobs/${hashB}`),
+      "no bytes packed for the second space",
+    ).toBeDefined();
+    expect(entries.get(`blobs/${hashA}`)!.toString()).toBe(bytesA.toString());
+    expect(entries.get(`blobs/${hashB}`)!.toString()).toBe(bytesB.toString());
+
+    const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
+      blob_count: number;
+      space_id: string | null;
+    };
+    expect(manifest.blob_count).toBe(2);
+    expect(manifest.space_id).toBeNull();
+
+    // And the round trip, which is what the archive is for: restore into a
+    // database that has never seen these bytes and read one back.
+    const restoreRes = await destination.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${destination.adminKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: archive,
+    });
+    expect(restoreRes.status, await restoreRes.clone().text()).toBe(200);
+    const restored = await destination.blobBackend.get(hashA);
+    expect(restored).not.toBeNull();
+    expect(Buffer.from(restored!).toString()).toBe(bytesA.toString());
   });
 });

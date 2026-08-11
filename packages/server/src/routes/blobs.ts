@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { resolveBlobForSpace } from "../storage/blob-reader.js";
+import type { ResolvedBlob } from "../storage/blob-reader.js";
 import {
   requireAuth,
   requireAdmin,
@@ -307,26 +309,20 @@ const reconcileBlobsRoute = createRoute({
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a blob for a reader.
- *
- * A space-bound credential sees its own space's row and nothing else, which
- * is what makes a cross-space probe answer 404. A platform credential is not
- * confined to a space, and every other surface it reaches, items included,
- * resolves across them. The blob routes did not, so an operator could read an
- * item and then be told the blob it references is absent. Reporting absence
- * is the dangerous direction: absence is what a repair or a purge acts on.
- *
- * Content addressing makes the widened lookup well defined, because every row
- * for a hash describes the same bytes.
+ * A reader's view of a blob, keyed on whether the credential is confined to
+ * a space. The rule itself lives in `storage/blob-reader.ts`, shared with the
+ * export path, which had the same shape and the old behavior.
  */
 async function resolveBlobForReader(
   storage: Storage,
   apiKey: ApiKey,
   hash: string,
-): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
-  return hasPlatformAuthority(apiKey)
-    ? storage.blobs.getAcrossSpaces(hash)
-    : storage.blobs.get(hash, apiKey.space_id ?? "");
+): Promise<ResolvedBlob | null> {
+  return resolveBlobForSpace(
+    storage,
+    hasPlatformAuthority(apiKey) ? undefined : (apiKey.space_id ?? ""),
+    hash,
+  );
 }
 
 export function blobRoutes(
