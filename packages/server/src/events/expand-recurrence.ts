@@ -25,6 +25,11 @@
  * computed occurrence sat in.
  */
 import ICAL from "ical.js";
+// The conversions between an instant and the reading a zone gives it are
+// shared with the calendar mapping, which has to derive a whole day's date
+// the same way this derives an occurrence's hour. Two copies of that would
+// be two chances to disagree about a transition.
+import { instantToWallClock, wallClockToInstant } from "@withmarfa/shared";
 
 export interface RecurrenceSeries {
   /** Item id of the series. */
@@ -82,89 +87,6 @@ export const MAX_OCCURRENCES_PER_SERIES = 2000;
 export const MAX_EXPANSION_ITERATIONS = 100_000;
 
 export class RecurrenceExpansionError extends Error {}
-
-/**
- * The offset, in minutes, that `zone` was at for the given instant.
- *
- * Derived by asking Intl to render the instant in the zone and reading
- * the difference back, which is the only zone database Node is
- * guaranteed to ship. ical.js has its own, but it is empty apart from
- * UTC unless VTIMEZONE definitions are registered, and a Google series
- * carries a zone name rather than a VTIMEZONE block.
- */
-const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
-
-/** Formatter construction dominates the cost of an offset lookup, and
- *  one expansion asks about the same zone thousands of times. */
-function zoneFormatter(zone: string): Intl.DateTimeFormat {
-  let formatter = zoneFormatters.get(zone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: zone,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    zoneFormatters.set(zone, formatter);
-  }
-  return formatter;
-}
-
-function zoneOffsetMinutes(instant: Date, zone: string): number {
-  const parts = zoneFormatter(zone).formatToParts(instant);
-  const at = (type: string): number =>
-    Number(parts.find((p) => p.type === type)?.value ?? "0");
-  // `hour12: false` renders midnight as 24 in some engines.
-  const hour = at("hour") % 24;
-  const asUtc = Date.UTC(
-    at("year"),
-    at("month") - 1,
-    at("day"),
-    hour,
-    at("minute"),
-    at("second"),
-  );
-  return (asUtc - instant.getTime()) / 60_000;
-}
-
-/**
- * Turn a wall-clock reading into the instant it names in `zone`.
- *
- * The offset depends on the instant, and the instant is what we are
- * solving for, so this guesses with the offset at the naive reading and
- * then corrects once. One correction is enough: a second pass can only
- * differ inside a transition, where the wall-clock time is either
- * skipped or repeated and no exact answer exists. Both ambiguous cases
- * resolve forward, matching how calendar software presents them.
- */
-function wallClockToInstant(wall: Date, zone: string | undefined): Date {
-  if (!zone) return wall;
-  const guess = new Date(
-    wall.getTime() - zoneOffsetMinutes(wall, zone) * 60_000,
-  );
-  const corrected = new Date(
-    wall.getTime() - zoneOffsetMinutes(guess, zone) * 60_000,
-  );
-  return corrected;
-}
-
-/**
- * Render an instant as the wall-clock reading it has in `zone`, carried
- * in a Date's UTC fields so it can feed a floating iCalendar time.
- *
- * Exact, unlike the inverse: the offset at a known instant is
- * unambiguous, so no correction pass is needed.
- */
-function instantToWallClock(instant: Date, zone: string | undefined): Date {
-  if (!zone) return instant;
-  return new Date(
-    instant.getTime() + zoneOffsetMinutes(instant, zone) * 60_000,
-  );
-}
 
 /** ICAL.Time carries the fields; read them as a naive (floating) Date. */
 function icalTimeToWallClock(time: ICAL.Time): Date {

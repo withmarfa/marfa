@@ -911,3 +911,245 @@ describe("Google Calendar handlers — recurrence", () => {
     expect(edges).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Whole days and split zones
+//
+// The date an all-day event lands on has to be the same for every reader.
+// Google says "whole day" by sending `date` instead of `dateTime`, and the
+// mapping used to carry that through as a bare string, leaving the fact
+// implied by the formatting and every reader free to re-derive the day in
+// its own zone. That is what puts a birthday a day early for everyone west
+// of the event.
+//
+// The ambient-zone runs are the point: nothing has to *pass* a viewer zone
+// in for a date derivation to pick one up, because a value derived without
+// naming a zone gets the process's.
+// ---------------------------------------------------------------------------
+
+/** This package targets Workers and carries no Node types, so the ambient
+ *  zone is reached through `globalThis` rather than a bare `process`. The
+ *  suite itself runs under Node, where the switch is observable. */
+function ambientZoneEnv(): Record<string, string | undefined> | undefined {
+  return (
+    globalThis as { process?: { env: Record<string, string | undefined> } }
+  ).process?.env;
+}
+
+async function underAmbientZone(
+  zone: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const env = ambientZoneEnv();
+  const previous = env?.TZ;
+  if (env) env.TZ = zone;
+  try {
+    await fn();
+  } finally {
+    if (env) {
+      if (previous === undefined) delete env.TZ;
+      else env.TZ = previous;
+    }
+  }
+}
+
+const ALL_DAY_INBOUND = {
+  items: [
+    {
+      id: "gevt_allday",
+      status: "confirmed",
+      summary: "Company offsite",
+      start: { date: "2026-09-15" },
+      end: { date: "2026-09-16" },
+      etag: "etag_allday",
+    },
+  ],
+  nextSyncToken: "sync_allday",
+};
+
+describe("Google Calendar handlers — whole days", () => {
+  it("records all-day as a declared fact on the cross-app type too", async () => {
+    // The fidelity type already carried `all_day`; `core.event` did not, so
+    // one connection kept the fact and another lost it on a setting nobody
+    // was asked about. Both target types are driven here for that reason.
+    for (const targetType of ["core.event", "google.calendar.event"]) {
+      const { ctx, created } = buildContext({
+        proxyResponses: [() => jsonResponse(ALL_DAY_INBOUND)],
+        connectionRecord: {
+          id: "conn_gcal_test",
+          type: "system.connection",
+          properties: {
+            kind: "integration",
+            configuration: { target_type: targetType },
+          },
+        },
+      });
+      await handleSchedule(ctx, SCHEDULE_MSG());
+      expect(created).toHaveLength(1);
+      expect(created[0]!.type).toBe(targetType);
+      expect(created[0]!.properties, targetType).toMatchObject({
+        all_day: true,
+      });
+    }
+  });
+
+  it("stores an instant, not a bare date", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(ALL_DAY_INBOUND)],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    const props = created[0]!.properties!;
+    expect(props.starts_at).toBe("2026-09-15T00:00:00.000Z");
+    expect(props.ends_at).toBe("2026-09-16T00:00:00.000Z");
+    // And no zone is invented. Calendar states none on a whole day, so
+    // claiming one would be a fact it never gave us.
+    expect(props.timezone).toBeUndefined();
+  });
+
+  it("goes back out on the same calendar date from any zone", async () => {
+    // The criterion this exists for: run the outbound mapping east and west
+    // of the event and require one date.
+    const item: ItemResource = {
+      id: "mit_allday",
+      type: "core.event",
+      state: "active",
+      properties: {
+        title: "Company offsite",
+        starts_at: "2026-09-15T00:00:00.000Z",
+        ends_at: "2026-09-16T00:00:00.000Z",
+        all_day: true,
+      },
+    };
+    const sent: Record<string, unknown>[] = [];
+    for (const viewer of ["Pacific/Auckland", "America/Los_Angeles", "UTC"]) {
+      const { ctx, proxyCalls } = buildContext({
+        itemForEvent: item,
+        proxyResponses: [() => jsonResponse({ id: "gevt_ad", etag: "e" }, 201)],
+      });
+      await underAmbientZone(viewer, async () => {
+        await handleItemEvent(ctx, ITEM_EVENT("mit_allday", "created"));
+      });
+      sent.push(proxyCalls[0]!.body as Record<string, unknown>);
+    }
+    for (const body of sent) {
+      expect(body.start).toEqual({ date: "2026-09-15" });
+      expect(body.end).toEqual({ date: "2026-09-16" });
+    }
+  });
+
+  it("keeps the date when the event states a zone west of Greenwich", async () => {
+    // A whole day written under an explicit zone has to read back on the
+    // same day, which is only true if the stored instant is midnight in
+    // that zone rather than midnight UTC.
+    const item: ItemResource = {
+      id: "mit_allday_la",
+      type: "core.event",
+      state: "active",
+      properties: {
+        title: "Thanksgiving",
+        starts_at: "2026-11-26T08:00:00.000Z", // midnight in Los Angeles
+        ends_at: "2026-11-27T08:00:00.000Z",
+        timezone: "America/Los_Angeles",
+        all_day: true,
+      },
+    };
+    const { ctx, proxyCalls } = buildContext({
+      itemForEvent: item,
+      proxyResponses: [() => jsonResponse({ id: "gevt_la", etag: "e" }, 201)],
+    });
+    await underAmbientZone("Pacific/Auckland", async () => {
+      await handleItemEvent(ctx, ITEM_EVENT("mit_allday_la", "created"));
+    });
+    const body = proxyCalls[0]!.body as Record<string, unknown>;
+    expect(body.start).toEqual({ date: "2026-11-26" });
+  });
+});
+
+describe("Google Calendar handlers — an event that ends elsewhere", () => {
+  it("carries both zones inbound", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [
+              {
+                id: "gevt_flight",
+                status: "confirmed",
+                summary: "BER to JFK",
+                start: {
+                  dateTime: "2026-09-20T10:00:00+02:00",
+                  timeZone: "Europe/Berlin",
+                },
+                end: {
+                  dateTime: "2026-09-20T13:30:00-04:00",
+                  timeZone: "America/New_York",
+                },
+              },
+            ],
+            nextSyncToken: "sync_flight",
+          }),
+      ],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(created[0]!.properties).toMatchObject({
+      timezone: "Europe/Berlin",
+      end_timezone: "America/New_York",
+    });
+  });
+
+  it("does not invent an end zone when both ends agree", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [
+        () =>
+          jsonResponse({
+            items: [
+              {
+                id: "gevt_local",
+                status: "confirmed",
+                summary: "Standup",
+                start: {
+                  dateTime: "2026-09-20T09:00:00+02:00",
+                  timeZone: "Europe/Berlin",
+                },
+                end: {
+                  dateTime: "2026-09-20T09:30:00+02:00",
+                  timeZone: "Europe/Berlin",
+                },
+              },
+            ],
+            nextSyncToken: "sync_local",
+          }),
+      ],
+    });
+    await handleSchedule(ctx, SCHEDULE_MSG());
+    const props = created[0]!.properties!;
+    expect(props.timezone).toBe("Europe/Berlin");
+    expect(props.end_timezone).toBeUndefined();
+  });
+
+  it("sends the end zone back out on the end alone", async () => {
+    const item: ItemResource = {
+      id: "mit_flight",
+      type: "core.event",
+      state: "active",
+      properties: {
+        title: "BER to JFK",
+        starts_at: "2026-09-20T08:00:00.000Z",
+        ends_at: "2026-09-20T17:30:00.000Z",
+        timezone: "Europe/Berlin",
+        end_timezone: "America/New_York",
+      },
+    };
+    const { ctx, proxyCalls } = buildContext({
+      itemForEvent: item,
+      proxyResponses: [() => jsonResponse({ id: "gevt_f", etag: "e" }, 201)],
+    });
+    await handleItemEvent(ctx, ITEM_EVENT("mit_flight", "created"));
+    const body = proxyCalls[0]!.body as {
+      start: { timeZone?: string };
+      end: { timeZone?: string };
+    };
+    expect(body.start.timeZone).toBe("Europe/Berlin");
+    expect(body.end.timeZone).toBe("America/New_York");
+  });
+});
