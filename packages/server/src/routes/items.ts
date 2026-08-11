@@ -17,6 +17,10 @@ import {
   getSourceAllowlist,
 } from "@withmarfa/shared";
 import type { Item, ItemState, Metadata } from "@withmarfa/shared";
+import {
+  mergeUpdateProperties,
+  resolveIncomingProperties,
+} from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -1197,6 +1201,48 @@ export function itemRoutes(storage: Storage) {
             },
           );
         }
+
+        // An owning integration's re-sync gets faithful-mirror null
+        // semantics: the upstream cleared the field, so an explicit null
+        // clears the key here too.
+        const nullClears =
+          existing.source.startsWith("integration:") &&
+          credentialForUpdate?.item_source === existing.source;
+
+        // This branch used to be the one write path that skipped property
+        // validation, and it is also the one where a null removes a value
+        // rather than setting it. A re-sync sending a null title therefore
+        // deleted a field `core.event` declares required, leaving a row that
+        // could not have been created in the state it now sat in, with a 200
+        // and no signal. Judged on the merged result rather than the body,
+        // mirroring the merge the storage layer performs: a body naming no
+        // required field at all can still be what removes one.
+        if (
+          body.properties !== undefined &&
+          getTypeSchema(existing.type, spaceId) !== undefined
+        ) {
+          const merged = mergeUpdateProperties(
+            existing.properties,
+            resolveIncomingProperties(
+              existing.type,
+              properties,
+              nullClears,
+              spaceId,
+            ),
+            nullClears,
+          );
+          const validation = validateProperties(existing.type, merged, {
+            spaceId,
+          });
+          if (!validation.success) {
+            throw new MarfaError(
+              ErrorCode.INVALID_PROPERTIES,
+              "Invalid properties",
+              { errors: validation.errors },
+            );
+          }
+        }
+
         const { item: updatedItem, metadata: updatedMetadata } =
           await storage.runInTransaction(async () => {
             const updated = await storage.items.update(
@@ -1207,13 +1253,7 @@ export function itemRoutes(storage: Storage) {
                 ...(body.timestamp !== undefined && {
                   timestamp: body.timestamp,
                 }),
-                // An owning integration's re-sync gets faithful-mirror
-                // null semantics: the upstream cleared the field, so an
-                // explicit null clears the key here too.
-                ...(existing.source.startsWith("integration:") &&
-                credentialForUpdate?.item_source === existing.source
-                  ? { null_clears: true }
-                  : {}),
+                ...(nullClears ? { null_clears: true } : {}),
               },
               spaceId,
             );

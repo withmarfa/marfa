@@ -18,7 +18,6 @@ import {
   isValidId,
   getTypeSchema,
   validateProperties,
-  coerceNullProperties,
   validateTransition,
   softDeleteState,
   parseFilter,
@@ -29,6 +28,10 @@ import {
   typeSubtreeToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
+import {
+  mergeUpdateProperties,
+  resolveIncomingProperties,
+} from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type {
@@ -641,12 +644,12 @@ export class PgItemStore implements ItemStore {
         // semantics the create path applies — so a re-synced payload that
         // emits explicit nulls for absent fields doesn't overwrite stored
         // values with null. Required-field nulls are preserved.
-        const incomingProps =
-          input.properties !== undefined
-            ? input.null_clears === true
-              ? input.properties
-              : coerceNullProperties(row.type, input.properties, spaceId)
-            : undefined;
+        const incomingProps = resolveIncomingProperties(
+          row.type,
+          input.properties,
+          input.null_clears === true,
+          spaceId,
+        );
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
 
@@ -669,19 +672,11 @@ export class PgItemStore implements ItemStore {
             );
           }
 
-          const shallowMerged = incomingProps
-            ? { ...currentProps, ...incomingProps }
-            : currentProps;
-          // Faithful-mirror re-sync: a key the upstream cleared is dropped
-          // rather than surviving as a stale value.
-          const merged =
-            input.null_clears === true && incomingProps
-              ? Object.fromEntries(
-                  Object.entries(shallowMerged).filter(
-                    ([k]) => incomingProps[k] !== null,
-                  ),
-                )
-              : shallowMerged;
+          const merged = mergeUpdateProperties(
+            currentProps,
+            incomingProps,
+            input.null_clears === true,
+          );
           const newVersion = row.version + 1;
           const newTier = input.tier ?? row.tier;
 
