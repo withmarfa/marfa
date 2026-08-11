@@ -841,6 +841,54 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
           }),
       },
       {
+        id: "consent-configuration",
+        label: "With configuration",
+        render: () =>
+          renderInstallConsentScreen({
+            integrationId: "01999a3f-0000-4ec1-b378-000000000002",
+            manifestName: "withmarfa.rss-watcher",
+            manifestVersion: "1.0.0",
+            publisher: "Marfa",
+            summary: "Polls a feed and lands new entries as bookmarks.",
+            direction: "read",
+            manifest: {
+              ...INSTALL_MANIFEST,
+              configuration_schema: {
+                feed_url: {
+                  type: "string",
+                  description: "The Atom or RSS feed to poll.",
+                  required: true,
+                },
+              },
+            },
+          }),
+      },
+      {
+        id: "consent-configuration-refused",
+        label: "Configuration refused",
+        render: () =>
+          renderInstallConsentScreen({
+            integrationId: "01999a3f-0000-4ec1-b378-000000000002",
+            manifestName: "withmarfa.rss-watcher",
+            manifestVersion: "1.0.0",
+            publisher: "Marfa",
+            summary: "Polls a feed and lands new entries as bookmarks.",
+            direction: "read",
+            manifest: {
+              ...INSTALL_MANIFEST,
+              configuration_schema: {
+                feed_url: {
+                  type: "string",
+                  description: "The Atom or RSS feed to poll.",
+                  required: true,
+                },
+              },
+            },
+            configurationValues: {},
+            errorMessage: '"feed_url" is required',
+          }),
+      },
+      {
         id: "installed",
         label: "Installed",
         render: () => renderInstalledPage(),

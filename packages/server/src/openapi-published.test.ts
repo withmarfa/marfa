@@ -133,6 +133,11 @@ describe("published OpenAPI spec", () => {
     // once and every generated client silently lost type-compatibility
     // resolution while the runtime bodies kept carrying it. This pins the
     // generated surface so the field cannot rot off the wire again.
+    //
+    // Scoped to `responses`, deliberately: stringifying the whole operation
+    // also matches a request body, so a field present only in what clients
+    // SEND would satisfy a check about what they RECEIVE. It held before
+    // only because the type-route request bodies happened to be untyped.
     const typeOperations = [...published.entries()].filter(([key]) =>
       /^(GET|POST|PUT) \/types/.test(key),
     );
@@ -140,7 +145,9 @@ describe("published OpenAPI spec", () => {
 
     const missing: string[] = [];
     for (const [key, operation] of typeOperations) {
-      const text = JSON.stringify(operation);
+      const responses = (operation as { responses?: unknown }).responses;
+      expect(responses, `${key} has no responses object`).toBeDefined();
+      const text = JSON.stringify(responses);
       if (!text.includes('"compatible_with"')) missing.push(key);
     }
     expect(missing.sort()).toEqual([]);

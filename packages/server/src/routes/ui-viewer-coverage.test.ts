@@ -40,6 +40,13 @@ const NOT_PREVIEWED: { symbol: string; because: string }[] = [
       "The shell every other page passes through, not a page. It has no " +
       "standalone state to preview.",
   },
+  {
+    symbol: "renderConfigurationFields",
+    because:
+      "A form-row fragment shared by the configure page and the install " +
+      "screen, not a page. Both of its hosts are in the gallery, so every " +
+      "state it can render is previewed through them.",
+  },
 ];
 
 function walk(dir: string): string[] {

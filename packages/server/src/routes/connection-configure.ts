@@ -221,21 +221,33 @@ export function renderConfigureSuccess(): string {
  * favors working everywhere over per-integration polish, which a
  * bespoke page like the calendar picker can still add on top.
  */
-export function renderGenericConfigureForm(
-  connectionId: string,
+export function renderConfigurationFields(
   manifest: IntegrationManifestShape,
   current: Record<string, unknown>,
+  options?: {
+    /**
+     * Prepended to every input's `name`. The install form embeds these
+     * rows beside its own `label` / `decision` / `credential_ref`
+     * fields, and a manifest is free to declare a key with any of those
+     * names — the prefix is what keeps the two namespaces from
+     * colliding. The configure page, whose form carries nothing else,
+     * passes none.
+     */
+    namePrefix?: string;
+  },
 ): string {
   const schema = manifest.configuration_schema ?? {};
-  const rows = Object.entries(schema)
+  const prefix = options?.namePrefix ?? "";
+  return Object.entries(schema)
     .map(([key, spec]) => {
+      const name = `${prefix}${key}`;
       const value = current[key];
       const allowed = spec.from_target_types
         ? manifest.target_types
         : spec.values;
       let control: string;
       if (spec.type === "boolean") {
-        control = `<input type="checkbox" name="${esc(key)}" value="true"${value === true ? " checked" : ""}>`;
+        control = `<input type="checkbox" name="${esc(name)}" value="true"${value === true ? " checked" : ""}>`;
       } else if (allowed) {
         const opts = allowed
           .map(
@@ -243,18 +255,26 @@ export function renderGenericConfigureForm(
               `<option value="${esc(v)}"${value === v ? " selected" : ""}>${esc(v)}</option>`,
           )
           .join("");
-        control = `<select name="${esc(key)}">${opts}</select>`;
+        control = `<select name="${esc(name)}">${opts}</select>`;
       } else if (spec.type === "number") {
-        control = `<input type="number" name="${esc(key)}" value="${typeof value === "number" ? String(value) : ""}">`;
+        control = `<input type="number" name="${esc(name)}" value="${typeof value === "number" ? String(value) : ""}">`;
       } else if (spec.type === "string_array") {
         const joined = Array.isArray(value) ? value.join(", ") : "";
-        control = `<input type="text" name="${esc(key)}" value="${esc(joined)}" placeholder="comma-separated">`;
+        control = `<input type="text" name="${esc(name)}" value="${esc(joined)}" placeholder="comma-separated">`;
       } else {
-        control = `<input type="text" name="${esc(key)}" value="${typeof value === "string" ? esc(value) : ""}"${spec.required ? " required" : ""}>`;
+        control = `<input type="text" name="${esc(name)}" value="${typeof value === "string" ? esc(value) : ""}"${spec.required ? " required" : ""}>`;
       }
       return `<label class="field"><span class="field-name">${esc(key)}${spec.required ? " *" : ""}</span><span class="field-desc">${esc(spec.description)}</span>${control}</label>`;
     })
     .join("\n");
+}
+
+export function renderGenericConfigureForm(
+  connectionId: string,
+  manifest: IntegrationManifestShape,
+  current: Record<string, unknown>,
+): string {
+  const rows = renderConfigurationFields(manifest, current);
   return renderAuthLayout({
     title: "Configure connection",
     wide: true,
