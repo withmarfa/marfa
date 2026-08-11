@@ -3,6 +3,7 @@ import {
   ALL_TYPES,
   ALL_INTEGRATION_TYPES,
   ALL_SYSTEM_TYPES,
+  ALL_TYPE_IDS,
   INTEGRATION_TYPE_IDS,
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
@@ -109,6 +110,17 @@ describe("shipped type identifiers", () => {
     const total =
       ALL_TYPES.length + ALL_INTEGRATION_TYPES.length + ALL_SYSTEM_TYPES.length;
     expect(TYPE_REGISTRY.size).toBe(total);
+  });
+
+  it("exposes the same identifiers to the compiler as to the runtime", () => {
+    // `ALL_TYPE_IDS` is what sibling repositories will pin their type maps
+    // against, so it has to be the registry rather than a second list beside
+    // it. A literal list that drifted would type-check a map naming types
+    // this package no longer ships — the exact failure it exists to stop.
+    expect([...ALL_TYPE_IDS].sort()).toEqual(ALL_SHIPPED_IDENTIFIERS);
+    for (const id of ALL_TYPE_IDS) {
+      expect(TYPE_REGISTRY.has(id), `not registered: ${id}`).toBe(true);
+    }
   });
 
   it("resolves integration types exactly like core types", () => {

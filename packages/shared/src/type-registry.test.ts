@@ -15,32 +15,13 @@ import {
 import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
+// The registry's membership — its size and every shipped identifier — is
+// pinned literally in `type-registry-identity.test.ts`, which also catches a
+// rename that leaves the count intact. A second, weaker copy of that check
+// used to sit here; it could only fail in cases the identity test had already
+// failed, with a worse message. What belongs here is behavior: resolution,
+// inheritance, validation, lifecycle.
 describe("TYPE_REGISTRY", () => {
-  it("contains 21 core, 13 integration and 8 system types", () => {
-    expect(TYPE_REGISTRY.size).toBe(42);
-    expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.contacts.contact")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.drive.file")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.youtube.video")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.youtube.playlist")).toBe(true);
-    expect(TYPE_REGISTRY.has("google.youtube.channel")).toBe(true);
-    expect(TYPE_REGISTRY.has("todoist.task")).toBe(true);
-    expect(TYPE_REGISTRY.has("readwise.book")).toBe(true);
-    expect(TYPE_REGISTRY.has("readwise.highlight")).toBe(true);
-    expect(TYPE_REGISTRY.has("raindrop.raindrop")).toBe(true);
-    expect(TYPE_REGISTRY.has("raindrop.collection")).toBe(true);
-    expect(TYPE_REGISTRY.has("withmarfa.captured_email")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.device")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.app")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.connection")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.activity")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.integration")).toBe(true);
-    expect(TYPE_REGISTRY.has("system.account_holder")).toBe(true);
-  });
-
   it("contains all media group types", () => {
     const mediaTypes = [
       "core.media",

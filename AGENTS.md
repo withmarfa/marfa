@@ -179,7 +179,7 @@ Server package only (not needed for shared or SDK development):
 
 ## Schema-enforcement levers
 
-Three optional levers live in `SpaceConfig.enforcement` (writable via `PUT /spaces/current/config`), plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
+Three optional levers live in `SpaceConfig.enforcement` (writable via `PUT /spaces/me/config`), plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
 
 - **Strict mode** — `enforcement.strict_mode.types: string[]`. For each listed type, unknown properties on writes are rejected with `INVALID_PROPERTIES` (`code: "unknown_property"`). The base `getZodSchema` flips from `z.looseObject` to `z.strictObject`.
 - **Source allow-list** — `enforcement.source_allowlist.{types, sources}`. For each listed type, writes whose credential `source` isn't in the allowed sources are rejected with `FORBIDDEN`. Stricter than the credential's own scope.
