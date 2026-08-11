@@ -15,16 +15,21 @@ import type { EdgeStore, ItemStore } from "./interface.js";
 const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
 
 /**
- * Collection membership is a flat relation on purpose: a collection holds
- * items, never other collections. The declarative target constraint pins the
- * target to the collection family, but nothing declarative can say "and the
- * source must not be one of those", so the refusal lives here — same
- * hardcoded-per-edge shape as the cycle-risk set above. Hierarchy is what
- * `parent-of` is for, and mixing the two gives an item two competing notions
- * of where it sits.
+ * Collection membership is a flat relation on purpose: a container holds
+ * items, never other containers. The declarative target constraint pins the
+ * target to the container family, but nothing declarative can say "and the
+ * source must not be one of those", so the refusal lives here.
+ *
+ * The refused-source list is the edge's own target list, read from the same
+ * resolved schema, never a second literal: a copy drifted once when the
+ * membership edge gained two container types the copy did not, and two
+ * series could then hold each other. The derivation is also what makes a
+ * membership cycle impossible without a BFS — every cycle needs a container
+ * standing as a source somewhere, and no such edge can exist. Hierarchy is
+ * what `parent-of` is for, and mixing the two gives an item two competing
+ * notions of where it sits.
  */
 const COLLECTION_EDGE_TYPE = "in-collection";
-const COLLECTION_TYPE_CONSTRAINT = ["user.collection"];
 
 export interface EdgeProposal {
   source_id: string;
@@ -151,7 +156,7 @@ export async function assertEdgesCanBeCreated(
       p.edge_type === COLLECTION_EDGE_TYPE &&
       satisfiesEdgeConstraint(
         source.type,
-        COLLECTION_TYPE_CONSTRAINT,
+        schema.target_type_constraints,
         opts.space_id,
       )
     ) {
