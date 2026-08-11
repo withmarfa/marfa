@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS "enrichment_state" (
   "attempts" INTEGER NOT NULL DEFAULT 0,
   "error" TEXT,
   "updated_at" TEXT NOT NULL
-);
+, "config_signature" TEXT);
 
 CREATE TABLE IF NOT EXISTS \`metadata\` (
 	\`item_id\` text PRIMARY KEY NOT NULL,
@@ -536,6 +536,11 @@ CREATE INDEX IF NOT EXISTS \`idx_inbound_webhook_events_pending\` ON \`inbound_w
 CREATE INDEX IF NOT EXISTS \`idx_inbound_webhooks_connection_id\` ON \`inbound_webhooks\` (\`connection_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_items_created_at\` ON \`items\` (\`created_at\`);
+
+CREATE INDEX IF NOT EXISTS "idx_items_enrichment_candidates" ON "items" ("updated_at")
+  WHERE ("type" = 'core.file' OR "type" LIKE 'core.file.%')
+    AND "state" <> 'trashed'
+    AND json_extract("properties", '$.blob_ref') IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\`
   ON \`items\` (COALESCE(\`space_id\`, ''), \`source\`, \`source_id\`)

@@ -118,6 +118,17 @@ export const items = pgTable(
     // GIN index on the materialized tsvector. Drizzle-kit emits a
     // standard `CREATE INDEX ... USING gin` statement for this.
     index("idx_items_search_vector").using("gin", table.search_vector),
+    // Serves the enrichment candidate query, which runs on a timer forever
+    // and must cost nothing once a corpus is extracted. Partial: only file
+    // items with a blob are ever candidates, ordered as the query reads
+    // them. The candidate query inlines these constants as literals — a
+    // bound parameter defeats the planner's partial-index implication
+    // proof.
+    index("idx_items_enrichment_candidates")
+      .on(table.updated_at)
+      .where(
+        sql`(type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND (properties->>'blob_ref') IS NOT NULL`,
+      ),
   ],
 );
 
@@ -988,8 +999,10 @@ export const auth_passkey = pgTable(
 // Deterministic-enrichment bookkeeping: one row per file item the text
 // sweeper has looked at, keyed by item id. Lives in its own table rather
 // than in item properties so bookkeeping writes never mint version
-// snapshots or fan out item events, and the sweeper's candidate query is
-// one indexed anti-join instead of a per-item scan. A `blob_ref` change
+// snapshots or fan out item events. The candidate query anti-joins this
+// table by its PK and drives off `items` via the partial
+// idx_items_enrichment_candidates index — the items side is what needed
+// indexing, a fact the original claim here got wrong. A `blob_ref` change
 // or an `extractor_version` bump re-admits the item; `attempts` bounds
 // retries of failing blobs. Hard-deleting the item deletes the row.
 export const enrichmentState = pgTable("enrichment_state", {
@@ -1002,5 +1015,10 @@ export const enrichmentState = pgTable("enrichment_state", {
   status: text("status").notNull(),
   attempts: integer("attempts").notNull().default(0),
   error: text("error"),
+  // The configuration signature the row was last written under. A skip is
+  // terminal only relative to the settings that produced it; the candidate
+  // query re-offers skipped rows whose stamp differs from the sweeper's
+  // current one. Nullable: rows predating the column re-offer once.
+  config_signature: text("config_signature"),
   updated_at: text("updated_at").notNull(),
 });

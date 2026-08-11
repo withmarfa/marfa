@@ -310,8 +310,12 @@ jobs:
         run: pnpm lint
       - if: needs.changes.outputs.code == 'true'
         run: pnpm format:check
+      # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts)
+      # in this lane only — the PG lane covers dialect behavior, not the
+      # OCR library. The language model caches under ~/.cache on the
+      # self-hosted pool, so only the first run pays the download.
       - if: needs.changes.outputs.code == 'true'
-        run: pnpm test
+        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
       - if: needs.changes.outputs.code == 'true'
         run: pnpm --filter @withmarfa/server run smoke:worker-entry
 

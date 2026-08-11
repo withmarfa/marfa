@@ -2208,6 +2208,13 @@ export interface EnrichmentStateInput {
   status: "done" | "failed" | "skipped";
   attempts: number;
   error?: string | null;
+  /**
+   * The sweeper configuration the row was written under. A skip is only
+   * terminal relative to the settings that produced it — raise the size
+   * ceiling or enable image reading and the row deserves another look —
+   * so the candidate query re-offers skipped rows whose stamp differs.
+   */
+  config_signature?: string | null;
 }
 
 export interface EnrichmentStateRecord extends EnrichmentStateInput {
@@ -2224,13 +2231,15 @@ export interface EnrichmentStore {
   /**
    * File items needing extraction: `core.file` family, not trashed, with a
    * `blob_ref`, and either never looked at, changed since (`blob_ref`
-   * differs), authored under an older extractor, or failed with attempts
-   * to spare. Ordered oldest-updated first; bounded by `limit`.
+   * differs), authored under an older extractor, failed with attempts to
+   * spare, or skipped under a different configuration than
+   * `configSignature`. Ordered oldest-updated first; bounded by `limit`.
    */
   listCandidates(
     extractorVersion: number,
     maxAttempts: number,
     limit: number,
+    configSignature: string,
   ): Promise<EnrichmentCandidate[]>;
   get(itemId: string): Promise<EnrichmentStateRecord | null>;
   upsert(state: EnrichmentStateInput): Promise<void>;

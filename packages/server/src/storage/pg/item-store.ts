@@ -625,10 +625,18 @@ export class PgItemStore implements ItemStore {
       // Same tx-context propagation as create() — searchStore.{index,remove}
       // calls inside this block need the parent tx in ALS.
       return pgRequestContext.run({ tx }, async () => {
+        // FOR UPDATE, because the merge below is computed from this read.
+        // Under READ COMMITTED an unlocked read lets a concurrent commit
+        // land between it and the write, and the write then reverts that
+        // commit's properties to the pre-change shape — a background
+        // sweeper write could erase a user's edit made milliseconds
+        // earlier. The row lock serializes writers on the row, which is
+        // what SQLite's immediate-lock transaction already does.
         const [row] = await tx
           .select()
           .from(items)
-          .where(this.spaceWhere(id, spaceId));
+          .where(this.spaceWhere(id, spaceId))
+          .for("update");
         if (!row) {
           throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
         }
