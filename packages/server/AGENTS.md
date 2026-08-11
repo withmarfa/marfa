@@ -164,7 +164,7 @@ Guards: `storage/pg/connection.test.ts` and `storage/pg/endpoint.test.ts` for th
 
 **Pool timeouts.** Both clients set `idle_timeout` (30s) and `max_lifetime` (30 min). postgres.js leaves `idle_timeout` unset by default, so the pool holds its sockets for the life of the process — and a serverless Postgres only scales to zero when it has **no** connections, so an idle deployment bills continuously for being switched on. The values and their measured basis are documented at the constants in `storage/pg/connection.ts`. Reserved connections are exempt by construction (postgres.js cancels the idle timer whenever a connection leaves the idle queue), so a long-lived stream is never closed out from under itself.
 
-**Pool-slot consumption.** Each active stream consumes one pool slot for its lifetime. Today's pool size is 10 (`pg/connection.ts`); the bottleneck only bites at 10+ concurrent streams per server instance. Watch in staging; if it bites, partition into a dedicated streaming sub-pool.
+**Pool-slot consumption.** Each active stream consumes one slot of the dedicated session pool for its lifetime. That pool is capped at 5 (`pg/connection.ts`) and shared with short-hold `withJobLock` ticks; the reactive-run drainer, the one permanent holder, lives on its own single-connection client and takes none of these. Reservations are bounded: a job tick that cannot get a slot within its window skips (`withJobLock` answers `undefined`, its normal contention shape), and a stream request answers 503 `stream_capacity_exhausted` before any rows, so exhaustion degrades loudly instead of queueing callers forever.
 
 **Activation conditions.** All three must hold for the stream to acquire an RLS context:
 

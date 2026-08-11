@@ -8,7 +8,16 @@ import type { CoordinationStore } from "../interface.js";
 export class SqliteCoordinationStore implements CoordinationStore {
   private readonly exclusiveTails = new Map<string, Promise<void>>();
 
+  // The options parameter exists on the interface for the Postgres
+  // implementation's reservation budget; there is nothing to reserve here.
   withJobLock<T>(_name: string, fn: () => Promise<T>): Promise<T | undefined> {
+    return fn();
+  }
+
+  withLongLivedJobLock<T>(
+    _name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
     return fn();
   }
 

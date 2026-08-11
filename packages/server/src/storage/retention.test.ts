@@ -1039,6 +1039,13 @@ describe("RuntimeCredentialReaper — scheduling and coordination", () => {
           names.push(name);
           return opts.granted ? await fn() : undefined;
         },
+        withLongLivedJobLock: async <T>(
+          name: string,
+          fn: () => Promise<T>,
+        ): Promise<T | undefined> => {
+          names.push(name);
+          return opts.granted ? await fn() : undefined;
+        },
         // The reaper takes neither of the two below, but the store has to
         // satisfy the interface. Always running `fn` matches the real
         // contract: an exclusive lock waits rather than skipping.

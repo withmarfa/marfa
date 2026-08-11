@@ -1965,7 +1965,33 @@ export interface CoordinationStore {
    * instance already holds the lock (the caller should treat this as a
    * no-op tick, not an error).
    */
-  withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
+  withJobLock<T>(
+    name: string,
+    fn: () => Promise<T>,
+    options?: {
+      /**
+       * How long to wait for the underlying reservation before answering
+       * `undefined`. Callers on a request path pass a tight budget — their
+       * fallback is better than their user waiting; background ticks keep
+       * the generous default and ride out load spikes. Ignored by the
+       * SQLite implementation, which has nothing to reserve.
+       */
+      reserveTimeoutMs?: number;
+    },
+  ): Promise<T | undefined>;
+  /**
+   * `withJobLock` for the one caller whose `fn` runs for the process
+   * lifetime rather than a tick — the reactive-run bridge's drainer
+   * election. Separated because a permanent holder is capacity
+   * subtracted from whatever pool serves it: on Postgres this reserves
+   * from a dedicated single-connection client so a drainer can never
+   * crowd out streams or job ticks. Same contract otherwise: `undefined`
+   * when another instance holds the lock.
+   */
+  withLongLivedJobLock<T>(
+    name: string,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined>;
   /**
    * Acquire a named lock, waiting rather than skipping when another caller
    * holds it. Connection mint and uninstall use this to serialize lifecycle

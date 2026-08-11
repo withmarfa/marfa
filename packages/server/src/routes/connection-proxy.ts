@@ -496,13 +496,19 @@ async function withRefreshLock<T>(
   });
   inFlightRefresh.set(connectionId, gate);
   try {
-    // Cross-instance gate: best-effort. If another instance has the
-    // lock, withJobLock returns undefined; we fall through (the in-
-    // process map already serialized this connection here, so we just
-    // proceed and let the upstream arbitrate via invalid_grant).
+    // Cross-instance gate: best-effort. `undefined` means either another
+    // instance holds the lock or the session pool had no free slot within
+    // the reservation window; both degrade the same way — fall through to
+    // the in-process single-flight (the map above already serialized this
+    // connection here) and let the upstream arbitrate via invalid_grant.
+    // The request path must never queue behind an exhausted pool.
     const result = await storage.coordination.withJobLock(
       `connection-refresh:${connectionId}`,
       fn,
+      // Tight budget: this sits on the request path, and the fallback
+      // below is strictly better than the caller waiting out the
+      // background default.
+      { reserveTimeoutMs: 2_000 },
     );
     if (result === undefined) {
       // Another instance held the lock. Run our own attempt — the in-

@@ -21,7 +21,7 @@
  * existing scheduled-poll + webhook-receipt families.
  *
  * Concurrency: the bridge is gated by
- * `coordination.withJobLock("reactive-run-bridge", ...)` so
+ * `coordination.withLongLivedJobLock("reactive-run-bridge", ...)` so
  * multi-instance deployments only run one drainer.
  *
  * Cycle metadata flows through verbatim: the queue message envelope
@@ -521,7 +521,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
           attempt += 1;
           const outcome = { elected: false };
           try {
-            await storage.coordination.withJobLock(
+            await storage.coordination.withLongLivedJobLock(
               "reactive-run-bridge",
               async () => {
                 outcome.elected = true;

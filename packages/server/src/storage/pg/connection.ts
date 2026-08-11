@@ -119,6 +119,16 @@ export async function createConnection(
    * Never the data plane, never Better Auth.
    */
   sessionClient: PgClient;
+  /**
+   * Single-connection client for a lock held for the process lifetime —
+   * today the reactive-run bridge's drainer election. Held reservations
+   * are capacity subtracted from whatever pool they come from, and the
+   * drainer once quietly took a fifth of the session pool for the whole
+   * process, so the permanent holder gets a pool of its own. Lazy: the
+   * connection opens on first use, so a deployment with the bridge
+   * disabled never pays for it.
+   */
+  jobHolderClient: PgClient;
   close: () => Promise<void>;
 }> {
   const directConnectionString = options?.directConnectionString?.trim() ?? "";
@@ -172,14 +182,28 @@ export async function createConnection(
   // statement gets (see `directConnectionString`).
   const sessionClient = directConnectionString
     ? postgres(directConnectionString, {
-        // One slot per concurrent stream; streams are far rarer than
-        // data-plane requests and the direct endpoint has a tighter
-        // connection ceiling than the pooler.
+        // Sized against what reserves from it: one slot per concurrent
+        // stream plus one per in-flight `withJobLock` tick (job ticks are
+        // short; the process-lifetime holder lives on `jobHolderClient`,
+        // never here). The direct endpoint has a tighter connection
+        // ceiling than the pooler, which is why this stays small — and
+        // why a reservation that cannot be served times out rather than
+        // queueing forever.
         max: Math.min(options?.maxPoolSize ?? 10, 5),
         // Same reasoning as the app pool. This one matters more per socket:
         // between streams it holds its slots open with nothing to show for it.
         idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
         max_lifetime: POOL_MAX_LIFETIME_SECONDS,
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        onnotice: () => {},
+      })
+    : client;
+  const jobHolderClient = directConnectionString
+    ? postgres(directConnectionString, {
+        max: 1,
+        // No idle timeout: the whole point of this client is one
+        // reservation held for the process lifetime.
+        max_lifetime: null,
         // eslint-disable-next-line @typescript-eslint/no-empty-function
         onnotice: () => {},
       })
@@ -222,10 +246,14 @@ export async function createConnection(
     baseDb,
     client,
     sessionClient,
+    jobHolderClient,
     close: async () => {
       await client.end();
       if (sessionClient !== client) {
         await sessionClient.end();
+      }
+      if (jobHolderClient !== client) {
+        await jobHolderClient.end();
       }
     },
   };

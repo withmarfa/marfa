@@ -22,7 +22,44 @@ import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { PgClient } from "../storage/pg/connection.js";
-import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
+import {
+  acquireStreamRls,
+  StreamPoolExhaustedError,
+} from "../storage/pg/streaming-rls.js";
+import type { StreamRlsContext } from "../storage/pg/streaming-rls.js";
+
+/**
+ * Acquire the stream's RLS connection, mapping pool exhaustion to the
+ * retryable 503 the route contract promises. Called before any response
+ * bytes exist, so the refusal is a real status the client can act on.
+ */
+async function acquireRlsOrRefuse(
+  options: {
+    rlsEnforce: boolean;
+    pgClient: PgClient | null;
+    streamReserveTimeoutMs?: number;
+  },
+  spaceId: string | undefined,
+): Promise<StreamRlsContext | null> {
+  if (!options.rlsEnforce || options.pgClient === null || !spaceId) {
+    return null;
+  }
+  try {
+    return await acquireStreamRls(options.pgClient, spaceId, {
+      ...(options.streamReserveTimeoutMs !== undefined && {
+        reserveTimeoutMs: options.streamReserveTimeoutMs,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof StreamPoolExhaustedError) {
+      throw new MarfaError(
+        ErrorCode.STREAM_CAPACITY_EXHAUSTED,
+        "No streaming capacity is available right now; retry shortly",
+      );
+    }
+    throw err;
+  }
+}
 
 /**
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
@@ -35,6 +72,9 @@ import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
 export interface ExportRoutesOptions {
   rlsEnforce: boolean;
   pgClient: PgClient | null;
+  /** Override for the stream-slot reservation window; tests drive the
+   *  exhaustion path with a short one. Default lives in streaming-rls. */
+  streamReserveTimeoutMs?: number;
 }
 
 /**
@@ -248,12 +288,13 @@ export function exportRoutes(
     const allowedTypes = getTypeFilter(c);
     const encoder = new TextEncoder();
 
+    // Acquired before the response exists, so an exhausted pool answers a
+    // real 503 instead of a broken stream behind a 200 already sent.
+    const acquiredCtx = await acquireRlsOrRefuse(options, spaceId);
+
     const stream = new ReadableStream({
       async start(controller) {
-        const rlsCtx =
-          options.rlsEnforce && options.pgClient !== null && spaceId
-            ? await acquireStreamRls(options.pgClient, spaceId)
-            : null;
+        const rlsCtx = acquiredCtx;
         try {
           const work = async () => {
             // Ids of every item this export emits. Edges are filtered
@@ -388,10 +429,7 @@ async function handleArchiveExport(
   const source = c.req.query("source");
   const allowedTypes = getTypeFilter(c);
 
-  const rlsCtx =
-    options.rlsEnforce && options.pgClient !== null && spaceId
-      ? await acquireStreamRls(options.pgClient, spaceId)
-      : null;
+  const rlsCtx = await acquireRlsOrRefuse(options, spaceId);
 
   const lines: string[] = [];
   const edgeLines: string[] = [];
