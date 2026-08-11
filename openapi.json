@@ -2101,6 +2101,9 @@
                     "neighbors_truncated": {
                       "type": "boolean"
                     },
+                    "neighbors_omitted": {
+                      "type": "integer"
+                    },
                     "versions": {
                       "type": "array",
                       "items": {

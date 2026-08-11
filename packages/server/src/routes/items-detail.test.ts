@@ -115,6 +115,7 @@ interface DetailResponse {
     metadata: { tags: string[] };
   }[];
   neighbors_truncated?: boolean;
+  neighbors_omitted?: number;
   versions?: { id: string; version: number }[];
 }
 
@@ -232,6 +233,23 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     const ids = (d.neighbors ?? []).map((n) => n.item.id);
     expect(ids).not.toContain(secret);
     expect(ids).toEqual([]);
+    // Omitting is right; omitting silently is not. Without a count, a
+    // neighbourhood the caller may not fully read is indistinguishable from
+    // one that is genuinely empty, so an app missing a scope renders a
+    // ticket with none of its relations and looks correct doing it.
+    expect(d.neighbors_omitted).toBe(1);
+  });
+
+  it("reports nothing omitted when the caller can read the whole neighborhood", () => {
+    // The other direction, so the count cannot be a constant.
+    return (async () => {
+      const parent = await create(adminA, "core.note", { body: "root" });
+      const child = await create(adminA, "core.note", { body: "child" });
+      await edge(adminA, parent, child, "parent-of");
+      const d = await detail(adminA, parent, "neighbors");
+      expect((d.neighbors ?? []).map((n) => n.item.id)).toEqual([child]);
+      expect(d.neighbors_omitted).toBe(0);
+    })();
   });
 
   it("omits a cross-space neighbor even when an edge references it", async () => {
@@ -255,6 +273,10 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
     // ...but the cross-space item is never hydrated into a neighbor.
     expect(ids).not.toContain(itemB);
     expect(ids).toEqual([]);
+    // And it is not counted as a permission omission: an edge whose far end
+    // this space cannot see is a repair, not a scope to widen. It is logged
+    // separately for that reason.
+    expect(d.neighbors_omitted).toBe(0);
   });
 });
 
