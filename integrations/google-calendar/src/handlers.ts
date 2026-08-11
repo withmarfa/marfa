@@ -61,7 +61,11 @@ import {
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
-import { declaredConfigurationDefault } from "@withmarfa/shared";
+import {
+  dateInZoneToInstant,
+  declaredConfigurationDefault,
+  instantToDateInZone,
+} from "@withmarfa/shared";
 import {
   CALENDAR_API_BASE,
   DEFAULT_CALENDAR_ID,
@@ -1489,16 +1493,28 @@ function buildEventInput(
     // `place` (we keep the cross-app idiom for the location field).
     properties.place = event.location;
   }
-  if (event.start?.dateTime !== undefined) {
-    properties.starts_at = event.start.dateTime;
-  } else if (event.start?.date !== undefined) {
-    properties.starts_at = event.start.date;
-  }
-  if (event.end?.dateTime !== undefined) {
-    properties.ends_at = event.end.dateTime;
-  } else if (event.end?.date !== undefined) {
-    properties.ends_at = event.end.date;
-  }
+  // A whole day is not an instant, and Calendar says so by sending `date`
+  // instead of `dateTime`. Marfa records that as a fact rather than leaving
+  // it to be inferred from whether a string happens to carry a time, because
+  // an inference is invisible to every reader that did not think to make it.
+  const isAllDay =
+    event.start?.date !== undefined && event.start.dateTime === undefined;
+  if (isAllDay) properties.all_day = true;
+
+  // An all-day event carries no zone upstream, and inventing one would be a
+  // claim Calendar never made. Absent means the date is read in UTC, which
+  // is exactly the day it was written under, so the round trip is exact and
+  // the date is the same for every reader. Storing midnight UTC and then
+  // reading it back in a viewer's zone is the classic version of this bug:
+  // anywhere west of Greenwich sees the evening before.
+  const startInstant = isAllDay
+    ? dateInZoneToInstant(event.start?.date ?? "", undefined)
+    : event.start?.dateTime;
+  const endInstant = isAllDay
+    ? dateInZoneToInstant(event.end?.date ?? "", undefined)
+    : event.end?.dateTime;
+  if (startInstant != null) properties.starts_at = startInstant;
+  if (endInstant != null) properties.ends_at = endInstant;
   if (event.status !== undefined) properties.status = event.status;
 
   // Recurrence is not a Google detail: the rule, the zone it is read in,
@@ -1510,10 +1526,25 @@ function buildEventInput(
   }
   const timezone = event.start?.timeZone ?? event.end?.timeZone;
   if (timezone !== undefined) properties.timezone = timezone;
-  const originalStart =
+  // A flight lands in a zone it did not depart from, and Calendar offers the
+  // choice in its own interface. Collapsing the two loses a fact the user
+  // entered, so the end zone is carried whenever it differs.
+  if (
+    event.end?.timeZone !== undefined &&
+    event.end.timeZone !== event.start?.timeZone
+  ) {
+    properties.end_timezone = event.end.timeZone;
+  }
+  const originalStartRaw =
     event.originalStartTime?.dateTime ?? event.originalStartTime?.date;
-  if (originalStart !== undefined) {
-    properties.original_starts_at = originalStart;
+  if (originalStartRaw !== undefined) {
+    // An exception to an all-day series names the occurrence it replaces by
+    // date, so it needs the same conversion the series start did or the two
+    // never match.
+    const originalStart =
+      event.originalStartTime?.dateTime ??
+      dateInZoneToInstant(originalStartRaw, undefined);
+    if (originalStart != null) properties.original_starts_at = originalStart;
   }
 
   if (targetType === "core.event") {
@@ -1525,10 +1556,6 @@ function buildEventInput(
   // preserves what Calendar considers authoritative.
   if (event.htmlLink !== undefined) properties.html_link = event.htmlLink;
   if (event.etag !== undefined) properties.etag = event.etag;
-  // all_day is implied by `date` (no time) rather than `dateTime`.
-  if (event.start?.date !== undefined && event.start.dateTime === undefined) {
-    properties.all_day = true;
-  }
   if (sourceCalendarId !== undefined) {
     properties.source_calendar_id = sourceCalendarId;
   }
@@ -1549,10 +1576,13 @@ function buildEventInput(
 /**
  * Build the Calendar API request payload from a Marfa item.
  *
- * Honors optional `all_day` (writes `start.date` / `end.date` instead
- * of `dateTime`) and `timezone` (sets `start.timeZone` / `end.timeZone`).
- * Both are read from item properties — present on
- * `google.calendar.event` items, absent on plain `core.event` items.
+ * `all_day` writes `start.date` / `end.date` instead of `dateTime`, with the
+ * date derived from the stored instant read in the event's own zone. Never
+ * the writer's own zone: a date re-derived wherever the code happens to be
+ * running moves the event a day for half the world, which is the same fault
+ * from the outbound side. `timezone` sets `start.timeZone`, and
+ * `end_timezone` sets `end.timeZone` when the event ends somewhere else.
+ *
  * The fallback (no `all_day`, no `timezone`) writes
  * `start: { dateTime: <iso> }`, `end: { dateTime: <iso> }`.
  */
@@ -1564,6 +1594,7 @@ function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
     starts_at?: unknown;
     ends_at?: unknown;
     timezone?: unknown;
+    end_timezone?: unknown;
     all_day?: unknown;
     transparency?: unknown;
     visibility?: unknown;
@@ -1580,10 +1611,15 @@ function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
     typeof props.timezone === "string" && props.timezone.length > 0
       ? props.timezone
       : undefined;
+  const endTimezone =
+    typeof props.end_timezone === "string" && props.end_timezone.length > 0
+      ? props.end_timezone
+      : timezone;
 
   if (typeof props.starts_at === "string") {
     if (isAllDay) {
-      payload.start = { date: props.starts_at };
+      const date = instantToDateInZone(props.starts_at, timezone);
+      if (date !== null) payload.start = { date };
     } else if (timezone !== undefined) {
       payload.start = { dateTime: props.starts_at, timeZone: timezone };
     } else {
@@ -1592,9 +1628,10 @@ function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
   }
   if (typeof props.ends_at === "string") {
     if (isAllDay) {
-      payload.end = { date: props.ends_at };
-    } else if (timezone !== undefined) {
-      payload.end = { dateTime: props.ends_at, timeZone: timezone };
+      const date = instantToDateInZone(props.ends_at, timezone);
+      if (date !== null) payload.end = { date };
+    } else if (endTimezone !== undefined) {
+      payload.end = { dateTime: props.ends_at, timeZone: endTimezone };
     } else {
       payload.end = { dateTime: props.ends_at };
     }
