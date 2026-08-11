@@ -284,3 +284,160 @@ describe("StoredTokenProvider.refresh failure taxonomy", () => {
     expect(await storage.get(STORAGE_KEY)).toBeNull();
   });
 });
+
+describe("StoredTokenProvider single-flight", () => {
+  beforeEach(() => {
+    __resetDiscoveryCache();
+  });
+
+  it("concurrent callers share one refresh exchange", async () => {
+    // The guard this pins was deliberately kept when the exchange moved to
+    // oauth4webapi: the library holds no state, so it has nowhere to put
+    // it. Without it a page firing three requests on load performs three
+    // refreshes, and under refresh rotation the last two present an
+    // already-rotated token and end the session. Deleting the guard left
+    // every test green, which is why this one exists.
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch, calls } = makeMockFetch([
+      discoveryResponse(),
+      refreshOkResponse(),
+      // Nothing else queued: a second token exchange rejects loudly.
+    ]);
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch,
+    });
+
+    const tokens = await Promise.all([
+      provider.getAccessToken(),
+      provider.getAccessToken(),
+      provider.getAccessToken(),
+    ]);
+    expect(tokens).toEqual(["fresh_at", "fresh_at", "fresh_at"]);
+    const exchanges = calls.filter((c) => c.url === TOKEN_ENDPOINT);
+    expect(exchanges).toHaveLength(1);
+  });
+
+  it("a later refresh is a new flight, not the stale settled one", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const { fetch, calls } = makeMockFetch([
+      discoveryResponse(),
+      refreshOkResponse(),
+      refreshOkResponse(),
+    ]);
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch,
+    });
+    // getAccessToken hydrates and performs the first (forced) refresh;
+    // the explicit refresh() after it must be a fresh exchange, not the
+    // settled promise of the first — a guard that never cleared its
+    // in-flight slot would hand every later caller the stale result.
+    await provider.getAccessToken();
+    await provider.refresh();
+    expect(calls.filter((c) => c.url === TOKEN_ENDPOINT)).toHaveLength(2);
+  });
+});
+
+describe("StoredTokenProvider.signOut", () => {
+  it("clears the stored session and tells every subscriber", async () => {
+    const storage = new InMemoryTokenStorage();
+    await seedExpiredCache(storage);
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch: makeMockFetch([]).fetch,
+    });
+    expect(await provider.hydrateFromStorage()).toBe(true);
+
+    let firstFired = 0;
+    let secondFired = 0;
+    provider.onSignOut(() => {
+      firstFired += 1;
+      throw new Error("one handler misbehaving must not silence the rest");
+    });
+    provider.onSignOut(() => {
+      secondFired += 1;
+    });
+
+    await provider.signOut();
+
+    expect(firstFired).toBe(1);
+    expect(secondFired).toBe(1);
+    // The session is gone on disk and in memory: the next ask has nothing
+    // to hand out and nothing to refresh with.
+    expect(await storage.get(STORAGE_KEY)).toBeNull();
+    await expect(provider.getAccessToken()).rejects.toThrow(OAuthError);
+  });
+
+  it("an unsubscribed handler stays quiet", async () => {
+    const storage = new InMemoryTokenStorage();
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch: makeMockFetch([]).fetch,
+    });
+    let fired = 0;
+    const unsubscribe = provider.onSignOut(() => {
+      fired += 1;
+    });
+    unsubscribe();
+    await provider.signOut();
+    expect(fired).toBe(0);
+  });
+});
+
+describe("StoredTokenProvider restore", () => {
+  it("restores a live stored session without touching the network", async () => {
+    // The every-page-load path for both browser consumers: a session
+    // persisted on a previous visit, still valid, must come back without a
+    // single fetch — no discovery, no exchange.
+    const storage = new InMemoryTokenStorage();
+    await storage.set(
+      STORAGE_KEY,
+      JSON.stringify({
+        access_token: "stored_at",
+        refresh_token: "stored_rt",
+        access_expires_at: Date.now() + 3_600_000,
+        scope: "core.note:read",
+      }),
+    );
+    const { fetch, calls } = makeMockFetch([]);
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch,
+    });
+
+    expect(await provider.getAccessToken()).toBe("stored_at");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a corrupt stored blob is cleared, not crashed on", async () => {
+    const storage = new InMemoryTokenStorage();
+    await storage.set(STORAGE_KEY, "not json {");
+    const provider = new StoredTokenProvider({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      storage,
+      storageKey: STORAGE_KEY,
+      fetch: makeMockFetch([]).fetch,
+    });
+    expect(await provider.hydrateFromStorage()).toBe(false);
+    expect(await storage.get(STORAGE_KEY)).toBeNull();
+  });
+});
