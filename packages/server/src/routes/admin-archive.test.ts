@@ -226,3 +226,138 @@ describe("POST /admin/restore-archive", () => {
     expect(data.blobs_imported).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("POST /admin/restore-archive — quota", () => {
+  async function buildTwoBlobArchive(spaceId: string): Promise<{
+    archive: Buffer;
+    blobs: { hash: string; data: Buffer }[];
+  }> {
+    const blobs = [
+      makeBlobData(`quota-blob-one-${spaceId}`),
+      makeBlobData(`quota-blob-two-${spaceId}`),
+    ];
+    const archive = await buildArchive(
+      {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        space_id: spaceId,
+        item_count: 2,
+        blob_count: 2,
+        blobs: Object.fromEntries(
+          blobs.map((b) => [
+            b.hash,
+            { mime_type: "text/plain", size: b.data.length },
+          ]),
+        ),
+      },
+      blobs.map((b, i) =>
+        JSON.stringify({
+          item: {
+            type: "core.file",
+            properties: {
+              title: `f${String(i)}`,
+              blob_ref: b.hash,
+              mime_type: "text/plain",
+            },
+          },
+        }),
+      ),
+      blobs,
+    );
+    return { archive, blobs };
+  }
+
+  it("refuses past the blob ceiling, names it, and leaves nothing behind", async () => {
+    if (!ctx.storage.spaces) throw new Error("space store expected");
+    const space = await ctx.storage.spaces.create("quota-restore-space");
+    const quotaRes = await request(
+      ctx.app,
+      "PUT",
+      `/spaces/${space.id}/quotas`,
+      {
+        key: ctx.adminKey,
+        body: { blobs_limit: 1 },
+      },
+    );
+    expect(quotaRes.status).toBe(200);
+
+    const { archive, blobs } = await buildTwoBlobArchive(space.id);
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${space.id}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
+      },
+    );
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { resource?: string; limit?: number } };
+    };
+    expect(body.error.code).toBe("quota_exceeded");
+    expect(body.error.details?.resource).toBe("blobs");
+    expect(body.error.details?.limit).toBe(1);
+
+    // No rows and no bytes behind: the refusal is indistinguishable from
+    // the restore never having been attempted.
+    for (const blob of blobs) {
+      expect(await ctx.storage.blobs.get(blob.hash, space.id)).toBeNull();
+      expect(await ctx.storage.blobs.getAcrossSpaces(blob.hash)).toBeNull();
+      expect(await ctx.blobBackend.exists(blob.hash)).toBe(false);
+    }
+
+    // Room made, the same archive lands.
+    await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
+      key: ctx.adminKey,
+      body: { blobs_limit: 10 },
+    });
+    const retry = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${space.id}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
+      },
+    );
+    expect(retry.status, await retry.clone().text()).toBe(200);
+    for (const blob of blobs) {
+      expect(await ctx.storage.blobs.get(blob.hash, space.id)).not.toBeNull();
+    }
+  });
+
+  it("refuses past the storage-byte ceiling the same way", async () => {
+    if (!ctx.storage.spaces) throw new Error("space store expected");
+    const space = await ctx.storage.spaces.create("quota-restore-bytes");
+    await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
+      key: ctx.adminKey,
+      body: { storage_bytes_limit: 8 },
+    });
+
+    const { archive, blobs } = await buildTwoBlobArchive(space.id);
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${space.id}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
+      },
+    );
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { resource?: string } };
+    };
+    expect(body.error.details?.resource).toBe("storage_bytes");
+    for (const blob of blobs) {
+      expect(await ctx.blobBackend.exists(blob.hash)).toBe(false);
+    }
+  });
+});

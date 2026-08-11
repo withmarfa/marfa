@@ -57,10 +57,29 @@ export async function reserveQuota(
   storage: Storage,
   reservations: readonly { resource: QuotaResource; increment: number }[],
 ): Promise<void> {
-  const spaceId = c.get("apiKey")?.space_id;
-  if (!spaceId || reservations.length === 0) return;
+  return reserveQuotaForSpace(
+    storage,
+    c.get("config"),
+    c.get("apiKey")?.space_id,
+    reservations,
+  );
+}
 
-  const config = c.get("config");
+/**
+ * The explicit-space form, for writes performed on a space's behalf by a
+ * caller who has no space of their own. The context form above reads the
+ * caller's `space_id`, which for a platform admin is `undefined` — so a
+ * platform-gated route calling it reserved nothing, silently, and archive
+ * restore wrote whatever the archive contained. A route writing INTO a
+ * space names that space here regardless of who is asking.
+ */
+export async function reserveQuotaForSpace(
+  storage: Storage,
+  config: AppConfig,
+  spaceId: string | undefined,
+  reservations: readonly { resource: QuotaResource; increment: number }[],
+): Promise<void> {
+  if (!spaceId || reservations.length === 0) return;
 
   const limits: {
     resource: QuotaResource;

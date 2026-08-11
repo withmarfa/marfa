@@ -34,6 +34,8 @@ import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { reserveQuotaForSpace } from "../middleware/quota.js";
+import type { AppConfig } from "../config.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 
@@ -197,19 +199,64 @@ interface BlobRestore {
 async function restoreArchiveBlobs(
   storage: Storage,
   blobBackend: BlobBackend,
+  config: AppConfig,
   pending: readonly PendingBlob[],
   spaceId: string,
 ): Promise<BlobRestore> {
   const wroteBytes: string[] = [];
   const wroteRows: string[] = [];
 
+  // Bytes first, rows second, same as `POST /blobs`: a rollback cannot
+  // reach a filesystem or an object store, so the bytes stay outside the
+  // transaction and this request takes back what it wrote on refusal.
   for (const blob of pending) {
     await withBlobUploadLock(blob.hash, async () => {
       if (!(await blobBackend.exists(blob.hash))) {
         await blobBackend.put(blob.hash, blob.data, blob.mimeType);
         wroteBytes.push(blob.hash);
       }
-      if ((await storage.blobs.get(blob.hash, spaceId)) === null) {
+    });
+  }
+
+  const undoBytes = async (): Promise<void> => {
+    for (const hash of wroteBytes) {
+      await withBlobUploadLock(hash, async () => {
+        try {
+          if ((await storage.blobs.getAcrossSpaces(hash)) !== null) return;
+          await blobBackend.delete(hash);
+        } catch (err) {
+          log("error", "blob.orphaned_after_refused_restore", {
+            hash,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+    }
+  };
+
+  // Rows and their quota reservation are one transaction: the reservation
+  // has to count under the same lock the rows commit under, and a refusal
+  // then rolls every row back at once. The caller with no space of their
+  // own is exactly why the explicit-space form exists — the platform-admin
+  // context form reserved nothing here, silently, and a restore could
+  // carry the space past ceilings every other blob write enforces.
+  try {
+    await storage.runInTransaction(async () => {
+      const planned: PendingBlob[] = [];
+      for (const blob of pending) {
+        if ((await storage.blobs.get(blob.hash, spaceId)) === null) {
+          planned.push(blob);
+        }
+      }
+      if (planned.length === 0) return;
+      await reserveQuotaForSpace(storage, config, spaceId || undefined, [
+        { resource: "blobs", increment: planned.length },
+        {
+          resource: "storage_bytes",
+          increment: planned.reduce((sum, b) => sum + b.data.length, 0),
+        },
+      ]);
+      for (const blob of planned) {
         await storage.blobs.register(
           blob.hash,
           blob.mimeType,
@@ -220,6 +267,12 @@ async function restoreArchiveBlobs(
         wroteRows.push(blob.hash);
       }
     });
+  } catch (err) {
+    // The transaction rolled the rows back; the bytes are this function's
+    // to take back before the refusal travels on.
+    wroteRows.length = 0;
+    await undoBytes();
+    throw err;
   }
 
   return {
@@ -234,23 +287,11 @@ async function restoreArchiveBlobs(
           });
         }
       }
-      for (const hash of wroteBytes) {
-        await withBlobUploadLock(hash, async () => {
-          try {
-            // Another space may have registered these same bytes in the
-            // meantime, and content addressing means its row describes the
-            // file this request happens to have written. Deleting then would
-            // break a blob nobody refused.
-            if ((await storage.blobs.getAcrossSpaces(hash)) !== null) return;
-            await blobBackend.delete(hash);
-          } catch (err) {
-            log("error", "blob.orphaned_after_refused_restore", {
-              hash,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        });
-      }
+      // Another space may have registered these same bytes in the
+      // meantime, and content addressing means its row describes the file
+      // this request happens to have written; `undoBytes` re-checks under
+      // the per-hash lock before deleting.
+      await undoBytes();
     },
   };
 }
@@ -474,6 +515,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const blobs = await restoreArchiveBlobs(
       storage,
       blobBackend,
+      c.get("config"),
       pendingBlobs,
       restoreSpaceId,
     );
