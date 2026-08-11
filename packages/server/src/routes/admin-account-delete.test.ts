@@ -148,6 +148,19 @@ describe("POST /admin/accounts/:id/delete", () => {
     );
     expect(operatorRow?.key_id).toBeTruthy();
 
+    // The hard-delete row is documented as the one row in the chain that
+    // keeps its details payload — the redaction sweep must not have
+    // rewritten it to the sentinel.
+    const hardDeleted = audit.data.find(
+      (r) => r.action === "auth.account.hard_deleted",
+    );
+    const raw = hardDeleted?.details;
+    const hardDetails = (
+      typeof raw === "string" ? JSON.parse(raw) : (raw ?? {})
+    ) as { redacted?: boolean; space_id?: string };
+    expect(hardDetails.redacted).toBe(false);
+    expect(hardDetails.space_id).toBe(spaceId);
+
     // Idempotence is a refusal, not a second delete: the account is gone,
     // so the email resolves to nothing.
     const again = await request(

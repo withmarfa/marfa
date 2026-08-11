@@ -41,9 +41,9 @@
  *      token + any in-flight reset/verify tokens — all keyed by
  *      `value = authUserId`).
  *   8. `users` row, `spaces` row.
- *   9. `auth.account.hard_deleted` audit row (BEFORE redactForUser
- *      so it survives the sweep).
- *   10. `audit.redactForUser(authUserId)` to scrub PII.
+ *   9. `audit.redactForUser(authUserId)` to scrub PII.
+ *  10. `auth.account.hard_deleted` audit row (AFTER the sweep, so it
+ *      is the one row that keeps its details payload).
  *   11. `auth_user` row — FK cascades drop `auth_session`,
  *      `auth_account`, `auth_passkey`.
  *
@@ -188,16 +188,19 @@ export async function pgDeleteAccountCascade(
       }
     }
 
-    // ---- 9. Hard-delete audit row (survives the redact sweep). -----------
+    // ---- 9. Redact the existing audit trail. -----------------------------
+    await storage.audit.redactForUser(authUserId);
+
+    // ---- 10. Hard-delete audit row, written AFTER the sweep — the sweep
+    // matches on resource_id, so a row written before it is rewritten to
+    // the sentinel like any other. Writing it after is what makes this the
+    // one row in the chain that keeps its details payload. --------------
     await storage.audit.log({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,
       details: { space_id: spaceId, redacted: false },
     });
-
-    // ---- 10. Redact remaining audit trail. -------------------------------
-    await storage.audit.redactForUser(authUserId);
 
     // ---- 11. Delete auth_user (cascades sessions / accounts / passkeys). -
     await tx.delete(auth_user).where(eq(auth_user.id, authUserId));
