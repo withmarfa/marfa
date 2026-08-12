@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS public.auth_account (
     scope text,
     password text,
     created_at timestamp without time zone NOT NULL,
-    updated_at timestamp without time zone NOT NULL
+    updated_at timestamp without time zone NOT NULL,
+    issuer text
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_jwks (
@@ -100,7 +101,9 @@ CREATE TABLE IF NOT EXISTS public.auth_jwks (
     public_key text NOT NULL,
     private_key text NOT NULL,
     created_at timestamp without time zone NOT NULL,
-    expires_at timestamp without time zone
+    expires_at timestamp without time zone,
+    alg text,
+    crv text
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_oauth_access_token (
@@ -113,7 +116,12 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_access_token (
     refresh_id text,
     expires_at timestamp without time zone,
     created_at timestamp without time zone,
-    scopes text[] NOT NULL
+    scopes text[] NOT NULL,
+    authorization_code_id text,
+    confirmation jsonb,
+    requested_user_info_claims text[],
+    resources text[],
+    revoked timestamp without time zone
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_oauth_client (
@@ -146,7 +154,15 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_client (
     type text,
     require_pkce boolean,
     reference_id text,
-    metadata jsonb
+    metadata jsonb,
+    application_type text,
+    backchannel_logout_session_required boolean,
+    backchannel_logout_uri text,
+    client_credentials_scopes text[],
+    client_discovery_id text,
+    dpop_bound_access_tokens boolean,
+    jwks text,
+    jwks_uri text
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_oauth_consent (
@@ -156,7 +172,9 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_consent (
     reference_id text,
     scopes text[] NOT NULL,
     created_at timestamp without time zone,
-    updated_at timestamp without time zone
+    updated_at timestamp without time zone,
+    requested_user_info_claims text[],
+    resources text[]
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_oauth_refresh_token (
@@ -170,7 +188,14 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_refresh_token (
     created_at timestamp without time zone,
     revoked timestamp without time zone,
     auth_time timestamp without time zone,
-    scopes text[] NOT NULL
+    scopes text[] NOT NULL,
+    authorization_code_id text,
+    confirmation jsonb,
+    requested_user_info_claims text[],
+    resources text[],
+    rotated_at timestamp without time zone,
+    rotation_replay_expires_at timestamp without time zone,
+    rotation_replay_response text
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_passkey (
@@ -1085,9 +1110,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_space_id ON public.audit_log USING btre
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON public.audit_log USING btree ("timestamp");
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_account_issuer_account_id ON public.auth_account USING btree (issuer, account_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_account_provider ON public.auth_account USING btree (provider_id, account_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_account_user_id ON public.auth_account USING btree (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_authorization_code_id ON public.auth_oauth_access_token USING btree (authorization_code_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_client_id ON public.auth_oauth_access_token USING btree (client_id);
 
@@ -1102,6 +1131,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_oauth_client_reference_id ON public.auth_oau
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_client_user_id ON public.auth_oauth_client USING btree (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_reference_id ON public.auth_oauth_consent USING btree (reference_id);
+
+CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_authorization_code_id ON public.auth_oauth_refresh_token USING btree (authorization_code_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_client_id ON public.auth_oauth_refresh_token USING btree (client_id);
 
