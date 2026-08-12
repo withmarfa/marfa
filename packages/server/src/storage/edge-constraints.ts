@@ -256,8 +256,10 @@ export async function assertEdgesCanBeCreated(
       );
     }
 
-    // Cardinality — direction-correct per plan §Critical. Combine the DB
-    // pre-count with any in-batch proposals that already passed.
+    // Cardinality is judged direction-correct: for each edge type the
+    // constrained side is fixed by the spec (parent-of counts children per
+    // parent, not parents per child). Combine the DB pre-count with any
+    // in-batch proposals that already passed.
     const srcKey = `${p.source_id}|${p.edge_type}`;
     const tgtKey = `${p.target_id}|${p.edge_type}`;
     const dbSourceCount = sourceCounts.get(srcKey) ?? 0;
