@@ -1130,6 +1130,15 @@ export interface OAuthStore {
     spaceId: string | null,
     thresholdMs: number,
   ): Promise<void>;
+
+  /**
+   * Resolves once every in-flight `updateLastUsedAt` stamp has settled.
+   * The stamp is fire-and-forget from the bearer middleware, so `close()`
+   * drains it the way the audit store drains its writes — a stamp still
+   * opening a connection when the pool ends is otherwise an unhandled
+   * rejection.
+   */
+  drain(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

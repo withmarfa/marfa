@@ -5,7 +5,7 @@ import type { PaginatedResult } from "@withmarfa/shared";
 import type { AuditStore, AuditEntry } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
-import { AuditWriteTracker } from "../audit-write-tracker.js";
+import { WriteTracker } from "../write-tracker.js";
 import { auditLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -35,7 +35,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
 }
 
 export class SqliteAuditStore implements AuditStore {
-  private readonly writes = new AuditWriteTracker();
+  private readonly writes = new WriteTracker("audit");
 
   constructor(private db: DrizzleDb) {}
 
