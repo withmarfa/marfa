@@ -161,7 +161,11 @@ async function start(): Promise<void> {
       resource,
       processors: [
         new PiiRedactionLogRecordProcessor(),
-        new BatchLogRecordProcessor(logExporter),
+        // The processor takes its exporter on an options object rather than
+        // positionally. Passing it positionally still type-checks against a
+        // loose signature and yields a processor with no exporter, so logs
+        // batch and are then dropped without a word.
+        new BatchLogRecordProcessor({ exporter: logExporter }),
       ],
     });
     logs.setGlobalLoggerProvider(provider);
