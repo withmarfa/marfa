@@ -37,17 +37,33 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * Detects field-level conflicts between a client PATCH and the server's
  * current state, using the ancestor version as a common base.
  *
- * - Every key in clientProperties is treated as a client change (PATCH is partial).
+ * - A key in clientProperties counts as a client change only when its value
+ *   differs from the ancestor. The contract asks clients to send only the
+ *   fields they changed, but a client that echoes an unchanged field back
+ *   must not manufacture a conflict against an edit nobody made — under a
+ *   keep-both merge policy that surfaces as a duplicate item holding text
+ *   the user never typed, which reads as corruption.
  * - Server-changed fields are keys where current differs from ancestor.
  * - Conflicting fields are the intersection of both sets.
- * - If no conflicts: auto-merge (current + client overlay).
+ * - If no conflicts: auto-merge (current + client overlay). An echoed key
+ *   still rides the overlay, where it is a no-op against the value the
+ *   server already holds for it — unless the server changed it, in which
+ *   case the overlay must not revert that change (handled below).
  * - If conflicts: return the sorted list of conflicting field names.
  */
 export function detectConflict(input: ConflictInput): ConflictResult {
   const { clientProperties, currentProperties, ancestorProperties } = input;
 
-  // Every key the client is sending is a change
-  const clientChangedFields = new Set(Object.keys(clientProperties));
+  // A key the client sends counts as a change only if it differs from the
+  // ancestor the client read. Echoes of unchanged fields are dropped here
+  // AND excluded from the merge overlay: overlaying an echoed ancestor
+  // value onto a field the server has since changed would silently revert
+  // the server's edit, which is the clobber this detection exists to stop.
+  const clientChangedFields = new Set(
+    Object.keys(clientProperties).filter(
+      (key) => !deepEqual(clientProperties[key], ancestorProperties[key]),
+    ),
+  );
 
   // Find fields the server changed since the ancestor
   const serverChangedFields = new Set<string>();
@@ -76,9 +92,17 @@ export function detectConflict(input: ConflictInput): ConflictResult {
     };
   }
 
-  // Auto-merge: start with current, overlay client changes
+  // Auto-merge: start with current, overlay only the genuine client
+  // changes. Spreading the whole client payload here would let an echoed
+  // ancestor value overwrite a field the server changed since — the
+  // silent revert this detection exists to prevent, arriving through the
+  // merge instead of the conflict path.
+  const merged: Record<string, unknown> = { ...currentProperties };
+  for (const key of clientChangedFields) {
+    merged[key] = clientProperties[key];
+  }
   return {
     type: "no_conflict",
-    merged: { ...currentProperties, ...clientProperties },
+    merged,
   };
 }
