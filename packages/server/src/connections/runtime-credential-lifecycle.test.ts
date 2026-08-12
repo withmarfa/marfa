@@ -23,7 +23,7 @@
  * Boots in `hosted` mode because three of the four are only wrong on a
  * deployment that has spaces.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -255,16 +255,29 @@ describe("a mint cannot outlive the uninstall it raced", () => {
           result = r;
           return r;
         });
-        await new Promise((r) => setTimeout(r, 200));
         // Asserted before the revoke rather than after: what is being
         // pinned is that the mint is still waiting, not merely that it
-        // ends up refused.
+        // ends up refused. An absence check is bounded by time, not a
+        // condition — a blocked promise cannot be made to resolve by
+        // scheduling delay, so load can weaken this half toward a
+        // vacuous pass but never invert it into a false failure.
+        await new Promise((r) => setTimeout(r, 200));
         expect(settled).toBe(false);
         await ctx.storage.items.transition(connectionId, "revoked", space.id);
       },
     );
 
-    await new Promise((r) => setTimeout(r, 200));
+    // The positive half gates on the condition, not the clock: under
+    // machine load the released mint can take far longer than a fixed
+    // sleep allows, and this wait costs nothing when it is quick.
+    await vi.waitFor(
+      () => {
+        if (!settled) {
+          throw new Error("mint has not settled after the lock released");
+        }
+      },
+      { timeout: 15_000 },
+    );
     expect(result).not.toBeNull();
     expect(result!.status).toBe(403);
     expect(((await result!.json()) as ErrorResponse).error.code).toBe(
