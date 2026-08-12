@@ -111,4 +111,21 @@ describe("GET /items?filter= — source_id is filterable", () => {
       ),
     ).toEqual(["Archive/old.md"]);
   });
+
+  it("matches regardless of case, on either dialect", async () => {
+    // Paths carry human capitalization, and `notes/` for `Notes/` is
+    // exactly the near-miss a person types. The two dialects used to
+    // disagree here — SQLite matched, Postgres returned nothing — which
+    // made the same documented query wrong on one of them. This runs on
+    // both legs of the matrix and pins the shared, case-insensitive
+    // meaning.
+    expect(await pathsMatching('source_id starts_with "notes/"')).toEqual([
+      "Notes/2026/deep.md",
+      "Notes/first.md",
+      "Notes/second.md",
+    ]);
+    expect(await pathsMatching('source_id starts_with "NOTES/2026/"')).toEqual([
+      "Notes/2026/deep.md",
+    ]);
+  });
 });
