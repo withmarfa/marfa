@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Storage } from "./storage/interface.js";
@@ -77,6 +77,9 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
       } catch {
         // Best-effort.
       }
+      // The directory holds this file's sqlite database and blob
+      // root; nothing else removes it.
+      rmSync(tmpDir, { recursive: true, force: true });
     },
   };
 }

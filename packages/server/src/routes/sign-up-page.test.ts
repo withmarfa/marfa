@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
@@ -563,6 +563,9 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
       } else {
         await storage.close();
       }
+      // The directory holds this file's sqlite database and blob
+      // root; nothing else removes it.
+      rmSync(tmpDir, { recursive: true, force: true });
     },
   };
 }
