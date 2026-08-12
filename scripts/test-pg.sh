@@ -43,12 +43,17 @@ fi
 
 cleanup() {
   echo "→ Tearing down ${CONTAINER_NAME}"
-  docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  # -v matters: the postgres image declares a VOLUME, so every run mints an
+  # anonymous volume, and removing the container without -v orphans it at
+  # roughly 110 MB a run. The --rm on docker run cannot be relied on for
+  # this either, because this explicit removal racing it wins, and then
+  # nothing deletes the volume.
+  docker rm -f -v "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 # Remove any prior container (e.g. from a crashed previous run)
-docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+docker rm -f -v "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
 echo "→ Starting ${CONTAINER_NAME} (postgres:17) on port ${PG_PORT}"
 # `-c max_connections=500` raises the per-cluster connection cap above PG's
