@@ -13,7 +13,7 @@
  *      connection's older runtime credentials once they are past
  *      TTL + one-TTL grace, so per-dispatch mints don't accumulate.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createTestContext,
   request,
@@ -604,17 +604,29 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
           settled = true;
           failure = err;
         });
-        await new Promise((r) => setTimeout(r, 200));
         // Asserted before the revoke rather than after: what is being
         // pinned is that the mint is still waiting, not merely that it
-        // ends up refused.
+        // ends up refused. This is an absence check, so it is bounded by
+        // time rather than a condition — a blocked promise cannot be made
+        // to resolve by scheduling delay, so load can weaken this half
+        // toward a vacuous pass but never invert it into a false failure.
+        await new Promise((r) => setTimeout(r, 200));
         expect(settled).toBe(false);
         await ctx.storage.items.transition(connection.id, "revoked", space.id);
       },
     );
 
-    await new Promise((r) => setTimeout(r, 200));
-    expect(settled).toBe(true);
+    // The positive half gates on the condition, not the clock: under
+    // machine load the released mint can take far longer than a fixed
+    // sleep allows, and this wait costs nothing when it is quick.
+    await vi.waitFor(
+      () => {
+        if (!settled) {
+          throw new Error("mint has not settled after the lock released");
+        }
+      },
+      { timeout: 15_000 },
+    );
     expect(String(failure)).toMatch(/cannot mint runtime credential/);
   });
 });

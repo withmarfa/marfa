@@ -206,7 +206,7 @@ export async function createPgStorage(
     // making the window easy to hit). Draining lets pending writes settle
     // first; `drain()` itself never rejects.
     close: async () => {
-      await auditStore.drain();
+      await Promise.all([auditStore.drain(), oauthStore.drain()]);
       await close();
     },
     /** Raw query escape hatch. Originally added for parameterized

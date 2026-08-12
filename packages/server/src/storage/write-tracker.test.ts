@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { AuditWriteTracker } from "./audit-write-tracker.js";
+import { WriteTracker } from "./write-tracker.js";
 
-describe("AuditWriteTracker", () => {
+describe("WriteTracker", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("resolves the tracked write and never rejects on success", async () => {
-    const tracker = new AuditWriteTracker();
+    const tracker = new WriteTracker("audit");
     let ran = false;
     await expect(
       tracker.track(async () => {
@@ -19,7 +19,7 @@ describe("AuditWriteTracker", () => {
   });
 
   it("swallows a failing write — the returned promise resolves, not rejects", async () => {
-    const tracker = new AuditWriteTracker();
+    const tracker = new WriteTracker("audit");
     const warn = vi.spyOn(console, "warn").mockImplementation(vi.fn());
     // A write that rejects (e.g. the connection pool was torn down mid-write)
     // must not propagate. This is the unhandled-rejection guard: callers fire
@@ -32,7 +32,7 @@ describe("AuditWriteTracker", () => {
   });
 
   it("drain() waits for all in-flight writes to settle before resolving", async () => {
-    const tracker = new AuditWriteTracker();
+    const tracker = new WriteTracker("audit");
     const order: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -63,14 +63,14 @@ describe("AuditWriteTracker", () => {
   });
 
   it("drain() resolves even when an in-flight write fails", async () => {
-    const tracker = new AuditWriteTracker();
+    const tracker = new WriteTracker("audit");
     vi.spyOn(console, "warn").mockImplementation(vi.fn());
     void tracker.track(() => Promise.reject(new Error("boom")));
     await expect(tracker.drain()).resolves.toBeUndefined();
   });
 
   it("drain() is a no-op when nothing is in flight", async () => {
-    const tracker = new AuditWriteTracker();
+    const tracker = new WriteTracker("audit");
     await expect(tracker.drain()).resolves.toBeUndefined();
   });
 });

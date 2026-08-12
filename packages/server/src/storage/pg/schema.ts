@@ -123,6 +123,13 @@ export const items = pgTable(
     index("idx_items_source_id_prefix")
       .on(table.space_id, sql`${table.source_id} text_pattern_ops`)
       .where(sql`source_id IS NOT NULL`),
+    // Serves the same folder query under the case-insensitive predicate
+    // (LOWER(source_id) LIKE), which a btree on the raw column cannot.
+    // Its predecessor above survives until no serving build issues the
+    // case-sensitive predicate; a cleanup migration then drops it.
+    index("idx_items_source_id_ci_prefix")
+      .on(table.space_id, sql`LOWER(${table.source_id}) text_pattern_ops`)
+      .where(sql`source_id IS NOT NULL`),
     // GIN index on the materialized tsvector. Drizzle-kit emits a
     // standard `CREATE INDEX ... USING gin` statement for this.
     index("idx_items_search_vector").using("gin", table.search_vector),

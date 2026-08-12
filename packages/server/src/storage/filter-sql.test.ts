@@ -52,11 +52,15 @@ describe("filterToRawSql", () => {
       expect(result.params).toEqual(["Notes/%"]);
     });
 
-    it("generates the same source_id prefix clause on pg", () => {
+    it("lowers both sides of the source_id prefix on pg", () => {
+      // The operator means the same thing on both dialects, and that
+      // meaning is case-insensitive. SQLite's LIKE already is; on pg the
+      // column and the pattern are both lowered, and the functional
+      // index over LOWER(source_id) is what keeps this an index scan.
       const expr = parseFilter('source_id starts_with "Notes/"');
       const result = filterToRawSql(expr, "pg", "i");
-      expect(result.clause).toBe("i.source_id LIKE $1 ESCAPE '\\'");
-      expect(result.params).toEqual(["Notes/%"]);
+      expect(result.clause).toBe("LOWER(i.source_id) LIKE $1 ESCAPE '\\'");
+      expect(result.params).toEqual(["notes/%"]);
     });
 
     it("escapes LIKE metacharacters in a source_id prefix", () => {

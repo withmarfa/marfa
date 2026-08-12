@@ -37,6 +37,22 @@ function escapeLike(s: string): string {
 /** Declares the escape character `escapeLike` writes. Append to every LIKE. */
 const LIKE_ESCAPE_CLAUSE = " ESCAPE '\\'";
 
+/**
+ * The text operators mean the same thing on both dialects, and that
+ * meaning is case-insensitive. SQLite's LIKE is already case-insensitive
+ * over ASCII (and the folder query's index is collated NOCASE to match),
+ * but Postgres's LIKE is case-sensitive, so the same filter used to
+ * return different rows depending on which engine a deployment runs — a
+ * storage detail leaking through a public surface. On Postgres both
+ * sides are lowered, and the functional index on lower(source_id) is
+ * what keeps the folder query on an index scan. SQLite's own
+ * case-insensitivity is ASCII-only, an engine limitation documented in
+ * the query reference rather than papered over here.
+ */
+function likePattern(value: unknown): string {
+  return escapeLike(String(value).toLowerCase());
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -234,9 +250,13 @@ function systemFieldSql(
     case "lte":
       return sql`${col} <= ${v}`;
     case "contains":
-      return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return dialect === "pg"
+        ? sql`LOWER(${col}) LIKE ${"%" + likePattern(value) + "%"} ESCAPE '\\'`
+        : sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return sql`${col} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return dialect === "pg"
+        ? sql`LOWER(${col}) LIKE ${likePattern(value) + "%"} ESCAPE '\\'`
+        : sql`${col} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     default:
       throw new Error(`Unsupported operator "${op}" for system field`);
   }
@@ -287,9 +307,13 @@ function propertyFieldSql(
         ? sql`${numericExtract} <= ${value}`
         : sql`${extract} <= ${value}`;
     case "contains":
-      return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return dialect === "pg"
+        ? sql`LOWER(${extract}) LIKE ${"%" + likePattern(value) + "%"} ESCAPE '\\'`
+        : sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return sql`${extract} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return dialect === "pg"
+        ? sql`LOWER(${extract}) LIKE ${likePattern(value) + "%"} ESCAPE '\\'`
+        : sql`${extract} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "exists":
       return sql`${extract} IS NOT NULL`;
     case "not_exists":
@@ -518,16 +542,20 @@ function systemFieldRawSql(
       params.push(value);
       return { fragment: `${col} <= ${p}`, paramIdx: idx + 1 };
     case "contains": {
-      params.push("%" + escapeLike(String(value)) + "%");
+      const ci = dialect === "pg";
+      params.push(
+        "%" + (ci ? likePattern(value) : escapeLike(String(value))) + "%",
+      );
       return {
-        fragment: `${col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        fragment: `${ci ? `LOWER(${col})` : col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
         paramIdx: idx + 1,
       };
     }
     case "starts_with": {
-      params.push(escapeLike(String(value)) + "%");
+      const ci = dialect === "pg";
+      params.push((ci ? likePattern(value) : escapeLike(String(value))) + "%");
       return {
-        fragment: `${col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        fragment: `${ci ? `LOWER(${col})` : col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
         paramIdx: idx + 1,
       };
     }
@@ -628,16 +656,20 @@ function propertyOpRawSql(
       return { fragment: `${expr} <= ${p}`, paramIdx: idx + 1 };
     }
     case "contains": {
-      params.push("%" + escapeLike(String(value)) + "%");
+      const ci = dialect === "pg";
+      params.push(
+        "%" + (ci ? likePattern(value) : escapeLike(String(value))) + "%",
+      );
       return {
-        fragment: `${extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        fragment: `${ci ? `LOWER(${extract})` : extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
         paramIdx: idx + 1,
       };
     }
     case "starts_with": {
-      params.push(escapeLike(String(value)) + "%");
+      const ci = dialect === "pg";
+      params.push((ci ? likePattern(value) : escapeLike(String(value))) + "%");
       return {
-        fragment: `${extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
+        fragment: `${ci ? `LOWER(${extract})` : extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
         paramIdx: idx + 1,
       };
     }

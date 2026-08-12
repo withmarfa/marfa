@@ -184,10 +184,11 @@ export async function createSqliteStorage(
       return { changes: result.rowsAffected };
     },
     async close() {
-      // Drain in-flight fire-and-forget audit writes before closing the
-      // underlying connection, so a late write can't fail against a closed
-      // store. `drain()` never rejects.
-      await auditStore.drain();
+      // Drain in-flight fire-and-forget writes (audit rows and the OAuth
+      // last-used stamp) before closing the underlying connection, so a
+      // late write can't fail against a closed store. Neither drain
+      // rejects.
+      await Promise.all([auditStore.drain(), oauthStore.drain()]);
       await close();
     },
   };

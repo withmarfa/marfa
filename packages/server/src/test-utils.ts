@@ -111,22 +111,28 @@ export async function createPgTestStorage(options?: {
   return {
     storage,
     cleanup: async () => {
-      // Run close + drop in parallel, bounded by 5s. DROP uses WITH (FORCE)
-      // which terminates lingering pool connections — so it doesn't depend on
-      // storage.close() succeeding. Pool-close can hang when in-flight SSE /
-      // export streams delay postgres-js teardown; the timeout keeps afterAll
-      // hooks from blocking indefinitely.
-      const closePromise = storage.close().catch(() => undefined);
-      const dropPromise = clone.drop().catch(() => undefined);
-      const bound = new Promise<void>((resolve) => {
-        setTimeout(() => {
-          resolve();
-        }, 5_000);
-      });
+      // Close first, bounded — then drop. These used to run in parallel,
+      // which raced the DROP's `WITH (FORCE)` against the drain inside
+      // `storage.close()`: FORCE terminates backends server-side, so a
+      // tracked fire-and-forget write (audit row, oauth last-used stamp)
+      // still on the wire died mid-socket-write. The tracker catches the
+      // write's own rejection, but postgres-js leaks a second, unowned
+      // rejection when a socket is killed mid-write, and that one fails
+      // whichever test is running as an unhandled rejection — rarely on a
+      // quiet machine, reliably under load. Sequencing lets the drain
+      // finish before anything is terminated. The bound stays because
+      // pool-close can hang on in-flight SSE / export streams; a close
+      // that overruns it is then cleaned up by the FORCE drop, accepting
+      // the rare leaked rejection in exchange for never wedging afterAll.
       await Promise.race([
-        Promise.all([closePromise, dropPromise]).then(() => undefined),
-        bound,
+        storage.close().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            resolve();
+          }, 5_000);
+        }),
       ]);
+      await clone.drop().catch(() => undefined);
     },
   };
 }
