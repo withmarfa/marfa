@@ -207,6 +207,8 @@ When changing schema:
 
 FTS5 virtual tables stay inline in `sqlite/connection.ts` because the Drizzle schema can't express them. Don't add other inline DDL.
 
+**Two migration-bearing pull requests open at once is a live hazard, and rebasing does not fix it.** The migrator selects pending work by comparing each journal entry's `when` against the newest `created_at` already applied (`Number(lastDbMigration.created_at) < migration.folderMillis`), and it never reads `idx` at all. So the second of two such branches to merge is applied only if its `when` is the later of the two — and if it is not, it is skipped **permanently and silently** on every database that already ran the first, while passing every fresh-database CI job, because an empty database has nothing to compare against. Renumbering the file and the `idx` during a rebase looks like it resolves the collision and does nothing about this. Before merging the second branch, re-stamp its `when` to the current epoch millis; the numbering is for humans, the timestamp is what the migrator obeys.
+
 ### Migrations on the hosted deploy (migrate-then-deploy)
 
 The server does **not** migrate on boot. The hosted Cloudflare Containers deploy applies pending migrations as an explicit step **before** the container rolls — a schema-bearing image started against the old schema crash-loops (Cloudflare surfaces a generic "Failed to start container" 500 that masks the real cause). The canonical ordering is **migrate-then-deploy**.
@@ -298,6 +300,10 @@ Every job runs on the self-hosted pool, so a push costs no hosted minutes. It is
 - **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — re-running until green is how a real defect gets waved through.
 
 `workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the three freshness jobs.
+
+### Test infrastructure owns what it creates
+
+Every machine resource a test or script allocates — a container, a volume, a temp directory, a background process — is released by the same code, in the same place, on every exit path, failure included. The failure mode this exists for is invisible by design: nothing breaks when a resource leaks, so the cost surfaces later as somebody else's slow CI or full disk. `docker rm` on a container that mounted an anonymous volume takes `-v`, or the volume outlives it with nothing left to reference it — that exact miss once leaked several gigabytes a night from this repo's Postgres test scripts. Review criterion: a change that allocates a machine resource states where it is released, and a cleanup path that only runs on success is a leak with extra steps.
 
 ## Deploy
 
