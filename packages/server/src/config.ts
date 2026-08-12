@@ -93,7 +93,6 @@ export interface AppConfig {
   permissionBundles?: PermissionBundle[];
   cdnBaseUrl: string;
   authMode: "hosted" | "keys";
-  versionSnapshotIntervalMs: number;
   rateLimitEnabled: boolean;
   enableHsts: boolean;
   /**
@@ -786,10 +785,6 @@ export function loadConfig(): AppConfig {
     permissionBundles: getPermissionBundles(),
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
-    versionSnapshotIntervalMs: envNumber(
-      process.env.VERSION_SNAPSHOT_INTERVAL_MS,
-      600_000,
-    ),
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
     // RLS enforces by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`.

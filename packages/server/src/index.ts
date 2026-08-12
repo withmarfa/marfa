@@ -95,7 +95,6 @@ async function main() {
     const directUrl = config.databaseUrlDirect ?? "";
     storage = await waitForDb(() =>
       createPgStorage(databaseUrl, {
-        versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
         authMode: config.authMode,
         directConnectionString: directUrl,
         poolMode: config.dbPoolMode,
@@ -114,7 +113,6 @@ async function main() {
   } else {
     storage = await waitForDb(() =>
       createSqliteStorage(config.sqlitePath, {
-        versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
         authMode: config.authMode,
       }),
     );

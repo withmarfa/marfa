@@ -12,6 +12,8 @@
  * The interleave is driven deterministically: a wrapped version store
  * pauses the first update inside its transaction, after the row read, so
  * the test can land a concurrent title edit exactly inside the window.
+ * The pause hangs off the snapshot write, which every property update
+ * performs between reading the row and writing the merge.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../../test-utils.js";
@@ -68,7 +70,7 @@ describe.skipIf(!isPg)("pg update read-modify-write race", () => {
     const gatedVersionStore = new Proxy(baseVersionStore, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
-        if (prop === "getLatestTimestamp" && typeof value === "function") {
+        if (prop === "create" && typeof value === "function") {
           return async (...args: unknown[]) => {
             if (pauseArmed) {
               pauseArmed = false;

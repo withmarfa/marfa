@@ -1,4 +1,3 @@
-import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
 import {
   eq,
@@ -157,7 +156,6 @@ export class SqliteItemStore implements ItemStore {
     private db: DrizzleDb,
     private versionStore: SqliteVersionStore,
     private searchStore: SqliteSearchStore,
-    private versionSnapshotIntervalMs = 600_000,
   ) {}
 
   private spaceWhere(
@@ -654,17 +652,6 @@ export class SqliteItemStore implements ItemStore {
       const now = new Date().toISOString();
       const deviceId = row.device ?? undefined;
 
-      // Read latest version timestamp inside the tx so the gating decision
-      // is consistent with the rest of the update.
-      const latestVersionRow = await tx
-        .select({ created_at: versions.created_at })
-        .from(versions)
-        .where(eq(versions.item_id, id))
-        .orderBy(desc(versions.version))
-        .limit(1)
-        .get();
-      const latestTs = latestVersionRow?.created_at ?? null;
-
       const writeVersion = async (
         propertiesToSnapshot: Record<string, unknown>,
       ) => {
@@ -682,16 +669,15 @@ export class SqliteItemStore implements ItemStore {
       };
 
       if (input.version === undefined || row.version === input.version) {
-        if (
-          shouldCreateVersion(
-            latestTs,
-            this.versionSnapshotIntervalMs,
-            false,
-            input.force_snapshot === true,
-          )
-        ) {
-          await writeVersion(currentProps);
-        }
+        // Every version-incrementing write snapshots the state it is leaving
+        // behind. Three-way merge resolves a stale write against the snapshot
+        // at the version the client sent, so a version that passed without
+        // one can never be merged against: the server declares every
+        // submitted field in conflict instead. A time-based throttle here
+        // made that the common case rather than the rare one, because two
+        // devices editing within the window is ordinary use. Volume is the
+        // version thinner's problem, not this write's.
+        await writeVersion(currentProps);
 
         const merged = mergeUpdateProperties(
           currentProps,
@@ -780,16 +766,9 @@ export class SqliteItemStore implements ItemStore {
         } satisfies ConflictResponse;
       }
 
-      if (
-        shouldCreateVersion(
-          latestTs,
-          this.versionSnapshotIntervalMs,
-          false,
-          input.force_snapshot === true,
-        )
-      ) {
-        await writeVersion(currentProps);
-      }
+      // Same invariant as the fast path above: the version being left behind
+      // is snapshotted so a later stale write can merge against it.
+      await writeVersion(currentProps);
       const newVersion = row.version + 1;
       const newTier = input.tier ?? row.tier;
 

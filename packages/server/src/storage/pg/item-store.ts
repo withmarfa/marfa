@@ -1,4 +1,3 @@
-import { shouldCreateVersion } from "../version-gating.js";
 import {
   eq,
   ne,
@@ -161,7 +160,6 @@ export class PgItemStore implements ItemStore {
     private db: PgDb,
     private versionStore: PgVersionStore,
     private searchStore: PgSearchStore,
-    private versionSnapshotIntervalMs = 600_000,
   ) {}
 
   private spaceWhere(
@@ -662,23 +660,21 @@ export class PgItemStore implements ItemStore {
         const deviceId = row.device ?? undefined;
 
         if (input.version === undefined || row.version === input.version) {
-          const latestTs = await this.versionStore.getLatestTimestamp(id, tx);
-          if (
-            shouldCreateVersion(
-              latestTs,
-              this.versionSnapshotIntervalMs,
-              false,
-              input.force_snapshot === true,
-            )
-          ) {
-            await this.versionStore.create(
-              id,
-              row.version,
-              currentProps,
-              deviceId,
-              tx,
-            );
-          }
+          // Every version-incrementing write snapshots the state it is
+          // leaving behind. Three-way merge resolves a stale write against
+          // the snapshot at the version the client sent, so a version that
+          // passed without one can never be merged against: the server
+          // declares every submitted field in conflict instead. A time-based
+          // throttle here made that the common case rather than the rare
+          // one, because two devices editing within the window is ordinary
+          // use. Volume is the version thinner's problem, not this write's.
+          await this.versionStore.create(
+            id,
+            row.version,
+            currentProps,
+            deviceId,
+            tx,
+          );
 
           const merged = mergeUpdateProperties(
             currentProps,
@@ -771,26 +767,15 @@ export class PgItemStore implements ItemStore {
           } satisfies ConflictResponse;
         }
 
-        const mergeLatestTs = await this.versionStore.getLatestTimestamp(
+        // Same invariant as the fast path above: the version being left
+        // behind is snapshotted so a later stale write can merge against it.
+        await this.versionStore.create(
           id,
+          row.version,
+          currentProps,
+          deviceId,
           tx,
         );
-        if (
-          shouldCreateVersion(
-            mergeLatestTs,
-            this.versionSnapshotIntervalMs,
-            false,
-            input.force_snapshot === true,
-          )
-        ) {
-          await this.versionStore.create(
-            id,
-            row.version,
-            currentProps,
-            deviceId,
-            tx,
-          );
-        }
         const newVersion = row.version + 1;
         const newTier = input.tier ?? row.tier;
 

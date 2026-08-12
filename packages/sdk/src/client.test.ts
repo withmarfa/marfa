@@ -62,7 +62,6 @@ beforeAll(async () => {
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode: "keys",
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,

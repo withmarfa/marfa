@@ -41,7 +41,6 @@ import {
 export async function createSqliteStorage(
   sqlitePath: string,
   options?: {
-    versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
   },
 ): Promise<
@@ -61,12 +60,7 @@ export async function createSqliteStorage(
 
   const versionStore = new SqliteVersionStore(db);
   const searchStore = new SqliteSearchStore(db);
-  const itemStore = new SqliteItemStore(
-    db,
-    versionStore,
-    searchStore,
-    options?.versionSnapshotIntervalMs,
-  );
+  const itemStore = new SqliteItemStore(db, versionStore, searchStore);
   const metadataStore = new SqliteMetadataStore(db);
   const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);

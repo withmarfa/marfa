@@ -529,7 +529,6 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode: "hosted",
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
