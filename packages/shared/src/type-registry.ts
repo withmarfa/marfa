@@ -559,10 +559,23 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       schema = z.email();
       break;
     case "datetime":
-      schema = boundedString(field);
+      // Either a full ISO 8601 instant with a mandatory offset (Z or
+      // ±HH:MM), or a bare calendar date. The offset requirement is what
+      // makes a timed value an instant rather than a wall-clock
+      // ambiguity; the bare date is the all-day shape the event model
+      // ruled explicitly — a whole day has no instant at all, and
+      // `all_day` on the event is what says which reading applies. A
+      // naive local time satisfies neither and is refused, so it cannot
+      // surface later as a parse error in whatever reads it. Measured
+      // against both live databases before enforcement: every stored
+      // value in a declared datetime field already conforms, so no
+      // migration accompanies this.
+      schema = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
       break;
     case "date":
-      schema = boundedString(field);
+      // A calendar date, YYYY-MM-DD. Same reasoning as datetime: the
+      // declared format used to collapse to an unchecked bounded string.
+      schema = z.iso.date();
       break;
     case "enum":
       if (field.enum_values && field.enum_values.length > 0) {
