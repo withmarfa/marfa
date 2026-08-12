@@ -12,7 +12,7 @@ import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
 import type { Hono } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BulkActionWorker } from "./bulk-actions/index.js";
@@ -65,6 +65,10 @@ export interface TestContext {
   storage: Storage;
   blobBackend: BlobBackend;
   adminKey: string;
+  /** The per-context temporary directory holding the sqlite database and
+   *  the blob root. Exposed so a test can assert on its lifetime; removed
+   *  by `cleanup`. */
+  tmpDir: string;
   /** Awaitable cleanup. Callers that don't `await` still trigger the
    *  cleanup (the promise is created immediately), but unawaited
    *  cleanups queue against admin-URL DROPs from other test files and
@@ -459,8 +463,26 @@ export async function createTestContext(
    */
   emailTransport?: EmailTransport,
 ): Promise<TestContext> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
+  try {
+    return await buildTestContext(tmpDir, overrides, emailTransport);
+  } catch (error) {
+    // The only thing that removes this directory on the happy path is the
+    // `cleanup` closure, and that closure does not exist until the build
+    // returns one. A throw anywhere below therefore strands the directory
+    // with nothing left holding a reference to it, so it is removed here
+    // before the failure propagates.
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function buildTestContext(
+  tmpDir: string,
+  overrides?: Partial<AppConfig>,
+  emailTransport?: EmailTransport,
+): Promise<TestContext> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const blobPath = join(tmpDir, "blobs");
 
   const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
@@ -552,15 +574,24 @@ export async function createTestContext(
     storage,
     blobBackend,
     adminKey: rawKey,
+    tmpDir,
     cleanup: async () => {
-      if (pgCleanup) {
-        await pgCleanup();
-      } else {
-        try {
-          await storage.close();
-        } catch {
-          // Best-effort.
+      try {
+        if (pgCleanup) {
+          await pgCleanup();
+        } else {
+          try {
+            await storage.close();
+          } catch {
+            // Best-effort.
+          }
         }
+      } finally {
+        // In `finally` because a failed close must not strand the
+        // directory: the database file inside it is unreachable either
+        // way, and one leaked directory per context is what filled a
+        // disk with six hundred thousand of them.
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   };

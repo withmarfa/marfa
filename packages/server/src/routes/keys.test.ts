@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -161,20 +161,24 @@ describe("bootstrap sentinel", () => {
   async function freshApp(): Promise<{
     app: ReturnType<typeof createApp>;
     storage: Storage;
+    /** Removed by the caller alongside `storage.close()`; nothing else
+     *  removes it. */
+    tmpDir: string;
   }> {
     const dialect = process.env.DB_DIALECT ?? "sqlite";
     let storage: Storage;
     let blobPath: string;
+    let tmpDir: string;
     if (dialect === "pg") {
       const pg = await createPgTestStorage();
       storage = pg.storage;
       // pg.cleanup leaks here intentionally — `freshApp` doesn't have
       // a returned-cleanup contract with its callers; the leaked clone
       // is mopped up by the next test-run's dropStaleClones pass.
-      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-pg-"));
+      tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-pg-"));
       blobPath = join(tmpDir, "blobs");
     } else {
-      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
+      tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
       storage = await createSqliteStorage(join(tmpDir, "test.db"));
       blobPath = join(tmpDir, "blobs");
     }
@@ -220,11 +224,11 @@ describe("bootstrap sentinel", () => {
       rateLimitWindowMs: 60_000,
       mcpEnabled: false,
     });
-    return { app, storage };
+    return { app, storage, tmpDir };
   }
 
   it("admits the first unauthenticated POST /keys as bootstrap", async () => {
-    const { app, storage } = await freshApp();
+    const { app, storage, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
         body: {
@@ -266,6 +270,7 @@ describe("bootstrap sentinel", () => {
       );
     } finally {
       await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
@@ -273,7 +278,7 @@ describe("bootstrap sentinel", () => {
     // The sentinel claim is irreversible. If a request that can never
     // mint consumed it, a single stray field would lock a brand-new
     // instance out of bootstrap permanently.
-    const { app, storage } = await freshApp();
+    const { app, storage, tmpDir } = await freshApp();
     try {
       const rejected = await request(app, "POST", "/keys", {
         body: {
@@ -293,6 +298,7 @@ describe("bootstrap sentinel", () => {
       expect(await storage.settings.get("bootstrapped")).toBe("true");
     } finally {
       await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
@@ -302,7 +308,7 @@ describe("bootstrap sentinel", () => {
     // branch. Avoids depending on the shared `ctx` because freshApp()
     // tests under PG truncate the shared container, which would wipe
     // the ctx's admin key and sentinel between tests.
-    const { app, storage } = await freshApp();
+    const { app, storage, tmpDir } = await freshApp();
     try {
       const bootstrapRes = await request(app, "POST", "/keys", {
         body: {
@@ -354,11 +360,12 @@ describe("bootstrap sentinel", () => {
       ).toBe(false);
     } finally {
       await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("does NOT re-open bootstrap after every key is revoked", async () => {
-    const { app, storage } = await freshApp();
+    const { app, storage, tmpDir } = await freshApp();
     try {
       // First unauthenticated POST succeeds as bootstrap.
       const firstRes = await request(app, "POST", "/keys", {
@@ -394,11 +401,12 @@ describe("bootstrap sentinel", () => {
       expect(secondRes.status).toBe(401);
     } finally {
       await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("concurrent unauthenticated POST /keys mints exactly one admin key", async () => {
-    const { app, storage } = await freshApp();
+    const { app, storage, tmpDir } = await freshApp();
     try {
       const N = 8;
       const bodies = Array.from({ length: N }, (_, i) => ({
@@ -425,6 +433,7 @@ describe("bootstrap sentinel", () => {
       expect(keys[0]?.role).toBe("admin");
     } finally {
       await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
@@ -438,8 +447,9 @@ describe("bootstrap sentinel", () => {
   it.skipIf(SKIP_SQLITE_ONLY)(
     "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (sqlite)",
     async () => {
-      const { storage } = (await freshApp()) as unknown as {
+      const { storage, tmpDir } = (await freshApp()) as unknown as {
         storage: Awaited<ReturnType<typeof createSqliteStorage>>;
+        tmpDir: string;
       };
       try {
         const rows = (await storage.__sqliteAll(
@@ -456,6 +466,7 @@ describe("bootstrap sentinel", () => {
         expect(rows.every((r) => r.created_at > 0)).toBe(true);
       } finally {
         await storage.close();
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   );
@@ -489,6 +500,7 @@ describe("bootstrap sentinel", () => {
         expect(after[0]?.n ?? 0).toBe(beforeCount);
       } finally {
         await reopened.close();
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   );
@@ -496,8 +508,9 @@ describe("bootstrap sentinel", () => {
   it.skipIf(SKIP_SQLITE_ONLY)(
     "bootstrap creates idx_api_keys_connection_id (sqlite)",
     async () => {
-      const { storage } = (await freshApp()) as unknown as {
+      const { storage, tmpDir } = (await freshApp()) as unknown as {
         storage: Awaited<ReturnType<typeof createSqliteStorage>>;
+        tmpDir: string;
       };
       try {
         const indexes = (await storage.__sqliteAll(
@@ -518,6 +531,7 @@ describe("bootstrap sentinel", () => {
         expect(usesIndex).toBe(true);
       } finally {
         await storage.close();
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   );
