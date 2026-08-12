@@ -793,6 +793,12 @@ export const auth_account = pgTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
+    // 1.7 keys account lookups on (issuer, account_id): local credential
+    // accounts carry `local:credential`, OAuth identities a namespaced
+    // provider form. Nullable so a 1.6 build can still insert during the
+    // deploy window; the migration backfills, and the deploy re-runs the
+    // backfill after the roll for any row minted inside the window.
+    issuer: text("issuer"),
     userId: text("user_id")
       .notNull()
       .references(() => auth_user.id, { onDelete: "cascade" }),
@@ -814,6 +820,10 @@ export const auth_account = pgTable(
     index("idx_auth_account_user_id").on(table.userId),
     uniqueIndex("idx_auth_account_provider").on(
       table.providerId,
+      table.accountId,
+    ),
+    uniqueIndex("idx_auth_account_issuer_account_id").on(
+      table.issuer,
       table.accountId,
     ),
   ],
@@ -866,6 +876,19 @@ export const auth_oauth_client = pgTable(
     // insert and return strings on read, which breaks the plugin's
     // `client.redirectUris?.find(...)` callers with a TypeError.
     scopes: text("scopes").array(),
+    // 1.7 additions, nullable so a 1.6 build serves this schema without
+    // noticing. The library reads its own registration surface from
+    // these; nothing in Marfa writes them yet.
+    applicationType: text("application_type"),
+    backchannelLogoutSessionRequired: boolean(
+      "backchannel_logout_session_required",
+    ),
+    backchannelLogoutUri: text("backchannel_logout_uri"),
+    clientCredentialsScopes: text("client_credentials_scopes").array(),
+    clientDiscoveryId: text("client_discovery_id"),
+    dpopBoundAccessTokens: boolean("dpop_bound_access_tokens"),
+    jwks: text("jwks"),
+    jwksUri: text("jwks_uri"),
     userId: text("user_id").references(() => auth_user.id, {
       onDelete: "cascade",
     }),
@@ -923,11 +946,26 @@ export const auth_oauth_refresh_token = pgTable(
     // Plugin-declared `string[]` field — see the comment on
     // `auth_oauth_client.scopes` for the rationale.
     scopes: text("scopes").array().notNull(),
+    // 1.7 additions, all nullable so a 1.6 build serves this schema
+    // without noticing. The rotation columns carry the library's own
+    // replay handling for a rotated token presented twice.
+    authorizationCodeId: text("authorization_code_id"),
+    confirmation: jsonb("confirmation"),
+    requestedUserInfoClaims: text("requested_user_info_claims").array(),
+    resources: text("resources").array(),
+    rotatedAt: timestamp("rotated_at", { mode: "date" }),
+    rotationReplayExpiresAt: timestamp("rotation_replay_expires_at", {
+      mode: "date",
+    }),
+    rotationReplayResponse: text("rotation_replay_response"),
   },
   (table) => [
     index("idx_auth_oauth_refresh_token_token").on(table.token),
     index("idx_auth_oauth_refresh_token_client_id").on(table.clientId),
     index("idx_auth_oauth_refresh_token_user_id").on(table.userId),
+    index("idx_auth_oauth_refresh_token_authorization_code_id").on(
+      table.authorizationCodeId,
+    ),
   ],
 );
 
@@ -956,11 +994,22 @@ export const auth_oauth_access_token = pgTable(
     // Plugin-declared `string[]` field — see the comment on
     // `auth_oauth_client.scopes` for the rationale.
     scopes: text("scopes").array().notNull(),
+    // 1.7 additions, all nullable so a 1.6 build serves this schema
+    // without noticing. `resources` is what binds a token to the
+    // audience its grant covered.
+    authorizationCodeId: text("authorization_code_id"),
+    confirmation: jsonb("confirmation"),
+    requestedUserInfoClaims: text("requested_user_info_claims").array(),
+    resources: text("resources").array(),
+    revoked: timestamp("revoked", { mode: "date" }),
   },
   (table) => [
     uniqueIndex("idx_auth_oauth_access_token_token").on(table.token),
     index("idx_auth_oauth_access_token_client_id").on(table.clientId),
     index("idx_auth_oauth_access_token_user_id").on(table.userId),
+    index("idx_auth_oauth_access_token_authorization_code_id").on(
+      table.authorizationCodeId,
+    ),
   ],
 );
 
@@ -978,6 +1027,10 @@ export const auth_oauth_consent = pgTable(
     scopes: text("scopes").array().notNull(),
     createdAt: timestamp("created_at", { mode: "date" }),
     updatedAt: timestamp("updated_at", { mode: "date" }),
+    // 1.7 additions, nullable so a 1.6 build serves this schema without
+    // noticing.
+    requestedUserInfoClaims: text("requested_user_info_claims").array(),
+    resources: text("resources").array(),
   },
   (table) => [
     // One consent row per user-client pair. The OAuth Provider plugin's
@@ -1001,6 +1054,12 @@ export const auth_jwks = pgTable("auth_jwks", {
   privateKey: text("private_key").notNull(),
   createdAt: timestamp("created_at", { mode: "date" }).notNull(),
   expiresAt: timestamp("expires_at", { mode: "date" }),
+  // 1.7 records which algorithm a key pair was minted for, and the curve
+  // for EC/OKP keys, so verification can select among heterogeneous keys.
+  // Nullable: rows minted under 1.6 predate the columns, and the library
+  // reads null as its configured default algorithm.
+  alg: text("alg"),
+  crv: text("crv"),
 });
 
 // Passkey credentials (one per registered authenticator).

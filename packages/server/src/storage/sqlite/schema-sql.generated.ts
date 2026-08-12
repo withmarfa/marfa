@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS \`auth_jwks\` (
 	\`private_key\` text NOT NULL,
 	\`created_at\` integer NOT NULL,
 	\`expires_at\` integer
-);
+, \`alg\` text, \`crv\` text);
 
 CREATE TABLE IF NOT EXISTS "oauth_device_codes" (
   \`id\` text PRIMARY KEY NOT NULL,
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS \`auth_account\` (
 	\`scope\` text,
 	\`password\` text,
 	\`created_at\` integer NOT NULL,
-	\`updated_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL, \`issuer\` text,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
 
@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_client\` (
 	\`type\` text,
 	\`require_pkce\` integer,
 	\`reference_id\` text,
-	\`metadata\` text,
+	\`metadata\` text, \`application_type\` text, \`backchannel_logout_session_required\` integer, \`backchannel_logout_uri\` text, \`client_credentials_scopes\` text, \`client_discovery_id\` text, \`dpop_bound_access_tokens\` integer, \`jwks\` text, \`jwks_uri\` text,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
 
@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_refresh_token\` (
 	\`created_at\` integer,
 	\`revoked\` integer,
 	\`auth_time\` integer,
-	\`scopes\` text NOT NULL,
+	\`scopes\` text NOT NULL, \`authorization_code_id\` text, \`confirmation\` text, \`requested_user_info_claims\` text, \`resources\` text, \`rotated_at\` integer, \`rotation_replay_expires_at\` integer, \`rotation_replay_response\` text,
 	FOREIGN KEY (\`session_id\`) REFERENCES \`auth_session\`(\`id\`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
@@ -382,7 +382,7 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_access_token\` (
 	\`refresh_id\` text,
 	\`expires_at\` integer,
 	\`created_at\` integer,
-	\`scopes\` text NOT NULL,
+	\`scopes\` text NOT NULL, \`authorization_code_id\` text, \`confirmation\` text, \`requested_user_info_claims\` text, \`resources\` text, \`revoked\` integer,
 	FOREIGN KEY (\`session_id\`) REFERENCES \`auth_session\`(\`id\`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (\`refresh_id\`) REFERENCES \`auth_oauth_refresh_token\`(\`id\`) ON UPDATE no action ON DELETE cascade
@@ -395,7 +395,7 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_consent\` (
 	\`reference_id\` text,
 	\`scopes\` text NOT NULL,
 	\`created_at\` integer,
-	\`updated_at\` integer,
+	\`updated_at\` integer, \`requested_user_info_claims\` text, \`resources\` text,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
 
@@ -454,11 +454,17 @@ CREATE INDEX IF NOT EXISTS \`idx_audit_log_space_id\` ON \`audit_log\` (\`space_
 
 CREATE INDEX IF NOT EXISTS \`idx_audit_log_timestamp\` ON \`audit_log\` (\`timestamp\`);
 
+CREATE UNIQUE INDEX IF NOT EXISTS \`idx_auth_account_issuer_account_id\`
+  ON \`auth_account\` (\`issuer\`, \`account_id\`);
+
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_auth_account_provider\` ON \`auth_account\` (\`provider_id\`,\`account_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_account_user_id\` ON \`auth_account\` (\`user_id\`);
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`auth_oauth_access_token_token_unique\` ON \`auth_oauth_access_token\` (\`token\`);
+
+CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_authorization_code_id\`
+  ON \`auth_oauth_access_token\` (\`authorization_code_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_client_id\` ON \`auth_oauth_access_token\` (\`client_id\`);
 
@@ -478,6 +484,9 @@ CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_consent_reference_id\` ON \`auth_oau
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`uq_auth_oauth_consent_client_user\`
   ON \`auth_oauth_consent\` (\`client_id\`, \`user_id\`);
+
+CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_authorization_code_id\`
+  ON \`auth_oauth_refresh_token\` (\`authorization_code_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_client_id\` ON \`auth_oauth_refresh_token\` (\`client_id\`);
 

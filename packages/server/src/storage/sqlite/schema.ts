@@ -733,6 +733,9 @@ export const auth_account = sqliteTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     providerId: text("provider_id").notNull(),
+    // 1.7 keys account lookups on (issuer, account_id) — see the pg
+    // sibling for the reasoning. Nullable for the deploy window.
+    issuer: text("issuer"),
     userId: text("user_id")
       .notNull()
       .references(() => auth_user.id, { onDelete: "cascade" }),
@@ -754,6 +757,10 @@ export const auth_account = sqliteTable(
     index("idx_auth_account_user_id").on(table.userId),
     uniqueIndex("idx_auth_account_provider").on(
       table.providerId,
+      table.accountId,
+    ),
+    uniqueIndex("idx_auth_account_issuer_account_id").on(
+      table.issuer,
       table.accountId,
     ),
   ],
@@ -799,6 +806,21 @@ export const auth_oauth_client = sqliteTable(
     subjectType: text("subject_type"),
     /** JSON-encoded string[] — Better Auth adapter serializes */
     scopes: text("scopes"),
+    // 1.7 additions, nullable so a 1.6 build serves this schema without
+    // noticing. Arrays store as text on this dialect.
+    applicationType: text("application_type"),
+    backchannelLogoutSessionRequired: integer(
+      "backchannel_logout_session_required",
+      { mode: "boolean" },
+    ),
+    backchannelLogoutUri: text("backchannel_logout_uri"),
+    clientCredentialsScopes: text("client_credentials_scopes"),
+    clientDiscoveryId: text("client_discovery_id"),
+    dpopBoundAccessTokens: integer("dpop_bound_access_tokens", {
+      mode: "boolean",
+    }),
+    jwks: text("jwks"),
+    jwksUri: text("jwks_uri"),
     userId: text("user_id").references(() => auth_user.id, {
       onDelete: "cascade",
     }),
@@ -854,11 +876,25 @@ export const auth_oauth_refresh_token = sqliteTable(
     revoked: integer("revoked", { mode: "timestamp" }),
     authTime: integer("auth_time", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
+    // 1.7 additions, all nullable so a 1.6 build serves this schema
+    // without noticing. Arrays and json store as text on this dialect.
+    authorizationCodeId: text("authorization_code_id"),
+    confirmation: text("confirmation"),
+    requestedUserInfoClaims: text("requested_user_info_claims"),
+    resources: text("resources"),
+    rotatedAt: integer("rotated_at", { mode: "timestamp" }),
+    rotationReplayExpiresAt: integer("rotation_replay_expires_at", {
+      mode: "timestamp",
+    }),
+    rotationReplayResponse: text("rotation_replay_response"),
   },
   (table) => [
     index("idx_auth_oauth_refresh_token_token").on(table.token),
     index("idx_auth_oauth_refresh_token_client_id").on(table.clientId),
     index("idx_auth_oauth_refresh_token_user_id").on(table.userId),
+    index("idx_auth_oauth_refresh_token_authorization_code_id").on(
+      table.authorizationCodeId,
+    ),
   ],
 );
 
@@ -885,11 +921,21 @@ export const auth_oauth_access_token = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }),
     scopes: text("scopes").notNull(),
+    // 1.7 additions, all nullable so a 1.6 build serves this schema
+    // without noticing. Arrays and json store as text on this dialect.
+    authorizationCodeId: text("authorization_code_id"),
+    confirmation: text("confirmation"),
+    requestedUserInfoClaims: text("requested_user_info_claims"),
+    resources: text("resources"),
+    revoked: integer("revoked", { mode: "timestamp" }),
   },
   (table) => [
     uniqueIndex("idx_auth_oauth_access_token_token").on(table.token),
     index("idx_auth_oauth_access_token_client_id").on(table.clientId),
     index("idx_auth_oauth_access_token_user_id").on(table.userId),
+    index("idx_auth_oauth_access_token_authorization_code_id").on(
+      table.authorizationCodeId,
+    ),
   ],
 );
 
@@ -905,6 +951,9 @@ export const auth_oauth_consent = sqliteTable(
     scopes: text("scopes").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }),
     updatedAt: integer("updated_at", { mode: "timestamp" }),
+    // 1.7 additions, nullable; arrays store as text on this dialect.
+    requestedUserInfoClaims: text("requested_user_info_claims"),
+    resources: text("resources"),
   },
   (table) => [
     // One consent row per user-client pair. The OAuth Provider plugin's
@@ -930,6 +979,9 @@ export const auth_jwks = sqliteTable("auth_jwks", {
   privateKey: text("private_key").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp" }),
+  // 1.7 key-algorithm columns — see the pg sibling for the reasoning.
+  alg: text("alg"),
+  crv: text("crv"),
 });
 
 // Passkey credentials (one per registered authenticator).
