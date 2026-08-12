@@ -96,6 +96,16 @@ export const items = pgTable(
     device: text("device"),
     capture_latitude: doublePrecision("capture_latitude"),
     capture_longitude: doublePrecision("capture_longitude"),
+    // The `starts_at` / `ends_at` properties as normalized UTC instants,
+    // maintained by the write path. Stored times are instants written in
+    // whatever offset their upstream used, so comparing them as strings
+    // orders `+02:00` against `Z` wrongly and no window predicate can be
+    // pushed into SQL. These carry the exact shape
+    // `Date.prototype.toISOString()` emits, whose fixed width is what
+    // makes lexical order and instant order the same thing. Nullable
+    // because most items are not events.
+    starts_at_utc: text("starts_at_utc"),
+    ends_at_utc: text("ends_at_utc"),
     // Materialized tsvector populated by the search store at write time.
     // Nullable so backfilled rows can be detected mid-migration. Indexed
     // via GIN below.
@@ -130,6 +140,12 @@ export const items = pgTable(
     index("idx_items_source_id_ci_prefix")
       .on(table.space_id, sql`LOWER(${table.source_id}) text_pattern_ops`)
       .where(sql`source_id IS NOT NULL`),
+    // Serves the calendar's window scan: a space, then a range over the
+    // normalized start instant. Partial because only events carry one,
+    // which keeps the index to the calendar rather than the corpus.
+    index("idx_items_starts_at_utc")
+      .on(table.space_id, table.starts_at_utc)
+      .where(sql`starts_at_utc IS NOT NULL`),
     // GIN index on the materialized tsvector. Drizzle-kit emits a
     // standard `CREATE INDEX ... USING gin` statement for this.
     index("idx_items_search_vector").using("gin", table.search_vector),

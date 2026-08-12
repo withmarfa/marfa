@@ -81,6 +81,16 @@ export const items = sqliteTable(
     device: text("device"),
     capture_latitude: real("capture_latitude"),
     capture_longitude: real("capture_longitude"),
+    // The `starts_at` / `ends_at` properties as normalized UTC instants,
+    // maintained by the write path. Stored times are instants written in
+    // whatever offset their upstream used, so comparing them as strings
+    // orders `+02:00` against `Z` wrongly and no window predicate can be
+    // pushed into SQL. These carry the exact shape
+    // `Date.prototype.toISOString()` emits, whose fixed width is what
+    // makes lexical order and instant order the same thing. Nullable
+    // because most items are not events.
+    starts_at_utc: text("starts_at_utc"),
+    ends_at_utc: text("ends_at_utc"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
@@ -106,6 +116,12 @@ export const items = sqliteTable(
     index("idx_items_source_id_prefix")
       .on(table.space_id, sql`${table.source_id} COLLATE NOCASE`)
       .where(sql`source_id IS NOT NULL`),
+    // Serves the calendar's window scan: a space, then a range over the
+    // normalized start instant. Partial because only events carry one,
+    // which keeps the index to the calendar rather than the corpus.
+    index("idx_items_starts_at_utc")
+      .on(table.space_id, table.starts_at_utc)
+      .where(sql`starts_at_utc IS NOT NULL`),
     // Serves the enrichment candidate query, which runs on a timer forever
     // and must cost nothing once a corpus is extracted. Partial: only file
     // items with a blob are ever candidates, ordered as the query reads

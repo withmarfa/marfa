@@ -22,7 +22,7 @@ import {
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema } from "./_schemas.js";
 import {
@@ -57,15 +57,16 @@ export const MAX_OCCURRENCES = 5000;
 const EVENT_PAGE_SIZE = 200;
 
 /**
- * Ceiling on how many event rows one request will read.
+ * Ceiling on how many event rows one request will read, across every
+ * pass it makes.
  *
- * A window cannot narrow the read: a rule written in 2019 produces
- * occurrences in 2026, so every series has to be considered whatever the
- * window is, and the stored times are not comparable in SQL — they are
- * instants written in whatever offset their upstream used, so a string
- * comparison against the window would order `+01:00` against `Z`
- * wrongly. Until a normalized instant column exists this route reads the
- * calendar and filters in memory, and the only honest bound is a loud one.
+ * The window now narrows the standalone read in SQL: `starts_at_utc`
+ * carries each stored time as a normalized instant, so a range over it
+ * is a range over time. Two of the three passes still cannot be
+ * windowed, and this is the backstop for those. A rule written in 2019
+ * produces occurrences in 2026, so every series has to be considered
+ * whatever the window is; an exception moved outside the window still
+ * shadows the slot it left inside it. Both are read whole.
  *
  * It refuses rather than truncating, matching `MAX_OCCURRENCES`. Reading
  * one page and stopping is what this replaces: it returned 200 with an
@@ -80,9 +81,21 @@ export const MAX_EVENTS_SCANNED = 20000;
  */
 const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
 
+/** Rows read so far by one request, shared across its passes so the
+ *  ceiling bounds the request rather than each pass separately. */
+interface ScanBudget {
+  scanned: number;
+}
+
+/** The storage-side narrowing one pass applies on top of type and state. */
+type EventScanNarrowing = Pick<
+  ItemFilters,
+  "hasProperty" | "startsAtUtcFrom" | "startsAtUtcTo"
+>;
+
 /**
- * Every active event of the named types in the space, walked page by
- * page rather than one page deep.
+ * The active events of the named types that match one pass's narrowing,
+ * walked page by page rather than one page deep.
  *
  * The ceiling is a parameter rather than a closed-over constant so it is
  * reachable: a backstop nothing can drive is a backstop nobody knows the
@@ -91,11 +104,13 @@ const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
  * read this replaces answered 200 with a calendar missing whatever sat
  * past row 200, which is the failure a person cannot see.
  */
-export async function gatherEventItems(
+async function scanEvents(
   storage: Storage,
   spaceId: string | undefined,
   types: readonly string[],
   maxScanned: number,
+  budget: ScanBudget,
+  narrowing: EventScanNarrowing = {},
 ): Promise<Item[]> {
   const items: Item[] = [];
   for (const type of types) {
@@ -106,10 +121,12 @@ export async function gatherEventItems(
         type,
         state: "active",
         limit: EVENT_PAGE_SIZE,
+        ...narrowing,
         ...(cursor !== undefined ? { cursor } : {}),
       });
       items.push(...page.data);
-      if (items.length > maxScanned) {
+      budget.scanned += page.data.length;
+      if (budget.scanned > maxScanned) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `This space holds more than ${String(maxScanned)} events; the calendar cannot be assembled in one read`,
@@ -120,6 +137,21 @@ export async function gatherEventItems(
     } while (cursor !== undefined);
   }
   return items;
+}
+
+/**
+ * Every active event of the named types in the space, unnarrowed.
+ *
+ * The unbounded walk the ceiling exists to bound, exposed so the ceiling
+ * itself is reachable from a test.
+ */
+export async function gatherEventItems(
+  storage: Storage,
+  spaceId: string | undefined,
+  types: readonly string[],
+  maxScanned: number,
+): Promise<Item[]> {
+  return await scanEvents(storage, spaceId, types, maxScanned, { scanned: 0 });
 }
 
 const OccurrenceSchema = z.object({
@@ -283,11 +315,51 @@ export function occurrenceRoutes(storage: Storage) {
       );
     }
 
-    const items = await gatherEventItems(
+    // Three passes, because the calendar is three different questions
+    // and only one of them is about the window.
+    //
+    // The ceiling is shared across all three: it bounds the request, not
+    // each pass, so a space cannot slip past it by splitting its events
+    // between them.
+    const budget: ScanBudget = { scanned: 0 };
+
+    // Series. Unwindowed by necessity — a rule written years ago
+    // produces occurrences in any window, so the window says nothing
+    // about which rules matter.
+    const seriesItems = await scanEvents(
       storage,
       spaceId,
       wanted,
       MAX_EVENTS_SCANNED,
+      budget,
+      { hasProperty: "recurrence" },
+    );
+
+    // Exceptions. Unwindowed for the opposite reason — an exception
+    // whose own time was moved outside the window still shadows the
+    // occurrence it replaced inside it, so narrowing this pass would put
+    // a ghost back on the calendar at a slot nobody is at.
+    const exceptionItems = await scanEvents(
+      storage,
+      spaceId,
+      wanted,
+      MAX_EVENTS_SCANNED,
+      budget,
+      { hasProperty: "original_starts_at" },
+    );
+
+    // Standalone events, narrowed to the window in SQL against the
+    // normalized instant column.
+    const windowItems = await scanEvents(
+      storage,
+      spaceId,
+      wanted,
+      MAX_EVENTS_SCANNED,
+      budget,
+      {
+        startsAtUtcFrom: from.toISOString(),
+        startsAtUtcTo: to.toISOString(),
+      },
     );
 
     // An exception names its series through parent-of, so the series is
@@ -298,9 +370,6 @@ export function occurrenceRoutes(storage: Storage) {
     // and an exception is an ordinary shape — a calendar where several
     // hundred meetings have each been moved once is a busy calendar, not
     // a pathological one.
-    const exceptionItems = items.filter(
-      (item) => stringProp(item, "original_starts_at") !== undefined,
-    );
     const exceptionsBySeries = new Map<string, RecurrenceException[]>();
     if (exceptionItems.length > 0) {
       const parentsByException = await storage.edges.listToTargetsBatched(
@@ -322,7 +391,14 @@ export function occurrenceRoutes(storage: Storage) {
       }
     }
 
-    const byId = new Map(items.map((item) => [item.id, item]));
+    // One row can answer more than one pass — a series whose own start
+    // falls in the window is in the first and the third — so the three
+    // results are folded into one map keyed on id. Everything below
+    // reads a row through this, so nothing is expanded or shown twice.
+    const byId = new Map<string, Item>();
+    for (const item of [...seriesItems, ...exceptionItems, ...windowItems]) {
+      byId.set(item.id, item);
+    }
     const results: {
       starts_at: string;
       ends_at?: string;
@@ -339,7 +415,10 @@ export function occurrenceRoutes(storage: Storage) {
 
     // Series first, standalone second, because only the expansion knows
     // which stored exceptions it consumed.
-    for (const item of items) {
+    const expandedSeries = new Set<string>();
+    for (const item of seriesItems) {
+      if (expandedSeries.has(item.id)) continue;
+      expandedSeries.add(item.id);
       const recurrence = recurrenceProp(item);
       const startsAt = stringProp(item, "starts_at");
       if (recurrence.length === 0 || startsAt === undefined) continue;
@@ -402,7 +481,14 @@ export function occurrenceRoutes(storage: Storage) {
       }
     }
 
-    for (const item of items) {
+    const shownStandalone = new Set<string>();
+    for (const item of windowItems) {
+      if (shownStandalone.has(item.id)) continue;
+      shownStandalone.add(item.id);
+
+      // A row carrying a rule was already read and expanded by the first
+      // pass; the window scan reaches it too, because a series' own
+      // start is an ordinary start.
       if (recurrenceProp(item).length > 0) continue;
 
       // An exception an expansion consumed is already shown through its
@@ -412,6 +498,10 @@ export function occurrenceRoutes(storage: Storage) {
       const startsAt = stringProp(item, "starts_at");
       if (startsAt === undefined) continue;
       const at = new Date(startsAt);
+      // The SQL does the narrowing now. This stays as a belt: it is the
+      // one place the normalized column and the stored value are read
+      // against each other, so a column that ever disagreed with its row
+      // shows up as a missing event rather than a wrong one.
       if (Number.isNaN(at.getTime()) || at < from || at >= to) continue;
       const endsAt = stringProp(item, "ends_at");
       results.push({

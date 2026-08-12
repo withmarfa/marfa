@@ -127,6 +127,23 @@ export interface ItemFilters {
   direction?: SortDirection;
   since?: string;
   until?: string;
+  /** Inclusive lower bound on the normalized `starts_at_utc` column, and
+   *  so implicitly `starts_at_utc IS NOT NULL`. Serves the calendar's
+   *  window scan: the column is written in the exact shape
+   *  `toISOString()` emits, which is what lets a text comparison answer a
+   *  question about instants. Internal — not reachable through the
+   *  public `?filter=` grammar. */
+  startsAtUtcFrom?: string;
+  /** Exclusive upper bound on `starts_at_utc`. Exclusive because a
+   *  calendar window's end belongs to the next window. */
+  startsAtUtcTo?: string;
+  /** Restrict to rows carrying this top-level property key. Serves the
+   *  calendar's series and exception discovery, both of which have to
+   *  read every matching row whatever window was asked for: an old rule
+   *  produces occurrences in any window, and an exception moved outside
+   *  one still shadows the slot it left inside it. Internal — not
+   *  reachable through the public `?filter=` grammar. */
+  hasProperty?: string;
   limit?: number;
   cursor?: string;
 }

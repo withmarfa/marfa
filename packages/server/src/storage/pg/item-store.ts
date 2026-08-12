@@ -33,6 +33,7 @@ import {
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
+import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
   CreateItemInput,
@@ -273,6 +274,7 @@ export class PgItemStore implements ItemStore {
             device: input.device,
             capture_latitude: input.capture_latitude,
             capture_longitude: input.capture_longitude,
+            ...instantColumnValues(properties),
           });
         } catch (err) {
           if (isPrimaryKeyViolation(err)) {
@@ -475,6 +477,24 @@ export class PgItemStore implements ItemStore {
       conditions.push(
         sql`COALESCE(${items.timestamp}, ${items.created_at}) <= ${filters.until}`,
       );
+    }
+
+    // The normalized instant columns compare as text because they are
+    // written in one fixed-width shape, so the calendar's window is a
+    // range scan rather than a read of every event.
+    if (filters.startsAtUtcFrom !== undefined) {
+      conditions.push(
+        sql`${items.starts_at_utc} >= ${filters.startsAtUtcFrom}`,
+      );
+    }
+    if (filters.startsAtUtcTo !== undefined) {
+      conditions.push(sql`${items.starts_at_utc} < ${filters.startsAtUtcTo}`);
+    }
+
+    if (filters.hasProperty !== undefined) {
+      // jsonb's own key-exists operator. The key is a bound parameter, so
+      // a caller-supplied name can never reach the statement text.
+      conditions.push(sql`${items.properties} ? ${filters.hasProperty}`);
     }
 
     if (filters.tags && filters.tags.length > 0) {
@@ -686,6 +706,9 @@ export class PgItemStore implements ItemStore {
 
           const setClause: Record<string, unknown> = {
             properties: merged,
+            // Unconditional, so a patch that removes `starts_at` nulls
+            // the column rather than leaving the last value behind.
+            ...instantColumnValues(merged),
             version: newVersion,
             updated_at: now,
             ...(input.tier !== undefined && { tier: input.tier }),
@@ -781,6 +804,7 @@ export class PgItemStore implements ItemStore {
 
         const mergeSet: Record<string, unknown> = {
           properties: result.merged,
+          ...instantColumnValues(result.merged),
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),

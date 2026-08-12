@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS "items" (
 	\`capture_latitude\` real,
 	\`capture_longitude\` real,
 	\`tier\` text DEFAULT 'library' NOT NULL
-);
+, "starts_at_utc" text, "ends_at_utc" text);
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
 
@@ -549,6 +549,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\`
 CREATE INDEX IF NOT EXISTS "idx_items_source_id_prefix"
   ON "items" ("space_id", "source_id" COLLATE NOCASE)
   WHERE "source_id" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS "idx_items_starts_at_utc"
+  ON "items" ("space_id", "starts_at_utc")
+  WHERE starts_at_utc IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS \`idx_items_state\` ON \`items\` (\`state\`);
 
