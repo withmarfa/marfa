@@ -136,6 +136,33 @@ describe("extraction", () => {
     expect(found.results.map((r) => r.item.id)).toContain(id);
   });
 
+  // A PDF is the one uploaded shape that reaches a reader with a history of
+  // arbitrary-execution advisories, and the version behind it is forced by an
+  // override rather than chosen by the parsing library. This drives the whole
+  // path a caller's document actually takes — upload, sweep, extract, find by
+  // content — so a reader that resolved wrongly fails here rather than in
+  // production.
+  it("puts an uploaded pdf's text on the item and finds it by search", async () => {
+    const bytes = await fixture("multipage.pdf");
+    const mime = "application/pdf";
+    const id = await createFileItem(await seedBlob(bytes, mime), mime);
+
+    const result = await sweeper().runOnce();
+    expect(result).toEqual({ extracted: 1, skipped: 0, failed: 0 });
+
+    const props = await readItem(id);
+    expect(String(props.extracted_text)).toContain("page two marker");
+
+    const search = await request(ctx.app, "GET", "/search?q=quokkapdf", {
+      key: ctx.adminKey,
+    });
+    expect(search.status).toBe(200);
+    const found = (await search.json()) as {
+      results: { item: { id: string } }[];
+    };
+    expect(found.results.map((r) => r.item.id)).toContain(id);
+  });
+
   it("extracts from a subtype of file", async () => {
     const bytes = await fixture("sample.png");
     const ocr = new FakeOcr(() => Promise.resolve("subtype marker text"));
