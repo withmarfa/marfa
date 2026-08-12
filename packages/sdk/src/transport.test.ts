@@ -68,7 +68,11 @@ describe("HttpTransport — timeout wiring", () => {
 
     const transport = makeTransport(mockFetch, 50);
 
-    const start = Date.now();
+    // No wall-clock bound: the rejection shape is itself the proof that
+    // the timeout beat the response, because the mock resolves with a
+    // 200 unless the abort lands first. Asserting elapsed time on top
+    // measured the machine's scheduling margin, not the transport, and
+    // failed under load by a millisecond.
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof MarfaError &&
@@ -77,8 +81,6 @@ describe("HttpTransport — timeout wiring", () => {
         err.cause instanceof DOMException &&
         err.cause.name === "AbortError",
     );
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(150);
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

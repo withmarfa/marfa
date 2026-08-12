@@ -106,6 +106,10 @@ describe.skipIf(!isPg)("pg update read-modify-write race", () => {
     // The edit must be given time to reach the database. With the row
     // locked it blocks there until the sweeper commits; without the lock
     // it commits inside the window and the sweeper's merge erases it.
+    // A fixed wait is deliberate: the blocked edit is invisible from
+    // outside, so there is no condition to poll, and the wait's failure
+    // direction under load is a vacuous pass on broken code, never a
+    // false failure on correct code.
     await new Promise((resolve) => setTimeout(resolve, 300));
     releaseGate();
 
