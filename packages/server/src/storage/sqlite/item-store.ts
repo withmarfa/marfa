@@ -35,6 +35,7 @@ import {
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
+import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
   CreateItemInput,
@@ -267,6 +268,8 @@ export class SqliteItemStore implements ItemStore {
             device: input.device,
             capture_latitude: input.capture_latitude,
             capture_longitude: input.capture_longitude,
+            // Ordinary text columns beside the JSONB blob, not part of it.
+            ...instantColumnValues(properties),
           })
           .run();
       } catch (err) {
@@ -482,6 +485,26 @@ export class SqliteItemStore implements ItemStore {
       );
     }
 
+    // The normalized instant columns compare as text because they are
+    // written in one fixed-width shape, so the calendar's window is a
+    // range scan rather than a read of every event.
+    if (filters.startsAtUtcFrom !== undefined) {
+      conditions.push(
+        sql`${items.starts_at_utc} >= ${filters.startsAtUtcFrom}`,
+      );
+    }
+    if (filters.startsAtUtcTo !== undefined) {
+      conditions.push(sql`${items.starts_at_utc} < ${filters.startsAtUtcTo}`);
+    }
+
+    if (filters.hasProperty !== undefined) {
+      // The JSON path is assembled in JS and bound as a parameter, so a
+      // caller-supplied key never reaches the statement text.
+      conditions.push(
+        sql`json_extract(${items.properties}, ${`$."${filters.hasProperty}"`}) IS NOT NULL`,
+      );
+    }
+
     if (filters.tags && filters.tags.length > 0) {
       for (const tag of filters.tags) {
         conditions.push(
@@ -689,6 +712,9 @@ export class SqliteItemStore implements ItemStore {
 
         const setClause: Record<string, unknown> = {
           properties: sql`jsonb(${JSON.stringify(merged)})`,
+          // Unconditional, so a patch that removes `starts_at` nulls the
+          // column rather than leaving the last value behind.
+          ...instantColumnValues(merged),
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
@@ -774,6 +800,7 @@ export class SqliteItemStore implements ItemStore {
 
       const mergeSet: Record<string, unknown> = {
         properties: sql`jsonb(${JSON.stringify(result.merged)})`,
+        ...instantColumnValues(result.merged),
         version: newVersion,
         updated_at: now,
         ...(input.tier !== undefined && { tier: input.tier }),

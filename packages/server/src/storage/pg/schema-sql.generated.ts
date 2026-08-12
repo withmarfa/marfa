@@ -385,7 +385,9 @@ CREATE TABLE IF NOT EXISTS public.items (
     capture_latitude double precision,
     capture_longitude double precision,
     tier text DEFAULT 'library'::text NOT NULL,
-    search_vector tsvector
+    search_vector tsvector,
+    starts_at_utc text,
+    ends_at_utc text
 );
 
 CREATE TABLE IF NOT EXISTS public.metadata (
@@ -1160,6 +1162,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup ON public.items USING b
 CREATE INDEX IF NOT EXISTS idx_items_source_id_ci_prefix ON public.items USING btree (space_id, lower(source_id) text_pattern_ops) WHERE (source_id IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_items_source_id_prefix ON public.items USING btree (space_id, source_id text_pattern_ops) WHERE (source_id IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_items_starts_at_utc ON public.items USING btree (space_id, starts_at_utc) WHERE (starts_at_utc IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_items_state ON public.items USING btree (state);
 

@@ -353,6 +353,113 @@ describe("GET /occurrences", () => {
     expect(mine[0]?.message).toContain("in this window");
   });
 
+  it("leaves out an event that straddles the window's start", async () => {
+    // Pinning what the route does, not arguing for it: the window is
+    // matched on the start instant alone, so an event already running
+    // when the window opens is not on it. The SQL narrowing has to make
+    // the same call the in-memory filter did, and this is where a
+    // change of mind would show up.
+    const id = await createEvent({
+      title: "Started before the window",
+      starts_at: "2027-06-30T22:00:00.000Z",
+      ends_at: "2027-07-01T02:00:00.000Z",
+    });
+    const { rows } = await occurrences(
+      "2027-07-01T00:00:00Z",
+      "2027-07-05T00:00:00Z",
+    );
+    expect(rows.some((r) => r.item.id === id)).toBe(false);
+  });
+
+  it("shadows an occurrence whose exception was moved out of the window", async () => {
+    // The exception's own time is outside the window, so a windowed
+    // read of exceptions would never see it and the slot it left would
+    // come back as a ghost: a meeting shown at a time nobody is at.
+    const seriesId = await createEvent({
+      title: "Series with an escapee",
+      starts_at: "2027-08-02T10:00:00.000Z",
+      ends_at: "2027-08-02T11:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    });
+    const movedId = await createEvent({
+      title: "Escaped to October",
+      starts_at: "2027-10-06T10:00:00.000Z",
+      original_starts_at: "2027-08-09T10:00:00.000Z",
+    });
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: seriesId,
+        target_id: movedId,
+        edge_type: "parent-of",
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const { rows } = await occurrences(
+      "2027-08-01T00:00:00Z",
+      "2027-08-15T00:00:00Z",
+    );
+    // Nothing of this series sits at the slot the exception vacated.
+    // Scoped to the series because the suite shares one space and an
+    // unrelated weekly rule runs through the same instant.
+    expect(
+      rows.filter(
+        (r) =>
+          r.series_id === seriesId &&
+          r.starts_at === "2027-08-09T10:00:00.000Z",
+      ),
+    ).toHaveLength(0);
+    // The 2nd still comes from the series, so the shadow removed one
+    // occurrence rather than the rule.
+    expect(
+      rows.filter(
+        (r) =>
+          r.series_id === seriesId &&
+          r.starts_at === "2027-08-02T10:00:00.000Z",
+      ),
+    ).toHaveLength(1);
+    // The exception itself appears once and only through the series,
+    // carrying its own out-of-window time and the slot it replaces.
+    const shown = rows.filter((r) => r.item.id === movedId);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2027-10-06T10:00:00.000Z");
+    expect(shown[0]?.replaces).toBe("2027-08-09T10:00:00.000Z");
+    expect(shown[0]?.series_id).toBe(seriesId);
+  });
+
+  it("puts mixed offsets on the right side of the window boundary", async () => {
+    // The case a comparison against the stored strings gets wrong: read
+    // as text, `2027-09-01T01:00:00+02:00` sorts after the window's
+    // `2027-09-01T00:00:00Z` start, so the event before the boundary
+    // reads as being after it.
+    const beforeId = await createEvent({
+      title: "An hour before the window, written in +02:00",
+      starts_at: "2027-09-01T01:00:00+02:00",
+    });
+    const insideId = await createEvent({
+      title: "Half an hour into the window, written in Z",
+      starts_at: "2027-09-01T00:30:00.000Z",
+    });
+    const alsoInsideId = await createEvent({
+      title: "Two hours into the window, written in +02:00",
+      starts_at: "2027-09-01T04:00:00+02:00",
+    });
+
+    const { rows } = await occurrences(
+      "2027-09-01T00:00:00Z",
+      "2027-09-02T00:00:00Z",
+    );
+    const mine = rows.filter((r) =>
+      [beforeId, insideId, alsoInsideId].includes(r.item.id),
+    );
+    expect(mine.map((r) => r.item.id)).toEqual([insideId, alsoInsideId]);
+    expect(mine.map((r) => r.starts_at)).toEqual([
+      "2027-09-01T00:30:00.000Z",
+      "2027-09-01T02:00:00.000Z",
+    ]);
+  });
+
   it("reports a malformed rule against its series and keeps the rest of the calendar", async () => {
     const badId = await createEvent({
       title: "Rule with no frequency",
