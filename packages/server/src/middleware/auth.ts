@@ -312,8 +312,7 @@ export function authMiddleware(
     // so a token in hand resolves to its row by exact-match on the
     // hashed `token` column.
     //
-    // **Side-channel join, NOT custom claims.** The plan's contingency
-    // applies here (§Caveats §3 in the plan file): the plugin's
+    // **Side-channel join, NOT custom claims.** The plugin's
     // `customAccessTokenClaims` only embeds in JWT tokens, and Marfa
     // keeps opaque tokens (correct for our profile — DB lookup is
     // sub-ms, revocation stays clean). The row itself carries

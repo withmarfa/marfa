@@ -349,13 +349,13 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     },
 
     // ----- Custom claims -----
-    // Access tokens are opaque (see plan §Caveats §3 for rationale —
-    // DB lookup is sub-ms at our scale, revocation stays clean, no
-    // scope-expansion to JWTs). The claims here surface on /oauth2/introspect
-    // responses, which the bearer middleware does NOT call (it reads
-    // `auth_oauth_access_token` directly + joins `system.connection`).
-    // Kept anyway so external resource servers introspecting Marfa-issued
-    // tokens get a usable claim set.
+    // Access tokens are opaque, deliberately: the DB lookup is sub-ms at
+    // our scale, revocation stays clean, and scopes never ride inside a
+    // token where they could outlive a narrowing. The claims here surface
+    // on /oauth2/introspect responses, which the bearer middleware does
+    // NOT call (it reads `auth_oauth_access_token` directly + joins
+    // `system.connection`). Kept anyway so external resource servers
+    // introspecting Marfa-issued tokens get a usable claim set.
     customAccessTokenClaims: ({ user, scopes, referenceId }) => {
       const claims: Record<string, unknown> = {
         scope: scopes.join(" "),

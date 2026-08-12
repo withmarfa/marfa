@@ -41,6 +41,10 @@ const ORIGIN = "http://localhost:0";
 async function seedConfidentialClient(
   c: TestContext,
   secret: string,
+  /** The client's machine-grant allowlist. Omitted means the client
+   *  registered none, which the library reads as no authorized scopes
+   *  and refuses — the ceiling this suite exists to pin. */
+  clientCredentialsScopes?: string[],
 ): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -71,6 +75,9 @@ async function seedConfidentialClient(
     redirectUris: asArray([]),
     grantTypes: asArray(["client_credentials"]),
     tokenEndpointAuthMethod: "client_secret_basic",
+    ...(clientCredentialsScopes !== undefined
+      ? { clientCredentialsScopes: asArray(clientCredentialsScopes) }
+      : {}),
     public: false,
     disabled: false,
     createdAt: now,
@@ -112,26 +119,27 @@ describe("client_credentials default-scope ceiling", () => {
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
+    // The ceiling is that a client which registered no scopes gains no
+    // reach. The library now enforces that by refusing the grant outright
+    // rather than by issuing a token carrying nothing: a machine grant is
+    // authorized against an explicit per-client allowlist, and an absent
+    // allowlist means no authorized scopes. Refusing is the stricter of
+    // the two answers and the more useful one — a zero-scope token is
+    // indistinguishable from a working credential until the first call
+    // fails, so handing one back turns a registration mistake into a
+    // runtime mystery.
     const token = await clientCredentialsToken(ctx, clientId, secret);
-    expect(token.status).toBe(200);
-    const grantedScope = (token.body.scope as string | undefined) ?? "";
-    expect(grantedScope).not.toContain("*:write");
-    expect(grantedScope).not.toContain("*:read");
-    expect(grantedScope.trim()).toBe("");
-
-    // No data-plane reach: a zero-scope credential cannot write.
-    const accessToken = token.body.access_token as string;
-    const write = await request(ctx.app, "POST", "/items", {
-      key: accessToken,
-      body: { type: "core.note", properties: { body: "m2m" } },
-    });
-    expect(write.status).toBeGreaterThanOrEqual(400);
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("unauthorized_client");
+    expect(token.body.access_token).toBeUndefined();
   });
 
-  it("still grants an explicitly requested scope", async () => {
+  it("still grants an explicitly requested scope the client registered", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const clientId = await seedConfidentialClient(ctx, secret, [
+      "core.note:read",
+    ]);
 
     const token = await clientCredentialsToken(
       ctx,

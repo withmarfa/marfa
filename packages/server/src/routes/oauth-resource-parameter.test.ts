@@ -61,6 +61,10 @@ async function seedConfidentialClient(
     redirectUris: asArray([]),
     grantTypes: asArray(["client_credentials"]),
     tokenEndpointAuthMethod: "client_secret_basic",
+    // 1.7 authorizes machine grants against an explicit per-client
+    // allowlist; a NULL here reads as "no authorized scopes" and the
+    // token endpoint answers unauthorized_client.
+    clientCredentialsScopes: asArray(["core.note:read"]),
     public: false,
     disabled: false,
     createdAt: now,
@@ -133,5 +137,26 @@ describe("resource parameter on the token endpoint", () => {
     expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(
       true,
     );
+  });
+
+  it("refuses a resource outside the accepted set with the RFC 8707 error", async () => {
+    // The accepted audiences are pinned from the issuer base URL, so a
+    // client cannot pick its own token audience — the escalation class
+    // where a token minted under one grant is spent against another
+    // audience. Refused up front, before the mint, with the error shape
+    // RFC 8707 names for it.
+    const base = "http://localhost:0";
+    ctx = await createTestContext({
+      authAllowSignup: false,
+      authBaseUrl: base,
+    });
+    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
+    const clientId = await seedConfidentialClient(ctx, secret);
+
+    const token = await tokenRequest(ctx, clientId, secret, {
+      resource: "https://evil.example.com/api",
+    });
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("invalid_target");
   });
 });
