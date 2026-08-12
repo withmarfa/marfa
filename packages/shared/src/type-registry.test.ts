@@ -240,6 +240,66 @@ describe("validateProperties", () => {
     expect(result.success).toBe(true);
   });
 
+  it("rejects a datetime field holding anything but an instant", () => {
+    // A declared datetime used to collapse to an unchecked bounded
+    // string, so "not a date" was stored happily and surfaced far away
+    // as a parse error in whatever read it — the calendar expander was
+    // throwing on values the write path had already blessed.
+    for (const bad of [
+      "not a date",
+      "",
+      "2026-03-27T09:00:00", // naive local time carries no offset
+      "2026-3-27", // not ISO 8601
+    ]) {
+      const result = validateProperties("core.event", {
+        title: "an event",
+        starts_at: bad,
+      });
+      expect(result.success, `starts_at ${JSON.stringify(bad)}`).toBe(false);
+    }
+  });
+
+  it("accepts datetime instants in any offset, and the all-day bare date", () => {
+    for (const good of [
+      "2026-03-27T09:00:00Z",
+      "2026-03-27T09:00:00+01:00",
+      "2026-03-27T09:00:00.123Z",
+      "2026-09-20T13:30:00-04:00",
+      // The all-day shape the event model rules: a whole day has no
+      // instant, and `all_day` on the event says which reading applies.
+      "2026-09-15",
+    ]) {
+      const result = validateProperties("core.event", {
+        title: "an event",
+        starts_at: good,
+      });
+      expect(result.success, `starts_at ${JSON.stringify(good)}`).toBe(true);
+    }
+  });
+
+  it("rejects a date field holding anything but a calendar date", () => {
+    for (const bad of [
+      "not a date",
+      "",
+      "2026-03-27T09:00:00Z",
+      "27/03/2026",
+    ]) {
+      const result = validateProperties("core.entity.person", {
+        name: "Someone",
+        birthday: bad,
+      });
+      expect(result.success, `birthday ${JSON.stringify(bad)}`).toBe(false);
+    }
+  });
+
+  it("accepts a plain calendar date in a date field", () => {
+    const result = validateProperties("core.entity.person", {
+      name: "Someone",
+      birthday: "1990-03-27",
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("returns error for unknown type", () => {
     const result = validateProperties("core.nonexistent", { body: "hi" });
     expect(result.success).toBe(false);
