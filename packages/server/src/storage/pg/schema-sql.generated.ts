@@ -1157,6 +1157,8 @@ CREATE INDEX IF NOT EXISTS idx_items_search_vector ON public.items USING gin (se
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup ON public.items USING btree (COALESCE(space_id, ''::text), source, source_id) WHERE (source IS NOT NULL);
 
+CREATE INDEX IF NOT EXISTS idx_items_source_id_ci_prefix ON public.items USING btree (space_id, lower(source_id) text_pattern_ops) WHERE (source_id IS NOT NULL);
+
 CREATE INDEX IF NOT EXISTS idx_items_source_id_prefix ON public.items USING btree (space_id, source_id text_pattern_ops) WHERE (source_id IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_items_state ON public.items USING btree (state);
