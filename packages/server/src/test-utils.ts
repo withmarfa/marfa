@@ -89,7 +89,6 @@ export interface TestContext {
  * queue. Awaiting cleanup bounds per-file work.
  */
 export async function createPgTestStorage(options?: {
-  versionSnapshotIntervalMs?: number;
   authMode?: "hosted" | "keys";
   /** Override the default pool-size cap. Default is 3 — see comment
    *  inside this function for the rationale. */
@@ -496,7 +495,6 @@ export async function createTestContext(
     cdnBaseUrl: "",
     authMode: "keys",
     mcpEnabled: true,
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,

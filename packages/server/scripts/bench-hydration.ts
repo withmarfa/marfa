@@ -32,7 +32,6 @@ async function main(): Promise<void> {
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode: "keys",
-    versionSnapshotIntervalMs: 600000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,

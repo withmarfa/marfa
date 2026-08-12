@@ -59,7 +59,6 @@ function specGenerationConfig(authMode: AuthMode): AppConfig {
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode,
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,

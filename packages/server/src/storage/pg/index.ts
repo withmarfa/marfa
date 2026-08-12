@@ -42,7 +42,6 @@ import { pgRequestContext } from "./request-context.js";
 export async function createPgStorage(
   connectionString: string,
   options?: {
-    versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
     /** Override the postgres-js pool size (default 10). Used by the
      *  test fixture (`createPgTestStorage`) to cap each per-file pool
@@ -71,12 +70,7 @@ export async function createPgStorage(
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(db, client);
-  const itemStore = new PgItemStore(
-    db,
-    versionStore,
-    searchStore,
-    options?.versionSnapshotIntervalMs,
-  );
+  const itemStore = new PgItemStore(db, versionStore, searchStore);
   const metadataStore = new PgMetadataStore(db);
   const typeStore = new PgTypeStore(db);
 

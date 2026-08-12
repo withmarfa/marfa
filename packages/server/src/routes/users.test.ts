@@ -67,7 +67,6 @@ async function createHostedContext(): Promise<HostedContext> {
     corsOrigins: [],
     cdnBaseUrl: "",
     authMode: "hosted",
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,

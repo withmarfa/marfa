@@ -45,7 +45,6 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
     corsOrigins: [ALLOWED_ORIGIN],
     cdnBaseUrl: "",
     authMode: "keys",
-    versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
