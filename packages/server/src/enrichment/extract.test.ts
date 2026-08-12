@@ -93,6 +93,31 @@ describe("extractText", () => {
     if (out.kind === "text") expect(out.text).toContain("quokkapdf");
   });
 
+  // The reader below these is held at a forced version, because the parsing
+  // library pins one carrying an arbitrary-execution advisory. A single
+  // one-page uncompressed document is thin cover for a reader swap, so the
+  // two shapes most likely to expose a difference are covered too: text
+  // spanning several pages, and a Flate-compressed content stream.
+  it("reads text from every page of a multi-page pdf", async () => {
+    const bytes = await fixture("multipage.pdf");
+    const out = await extractText(bytes, "application/pdf", OPTS);
+    expect(out.kind).toBe("text");
+    if (out.kind === "text") {
+      expect(out.text).toContain("page one");
+      expect(out.text).toContain("page two marker");
+      expect(out.text).toContain("page three");
+    }
+  });
+
+  it("reads text from a pdf whose content stream is compressed", async () => {
+    const bytes = await fixture("compressed.pdf");
+    const out = await extractText(bytes, "application/pdf", OPTS);
+    expect(out.kind).toBe("text");
+    if (out.kind === "text") {
+      expect(out.text).toContain("compressed stream marker");
+    }
+  });
+
   it("sends images to the OCR engine when one is supplied", async () => {
     const ocr = new FakeOcr("recognized marker");
     const bytes = await fixture("sample.png");
