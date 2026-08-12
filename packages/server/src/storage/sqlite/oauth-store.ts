@@ -2,6 +2,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { OAuthDeviceCode, OAuthDeviceCodeStatus } from "@withmarfa/shared";
 import type { OAuthStore } from "../interface.js";
+import { WriteTracker } from "../write-tracker.js";
 import { items, oauthDeviceCodes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -15,6 +16,15 @@ import type { DrizzleDb } from "./connection.js";
  */
 export class SqliteOAuthStore implements OAuthStore {
   constructor(private db: DrizzleDb) {}
+
+  /**
+   * In-flight tracking for the fire-and-forget `last_used_at` stamp. The
+   * bearer middleware fires the stamp after the response and nothing
+   * awaits it, so without tracking a stamp still in flight when the
+   * connection closes surfaces as an unhandled rejection. Same shape as
+   * the audit store's drain, which fixed the same class.
+   */
+  private readonly stamps = new WriteTracker("oauth-grant-stamp");
 
   async createDeviceCode(input: {
     deviceCodeHash: string;
@@ -132,7 +142,24 @@ export class SqliteOAuthStore implements OAuthStore {
    * the conditional check. ISO-8601 timestamps sort correctly as text,
    * so the comparison is a plain `<`.
    */
-  async updateLastUsedAt(
+  updateLastUsedAt(
+    connectionItemId: string,
+    spaceId: string | null,
+    thresholdMs: number,
+  ): Promise<void> {
+    // Tracked so `close()` can drain an in-flight stamp; the returned
+    // promise never rejects, matching the callers' fire-and-forget use.
+    return this.stamps.track(() =>
+      this.applyLastUsedAt(connectionItemId, spaceId, thresholdMs),
+    );
+  }
+
+  /** Resolve once every in-flight stamp has settled. */
+  drain(): Promise<void> {
+    return this.stamps.drain();
+  }
+
+  private async applyLastUsedAt(
     connectionItemId: string,
     spaceId: string | null,
     thresholdMs: number,
