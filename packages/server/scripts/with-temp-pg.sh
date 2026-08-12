@@ -54,7 +54,9 @@ PG_DB="marfa_schema_dump"
 CONTAINER_NAME="marfa-schema-dump-pg-${PG_PORT}"
 
 cleanup() {
-  docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  # -v matters: the postgres image declares a VOLUME, so every run mints an
+  # anonymous volume, and removing the container without -v orphans it.
+  docker rm -f -v "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
