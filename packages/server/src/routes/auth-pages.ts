@@ -736,10 +736,30 @@ export function authRoutes(
     const formData = await c.req.formData();
     const returnTo = validateReturnTo(formData.get("return_to"));
 
-    // Better Auth's generic-oauth plugin exposes POST /auth/sign-in/oauth2
-    // taking { providerId, callbackURL }. Successful response returns
-    // { url, redirect: true } pointing at the provider's authorize URL.
-    const upstream = new Request(new URL("/auth/sign-in/oauth2", c.req.url), {
+    // A configured provider whose discovery could not be reached is
+    // degraded, not missing. Saying so here is what keeps the
+    // degradation honest: without it the sign-in page would render the
+    // button and then fail generically, which reads as a bug in Marfa
+    // rather than an identity provider that is down.
+    const availability = auth.oidcStatusOf(providerId);
+    if (availability?.status === "unavailable") {
+      return c.redirect(
+        buildSignInRedirect({
+          mode: "password",
+          returnTo,
+          error: "provider_unavailable",
+        }),
+        302,
+      );
+    }
+
+    // Federated providers are registered as social providers and signed
+    // in through the core POST /auth/sign-in/social, taking
+    // { provider, callbackURL }. The generic-oauth plugin's own
+    // /auth/sign-in/oauth2 endpoint no longer exists. Successful
+    // response returns { url, redirect: true } pointing at the
+    // provider's authorize URL.
+    const upstream = new Request(new URL("/auth/sign-in/social", c.req.url), {
       method: "POST",
       headers: forwardHeaders(
         c.req.raw.headers,
@@ -747,7 +767,7 @@ export function authRoutes(
         auth.baseURL,
       ),
       body: JSON.stringify({
-        providerId,
+        provider: providerId,
         // Better-Auth's generic-oauth plugin enforces the same
         // trusted-origins check as magic-link — absolute same-origin
         // URL required.
@@ -756,11 +776,20 @@ export function authRoutes(
     });
     const response = await auth.handler(upstream);
     if (!response.ok) {
+      // Dispatching went through the handler, which awaits the auth
+      // context — so provider availability is settled by now even on the
+      // very first request after a boot, when the check above ran too
+      // early to know anything. A degraded provider is reported as
+      // degraded rather than as a generic OAuth failure.
+      const settled = auth.oidcStatusOf(providerId);
       return c.redirect(
         buildSignInRedirect({
           mode: "password",
           returnTo,
-          error: "oauth_failed",
+          error:
+            settled?.status === "unavailable"
+              ? "provider_unavailable"
+              : "oauth_failed",
         }),
         302,
       );

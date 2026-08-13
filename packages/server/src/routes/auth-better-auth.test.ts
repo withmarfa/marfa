@@ -247,38 +247,156 @@ describe("better-auth /auth/* surface", () => {
     expect(res.status).not.toBe(404);
   });
 
-  it("federated OIDC provider exposes /auth/sign-in/oauth2 when configured", async () => {
+  it("a reachable federated provider redirects to its authorize URL", async () => {
+    // Discovery is the only network the provider needs at this point;
+    // building the authorize URL is local. Answering it here exercises
+    // the real path a browser takes, which asserting "not a 404" never
+    // did — the endpoint this route dispatches to moved, and a route
+    // pointing at a path that no longer exists still isn't a 404 to the
+    // caller, it is a silent redirect back to the sign-in page.
+    const realFetch = globalThis.fetch;
+    const stub: typeof fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.includes("accounts.example.com")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: "https://accounts.example.com",
+              authorization_endpoint: "https://accounts.example.com/authorize",
+              token_endpoint: "https://accounts.example.com/token",
+              userinfo_endpoint: "https://accounts.example.com/userinfo",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return realFetch(input, init);
+    };
+    globalThis.fetch = stub;
+
+    try {
+      ctx = await createTestContext({
+        authAllowSignup: true,
+        oidcProviders: [
+          {
+            providerId: "test-provider",
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            discoveryUrl:
+              "https://accounts.example.com/.well-known/openid-configuration",
+          },
+        ],
+      });
+
+      const form = new URLSearchParams({ return_to: "/" });
+      const res = await ctx.app.request(
+        "/auth/sign-in/provider/test-provider",
+        {
+          method: "POST",
+          headers: {
+            origin: ORIGIN,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: form.toString(),
+        },
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toContain(
+        "https://accounts.example.com/authorize",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("an unreachable provider degrades itself, leaves the server up, and says so", async () => {
+    // No fetch stub: the discovery URL does not resolve. Before
+    // providers initialized one at a time, this rejection escaped plugin
+    // init where no caller could reach it, and — since the auth instance
+    // is built at boot and nothing installs an unhandledRejection
+    // handler — terminated the process.
     ctx = await createTestContext({
       authAllowSignup: true,
       oidcProviders: [
         {
-          providerId: "test-provider",
+          providerId: "unreachable-provider",
           clientId: "test-client",
           clientSecret: "test-secret",
           discoveryUrl:
-            "https://accounts.example.com/.well-known/openid-configuration",
+            "https://nothing-listens.invalid/.well-known/openid-configuration",
         },
       ],
     });
 
-    // The endpoint is mounted; we just verify it isn't 404 (it'll fail
-    // to fetch the discovery URL in the test, but the route exists).
-    const res = await request(ctx.app, "POST", "/auth/sign-in/oauth2", {
-      body: { providerId: "test-provider" },
+    // The sign-in route says why, rather than claiming the provider does
+    // not exist or failing generically. Driven first because it
+    // dispatches through the auth handler, which awaits the context Better
+    // Auth builds asynchronously — after this, availability is settled
+    // rather than still initializing.
+    const res = await ctx.app.request(
+      "/auth/sign-in/provider/unreachable-provider",
+      {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ return_to: "/" }).toString(),
+      },
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("provider_unavailable");
+
+    // The server is up and answering.
+    const health = await request(ctx.app, "GET", "/health");
+    expect(health.status).toBe(200);
+    const body = (await health.json()) as {
+      status: string;
+      components: Record<
+        string,
+        {
+          status: string;
+          providers?: { provider_id: string; status: string }[];
+        }
+      >;
+    };
+    // Visible without reading container output.
+    expect(body.status).toBe("degraded");
+    expect(body.components.identity_providers?.status).toBe("degraded");
+    expect(body.components.identity_providers?.providers).toContainEqual(
+      expect.objectContaining({
+        provider_id: "unreachable-provider",
+        status: "unavailable",
+      }),
+    );
+
+    // Every other way in is untouched.
+    const signUp = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "degraded@example.com",
+        password: "correct horse battery",
+        name: "Degraded",
+      },
       headers: { origin: ORIGIN },
     });
-    expect(res.status).not.toBe(404);
+    expect(signUp.status).toBe(200);
   });
 
-  it("genericOAuth gracefully skips when no providers configured", async () => {
+  it("no federated providers configured means no identity component at all", async () => {
     ctx = await createTestContext({ authAllowSignup: true, oidcProviders: [] });
-    // /auth/sign-in/oauth2 still mounted (the plugin registers regardless),
-    // but errors out for an unknown providerId. Just confirming no crash.
-    const res = await request(ctx.app, "POST", "/auth/sign-in/oauth2", {
-      body: { providerId: "nope" },
-      headers: { origin: ORIGIN },
-    });
-    expect(res.status).not.toBe(500);
+    const health = await request(ctx.app, "GET", "/health");
+    const body = (await health.json()) as {
+      status: string;
+      components: Record<string, unknown>;
+    };
+    expect(body.status).toBe("ok");
+    expect(body.components.identity_providers).toBeUndefined();
   });
 
   it("/.well-known/oauth-authorization-server returns the discovery doc", async () => {
