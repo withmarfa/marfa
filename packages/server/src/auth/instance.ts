@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { genericOAuth, jwt, magicLink } from "better-auth/plugins";
+import { jwt, magicLink } from "better-auth/plugins";
 import { passkey } from "@better-auth/passkey";
 import {
   deriveHandleFromEmail,
@@ -25,6 +25,8 @@ import {
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import { seedStarterContent } from "./starter-content.js";
+import { resilientGenericOAuth } from "./oidc-availability.js";
+import type { OidcProviderHealth } from "./oidc-availability.js";
 import { ensureAccountHolderItem } from "./account-holder.js";
 
 /**
@@ -99,7 +101,10 @@ export interface MarfaAuthOptions {
   marfaEmailTransport?: MarfaEmailTransport;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Each entry surfaces a sign-in button
-   *  on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. */
+   *  on the sign-in page, signs in through `/auth/sign-in/social` and
+   *  returns via `/auth/oauth2/callback/<providerId>`. A provider whose
+   *  discovery cannot be reached degrades rather than taking the server
+   *  down — see `oidc-availability.ts`. */
   oidcProviders?: readonly {
     providerId: string;
     clientId: string;
@@ -196,6 +201,24 @@ export interface MarfaAuth {
    *  The sign-in page renders one button per ID. Empty when no
    *  providers are configured. */
   oidcProviderIds: readonly string[];
+  /** Resolves once Better Auth has finished building its context —
+   *  including federated provider initialization. Never rejects: a
+   *  failure is logged and left for the per-request path to surface.
+   *  Callers that need a settled availability picture await this. */
+  ready: Promise<void>;
+  /** Availability of every configured federated provider, in
+   *  registration order. A provider whose discovery could not be reached
+   *  is reported `unavailable` here rather than taking the server down —
+   *  the health surface renders this so the degradation is visible
+   *  without reading container output. */
+  oidcHealth: () => OidcProviderHealth[];
+  /** One provider's availability, or `undefined` when it is not
+   *  configured. The sign-in route uses this to answer with a reason
+   *  instead of claiming the provider does not exist. */
+  oidcStatusOf: (providerId: string) => OidcProviderHealth | undefined;
+  /** Cancel any pending provider retry. Servers call this on shutdown
+   *  and tests on teardown; a retry left pending outlives its server. */
+  stopOidcRetries: () => void;
   /** Public-facing issuer URL the instance advertises (drives
    *  `verification_uri` in the Device Authorization Grant response,
    *  the OAuth issuer field on the discovery doc, and the cookie
@@ -285,6 +308,13 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       typeof candidate === "string" && candidate.length > 0,
   );
   const signingSecret = configuredSecret ?? randomBytes(32).toString("hex");
+
+  // Federated providers initialize one at a time behind this handle so a
+  // provider that cannot be reached degrades itself instead of the
+  // server. See `oidc-availability.ts` for why that is the trade.
+  const oidc = resilientGenericOAuth({
+    providers: options.oidcProviders ?? [],
+  });
 
   const instance = betterAuth({
     baseURL: options.baseURL,
@@ -660,15 +690,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           await transport({ email, url, token });
         },
       }),
-      genericOAuth({
-        config: (options.oidcProviders ?? []).map((p) => ({
-          providerId: p.providerId,
-          clientId: p.clientId,
-          clientSecret: p.clientSecret,
-          discoveryUrl: p.discoveryUrl,
-          scopes: p.scopes ?? ["openid", "email", "profile"],
-        })),
-      }),
+      oidc.plugin,
     ],
     advanced: {
       // Better Auth's trusted-origins check is a real defense on this
@@ -700,6 +722,26 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     },
   });
 
+  // Better Auth builds its context asynchronously and starts that work
+  // at construction, but nothing awaits the promise until the first
+  // request touches the handler. Anything that rejects inside plugin
+  // init therefore surfaces as an unhandled rejection — which, with no
+  // handler installed, terminates the process at boot. Attaching here
+  // converts that into a logged failure: the auth surface then fails per
+  // request, the way every other unreachable dependency does, instead of
+  // taking the whole server with it.
+  const ready = (
+    instance as unknown as { $context: Promise<unknown> }
+  ).$context.then(
+    () => undefined,
+    (err: unknown) => {
+      log("error", "auth initialization failed; auth requests will error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    },
+  );
+
   // Wrap better-auth's session-lookup API behind a narrow promise.
   // `getSession` resolves to `null` when no valid cookie is present —
   // either no cookie at all, or a cookie whose session has expired or
@@ -716,6 +758,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     getSession: (headers: Headers) => api.getSession({ headers }),
     allowSignup: options.allowSignup,
     oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
+    ready,
+    oidcHealth: () => oidc.snapshot(),
+    oidcStatusOf: (providerId: string) => oidc.statusOf(providerId),
+    stopOidcRetries: () => {
+      oidc.stop();
+    },
     baseURL: options.baseURL,
     signingSecret,
   };

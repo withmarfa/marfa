@@ -60,6 +60,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   magic_send_failed:
     "We couldn't send the sign-in link. Check the address and try again.",
   oauth_failed: "Sign-in via that provider failed. Try again.",
+  provider_unavailable:
+    "That sign-in provider cannot be reached right now. Try again shortly, or sign in another way.",
   invalid_return_to:
     "That sign-in link looked unsafe, so we ignored where it pointed. Please sign in again.",
 };

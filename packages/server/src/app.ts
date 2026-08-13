@@ -285,7 +285,12 @@ export function createApp(
       cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  app.route("/health", healthRoutes(storage, blobBackend, config));
+  // `auth` is constructed further down, so health reads it through a
+  // closure rather than a value — the handle is resolved per request.
+  app.route(
+    "/health",
+    healthRoutes(storage, blobBackend, config, () => auth),
+  );
 
   // Local-runtime substrate routes (POST /runtime/webhook/:id). Mounted
   // before any auth middleware so the public webhook receipt endpoint
