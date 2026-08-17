@@ -188,9 +188,17 @@ echo ""
 # Pre-build workspace deps so each Worker bundle picks up fresh dist
 # artifacts. Wrangler bundles the integration source directly, but the
 # workspace packages it imports are consumed from their dist output.
+#
+# Sequential, deliberately. In parallel a package's declaration build
+# reads a dependency's `dist` while that dependency is rebuilding it,
+# and tsup cleans its output directory first, so the reader finds
+# either the previous declarations or nothing depending on timing. It
+# fails in a minority of runs with a `Could not find a declaration
+# file` error naming a package being built alongside it, which reads
+# as flake and passes on retry.
 if (( DRY_RUN == 0 )); then
   echo "→ Pre-building workspace deps"
-  pnpm --filter "@withmarfa/runtime-sdk..." --if-present build
+  pnpm --filter "@withmarfa/runtime-sdk..." --workspace-concurrency=1 --if-present build
 fi
 
 for i in "${!TARGET_PKGS[@]}"; do
