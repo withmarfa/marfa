@@ -323,6 +323,34 @@ importers:
         specifier: ^4.96.0
         version: 4.122.0(@cloudflare/workers-types@4.20260609.1)
 
+  integrations/readwise-reader:
+    dependencies:
+      '@withmarfa/runtime-sdk':
+        specifier: workspace:*
+        version: link:../../packages/runtime-sdk
+      '@withmarfa/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260602.1
+        version: 4.20260609.1
+      '@withmarfa/runtime-test':
+        specifier: workspace:*
+        version: link:../../packages/runtime-test
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.25)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.0.16(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.22.4)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.96.0
+        version: 4.122.0(@cloudflare/workers-types@4.20260609.1)
+
   integrations/rss-watcher:
     dependencies:
       '@withmarfa/runtime-sdk':

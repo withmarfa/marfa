@@ -142,6 +142,13 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
     serviceBinding: "INTEGRATION_READWISE",
   },
   {
+    name: "readwise.reader",
+    dirName: "readwise-reader",
+    triggers: ["schedule", "item-event"],
+    hasWorker: true,
+    serviceBinding: "INTEGRATION_READWISE_READER",
+  },
+  {
     name: "raindrop.bookmarks",
     dirName: "raindrop",
     triggers: ["schedule"],

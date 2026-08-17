@@ -115,6 +115,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_GOOGLE_YOUTUBE?: ServiceBinding;
   INTEGRATION_TODOIST_TASKS?: ServiceBinding;
   INTEGRATION_READWISE?: ServiceBinding;
+  INTEGRATION_READWISE_READER?: ServiceBinding;
   INTEGRATION_RAINDROP?: ServiceBinding;
   INTEGRATION_WITHMARFA_INBOX?: ServiceBinding;
 }

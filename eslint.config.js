@@ -23,14 +23,19 @@ export default [
             // project.
             "integrations/*/email-worker/vitest.config.ts",
           ],
-          // Default is 8; we have ~10 config files that fall through
-          // to the default project (per-package tsup + vitest configs
-          // across 6 packages + 1 integration + the root vitest +
-          // eslint configs). Raised to 43 to accommodate the in-tree
-          // integration configs plus the withmarfa.inbox email-worker
-          // subpackage that contributes a vitest.config through the
-          // `integrations/*/email-worker/vitest.config.ts` glob.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 43,
+          // Default is 8. Every workspace package contributes a
+          // tsup.config and a vitest.config that fall through to the
+          // default project, so the real number grows by two with each
+          // new package or integration — and crossing the cap fails
+          // lint from files nobody touched, naming the config rather
+          // than the addition that pushed it over.
+          //
+          // Set well above the current count so an ordinary addition
+          // does not trip it. When it is genuinely reached, raise it
+          // again with headroom; the alternative is giving the config
+          // files a tsconfig of their own so they stop falling through
+          // at all.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 80,
         },
         tsconfigRootDir: import.meta.dirname,
       },
