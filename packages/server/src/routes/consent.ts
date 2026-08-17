@@ -218,6 +218,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "raindrop.collection": "Raindrop collections",
   "raindrop.raindrop": "Raindrop bookmarks",
   "readwise.book": "Readwise books",
+  "readwise.document": "Readwise Reader documents",
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
   "withmarfa.captured_email": "Captured emails",
