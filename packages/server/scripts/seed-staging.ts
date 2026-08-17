@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const DIRS = [
   "rss-watcher",
   "readwise",
+  "readwise-reader",
   "todoist",
   "raindrop",
   "github-webhooks",

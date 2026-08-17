@@ -209,6 +209,10 @@ binding = "INTEGRATION_READWISE"
 service = "marfa-integration-readwise-staging"
 
 [[env.staging.services]]
+binding = "INTEGRATION_READWISE_READER"
+service = "marfa-integration-readwise-reader-staging"
+
+[[env.staging.services]]
 binding = "INTEGRATION_RAINDROP"
 service = "marfa-integration-raindrop-staging"
 
@@ -264,6 +268,10 @@ service = "marfa-integration-todoist-tasks-prod"
 [[env.prod.services]]
 binding = "INTEGRATION_READWISE"
 service = "marfa-integration-readwise-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_READWISE_READER"
+service = "marfa-integration-readwise-reader-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_RAINDROP"

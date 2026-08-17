@@ -50,7 +50,7 @@ To install:
 
 ## Token-backed integrations
 
-Manifests whose upstream uses a static API token rather than an OAuth flow declare `token_requirements: { <capability>: "required" }` and bump `manifest_schema_version` to `1.1.0`. Current instances: Todoist, Readwise, Raindrop. Every API-key-based upstream lands here.
+Manifests whose upstream uses a static API token rather than an OAuth flow declare `token_requirements: { <capability>: "required" }` and bump `manifest_schema_version` to `1.1.0`. Current instances: Todoist, Readwise, Readwise Reader, Raindrop. Every API-key-based upstream lands here.
 
 The substrate seam mirrors the OAuth one: the bearer lives on a `system.credential` row, referenced from the connection via `credential_ref`. Both kinds share the encryption domain (`connectionOauthToken`), the install path (`POST /connections/install`), and the proxy entry point (`POST /connections/:id/proxy/*`). Differences:
 
@@ -151,7 +151,16 @@ Deploy the control plane before the Workers. It has to know the new root before 
 - **`_template`** — scaffold to copy when starting a new integration.
 - **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
 - **`github-webhooks`** — inbound webhook on a repo to `core.bookmark`.
-- **`google-calendar`** — bidirectional OAuth sync with the `google.calendar` family (the upstream-fidelity sibling to forthcoming `google.tasks`, `google.contacts`, etc.).
+- **`google-calendar`** — bidirectional OAuth sync with the `google.calendar` family.
+- **`google-contacts`** — bidirectional OAuth sync to `google.contacts.contact`.
+- **`google-tasks`** — bidirectional OAuth sync to `google.tasks.task`.
+- **`google-drive`** — inbound OAuth sync to `google.drive.file`.
+- **`google-youtube`** — inbound OAuth sync of channels, playlists and videos.
+- **`todoist`** — bidirectional token sync over Todoist's Sync and REST APIs.
+- **`readwise`** — inbound token sync of highlights and their parent books, over the v2 export API.
+- **`readwise-reader`** — bidirectional token sync of Reader documents, over the separate v3 documents API.
+- **`raindrop`** — inbound token sync of bookmarks and collections.
+- **`withmarfa-inbox`** — email capture via Cloudflare Email Routing.
 - **`task-auto-archive`** — item-event automation on `core.task` items.
 - **`sync`** — re-presents the external sync daemon as a connection (local-only).
 
