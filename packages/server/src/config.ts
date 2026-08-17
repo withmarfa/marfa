@@ -596,6 +596,7 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
       "raindrop.collection:read",
       "raindrop.raindrop:read",
       "readwise.book:read",
+      "readwise.document:read",
       "readwise.highlight:read",
       "todoist.task:read",
       "withmarfa.captured_email:read",
