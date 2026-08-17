@@ -546,6 +546,27 @@ describe("outbound item events", () => {
     );
   });
 
+  it("creates a document that has no author, which is the ordinary case", async () => {
+    // Reader refuses a save carrying `should_clean_html: false` unless
+    // BOTH author and title are present, and an author is optional on
+    // this type. Sending the flag rejected every authorless document
+    // with a 400 naming a field the writer never had to supply.
+    const built = buildContext({
+      items: { mit_9: marfaItem("mit_9", { title: "No author here" }) },
+      proxyResponses: [
+        () => json({ id: "doc_na" }, 201),
+        () => json({ results: [doc({ id: "doc_na" })] }),
+      ],
+    });
+    const result = await handleItemEvent(built.ctx, itemEventMsg("mit_9"));
+    expect(result).toEqual({ ok: true });
+
+    const save = built.proxyCalls[0]?.body as Record<string, unknown>;
+    expect(save).toHaveProperty("html");
+    expect(save).not.toHaveProperty("should_clean_html");
+    expect(save).not.toHaveProperty("author");
+  });
+
   it("adopts an existing document on a 200 and then updates it, because a re-save changes nothing", async () => {
     // Observed: POST /save/ on a known URL returns 200 with the existing
     // id and mutates no field. Treating that as a successful write would

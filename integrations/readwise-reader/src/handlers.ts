@@ -505,9 +505,19 @@ async function createUpstream(
   // A fabricated URL points at nothing by design, so Reader has to be
   // given something to show or it will try to fetch a host that cannot
   // resolve and store an empty document.
+  //
+  // `should_clean_html` is deliberately not sent. Setting it false makes
+  // Reader refuse the save unless BOTH `author` and `title` are present:
+  //
+  //   400 "The fields 'author' and 'title' are required when you don't
+  //        use should_clean_html"
+  //
+  // An author is optional on a Reader document and on this type, so
+  // suppressing the cleaner would reject the ordinary case of somebody
+  // writing a document in Marfa and not naming an author. Letting Reader
+  // clean a placeholder body costs nothing.
   if (isFabricatedUrl(sourceUrl)) {
     body.html = renderPlaceholderHtml(props);
-    body.should_clean_html = false;
   }
   applyWritableFields(body, props);
 
