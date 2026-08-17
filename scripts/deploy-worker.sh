@@ -56,11 +56,20 @@ echo "→ Pre-building workspace deps for $PKG_NAME"
 # `--if-present` skips packages without a `build` script (e.g.
 # runtime-control bundles via wrangler and has no `build`;
 # integration Workers do have a `build` that emits `dist/local.js`
-# for the local-runtime substrate path). pnpm honors topological
-# order, so `@withmarfa/shared` rebuilds before `@withmarfa/webhooks`
-# before consumer-packages — no stale upstream dist landing in the
-# worker bundle.
-pnpm --filter "$PKG_NAME..." --if-present build
+# for the local-runtime substrate path).
+#
+# `--workspace-concurrency=1` is what actually orders the builds, and
+# it is load-bearing rather than a throughput choice. Run in parallel,
+# a package's declaration build reads a dependency's `dist` while that
+# dependency is rebuilding it: tsup cleans its output directory first,
+# so the reader either finds the previous declarations or finds
+# nothing, depending on which won the race. The failure is a
+# `Could not find a declaration file` error naming a workspace package
+# that is being built in the same command, it lands in maybe a quarter
+# of runs, and the retry that follows usually passes — which is what
+# makes it read as infrastructure flake. The root `build` script has
+# always run sequentially for the same reason.
+pnpm --filter "$PKG_NAME..." --workspace-concurrency=1 --if-present build
 
 # Working-dir handling: if the worker dir carries its own wrangler.toml
 # / wrangler.jsonc, cd in so wrangler picks it up automatically. If
