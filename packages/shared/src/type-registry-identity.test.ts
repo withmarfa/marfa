@@ -60,6 +60,7 @@ const INTEGRATION_TYPE_IDENTIFIERS = [
   "raindrop.collection",
   "raindrop.raindrop",
   "readwise.book",
+  "readwise.document",
   "readwise.highlight",
   "todoist.task",
   "withmarfa.captured_email",
