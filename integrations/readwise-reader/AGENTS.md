@@ -135,9 +135,23 @@ inbound sweep. It exists to satisfy Reader's dedupe, and putting a
 deliberately unresolvable address in front of the person who created
 the item would be worse than omitting it.
 
-## Echo suppression
+## Echo suppression, and why the lag window is not on the write path
 
 `echo_ttl_seconds: 120`, `lag_window_seconds: 600`.
+
+The outbound handler does **not** check `inLagWindow`. Deferring an
+outbound write there loses it: the window is ten minutes, the queue
+allows six retries, and the retries are exhausted long before the
+window closes, so the message dead-letters with nothing surfaced to
+anyone. Measured against a live account, a document trashed shortly
+after being created was still present twenty minutes later.
+
+The lag window is a read-side guard, and its contract in the runtime
+SDK says so — it exists to stop an inbound sweep reading a stale
+upstream and stomping an item that just changed. An outbound write
+carries the item's current state, so applying it late is harmless and
+applying it never is not. The inbound direction stays guarded by
+`shouldSkipReactive`, which is a different call.
 
 The hash covers the fields a round-trip can touch and is always
 computed from a document **Reader returned**, never from one this code

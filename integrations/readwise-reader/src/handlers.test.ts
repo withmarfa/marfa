@@ -738,7 +738,12 @@ describe("outbound item events", () => {
     expect(built.proxyCalls[0]?.method).toBe("DELETE");
   });
 
-  it("defers while a recent write to the same document is still in its lag window", async () => {
+  it("applies a second edit inside the lag window instead of deferring it", async () => {
+    // Deferring here loses the edit. The window is ten minutes, the
+    // queue allows six retries, and the retries run out first — measured
+    // against a live account, a trash issued shortly after a create was
+    // still not applied twenty minutes later. The lag window guards
+    // reactive reads, not outbound writes.
     const storage = createMemoryStorage();
     const seed = buildContext({
       storage,
@@ -748,14 +753,42 @@ describe("outbound item events", () => {
 
     const built = buildContext({
       storage,
-      items: { mit_1: marfaItem("mit_1", { title: "Racing" }) },
-      proxyResponses: [],
+      items: { mit_1: marfaItem("mit_1", { title: "Edited again, quickly" }) },
+      proxyResponses: [
+        () => json({ id: "doc_1", url: "https://read.readwise.io/read/doc_1" }),
+        () => json({ results: [doc({ title: "Edited again, quickly" })] }),
+      ],
     });
     await built.ctx.echo.trackOutboundWrite("doc_1", "somehash");
 
     const result = await handleItemEvent(built.ctx, itemEventMsg("mit_1"));
-    expect(result).toMatchObject({ ok: false, retry: true });
-    expect(built.proxyCalls).toHaveLength(0);
+    expect(result).toEqual({ ok: true });
+    expect(built.proxyCalls[0]?.method).toBe("PATCH");
+    expect((built.proxyCalls[0]?.body as { title?: string }).title).toBe(
+      "Edited again, quickly",
+    );
+  });
+
+  it("applies a trash inside the lag window, because a dropped delete is unrecoverable", async () => {
+    const storage = createMemoryStorage();
+    const seed = buildContext({
+      storage,
+      proxyResponses: [() => json({ nextPageCursor: null, results: [doc()] })],
+    });
+    await handleSchedule(seed.ctx, SCHEDULE_MSG());
+
+    const built = buildContext({
+      storage,
+      items: { mit_1: marfaItem("mit_1", { title: "Gone" }, "trashed") },
+      proxyResponses: [() => new Response(null, { status: 204 })],
+    });
+    await built.ctx.echo.trackOutboundWrite("doc_1", "somehash");
+
+    const result = await handleItemEvent(built.ctx, itemEventMsg("mit_1"));
+    expect(result).toEqual({ ok: true });
+    expect(built.proxyCalls[0]?.method).toBe("DELETE");
+    const cursor = await readCursor(storage);
+    expect(cursor.doc_mappings).not.toHaveProperty("doc_1");
   });
 
   it("retries a server error", async () => {

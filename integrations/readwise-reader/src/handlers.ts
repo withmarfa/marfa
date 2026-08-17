@@ -469,10 +469,23 @@ export async function handleItemEvent(
 
   const externalId = findExternalIdFor(cursor, item.id);
 
-  if (externalId !== null && (await ctx.echo.inLagWindow(externalId))) {
-    return { ok: false, retry: true, reason: "in_lag_window" };
-  }
-
+  // No lag-window guard on this path, deliberately.
+  //
+  // The obvious thing to write here is "if a write to this document is
+  // still inside its lag window, defer with retry". Four integrations do
+  // exactly that, and it loses data: the window is ten minutes, the queue
+  // gives a message six retries, and the retries are exhausted long
+  // before the window closes. The message then dead-letters. Measured
+  // against a live account, a document trashed shortly after being
+  // created was still there twenty minutes later, with nothing surfaced
+  // to the user.
+  //
+  // The lag window is a read-side guard. Its own contract in the runtime
+  // SDK says so: it exists to stop an inbound sweep reading a stale
+  // upstream and stomping an item that just changed. An outbound write
+  // carries the item's current state, so applying it late is harmless
+  // and applying it never is not. The inbound direction stays protected
+  // by `shouldSkipReactive`, which is a different call.
   if (item.state === "trashed") {
     return deleteUpstream(ctx, cursor, externalId);
   }
