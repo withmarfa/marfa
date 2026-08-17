@@ -54,9 +54,23 @@ kinds of thing come back that this integration deliberately drops:
   everything the person actually saved.
 - **Nothing else.** Every other parent document is in scope.
 
-## Six API behaviours that are not in the documentation
+## Seven API behaviours that are not in the documentation
 
 Each was established against a live account, and each changes the code.
+
+- **Suppressing the HTML cleaner makes an author mandatory.** A save
+  carrying `should_clean_html: false` is refused unless **both** `author`
+  and `title` are present:
+
+  ```
+  400 The fields 'author' and 'title' are required when you don't use
+      should_clean_html
+  ```
+
+  An author is optional on a Reader document and on this type, so the
+  flag is never sent. Omitting it accepts a save with neither field.
+  This one reached staging before it was caught, because the probe that
+  established the fabricated-URL path happened to supply an author.
 
 - **Re-saving a known URL is inert.** `POST /save/` on a URL Reader
   already holds returns **200** with the existing document id and
