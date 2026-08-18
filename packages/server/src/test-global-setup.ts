@@ -1,10 +1,11 @@
 /**
  * Vitest global setup for the server package.
  *
- * Two jobs. First, it sweeps temporary directories abandoned by earlier
- * runs (see `sweepStaleTempDirs`). Second, when DB_DIALECT=pg, it builds
- * the template database once before any test runs and drops it once
- * after all tests finish; per-file clones are owned by
+ * Three jobs. First, it refuses to run against a stale build (see
+ * `assertBuiltDepsAreFresh`). Second, it sweeps temporary directories
+ * abandoned by earlier runs (see `sweepStaleTempDirs`). Third, when
+ * DB_DIALECT=pg, it builds the template database once before any test runs
+ * and drops it once after all tests finish; per-file clones are owned by
  * `createPgTestStorage` in `test-utils.ts`.
  *
  * On the default sqlite path the database half is a no-op — sqlite tests
@@ -13,7 +14,7 @@
  * Returned function is invoked by vitest at teardown.
  */
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildTemplate, dropTemplate } from "./storage/pg/test-template.js";
@@ -76,7 +77,89 @@ function sweepStaleTempDirs(): void {
   }
 }
 
+/**
+ * Workspace dependencies this package imports through a built `dist` rather
+ * than from source. Each entry is a directory under `packages/`.
+ */
+const BUILT_DEPS = ["types", "shared", "webhooks", "runtime-sdk"] as const;
+
+/** Newest mtime beneath `dir`, or 0 if it does not exist. */
+function newestMtime(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let newest = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      newest = Math.max(newest, newestMtime(full));
+    } else {
+      try {
+        newest = Math.max(newest, statSync(full).mtimeMs);
+      } catch {
+        // Raced with a concurrent build or clean; skip it.
+      }
+    }
+  }
+  return newest;
+}
+
+/**
+ * Refuse to run when a dependency's source is newer than its build.
+ *
+ * These tests import sibling packages through their compiled `dist`, so a
+ * source change that has not been rebuilt is invisible: the suite runs
+ * happily against the previous version and reports on it as though it were
+ * current. That is the worst shape of false signal, because nothing about it
+ * looks wrong — it is confident, reproducible, and answering a question
+ * nobody asked.
+ *
+ * It has cost real time twice. Once a local run and CI disagreed about the
+ * same commit and both were right, because one had rebuilt the type registry
+ * and the other had not. Once a just-merged validation appeared not to work.
+ * Both were diagnosed as code problems first.
+ *
+ * A timestamp comparison rather than a content hash: it is cheap, it needs no
+ * build-tool cooperation, and the failure it guards against is always
+ * "source edited, build not re-run", which moves mtime. CI builds before it
+ * tests, so this is silent there.
+ */
+function assertBuiltDepsAreFresh(): void {
+  const packagesDir = join(import.meta.dirname, "..", "..");
+  const stale: string[] = [];
+
+  for (const dep of BUILT_DEPS) {
+    const src = join(packagesDir, dep, "src");
+    const dist = join(packagesDir, dep, "dist");
+    if (!existsSync(src)) continue;
+
+    const builtAt = newestMtime(dist);
+    if (builtAt === 0) {
+      stale.push(`@withmarfa/${dep} (never built)`);
+      continue;
+    }
+    if (newestMtime(src) > builtAt) stale.push(`@withmarfa/${dep}`);
+  }
+
+  if (stale.length === 0) return;
+
+  throw new Error(
+    [
+      "",
+      "Refusing to run: these packages have source newer than their build,",
+      "so the suite would test the previous version and report on it as",
+      "though it were current.",
+      "",
+      ...stale.map((s) => `  - ${s}`),
+      "",
+      "Rebuild, then re-run:",
+      "",
+      "  pnpm build",
+      "",
+    ].join("\n"),
+  );
+}
+
 export default async function setup(): Promise<() => Promise<void>> {
+  assertBuiltDepsAreFresh();
   sweepStaleTempDirs();
 
   if (process.env.DB_DIALECT !== "pg") {
