@@ -64,6 +64,8 @@ const INTEGRATION_TYPE_IDENTIFIERS = [
   "readwise.highlight",
   "todoist.task",
   "withmarfa.captured_email",
+  "withmarfa.podcast.episode",
+  "withmarfa.podcast.show",
 ];
 
 const SYSTEM_TYPE_IDENTIFIERS = [

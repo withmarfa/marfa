@@ -600,6 +600,8 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
       "readwise.highlight:read",
       "todoist.task:read",
       "withmarfa.captured_email:read",
+      "withmarfa.podcast.episode:read",
+      "withmarfa.podcast.show:read",
     ],
     default_on: true,
   },
