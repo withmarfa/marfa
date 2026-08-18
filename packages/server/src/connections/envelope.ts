@@ -138,15 +138,16 @@ export type DispatchOutcome =
   | { would_dispatch: true }
   | {
       would_dispatch: false;
-      reason: "self_event" | "cross_space";
+      reason: "self_event" | "cross_space" | "system_type";
     };
 
 /**
  * The bridge's per-subscriber gate. Runs in order:
- *   1. self-event (the subscriber is the connection that originated the event)
- *   2. cross-space (the subscriber's space doesn't match the event's)
+ *   1. system type (the event is the platform's own bookkeeping)
+ *   2. self-event (the subscriber is the connection that originated the event)
+ *   3. cross-space (the subscriber's space doesn't match the event's)
  *
- * Returns `{ would_dispatch: true }` when both gates pass — the caller
+ * Returns `{ would_dispatch: true }` when every gate passes — the caller
  * may then build the envelope. Hop-budget enforcement is upstream of the
  * bridge (`pubsub.passesHopBudget` runs at publish time) so it's NOT
  * checked here; see the preview-event route for how that's surfaced.
@@ -155,6 +156,17 @@ export function evaluateDispatch(
   event: ItemEventWithId,
   entry: SubscriptionEntry,
 ): DispatchOutcome {
+  // `system.*` rows are the platform talking to itself — activity rows,
+  // connection lifecycle, credentials, the integration catalog. Reacting
+  // to another integration's log line is never what a handler wants, and
+  // the fanout is not merely wasted: reporting progress is itself an
+  // event, so two reactive connections in one space answer each other's
+  // activity rows and walk the cycle hop counter up until the budget is
+  // reached and real events start being dropped. An ordinary import into
+  // an ordinary space was enough to do it.
+  if (event.item.type.startsWith("system.")) {
+    return { would_dispatch: false, reason: "system_type" };
+  }
   if (entry.connection_id === event.originatingConnectionId) {
     return { would_dispatch: false, reason: "self_event" };
   }
