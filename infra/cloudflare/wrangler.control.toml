@@ -169,6 +169,10 @@ id = "${CONTROL_PLANE_PROD_KV_ID}"
 # ---------------------------------------------------------------------------
 
 [[env.staging.services]]
+binding = "INTEGRATION_PODCASTS"
+service = "marfa-integration-podcasts-staging"
+
+[[env.staging.services]]
 binding = "INTEGRATION_RSS_WATCHER"
 service = "marfa-integration-rss-watcher-staging"
 
@@ -228,6 +232,10 @@ service = "marfa-integration-withmarfa-inbox-staging"
 # parses this file with a strict TOML parser and asserts both invariants
 # (every dispatch entry → a binding in both envs; no duplicate `binding`
 # keys inside one `[[env.X.services]]` block).
+
+[[env.prod.services]]
+binding = "INTEGRATION_PODCASTS"
+service = "marfa-integration-podcasts-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_RSS_WATCHER"

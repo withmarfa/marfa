@@ -24,6 +24,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // no real manifest and is skipped; any dir without a manifest export is
 // skipped with a warning rather than failing the run.
 const DIRS = [
+  "podcasts",
   "rss-watcher",
   "readwise",
   "readwise-reader",

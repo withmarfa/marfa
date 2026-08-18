@@ -105,6 +105,7 @@ export interface ControlPlaneEnv {
    * before all integrations are deployed; routes that reach for a
    * missing binding return 503 with a clear reason.
    */
+  INTEGRATION_PODCASTS?: ServiceBinding;
   INTEGRATION_RSS_WATCHER?: ServiceBinding;
   INTEGRATION_GITHUB_WEBHOOKS?: ServiceBinding;
   INTEGRATION_TASK_AUTO_ARCHIVE?: ServiceBinding;
