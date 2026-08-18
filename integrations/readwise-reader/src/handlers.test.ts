@@ -658,6 +658,107 @@ describe("inbound sweep", () => {
     expect(summary?.detail?.failed).toBe(1);
   });
 
+  it("keeps holding the watermark when the failure was in an earlier sweep", async () => {
+    // A backfill spans several sweeps. A failure on the first sweep has
+    // to still be remembered when a later sweep reaches the end of the
+    // stream and decides whether the pass was clean, or the document
+    // that failed is stepped over and stranded.
+    const storage = createMemoryStorage();
+
+    const first = buildContext({
+      storage,
+      proxyResponses: [
+        () =>
+          json({
+            nextPageCursor: "page_2",
+            results: [doc({ id: "d1" }), doc({ id: "d2" })],
+          }),
+      ],
+      bulkBehaviour: [
+        () => ({
+          counts: { created: 1, updated: 0, skipped: 0, errored: 1 },
+          results: [
+            { index: 0, outcome: "created" as const, id: "mit_1" },
+            {
+              index: 1,
+              outcome: "errored" as const,
+              error: { code: "validation_error", message: "bad document" },
+            },
+          ],
+        }),
+      ],
+    });
+    await handleSchedule(first.ctx, SCHEDULE_MSG());
+
+    // A later sweep finishes the stream cleanly. The watermark must
+    // still not move — the earlier failure is what it is waiting on.
+    const second = buildContext({
+      storage,
+      proxyResponses: [
+        () => json({ nextPageCursor: null, results: [doc({ id: "d3" })] }),
+      ],
+    });
+    await handleSchedule(second.ctx, SCHEDULE_MSG());
+
+    const held = (await second.ctx.cursor.read("main")) as {
+      updated_after: string;
+      retried_after_failure: boolean;
+    };
+    expect(held.updated_after).toBe("1970-01-01T00:00:00Z");
+    expect(held.retried_after_failure).toBe(true);
+
+    // The retry pass completes cleanly, so now it moves.
+    const third = buildContext({
+      storage,
+      proxyResponses: [
+        () => json({ nextPageCursor: null, results: [doc({ id: "d3" })] }),
+      ],
+    });
+    await handleSchedule(third.ctx, SCHEDULE_MSG());
+    const moved = (await third.ctx.cursor.read("main")) as {
+      updated_after: string;
+      retried_after_failure: boolean;
+    };
+    expect(moved.updated_after).not.toBe("1970-01-01T00:00:00Z");
+    expect(moved.retried_after_failure).toBe(false);
+  });
+
+  it("stops holding after one retry, so a document Marfa always refuses cannot pin the watermark", async () => {
+    // Holding forever would re-walk the entire library on every tick for
+    // the sake of one document that will never be accepted. The
+    // action_required rows are the record instead.
+    const storage = createMemoryStorage();
+    const failing = () => ({
+      counts: { created: 0, updated: 0, skipped: 0, errored: 1 },
+      results: [
+        {
+          index: 0,
+          outcome: "errored" as const,
+          error: { code: "validation_error", message: "always bad" },
+        },
+      ],
+    });
+
+    for (const pass of [1, 2]) {
+      const built = buildContext({
+        storage,
+        proxyResponses: [
+          () => json({ nextPageCursor: null, results: [doc({ id: "dx" })] }),
+        ],
+        bulkBehaviour: [failing],
+      });
+      await handleSchedule(built.ctx, SCHEDULE_MSG());
+      const c = (await built.ctx.cursor.read("main")) as {
+        updated_after: string;
+      };
+      if (pass === 1) {
+        expect(c.updated_after).toBe("1970-01-01T00:00:00Z");
+      } else {
+        expect(c.updated_after).not.toBe("1970-01-01T00:00:00Z");
+      }
+    }
+  });
+
   it("does nothing on an empty sweep", async () => {
     const built = buildContext({
       proxyResponses: [() => json({ nextPageCursor: null, results: [] })],

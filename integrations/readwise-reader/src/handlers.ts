@@ -112,6 +112,23 @@ interface ReaderCursor {
   doc_mappings: Record<string, string>;
   /** ISO timestamp of the last completed sweep. Diagnostic only. */
   last_inbound_at: string | null;
+  /**
+   * Documents that failed to write since the watermark last moved.
+   * Carried on the cursor rather than kept in the sweep, because a
+   * backfill spans several sweeps: a failure on the third page of a
+   * six-sweep pass has to still be remembered when the sixth sweep
+   * decides whether the pass was clean.
+   */
+  failed_since_watermark: number;
+  /**
+   * Whether the pass since the last watermark move is already a retry.
+   * Bounds the hold at one extra pass — a document Reader keeps handing
+   * over and Marfa keeps refusing would otherwise pin the watermark
+   * forever and re-walk the whole library on every tick. After the
+   * retry the watermark moves and the `action_required` rows stand as
+   * the record.
+   */
+  retried_after_failure: boolean;
 }
 
 interface ReaderConfig {
@@ -124,6 +141,8 @@ function defaultCursor(): ReaderCursor {
     page_cursor: null,
     doc_mappings: {},
     last_inbound_at: null,
+    failed_since_watermark: 0,
+    retried_after_failure: false,
   };
 }
 
@@ -311,9 +330,10 @@ export async function handleSchedule(
   }
   const config = resolved.config;
 
-  const cursor: ReaderCursor =
-    ((await ctx.cursor.read(CURSOR_KEY)) as ReaderCursor | null) ??
-    defaultCursor();
+  const cursor: ReaderCursor = {
+    ...defaultCursor(),
+    ...(((await ctx.cursor.read(CURSOR_KEY)) as ReaderCursor | null) ?? {}),
+  };
 
   // A parked sweep resumes from its page cursor against the watermark it
   // started under. Restarting from the watermark would re-walk pages
@@ -418,6 +438,7 @@ export async function handleSchedule(
         if (entry === undefined) continue;
         if (result.outcome === "errored" || result.id === undefined) {
           failed += 1;
+          cursor.failed_since_watermark += 1;
           await ctx.activity.emit({
             severity: "action_required",
             summary: `readwise reader: failed to upsert marfa item for document ${entry.doc.id}`,
@@ -450,13 +471,30 @@ export async function handleSchedule(
     if (parked) break;
   }
 
-  // The watermark moves only when a sweep both reached the end of the
-  // stream and wrote everything it saw. Advancing it over a document that
-  // failed to write would strand that document permanently: nothing
-  // fetches it again unless it changes upstream.
-  if (!parked && failed === 0) {
-    cursor.updated_after = sweepStartedAt;
-    cursor.last_inbound_at = sweepStartedAt;
+  // The watermark moves only when a sweep reached the end of the stream,
+  // and then only if the whole pass since the last move wrote everything
+  // it saw. Advancing over a document that failed would strand it:
+  // nothing fetches it again unless it changes upstream.
+  //
+  // The failure count is read from the cursor rather than from this
+  // sweep, because a backfill takes several sweeps and the failure may
+  // have happened in an earlier one.
+  if (!parked) {
+    const passWasClean = cursor.failed_since_watermark === 0;
+    if (passWasClean || cursor.retried_after_failure) {
+      // Either nothing failed, or the pass that just finished was
+      // already the retry. Move on and let the `action_required` rows
+      // stand as the record — holding forever would re-walk the whole
+      // library on every tick for one document Marfa will never accept.
+      cursor.updated_after = sweepStartedAt;
+      cursor.last_inbound_at = sweepStartedAt;
+      cursor.failed_since_watermark = 0;
+      cursor.retried_after_failure = false;
+    } else {
+      // Hold, and mark the next pass as the retry.
+      cursor.failed_since_watermark = 0;
+      cursor.retried_after_failure = true;
+    }
     await ctx.cursor.write(CURSOR_KEY, cursor);
   }
 
