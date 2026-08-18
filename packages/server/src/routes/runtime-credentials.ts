@@ -41,7 +41,7 @@ import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   runtimeCredentialItemSource,
-  withConnectionLifecycleLock,
+  withConnectionLifecycleLockInTransaction,
 } from "../connections/lifecycle-lock.js";
 import {
   buildEdgePermissions,
@@ -402,7 +402,7 @@ export function runtimeCredentialRoutes(
     // an uninstall that has already swept. The state read has to be
     // inside the lock too: a read taken before acquiring it is a
     // snapshot of a decision someone else may already have overturned.
-    const minted = await withConnectionLifecycleLock(
+    const minted = await withConnectionLifecycleLockInTransaction(
       storage,
       body.connection_id,
       async () => {
@@ -494,23 +494,32 @@ export function runtimeCredentialRoutes(
           stored.id,
         );
 
-        void storage.audit.log({
-          client_ip: c.get("clientIp") ?? null,
-          space_id: connection.space_id ?? null,
-          key_id: apiKey.id,
-          action: "runtime_credential.create",
-          resource_type: "api_key",
-          resource_id: stored.id,
-          details: {
-            connection_id: body.connection_id,
-            integration_name: body.integration_name,
-            ttl_seconds: ttlSeconds,
-          },
-        });
-
-        return { stored, rawKey, expiresAt };
+        return {
+          stored,
+          rawKey,
+          expiresAt,
+          ttlSeconds,
+          spaceId: connection.space_id ?? null,
+        };
       },
     );
+
+    // Outside the transaction deliberately. Audit is fire-and-forget, and
+    // an unawaited query issued inside a transaction can reach the pool
+    // after that transaction has already committed and released it.
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      space_id: minted.spaceId,
+      key_id: apiKey.id,
+      action: "runtime_credential.create",
+      resource_type: "api_key",
+      resource_id: minted.stored.id,
+      details: {
+        connection_id: body.connection_id,
+        integration_name: body.integration_name,
+        ttl_seconds: minted.ttlSeconds,
+      },
+    });
 
     return c.json(
       {
