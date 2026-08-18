@@ -340,28 +340,25 @@ else
   export SERVER_WORKERS_DEV="false"
   export SERVER_ROUTES='[{"pattern":"api.marfa.so","custom_domain":true}]'
   export V_OTEL_ENVIRONMENT="production"
-  # Prod has its own free Neon budget, so a longer idle window is affordable and
-  # keeps the dogfooding instance warm. Tune down if prod compute creeps up.
-  # Pre-launch posture. Production has no real traffic yet, so the doubled
-  # latency floor that comes with the smaller preset is not currently paid by
-  # anyone, and the memory saving is four times. Scale this back to
-  # `standard-1` at go-live: the 6s startup is worth buying once people are
-  # waiting on it, and this line is the whole change.
-  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-basic}"
-  # Deliberately NOT shortened, and that is a reversal worth explaining.
-  #
-  # This was briefly cut to 2m while production sat on `standard-1`, because
-  # at 4 GiB the residency the scheduled health probe bought — about
-  # seventeen probes a day, each holding the container up for the length of
-  # this window — was production's entire baseline cost. On `basic` the same
-  # residency costs a quarter as much, and the difference between a 2m and a
-  # 10m window is roughly sixty cents a month.
-  #
-  # Sixty cents does not buy a cold start on every visit after a short gap,
-  # and on the smaller preset that cold start is the measured 15s rather than
-  # 6s. The value of a lever depends on the multiplier it acts on; cutting the
-  # memory removed most of the reason to cut the window.
-  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-10m}"
+  # Sized like staging, and for the same reason. The pre-launch premise for
+  # the smaller preset — production has no real traffic, so nobody pays its
+  # latency floor — no longer holds: integration backfills and platform
+  # testing now write to production in bursts, and on `basic` those writes
+  # ran slow enough to be mistaken for a platform defect. Measured warm and
+  # like-for-like (same Neon tier): database health probes 354-619ms on
+  # `basic` against 54-85ms on `standard-1` — a larger gap than the preset's
+  # memory arithmetic predicts, so treat `basic` as unfit for write-heavy
+  # use, not merely slower. Reverting to the pre-launch cost posture is this
+  # line plus the idle window below.
+  export SERVER_INSTANCE_TYPE="${SERVER_INSTANCE_TYPE:-standard-1}"
+  # Staging parity, same reasoning as staging's window: production is driven
+  # in bursts separated by minutes of thinking time, and a short window made
+  # requests after each gap open on a cold start. COST: scheduled health
+  # probes land often enough that an hour-long window holds the instance
+  # resident most of the day — close to the warm floor (provisioned memory +
+  # disk + managing Durable Object) without setting V_CONTAINER_WARM. Tune
+  # this down first if production spend needs cutting.
+  export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-1h}"
   # Deliberate warm policy — OFF by default (opt-in). Warm keeps the prod
   # instance resident so real traffic never pays a cold start. COST: an
   # always-on container bills continuously — provisioned memory + disk plus its
