@@ -17,6 +17,7 @@ import {
   createEchoSuppression,
   type ConnectionContext,
   type ConnectionClient,
+  type BulkUpsertResponse,
   type CreateItemInput,
   type ItemResource,
   type ItemState,
@@ -65,8 +66,19 @@ interface ProxyCall {
   body?: unknown;
 }
 
+interface BulkCall {
+  items: CreateItemInput[];
+}
+
 interface BuildOpts {
   proxyResponses: (() => Response)[];
+  /**
+   * Per-call behaviour for `bulkUpsertItems`, indexed by call order.
+   * A function returning a response overrides the default all-created
+   * outcome; a function that throws simulates the page not landing.
+   * Falls through to the default once exhausted.
+   */
+  bulkBehaviour?: ((items: CreateItemInput[]) => BulkUpsertResponse)[];
   /** Items `getItem` should answer with, keyed by id. */
   items?: Record<string, ItemResource | null>;
   /** `properties.configuration` on the connection item. */
@@ -81,6 +93,7 @@ interface BuiltContext {
   created: CreateItemInput[];
   updated: { id: string; patch: Partial<CreateItemInput> }[];
   proxyCalls: ProxyCall[];
+  bulkCalls: BulkCall[];
 }
 
 function buildContext(opts: BuildOpts): BuiltContext {
@@ -89,7 +102,9 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const created: CreateItemInput[] = [];
   const updated: { id: string; patch: Partial<CreateItemInput> }[] = [];
   const proxyCalls: ProxyCall[] = [];
+  const bulkCalls: BulkCall[] = [];
   let proxyIdx = 0;
+  let bulkIdx = 0;
 
   const connectionItem = {
     id: CONNECTION_ID,
@@ -107,6 +122,32 @@ function buildContext(opts: BuildOpts): BuiltContext {
       return Promise.resolve({
         id: `mit_${String(created.length)}`,
         type: input.type,
+      });
+    },
+    bulkUpsertItems: (items: CreateItemInput[]) => {
+      bulkCalls.push({ items });
+      const behaviour = opts.bulkBehaviour?.[bulkIdx];
+      bulkIdx += 1;
+      if (behaviour) return Promise.resolve(behaviour(items));
+      // Default: every entry created, ids handed back in input order and
+      // in the same shape `createItem` uses, so assertions that predate
+      // batching keep meaning what they meant.
+      const results = items.map((input, index) => {
+        created.push(input);
+        return {
+          index,
+          outcome: "created" as const,
+          id: `mit_${String(created.length)}`,
+        };
+      });
+      return Promise.resolve({
+        counts: {
+          created: results.length,
+          updated: 0,
+          skipped: 0,
+          errored: 0,
+        },
+        results,
       });
     },
     updateItem: (id: string, patch: Partial<CreateItemInput>) => {
@@ -142,7 +183,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
     }),
     cycle: null,
   };
-  return { ctx, storage, emitted, created, updated, proxyCalls };
+  return { ctx, storage, emitted, created, updated, proxyCalls, bulkCalls };
 }
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
@@ -447,7 +488,11 @@ describe("inbound sweep", () => {
     expect(built.updated).toHaveLength(0);
   });
 
-  it("updates rather than recreates a document it already mapped", async () => {
+  it("re-syncs a mapped document through the same upsert, carrying its source_id", async () => {
+    // The handler no longer branches on its own mapping table. Every
+    // document goes through the one upsert and the server resolves
+    // `(source, source_id)` — which is what makes a mapping lost with a
+    // dying sweep harmless rather than a duplicate.
     const storage = createMemoryStorage();
     const first = buildContext({
       storage,
@@ -464,11 +509,153 @@ describe("inbound sweep", () => {
             results: [doc({ title: "Retitled upstream" })],
           }),
       ],
+      bulkBehaviour: [
+        (items) => ({
+          counts: { created: 0, updated: items.length, skipped: 0, errored: 0 },
+          results: items.map((_, index) => ({
+            index,
+            outcome: "updated" as const,
+            id: "mit_1",
+          })),
+        }),
+      ],
     });
     await handleSchedule(second.ctx, SCHEDULE_MSG());
-    expect(second.created).toHaveLength(0);
-    expect(second.updated).toHaveLength(1);
-    expect(second.updated[0]?.id).toBe("mit_1");
+
+    expect(second.bulkCalls).toHaveLength(1);
+    expect(second.bulkCalls[0]?.items).toHaveLength(1);
+    expect(second.bulkCalls[0]?.items[0]?.source_id).toBe("doc_1");
+    expect(second.bulkCalls[0]?.items[0]?.properties?.title).toBe(
+      "Retitled upstream",
+    );
+    const cursor = (await second.ctx.cursor.read("main")) as {
+      doc_mappings: Record<string, string>;
+    };
+    expect(cursor.doc_mappings.doc_1).toBe("mit_1");
+  });
+
+  it("resumes from the page it reached when a sweep dies mid-drain", async () => {
+    // The regression this integration actually shipped: a backfill over a
+    // library of several thousand documents cannot finish inside one
+    // sweep, so sweeps die partway. Progress has to survive that. It only
+    // does if the cursor is checkpointed per page rather than once at the
+    // end of the drain.
+    const storage = createMemoryStorage();
+    const first = buildContext({
+      storage,
+      proxyResponses: [
+        () => json({ nextPageCursor: "page_2", results: [doc({ id: "d1" })] }),
+        () => json({ nextPageCursor: "page_3", results: [doc({ id: "d2" })] }),
+        () => json({ nextPageCursor: "page_4", results: [doc({ id: "d3" })] }),
+      ],
+      bulkBehaviour: [
+        undefined as unknown as (
+          items: CreateItemInput[],
+        ) => BulkUpsertResponse,
+        undefined as unknown as (
+          items: CreateItemInput[],
+        ) => BulkUpsertResponse,
+        () => {
+          throw new Error("container suddenly disconnected");
+        },
+      ],
+    });
+
+    const result = await handleSchedule(first.ctx, SCHEDULE_MSG());
+    expect(result).toEqual({
+      ok: false,
+      retry: true,
+      reason: "reader inbound bulk upsert failed",
+    });
+
+    // Two pages applied, and the checkpoint records the third as the
+    // place to pick up — not the start of the library.
+    const parked = (await first.ctx.cursor.read("main")) as {
+      page_cursor: string | null;
+      updated_after: string;
+      doc_mappings: Record<string, string>;
+    };
+    expect(parked.page_cursor).toBe("page_3");
+    expect(Object.keys(parked.doc_mappings)).toEqual(["d1", "d2"]);
+
+    const second = buildContext({
+      storage,
+      proxyResponses: [
+        () => json({ nextPageCursor: null, results: [doc({ id: "d3" })] }),
+      ],
+    });
+    await handleSchedule(second.ctx, SCHEDULE_MSG());
+
+    // The resumed sweep asks for page three, rather than re-walking the
+    // two pages already applied.
+    expect(second.proxyCalls[0]?.path).toContain("pageCursor=page_3");
+    expect(second.created).toHaveLength(1);
+    expect(second.created[0]?.source_id).toBe("d3");
+  });
+
+  it("writes one request per page rather than one per document", async () => {
+    // A request per document is what turns six hundred documents into an
+    // hour of work, which is longer than a sweep gets.
+    const built = buildContext({
+      proxyResponses: [
+        () =>
+          json({
+            nextPageCursor: null,
+            results: [
+              doc({ id: "d1" }),
+              doc({ id: "d2" }),
+              doc({ id: "d3" }),
+              doc({ id: "d4" }),
+            ],
+          }),
+      ],
+    });
+    await handleSchedule(built.ctx, SCHEDULE_MSG());
+    expect(built.bulkCalls).toHaveLength(1);
+    expect(built.bulkCalls[0]?.items).toHaveLength(4);
+  });
+
+  it("holds the watermark when a document in the page failed to write", async () => {
+    // Advancing over a document that did not land strands it: nothing
+    // fetches it again unless it changes upstream.
+    const storage = createMemoryStorage();
+    const built = buildContext({
+      storage,
+      proxyResponses: [
+        () =>
+          json({
+            nextPageCursor: null,
+            results: [doc({ id: "d1" }), doc({ id: "d2" })],
+          }),
+      ],
+      bulkBehaviour: [
+        () => ({
+          counts: { created: 1, updated: 0, skipped: 0, errored: 1 },
+          results: [
+            { index: 0, outcome: "created" as const, id: "mit_1" },
+            {
+              index: 1,
+              outcome: "errored" as const,
+              error: { code: "validation_error", message: "bad document" },
+            },
+          ],
+        }),
+      ],
+    });
+    await handleSchedule(built.ctx, SCHEDULE_MSG());
+
+    const cursor = (await built.ctx.cursor.read("main")) as {
+      updated_after: string;
+      doc_mappings: Record<string, string>;
+    };
+    expect(cursor.updated_after).toBe("1970-01-01T00:00:00Z");
+    expect(cursor.doc_mappings.d1).toBe("mit_1");
+    expect(cursor.doc_mappings.d2).toBeUndefined();
+
+    const summary = built.emitted.at(-1)?.properties as
+      | { detail?: { failed?: number } }
+      | undefined;
+    expect(summary?.detail?.failed).toBe(1);
   });
 
   it("does nothing on an empty sweep", async () => {

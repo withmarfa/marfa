@@ -103,6 +103,26 @@ export interface ListItemsPage {
   has_more: boolean;
 }
 
+/** One entry's outcome from `bulkUpsertItems`, positionally matched to
+ *  the input array by `index`. */
+export interface BulkUpsertResult {
+  index: number;
+  outcome: "created" | "updated" | "skipped" | "errored";
+  id?: string;
+  reason?: string;
+  error?: { code: string; message: string };
+}
+
+export interface BulkUpsertResponse {
+  counts: {
+    created: number;
+    updated: number;
+    skipped: number;
+    errored: number;
+  };
+  results: BulkUpsertResult[];
+}
+
 /** Allowed lifecycle transitions for non-system items. The
  *  `core.task` auto-archive handler hits `archived`. */
 export type ItemState = "active" | "archived" | "trashed";
@@ -199,6 +219,34 @@ export class ConnectionClient {
       return wrapped.item;
     }
     return wrapped as ItemResource;
+  }
+
+  /**
+   * POST /items/bulk — upsert a batch of items in one request.
+   *
+   * The point is the round trip. A backfill that writes one item per
+   * request pays the full API latency per document, and against a
+   * library of several thousand that is the difference between a sweep
+   * that finishes and one that does not.
+   *
+   * Resolution is the same natural key `createItem` uses: the server
+   * matches on `(source, source_id)` first and stamps `source` from the
+   * runtime credential, so re-running a batch updates rather than
+   * duplicates.
+   *
+   * `atomic: false` deliberately. A backfill wants the ninety-nine
+   * documents that are fine to land while the one the server rejects is
+   * reported on its own; rolling the page back because a single upstream
+   * record is malformed would make the whole import hostage to it. Read
+   * `counts.errored` and decide, rather than assuming the batch applied
+   * in full.
+   */
+  async bulkUpsertItems(items: CreateItemInput[]): Promise<BulkUpsertResponse> {
+    return this.request<BulkUpsertResponse>("POST", "/items/bulk", {
+      items,
+      mode: "upsert",
+      atomic: false,
+    });
   }
 
   /** GET /items with the supplied query. Server caps the page size at

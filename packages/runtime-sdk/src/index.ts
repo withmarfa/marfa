@@ -41,6 +41,8 @@ export type {
   ItemState,
   ListItemsQuery,
   ListItemsPage,
+  BulkUpsertResult,
+  BulkUpsertResponse,
   UploadBlobInput,
   UploadBlobResult,
 } from "./connection-client.js";
