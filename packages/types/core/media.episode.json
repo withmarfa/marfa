@@ -3,11 +3,12 @@
   "parent": "core.media",
   "label": "Episode",
   "description": "Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "medium": {
-      "type": "string",
-      "description": "What the episode is made of. Recommended values: tv, podcast, radio, video, mixed"
+      "type": "enum",
+      "description": "What the episode is made of.",
+      "enum_values": ["tv", "podcast", "radio", "video", "mixed"]
     },
     "season_number": {
       "type": "integer",
@@ -20,6 +21,15 @@
     "duration": {
       "type": "number",
       "description": "Runtime in seconds"
+    },
+    "media_url": {
+      "type": "string",
+      "description": "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work.",
+      "format": "url"
+    },
+    "mime_type": {
+      "type": "string",
+      "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
   },
   "required": [],
