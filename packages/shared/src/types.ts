@@ -879,6 +879,9 @@ export interface PreviewEventEnvelope {
     | "ok"
     | "self_event"
     | "cross_space"
+    /** The event is a `system.*` row — the platform's own bookkeeping,
+     *  which never fans out to reactive handlers. */
+    | "system_type"
     | "hop_budget_exceeded"
     | "subscription_inactive";
   /**
