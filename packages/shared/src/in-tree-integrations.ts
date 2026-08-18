@@ -66,6 +66,13 @@ export interface InTreeIntegration {
 
 export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
   {
+    name: "withmarfa.podcasts",
+    dirName: "podcasts",
+    triggers: ["schedule"],
+    hasWorker: true,
+    serviceBinding: "INTEGRATION_PODCASTS",
+  },
+  {
     name: "withmarfa.rss-watcher",
     dirName: "rss-watcher",
     triggers: ["schedule"],

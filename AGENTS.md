@@ -1,6 +1,6 @@
 # Marfa
 
-Typed data layer. This monorepo holds eight active workspace packages, fifteen in-tree Integrations, and the Cloudflare infra package.
+Typed data layer. This monorepo holds eight active workspace packages, sixteen in-tree Integrations, and the Cloudflare infra package.
 
 **Docs MCP convention.** When working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or `marfa docs search "<query>"` from the CLI) before re-deriving from source.
 
@@ -17,10 +17,10 @@ Typed data layer. This monorepo holds eight active workspace packages, fifteen i
 - **@withmarfa/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
 - **@withmarfa/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface, so Integrations can unit-test in a `miniflare`-style fixture without booting a real Workers runtime.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fourteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fifteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
 - **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
-- **Inbound** — `google-drive`, `google-youtube`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `withmarfa-inbox` (email capture via Cloudflare Email Routing).
+- **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `withmarfa-inbox` (email capture via Cloudflare Email Routing).
 - **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-to-Marfa bridge re-presented as a Connection; the agent itself lives in `withmarfa/sync`).
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` plus deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.

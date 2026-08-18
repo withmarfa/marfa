@@ -1,0 +1,124 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for withmarfa.podcasts.
+# Schedule-trigger only — consumes its own scheduled-poll queue.
+# (Cloudflare Queues are single-consumer; per-integration queues are
+# necessary for multi-integration coexistence on staging.)
+
+name = "marfa-integration-podcasts"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+# `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
+
+# No public HTTP surface. The control plane reaches this Worker over a
+# Service Binding; queue delivery and Durable Object alarms never touch
+# a hostname. A `workers.dev` name would therefore only ever serve
+# unsolicited traffic.
+#
+# Both keys are stated because `preview_urls` has no dependable
+# default. Wrangler's deploy path resolves none locally: an unset
+# value is dropped from the request body and the API decides. Its
+# config schema documents a default of `false`, and the helper it
+# mocks that API with computes a third answer. Left unset, per-version
+# `<version>-<name>.<subdomain>.workers.dev` hostnames can keep
+# serving the Worker.
+workers_dev = false
+preview_urls = false
+
+[vars]
+INTEGRATION_NAME = "withmarfa.podcasts"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "marfa-integration-podcasts-staging"
+workers_dev = false
+preview_urls = false
+
+[env.staging.vars]
+INTEGRATION_NAME = "withmarfa.podcasts"
+MANIFEST_CRON = "0 0 * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "marfa-scheduled-poll-podcasts-staging"
+
+# DLQ producer binding so the consumer wrapper can stamp
+# `_failure_reason` on permanent failures before they leave the
+# operator's peekable surface.
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "marfa-scheduled-poll-podcasts-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "marfa-scheduled-poll-podcasts-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "marfa-scheduled-poll-podcasts-staging-dlq"
+
+# ---- Production -----------------------------------------------------------
+# Mirrors staging. Keep in sync if you change queue topology.
+[env.prod]
+name = "marfa-integration-podcasts-prod"
+workers_dev = false
+preview_urls = false
+
+[env.prod.vars]
+INTEGRATION_NAME = "withmarfa.podcasts"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "marfa-scheduled-poll-podcasts-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "marfa-scheduled-poll-podcasts-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "marfa-scheduled-poll-podcasts-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "marfa-scheduled-poll-podcasts-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_WORKER_IDENTITY_KEY
+#         This Worker's own identity, derived by the operator as
+#         HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, INTEGRATION_NAME).
+#         Presented to the control plane's lease broker, and required on
+#         every inbound call to this Worker's fetch surface.
+#         Set it with infra/cloudflare/scripts/init-integration-worker-secrets.sh,
+#         which derives it from the config's INTEGRATION_NAME.
+#         NOT the platform broker key this replaced: that key mints
+#         against any Connection in any space and never reaches a Worker.

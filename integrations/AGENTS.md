@@ -149,6 +149,7 @@ Deploy the control plane before the Workers. It has to know the new root before 
 ## In-tree integrations
 
 - **`_template`** — scaffold to copy when starting a new integration.
+- **`podcasts`** — scheduled poll of podcast RSS feeds to `withmarfa.podcast.show` and `withmarfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
 - **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
 - **`github-webhooks`** — inbound webhook on a repo to `core.bookmark`.
 - **`google-calendar`** — bidirectional OAuth sync with the `google.calendar` family.
