@@ -8,6 +8,9 @@
  *     original via `decryptSecret`.
  *   - Validation: malformed URL fields → 400.
  *   - Audit trail: `credential.oauth_provider.create` row written.
+ *   - Removal: `DELETE /credentials/{id}` gates on space_admin, refuses
+ *     while a live connection references the credential, and otherwise
+ *     removes the row and the secret it held.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
@@ -394,5 +397,141 @@ describe("POST /credentials/api-token — validation", () => {
       body: incomplete,
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("DELETE /credentials/{id}", () => {
+  async function makeCredential(label: string): Promise<string> {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, label },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { credential_id: string }).credential_id;
+  }
+
+  it("requires an admin key", async () => {
+    const id = await makeCredential("delete-auth-gate");
+    const memberKey = await mintMemberKey();
+    const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
+      key: memberKey,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("removes the credential and the secret it held", async () => {
+    const id = await makeCredential("delete-happy-path");
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
+
+    const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, credential_id: id });
+
+    // Gone, not orphaned. This is the whole point: the user's own secret
+    // has to be removable, and a soft-deleted row still holds it.
+    expect(await ctx.storage.items.get(id)).toBeNull();
+  });
+
+  it("a space_admin can remove a credential they created", async () => {
+    const spaceAdminKey = await mintSpaceAdminKey();
+    const created = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: spaceAdminKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "space-admin-owned" },
+    });
+    expect(created.status).toBe(201);
+    const { credential_id } = (await created.json()) as {
+      credential_id: string;
+    };
+
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      `/credentials/${credential_id}`,
+      { key: spaceAdminKey },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses while a connection that is not revoked references it", async () => {
+    const id = await makeCredential("delete-in-use");
+    const connection = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        credential_ref: id,
+      },
+    });
+
+    const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { connection_ids?: string[] } };
+    };
+    expect(body.error.code).toBe("credential_in_use");
+    expect(body.error.details?.connection_ids).toContain(connection.id);
+
+    // Still there — a refused delete must not half-remove anything.
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
+  });
+
+  it("allows removal once the referencing connection is revoked", async () => {
+    const id = await makeCredential("delete-after-revoke");
+    const connection = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        credential_ref: id,
+      },
+    });
+    await ctx.storage.items.transition(connection.id, "revoked");
+
+    const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    expect(await ctx.storage.items.get(id)).toBeNull();
+  });
+
+  it("404s on an unknown credential, and on an item that is not one", async () => {
+    const missing = await request(
+      ctx.app,
+      "DELETE",
+      "/credentials/01a00000-0000-7000-8000-000000000000",
+      { key: ctx.adminKey },
+    );
+    expect(missing.status).toBe(404);
+
+    const note = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "not a credential" },
+    });
+    const wrongType = await request(
+      ctx.app,
+      "DELETE",
+      `/credentials/${note.id}`,
+      { key: ctx.adminKey },
+    );
+    expect(wrongType.status).toBe(404);
+  });
+
+  it("writes an audit row", async () => {
+    const id = await makeCredential("delete-audit");
+    const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const audits = await waitForAudit(
+      () => ctx.storage.audit.list({ action: "credential.delete" }),
+      (r) => r.data.some((row) => row.resource_id === id),
+    );
+    expect(audits.data.some((row) => row.resource_id === id)).toBe(true);
   });
 });

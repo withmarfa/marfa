@@ -62,6 +62,11 @@ export enum ErrorCode {
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
+  /**
+   * A credential cannot be removed while a connection that is not
+   * revoked still references it. Details carry `connection_ids`.
+   */
+  CREDENTIAL_IN_USE = "credential_in_use",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
   /**
@@ -317,6 +322,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
+  [ErrorCode.CREDENTIAL_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
   [ErrorCode.WEBHOOK_SIGNATURE_MISSING]: 400,
