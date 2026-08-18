@@ -861,6 +861,63 @@ const googleYoutubeVideo: TypeSchema = {
   compatible_with: ["core.media"],
 };
 
+const withmarfaPodcastEpisode: TypeSchema = {
+  id: "withmarfa.podcast.episode",
+  label: "Podcast Episode",
+  description: "One episode of a podcast, as its feed item describes it. Joins its show through the in-collection edge, with the episode as the source. Mirrors an RSS 2.0 item together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.episode` instead. Both a raw and a normalized duration are kept, because feeds express it in several formats and the original is the only evidence of which one was meant.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Episode title (maps to the item `title`, falling back to `itunes:title`).", required: true },
+    guid: { type: "string", description: "The item's own identifier (maps to `guid`). Optional in RSS and required by Apple, so it is usually present but cannot be relied on; an item without one is identified by its enclosure address instead." },
+    guid_is_permalink: { type: "boolean", description: "The `isPermaLink` attribute as the feed gave it, defaulting to true when absent per RSS 2.0. Recorded rather than acted on: it says whether the guid can be dereferenced, which has no bearing on whether it is stable." },
+    enclosure_url: { type: "url", description: "Address of the episode's media file (maps to the item `enclosure` `url`). Where an item carries several enclosures — and modern feeds attach artwork, transcripts and captions alongside the audio — this is the audio or video one." },
+    enclosure_type: { type: "string", description: "MIME type the feed claims for the enclosure (maps to `enclosure` `type`), such as audio/mpeg or video/mp4. This is what distinguishes a video episode from an audio one; `itunes:type` does not." },
+    enclosure_length: { type: "integer", description: "Size in bytes the feed claims for the enclosure (maps to `enclosure` `length`). Required by the specification and frequently wrong — whole feeds report zero — so it is mirrored as claimed and should not be trusted for accounting." },
+    link: { type: "url", description: "The episode's own web page (maps to the item `link`). Distinct from `enclosure_url`, which is the media itself." },
+    description: { type: "string", description: "Short episode description, preferring `itunes:summary` and falling back to the item `description`." },
+    content_encoded: { type: "string", description: "Full show notes as published, usually HTML (maps to `content:encoded`). Kept as given rather than downgraded to text, since the markup carries the chapter links and credits." },
+    pub_date: { type: "datetime", description: "When the episode was published (maps to the item `pubDate`). Feeds give this in RFC 822 form, sometimes with an alphabetic timezone rather than a numeric offset." },
+    duration_raw: { type: "string", description: "The duration exactly as the feed wrote it (maps to `itunes:duration`), before normalization. Feeds use plain seconds, MM:SS and HH:MM:SS interchangeably, sometimes wrapped in CDATA with surrounding whitespace, so the original is kept as the evidence for how it was read." },
+    duration_seconds: { type: "number", description: "Duration in seconds, normalized from `duration_raw`. Absent where the feed's value could not be read as a duration." },
+    season_number: { type: "integer", description: "Season the episode belongs to (maps to `itunes:season`)." },
+    episode_number: { type: "integer", description: "Position within the season, or within the show where it has no seasons (maps to `itunes:episode`)." },
+    episode_type: { type: "enum", description: "Whether this is a full episode or something alongside the run (maps to `itunes:episodeType`, which defaults to full when absent).", enum_values: ["full", "trailer", "bonus"] },
+    explicit: { type: "enum", description: "Explicitness as declared by the item's `itunes:explicit`, normalized the same way as on the show.", enum_values: ["true", "false", "clean"] },
+    author: { type: "string", description: "Who made this episode (maps to the item `itunes:author`, falling back to `dc:creator` and then to the show's author, since most items omit it and the host is the answer)." },
+    image_url: { type: "url", description: "Episode artwork, from the `href` attribute of the item's `itunes:image`, falling back to the show's." },
+    feed_url: { type: "url", description: "Address of the feed this episode was read from, kept so an episode can be traced to its source without reading the show." },
+    podcast_guid: { type: "string", description: "Identifier of the show this episode belongs to, matching `podcast_guid` on `withmarfa.podcast.show`. The in-collection edge is the authoritative join; this is the same fact denormalized, so a reader holding an episode knows its show without a second call." },
+  },
+  display_hints: { title_field: "title", body_field: "content_encoded" },
+};
+
+const withmarfaPodcastShow: TypeSchema = {
+  id: "withmarfa.podcast.show",
+  label: "Podcast Show",
+  description: "A podcast, as its RSS feed describes it. One row per show, keyed on the show's stable identifier rather than its feed address, so a move between hosts does not create a second show. Episodes join it through the in-collection edge. Mirrors the channel element of an RSS 2.0 feed together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.series` instead.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Show name (maps to the channel `title`). A feed that omits it falls back to its host, since a show with no name cannot be told apart in a list.", required: true },
+    feed_url: { type: "url", description: "Address the feed was fetched from. Not the identity: a show that changes host keeps its guid and changes this.", required: true },
+    podcast_guid: { type: "string", description: "Stable identifier for the show, from the channel's `podcast:guid` where the feed declares one. Where it does not — which is most feeds — this is the same value computed the way the Podcasting 2.0 specification defines it, as a UUIDv5 over the feed address with the scheme and any trailing slash removed. A feed that later adds a conformant guid therefore lands on the value already stored." },
+    link: { type: "url", description: "The show's own web page (maps to the channel `link`). Distinct from `feed_url`, which is the machine-readable feed." },
+    description: { type: "string", description: "Show description, preferring `itunes:summary` and falling back to the channel `description`." },
+    author: { type: "string", description: "Who makes the show (maps to `itunes:author`, falling back to `managingEditor`, which is an address rather than a name and so is only a fallback)." },
+    owner_name: { type: "string", description: "Name on the feed's ownership record (maps to `itunes:owner` / `itunes:name`). The owner's email address is deliberately not mirrored." },
+    image_url: { type: "url", description: "Show artwork, from the `href` attribute of `itunes:image`, falling back to the channel `image` block. The iTunes element carries its value in an attribute and has no text content." },
+    language: { type: "string", description: "Language tag exactly as the feed gave it (maps to the channel `language`). Not corrected to canonical case, because a feed saying `en-us` is data about the feed." },
+    categories: { type: "array", description: "Category names from `itunes:category`, including nested subcategories, flattened to a list of the `text` attributes.", items_type: "string", maxItems: 50 },
+    itunes_type: { type: "enum", description: "Whether episodes are meant to be read newest-first or from the beginning (maps to `itunes:type`). Says nothing about audio versus video — that is carried per episode by the enclosure's MIME type.", enum_values: ["episodic", "serial"] },
+    complete: { type: "boolean", description: "Whether the feed declares that no further episodes will ever appear (maps to `itunes:complete`, which is present and set to yes, or absent)." },
+    explicit: { type: "enum", description: "Explicitness as declared by `itunes:explicit`. Normalized case-insensitively: yes and true become `true`, no and false become `false`, and `clean` is preserved because it asserts the absence of explicit content rather than merely not claiming it.", enum_values: ["true", "false", "clean"] },
+    copyright: { type: "string", description: "Copyright line (maps to the channel `copyright`)." },
+    new_feed_url: { type: "url", description: "Address the feed asks clients to move to (maps to `itunes:new-feed-url`). Recorded and surfaced for a person to act on, never followed automatically: a feed naming its own replacement is an instruction from an untrusted document." },
+    last_build_date: { type: "datetime", description: "When the feed says its contents last changed (maps to the channel `lastBuildDate`). Advisory only — some hosts omit it and others regenerate it on every render, so it is not used to decide whether to re-read a feed." },
+    episode_count: { type: "integer", description: "How many items the feed carried when it was last read. Not the show's episode count: some hosts publish only a recent window, and nothing in a feed says it has been truncated." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
 export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
   raindropCollection,
   raindropRaindrop,
@@ -876,6 +933,8 @@ export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
   googleYoutubeChannel,
   googleYoutubePlaylist,
   googleYoutubeVideo,
+  withmarfaPodcastEpisode,
+  withmarfaPodcastShow,
 ];
 
 const systemAccountHolder: TypeSchema = {
@@ -1053,6 +1112,8 @@ export const ALL_TYPE_IDS = [
   "system.webhook",
   "todoist.task",
   "withmarfa.captured_email",
+  "withmarfa.podcast.episode",
+  "withmarfa.podcast.show",
 ] as const;
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
