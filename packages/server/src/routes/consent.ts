@@ -222,6 +222,8 @@ export const SCOPE_LABELS: Record<string, string> = {
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
   "withmarfa.captured_email": "Captured emails",
+  "withmarfa.podcast.episode": "Podcast episodes",
+  "withmarfa.podcast.show": "Podcast shows",
   "user.*": "Your custom types",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",
