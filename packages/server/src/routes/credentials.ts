@@ -16,6 +16,10 @@
  *     refresh primitive — the proxy stamps the bearer verbatim and
  *     surfaces 401s as `action_required` activity for operator reauth.
  *
+ *   - `DELETE /credentials/{id}` — removes a credential and the secret
+ *     it holds. Refuses while a live connection still references it, so
+ *     removal cannot silently break a working integration.
+ *
  * The resulting credential id is passed as `credential_ref` on
  * subsequent `POST /connections/install` calls. Multiple integrations
  * sharing an upstream (e.g. `google.calendar` + `google.tasks`) share
@@ -33,6 +37,7 @@
  * the admin-gated route surface is the access-control boundary.
  */
 import { createRoute, z } from "@hono/zod-openapi";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -110,6 +115,11 @@ const ApiTokenCredentialResponseSchema = z.object({
   credential_id: z.string(),
 });
 
+const DeleteCredentialResponseSchema = z.object({
+  ok: z.literal(true),
+  credential_id: z.string(),
+});
+
 // ---------------------------------------------------------------------------
 // Route definition
 // ---------------------------------------------------------------------------
@@ -166,6 +176,69 @@ const createOAuthProviderCredentialRoute = createRoute({
         },
       },
       description: "Caller is not an admin or space_admin.",
+    },
+  },
+});
+
+const deleteCredentialRoute = createRoute({
+  operationId: "deleteCredential",
+  method: "delete",
+  path: "/{id}",
+  tags: ["Credentials"],
+  summary: "Delete a credential",
+  description:
+    "Removes a `system.credential` and the secret it holds. This is a hard delete: the encrypted secret is gone, not orphaned. Refuses with `credential_in_use` while any connection that is not revoked still references the credential — uninstall those connections first. `system.*` types carry the bounded `active | revoked` lifecycle, which the generic transition endpoint cannot express, so credential removal has its own route rather than going through `POST /items/{id}/transition`.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: DeleteCredentialResponseSchema },
+      },
+      description: "Credential removed along with the secret it held.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "Malformed credential id.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Authentication required.",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Caller is not an admin or space_admin.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
+      description: "No credential with that id in the caller's space.",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["credential_in_use"]),
+        },
+      },
+      description:
+        "A live connection still references this credential. The response names them.",
     },
   },
 });
@@ -327,6 +400,69 @@ export function credentialRoutes(storage: Storage) {
     });
 
     return c.json({ credential_id: credential.id }, 201);
+  });
+
+  r.openapi(deleteCredentialRoute, async (c) => {
+    const key = requireSpaceAdmin(c);
+    const { id } = c.req.valid("param");
+    if (!isValidId(id)) {
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid credential ID");
+    }
+    const spaceId = key.space_id ?? undefined;
+
+    const credential = await storage.items.get(id, spaceId);
+    if (credential?.type !== "system.credential") {
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Credential not found");
+    }
+
+    // Refuse rather than cascade. Taking a working integration down as a
+    // side effect of tidying up a credential is the more surprising of
+    // the two behaviours, and the caller can always uninstall first.
+    const connections = await storage.items.list({
+      spaceId,
+      type: "system.connection",
+      limit: 200,
+    });
+    const dependents = connections.data
+      .filter((conn) => conn.state !== "revoked")
+      .filter(
+        (conn) =>
+          (conn.properties as { credential_ref?: unknown } | undefined)
+            ?.credential_ref === id,
+      )
+      .map((conn) => conn.id);
+    if (dependents.length > 0) {
+      throw new MarfaError(
+        ErrorCode.CREDENTIAL_IN_USE,
+        `Credential ${id} is referenced by ${String(dependents.length)} connection(s) that are not revoked. Uninstall them first.`,
+        { connection_ids: dependents },
+      );
+    }
+
+    // `system.*` types soft-delete to `revoked`, and purge gates on the
+    // soft-deleted state, so removal is the two steps in order.
+    if (credential.state !== "revoked") {
+      await storage.items.transition(id, "revoked", spaceId);
+    }
+    await storage.edges.deleteBySource(id, undefined, spaceId);
+    await storage.edges.deleteByTarget(id, undefined, spaceId);
+    await storage.items.purge(id, spaceId);
+
+    void storage.audit.log({
+      key_id: key.id,
+      client_ip: c.get("clientIp") ?? null,
+      space_id: key.space_id ?? null,
+      action: "credential.delete",
+      resource_type: "item",
+      resource_id: id,
+      details: {
+        label: (credential.properties as { label?: unknown } | undefined)
+          ?.label,
+        kind: (credential.properties as { kind?: unknown } | undefined)?.kind,
+      },
+    });
+
+    return c.json({ ok: true as const, credential_id: id }, 200);
   });
 
   return r;
