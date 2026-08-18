@@ -218,6 +218,65 @@ describe("validateProperties", () => {
     expect(result.success).toBe(true);
   });
 
+  // The media subtypes that describe something playable carry a pointer to
+  // the file itself. `url` is the page about the work, so a type that only
+  // had `url` forced an episode's audio into a field that means something
+  // else -- or into an undeclared property the type system cannot see.
+  it("accepts a media file pointer on the playable media subtypes", () => {
+    for (const type of [
+      "core.media.episode",
+      "core.media.film",
+      "core.media.song",
+    ]) {
+      const result = validateProperties(type, {
+        title: "A playable thing",
+        media_url: "https://example.com/media/file.mp3",
+        mime_type: "audio/mpeg",
+      });
+      expect(result.success, `${type} rejected a media pointer`).toBe(true);
+    }
+  });
+
+  it("validates media_url as a url", () => {
+    const result = validateProperties("core.media.episode", {
+      title: "An episode",
+      media_url: "not-a-url",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // `medium` is what makes the containment restructure work: a podcast is a
+  // series with medium "podcast" rather than a type of its own. Left as free
+  // text, two writers spelling it differently would split the query surface
+  // permanently, so the value set is closed rather than merely recommended.
+  it("closes the medium value set on series and episode", () => {
+    for (const type of ["core.media.series", "core.media.episode"]) {
+      for (const medium of ["tv", "podcast", "radio", "video", "mixed"]) {
+        const ok = validateProperties(type, { title: "A work", medium });
+        expect(ok.success, `${type} rejected medium ${medium}`).toBe(true);
+      }
+      for (const medium of ["Podcast", "podcasts", "audio", ""]) {
+        const bad = validateProperties(type, { title: "A work", medium });
+        expect(bad.success, `${type} accepted medium ${medium}`).toBe(false);
+      }
+    }
+  });
+
+  it("closes the status value set on series", () => {
+    for (const status of ["ongoing", "ended", "cancelled"]) {
+      expect(
+        validateProperties("core.media.series", { title: "A show", status })
+          .success,
+      ).toBe(true);
+    }
+    expect(
+      validateProperties("core.media.series", {
+        title: "A show",
+        status: "hiatus",
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates integer fields reject floats", () => {
     const result = validateProperties("core.media.book", {
       title: "A Book",

@@ -3,7 +3,7 @@
   "parent": "core.media",
   "label": "Song",
   "description": "A song. Inherits all core.media fields.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "duration": {
       "type": "number",
@@ -20,6 +20,15 @@
     "track_number": {
       "type": "integer",
       "description": "Position within the album"
+    },
+    "media_url": {
+      "type": "string",
+      "description": "Direct address of the media file itself: an episode's audio or video enclosure, a track's audio file, a film's stream. Distinct from url, which is the web page about the work.",
+      "format": "url"
+    },
+    "mime_type": {
+      "type": "string",
+      "description": "MIME type of the resource at media_url, such as audio/mpeg or video/mp4. Describes what media_url points at, not what this item is."
     }
   },
   "required": []
