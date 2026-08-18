@@ -62,3 +62,7 @@ deploy.env
 
 # Wrangler local cache and mid-deploy scratch bundles (generated tool output).
 .wrangler/
+
+# Page snapshots from a local Playwright CLI run. Machine-local tooling
+# output, not part of the project.
+.playwright-cli/

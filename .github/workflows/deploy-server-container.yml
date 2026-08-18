@@ -40,7 +40,7 @@
 # SKIP_MIGRATE=1 because the gating `migrate` job has already applied them.
 #
 # Required GitHub config (org or repo):
-#   secrets.CLOUDFLARE_API_TOKEN      marfa-account token (CLOUDFLARE_API_TOKEN_MARFA)
+#   secrets.CLOUDFLARE_API_TOKEN      marfa-account token
 #   secrets.CLOUDFLARE_ACCOUNT_ID     marfa account id
 #   secrets.NEON_DATABASE_URL_STAGING direct (unpooled) Neon URL, staging project
 #   secrets.NEON_DATABASE_URL_PROD    direct (unpooled) Neon URL, production project

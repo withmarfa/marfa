@@ -127,7 +127,7 @@ fi
 # Consumer-scoped name first, so a deployer with no knowledge of any
 # particular operator's shell can run this. The suffixed name stays as a
 # fallback only.
-CF_TOKEN="${CLOUDFLARE_API_TOKEN:-${CLOUDFLARE_API_TOKEN_MARFA:-}}"
+CF_TOKEN="${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 if [[ -z "$CF_TOKEN" ]]; then
   echo "error: no Cloudflare API token resolved" >&2
   echo "  set CLOUDFLARE_API_TOKEN to a token with Workers write on the target account" >&2
