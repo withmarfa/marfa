@@ -34,6 +34,7 @@ function makeFetch(
       url: req.url,
       method: req.method,
       authorization: req.headers.get("Authorization") ?? undefined,
+      body: typeof init?.body === "string" ? init.body : undefined,
       cycleOrigin: req.headers.get("X-Marfa-Cycle-Origin") ?? undefined,
       cycleHop: req.headers.get("X-Marfa-Cycle-Hop") ?? undefined,
     });
@@ -255,6 +256,92 @@ describe("ConnectionClient", () => {
       "https://api.example.com/items/task_1/transition",
     );
     expect(item.state).toBe("archived");
+  });
+});
+
+describe("ConnectionClient.bulkUpsertItems", () => {
+  it("posts the batch to /items/bulk as a best-effort upsert", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({
+                counts: { created: 2, updated: 0, skipped: 0, errored: 0 },
+                results: [
+                  { index: 0, outcome: "created", id: "item_1" },
+                  { index: 1, outcome: "created", id: "item_2" },
+                ],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        ],
+        captured,
+      ),
+    });
+
+    const res = await client.bulkUpsertItems([
+      { type: "core.note", source_id: "up_1" },
+      { type: "core.note", source_id: "up_2" },
+    ]);
+
+    expect(captured[0]?.method).toBe("POST");
+    expect(captured[0]?.url).toBe("https://api.example.com/items/bulk");
+    expect(captured[0]?.authorization).toBe("Bearer marfa_k1_initial");
+    expect(res.counts.created).toBe(2);
+    expect(res.results.map((r) => r.id)).toEqual(["item_1", "item_2"]);
+
+    const sent = JSON.parse(captured[0]?.body ?? "{}") as {
+      mode?: string;
+      atomic?: boolean;
+      items?: { source_id?: string }[];
+    };
+    expect(sent.mode).toBe("upsert");
+    expect(sent.atomic).toBe(false);
+    expect(sent.items?.map((i) => i.source_id)).toEqual(["up_1", "up_2"]);
+  });
+
+  it("reports a per-entry failure rather than throwing the batch away", async () => {
+    // Best-effort by design: one malformed upstream record must not take
+    // the other ninety-nine documents down with it.
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({
+                counts: { created: 1, updated: 0, skipped: 0, errored: 1 },
+                results: [
+                  { index: 0, outcome: "created", id: "item_1" },
+                  {
+                    index: 1,
+                    outcome: "errored",
+                    error: { code: "validation_error", message: "nope" },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        ],
+        captured,
+      ),
+    });
+
+    const res = await client.bulkUpsertItems([
+      { type: "core.note", source_id: "up_1" },
+      { type: "core.note", source_id: "up_2" },
+    ]);
+    expect(res.counts.errored).toBe(1);
+    expect(res.results[1]?.outcome).toBe("errored");
+    expect(res.results[1]?.error?.code).toBe("validation_error");
   });
 });
 

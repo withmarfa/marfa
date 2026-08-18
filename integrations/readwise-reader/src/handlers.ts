@@ -38,6 +38,7 @@ import {
   type ScheduleMessage,
   type ItemEventMessage,
   type HandlerResult,
+  type BulkUpsertResponse,
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
@@ -324,6 +325,7 @@ export async function handleSchedule(
   let upserted = 0;
   let skippedScope = 0;
   let skippedEcho = 0;
+  let failed = 0;
   let parked = false;
   let throttled = false;
 
@@ -370,6 +372,12 @@ export async function handleSchedule(
       return reportFailure(ctx, "reader /list parse failed", err, true);
     }
 
+    // One page's worth of documents to write, paired with the upstream
+    // document each entry came from so the returned ids can be mapped
+    // back. Built first, written once — a request per document is what
+    // makes a backfill take longer than a sweep is allowed to run.
+    const batch: { doc: ReaderDocument; input: CreateItemInput }[] = [];
+
     for (const doc of payload.results ?? []) {
       seen += 1;
       if (!isInScope(doc, config)) {
@@ -383,47 +391,82 @@ export async function handleSchedule(
         continue;
       }
 
-      const mappedMarfaId = cursor.doc_mappings[doc.id];
+      batch.push({
+        doc,
+        input: { ...buildItemInput(doc), source_id: doc.id },
+      });
+    }
+
+    if (batch.length > 0) {
+      let bulk: BulkUpsertResponse;
       try {
-        if (mappedMarfaId !== undefined) {
-          await ctx.marfa.updateItem(mappedMarfaId, buildItemInput(doc));
-        } else {
-          const created = await ctx.marfa.createItem({
-            ...buildItemInput(doc),
-            source_id: doc.id,
-          });
-          cursor.doc_mappings[doc.id] = created.id;
-        }
-        upserted += 1;
+        bulk = await ctx.marfa.bulkUpsertItems(batch.map((e) => e.input));
       } catch (err) {
-        await ctx.activity.emit({
-          severity: "action_required",
-          summary: `readwise reader: failed to upsert marfa item for document ${doc.id}`,
-          detail: { error: errorMessage(err) },
-        });
+        // The page did not land. Leave the stored cursor pointing at this
+        // page — the checkpoint below only runs on a page that applied —
+        // so the retry re-fetches it rather than stepping over it.
+        return reportFailure(
+          ctx,
+          "reader inbound bulk upsert failed",
+          err,
+          true,
+        );
+      }
+
+      for (const result of bulk.results) {
+        const entry = batch[result.index];
+        if (entry === undefined) continue;
+        if (result.outcome === "errored" || result.id === undefined) {
+          failed += 1;
+          await ctx.activity.emit({
+            severity: "action_required",
+            summary: `readwise reader: failed to upsert marfa item for document ${entry.doc.id}`,
+            detail: {
+              outcome: result.outcome,
+              error: result.error ?? null,
+              reason: result.reason ?? null,
+            },
+          });
+          continue;
+        }
+        cursor.doc_mappings[entry.doc.id] = result.id;
+        upserted += 1;
       }
     }
 
     pages += 1;
     pageCursor = payload.nextPageCursor ?? null;
+    if (pageCursor !== null && pages >= MAX_PAGES_PER_SWEEP) parked = true;
+
+    // Checkpoint. Everything up to and including this page is applied, so
+    // record where the drain reached before asking for the next one. A
+    // sweep that dies after this point — and against a library of several
+    // thousand documents they do — resumes from here instead of
+    // discarding the pass and starting the walk again.
+    cursor.page_cursor = pageCursor;
+    await ctx.cursor.write(CURSOR_KEY, cursor);
+
     if (pageCursor === null) break;
-    if (pages >= MAX_PAGES_PER_SWEEP) parked = true;
+    if (parked) break;
   }
 
-  cursor.page_cursor = parked ? pageCursor : null;
-  // The watermark only moves when a sweep reached the end of the stream.
-  if (!parked) {
+  // The watermark moves only when a sweep both reached the end of the
+  // stream and wrote everything it saw. Advancing it over a document that
+  // failed to write would strand that document permanently: nothing
+  // fetches it again unless it changes upstream.
+  if (!parked && failed === 0) {
     cursor.updated_after = sweepStartedAt;
     cursor.last_inbound_at = sweepStartedAt;
+    await ctx.cursor.write(CURSOR_KEY, cursor);
   }
-  await ctx.cursor.write(CURSOR_KEY, cursor);
 
   await ctx.activity.emit({
     severity: "info",
-    summary: `readwise reader inbound: upserted=${String(upserted)} out_of_scope=${String(skippedScope)} echo_skipped=${String(skippedEcho)}${parked ? " (parked)" : ""}`,
+    summary: `readwise reader inbound: upserted=${String(upserted)} out_of_scope=${String(skippedScope)} echo_skipped=${String(skippedEcho)}${failed > 0 ? ` failed=${String(failed)}` : ""}${parked ? " (parked)" : ""}`,
     detail: {
       documents_seen: seen,
       upserted,
+      failed,
       skipped_out_of_scope: skippedScope,
       skipped_echo: skippedEcho,
       pages_drained: pages,
