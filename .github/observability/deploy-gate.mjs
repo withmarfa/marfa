@@ -6,12 +6,12 @@
  * replacement rules — so the pipeline used to end while the previous build was
  * still answering every request, and nothing measured the gap.
  *
- * Built on `probes.mjs` rather than `drift.mjs`. Drift compares environments
- * to `main` and to each other on a loose schedule; it has no notion of the SHA
- * of the deploy that just ran, which is the only thing this question is about.
- * The probe module already reads `version.sha` and already tells "no instance
- * behind the edge" apart from "the application returned 500", which is exactly
- * the triage a failed gate needs.
+ * Built on `probes.mjs`, which already reads `version.sha` and already tells
+ * "no instance behind the edge" apart from "the application returned 500" —
+ * exactly the triage a failed gate needs. Scheduled fleet monitoring used to
+ * live beside this file and now runs outside the repository entirely, so this
+ * gate and its probe module are all that remain here: they answer a question
+ * about one deploy, which is a build concern rather than a monitoring one.
  *
  * Polling is also what completes the roll: the container stands down when it
  * notices its image is stale, and it can only notice on a request.

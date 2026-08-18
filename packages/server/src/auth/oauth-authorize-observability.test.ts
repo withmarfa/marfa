@@ -383,35 +383,3 @@ describe("authorize failures are observable", () => {
     expect(byLevel.get("login_required")).toBe("info");
   });
 });
-
-/**
- * The alert is the consumer, and the consumer is in another language.
- *
- * `.github/observability/` runs standalone on a CI runner with no install
- * step, so it cannot import this constant and has to carry a copy. A copy
- * that drifts does not fail loudly: the counter simply matches nothing, stays
- * at zero forever, and the alert reads as healthy while blind — which is the
- * exact failure mode the whole signal exists to end. So the agreement is
- * pinned from this side, where the string is defined.
- */
-describe("the fleet alert counts the message this server actually logs", () => {
-  it("the built query counts this exact literal", async () => {
-    // Importing the alert module and asking it to build its query is the only
-    // check that means anything here: the query is assembled from a template
-    // literal, so the source text holds `${AUTHORIZE_REFUSED_MESSAGE}` rather
-    // than the string, and grepping the file would pass against a copy that
-    // had drifted.
-    const alertUrl = new URL(
-      "../../../../.github/observability/posthog.mjs",
-      import.meta.url,
-    );
-    const alert = (await import(alertUrl.href)) as {
-      buildTelemetryQuery: () => string;
-    };
-    const query = alert.buildTelemetryQuery();
-    expect(query).toContain(`countIf(message = '${AUTHORIZE_REFUSED_MESSAGE}'`);
-    // Only the actionable half. Folding the `info` records in would make the
-    // counter track traffic rather than trouble.
-    expect(query).toContain("AND level = 'warn'");
-  });
-});

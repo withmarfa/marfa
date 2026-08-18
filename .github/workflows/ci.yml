@@ -276,6 +276,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @withmarfa/server run lint:sqlite-migrations
 
+  deploy-gate-tests:
+    name: Deploy gate — unit tests
+    # No path filter and no `needs`, deliberately. It installs nothing and runs
+    # in seconds, so gating it would cost more than running it, and a filtered
+    # job cannot safely be made a required check later.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/observability
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node --test --test-reporter=tap '.github/observability/*.test.mjs'
+
   # Test jobs — run on every PR and on main pushes. These are the fast
   # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:
