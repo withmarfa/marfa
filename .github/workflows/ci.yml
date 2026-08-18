@@ -101,7 +101,10 @@ jobs:
   # a PR that modifies type or schema source files.
   types-freshness:
     name: Types codegen freshness
-    if: github.event_name != 'pull_request'
+    needs: changes
+    # Follows the change filter like every other job. Manual dispatch still
+    # runs it: `changes` reports an unknowable base as code=true.
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -138,7 +141,10 @@ jobs:
 
   openapi-freshness:
     name: OpenAPI spec freshness
-    if: github.event_name != 'pull_request'
+    needs: changes
+    # Follows the change filter like every other job. Manual dispatch still
+    # runs it: `changes` reports an unknowable base as code=true.
+    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
