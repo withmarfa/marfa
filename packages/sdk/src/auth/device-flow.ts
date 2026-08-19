@@ -69,7 +69,8 @@ interface InitiateResponse {
 
 interface TokenResponse {
   access_token: string;
-  refresh_token: string;
+  /** Present only when the approved scopes carry `offline_access`. */
+  refresh_token?: string;
   token_type: string;
   expires_in: number;
   scope: string;
@@ -145,6 +146,19 @@ export async function startDeviceFlow(
         });
         if (res.ok) {
           const tokens = (await res.json()) as TokenResponse;
+          // A 2xx that carries no refresh token is still a failure for this
+          // SDK, exactly as it is on the authorization-code path: the whole
+          // session model rests on being able to refresh, and a provider
+          // holding no refresh token dies at the first expiry with an error
+          // that names neither the cause nor the missing scope. Ask for
+          // `offline_access` to stay signed in.
+          if (!tokens.refresh_token) {
+            throw new OAuthError(
+              "invalid_grant",
+              "Device flow returned no refresh token. Request the `offline_access` scope to stay signed in.",
+              res.status,
+            );
+          }
           const storageKey = `marfa.auth.tokens:${issuer}:${config.clientId}`;
           const provider = new StoredTokenProvider({
             issuer,

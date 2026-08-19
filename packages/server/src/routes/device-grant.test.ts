@@ -555,7 +555,12 @@ describe("POST /auth/device/consent — approve / deny", () => {
     const poll = await pollToken(ctx, initResult.device_code, clientId);
     expect(poll.status).toBe(200);
     expect(poll.body.access_token).toMatch(/^marfa_at_/);
-    expect(poll.body.refresh_token).toMatch(/^marfa_rt_/);
+    // And nothing else: `initiate` asks for two data scopes and no
+    // `offline_access`, so this grant did not ask to stay signed in. A
+    // refresh token here would be one no rotation path can reach — the
+    // parity between this route and the authorization-code path is pinned
+    // in `auth/refresh-token-offline-access.test.ts`.
+    expect(poll.body.refresh_token).toBeUndefined();
   });
 
   it("F16: approve emits auth.grant.created audit row with source='device'", async () => {

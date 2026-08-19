@@ -1329,8 +1329,18 @@ export interface MintTokenPairInput {
    *  `storeTokens.hash` = `hashApiKey(token, salt)`). The plugin's
    *  bearer middleware looks this up by exact match. */
   accessTokenHash: string;
-  /** Pre-computed hash of the refresh-token string. */
-  refreshTokenHash: string;
+  /**
+   * Pre-computed hash of the refresh-token string, or `undefined` to mint an
+   * access token alone.
+   *
+   * Absent is the shape for a grant that did not ask to stay signed in. The
+   * library issues a refresh token only when the approved scopes carry
+   * `offline_access`, and only tokens it issued that way ever rotate, so a
+   * refresh token minted here without the scope would be a credential nothing
+   * could revoke by rotation. The access-token row then carries a null
+   * `refresh_id`, which the column already permits.
+   */
+  refreshTokenHash?: string;
   clientId: string;
   authUserId: string;
   referenceId: string | null;

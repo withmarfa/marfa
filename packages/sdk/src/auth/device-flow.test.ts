@@ -138,6 +138,44 @@ describe("startDeviceFlow", () => {
     expect(accessToken).toBe("marfa_at_xyz");
   });
 
+  it("refuses an approval that carries no refresh token", async () => {
+    // The server issues one only when the approved scopes carry
+    // `offline_access`, so this is the shape of a grant that did not ask to
+    // stay signed in. Persisting it would build a provider that cannot
+    // refresh and fails at the first expiry, naming neither the cause nor
+    // the scope; the authorization-code path already refuses the same shape.
+    const noRefresh = new Response(
+      JSON.stringify({
+        access_token: "marfa_at_xyz",
+        token_type: "bearer",
+        expires_in: 3600,
+        scope: "core.note:read",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const { fetch } = makeMockFetch([
+      discoveryResponse(),
+      initiateResponse(),
+      noRefresh,
+    ]);
+    const handle = await startDeviceFlow({
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      scopes: ["core.note:read"],
+      storage: new InMemoryTokenStorage(),
+      fetch,
+    });
+    const caught = await handle.pollForToken().then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(caught).toBeInstanceOf(OAuthError);
+    expect((caught as OAuthError).code).toBe("invalid_grant");
+    // The message names the scope, because "no refresh token" on its own
+    // leaves the reader nothing to go and change.
+    expect((caught as OAuthError).message).toContain("offline_access");
+  });
+
   it("bumps interval on slow_down and continues polling", async () => {
     // SLOW_DOWN_BUMP_MS adds 5s to the interval, so after the
     // slow_down response the next sleep is ~5s. Allow 10s for the

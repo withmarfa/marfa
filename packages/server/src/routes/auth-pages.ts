@@ -2423,11 +2423,8 @@ export function authRoutes(
     // would 401 on every request because the middleware's lookup hash
     // wouldn't match the stored one.
     const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
-    const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
     const accessBare = accessRaw.slice(ACCESS_TOKEN_PREFIX.length);
-    const refreshBare = refreshRaw.slice(REFRESH_TOKEN_PREFIX.length);
     const accessHash = hashApiKey(accessBare, salt);
-    const refreshHash = hashApiKey(refreshBare, salt);
 
     // Resolve the grant to extract space_id + approved scopes.
     // Type check is defense-in-depth: connection_item_id comes from a
@@ -2459,6 +2456,31 @@ export function authRoutes(
     if (typeof storage.oauthProvider?.mintTokenPair !== "function") {
       throw new Error("oauthProvider store not wired");
     }
+
+    // `offline_access` is what buys a refresh token, here as everywhere else.
+    //
+    // The library issues one only for a grant carrying the scope, and its
+    // rotation is reached only for tokens it issued that way: rotating
+    // revokes the presented token and links the replacement into the same
+    // family, which is what lets a replayed token be spotted and the chain
+    // terminated. This route writes its own rows and so sits outside that,
+    // and minting unconditionally produced a refresh token nothing could
+    // ever rotate — a credential with no expiry and no way to go stale, on
+    // grants belonging to devices signed in once and left alone.
+    //
+    // Issuing only on `offline_access` closes it by removing the credential
+    // rather than by reimplementing rotation, and it makes the two paths
+    // agree: a client that wants to stay signed in asks for the scope, and
+    // the consent screen already renders it as a line the user approves.
+    const staysSignedIn = grantScopes.includes("offline_access");
+    const refreshRaw = staysSignedIn
+      ? generateToken(REFRESH_TOKEN_PREFIX)
+      : undefined;
+    const refreshHash =
+      refreshRaw === undefined
+        ? undefined
+        : hashApiKey(refreshRaw.slice(REFRESH_TOKEN_PREFIX.length), salt);
+
     await storage.oauthProvider.mintTokenPair({
       accessTokenHash: accessHash,
       refreshTokenHash: refreshHash,
@@ -2478,7 +2500,7 @@ export function authRoutes(
 
     return c.json({
       access_token: accessRaw,
-      refresh_token: refreshRaw,
+      ...(refreshRaw !== undefined && { refresh_token: refreshRaw }),
       token_type: "bearer",
       expires_in: ACCESS_TOKEN_TTL_MS / 1000,
       scope: grantScopes.join(" "),
