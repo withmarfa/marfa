@@ -54,7 +54,7 @@ export async function waitForDeployedBuild(url, expectedSha, options = {}) {
       });
       const body = await response.text();
       if (response.ok) {
-        const { sha, degraded } = inspectHealthPayload(body);
+        const { sha, degraded, region, location } = inspectHealthPayload(body);
         lastSeen = sha;
         if (sha === expectedSha) {
           return {
@@ -62,6 +62,8 @@ export async function waitForDeployedBuild(url, expectedSha, options = {}) {
             attempts,
             rollWindowMs: now() - startedAt,
             degraded,
+            region,
+            location,
           };
         }
       } else {
@@ -87,6 +89,28 @@ export async function waitForDeployedBuild(url, expectedSha, options = {}) {
   }
 }
 
+/**
+ * Compare where the deploy actually landed against where it was meant to.
+ *
+ * Placement has no natural alarm: a container a continent away from its
+ * database fails no check, degrades no status and reports no error. It only
+ * costs latency, and latency gets attributed to whichever component the
+ * health payload happens to name. That is how production served every
+ * request from the wrong continent for four months with a green pipeline.
+ *
+ * Returns a reason string when the deploy should fail, or null when it
+ * should not. "The server did not report a region" is deliberately not a
+ * failure: a self-hosted deployment publishes none, and a gate that treated
+ * silence as a fault would fail every one of them.
+ */
+export function checkPlacement(expectedRegion, reported) {
+  if (!expectedRegion) return null;
+  if (!reported?.region) return null;
+  if (reported.region === expectedRegion) return null;
+  const where = reported.location ? ` (${reported.location})` : "";
+  return `container is in ${reported.region}${where}, expected ${expectedRegion}`;
+}
+
 /** Which surface an environment name deploys to. Shared with the watchdog so
  *  the gate and the alarm can never disagree about where an environment is. */
 export function healthUrlFor(environment) {
@@ -103,6 +127,9 @@ export function healthUrlFor(environment) {
 if (process.argv[1]?.endsWith("deploy-gate.mjs")) {
   const environment = process.env.DEPLOY_ENVIRONMENT;
   const expectedSha = (process.env.DEPLOY_SHA ?? "").slice(0, 7);
+  // Set by the deploy script from the same value it rendered into the
+  // container config, so the gate cannot check against a second opinion.
+  const expectedRegion = process.env.SERVER_REGION;
   if (!environment || !expectedSha) {
     console.error(
       "deploy-gate: DEPLOY_ENVIRONMENT and DEPLOY_SHA are both required",
@@ -120,9 +147,35 @@ if (process.argv[1]?.endsWith("deploy-gate.mjs")) {
       `✓ ${environment} is serving ${expectedSha} after ${seconds}s (${String(result.attempts)} probe${result.attempts === 1 ? "" : "s"})`,
     );
     console.log(`roll_window_seconds=${seconds}`);
+    if (result.region) {
+      console.log(
+        `  running in ${result.region}${result.location ? ` (${result.location})` : ""}`,
+      );
+    } else {
+      console.log("  the server reported no placement");
+    }
     if (result.degraded?.length) {
       console.log("  serving, but reporting degraded components:");
       for (const line of result.degraded) console.log(`    ${line}`);
+    }
+
+    const misplaced = checkPlacement(expectedRegion, result);
+    if (misplaced) {
+      console.error(`✗ ${environment} is serving from the wrong region.`);
+      console.error(`  ${misplaced}`);
+      console.error(
+        "  Every dependency this server has is in the expected region, and the",
+      );
+      console.error(
+        "  write path crosses to them many times per request, so this is a",
+      );
+      console.error(
+        "  multi-second penalty rather than a marginal one. Check the",
+      );
+      console.error(
+        "  `constraints.regions` on the container application before retrying.",
+      );
+      process.exit(1);
     }
     process.exit(0);
   }

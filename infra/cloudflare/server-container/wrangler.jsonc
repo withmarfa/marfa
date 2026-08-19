@@ -16,10 +16,31 @@
   "observability": { "enabled": true },
   "containers": [
     {
+      // Set explicitly. Left unset, the application is named by gluing the
+      // Worker name to the lowercased class name, which reads as
+      // `marfa-server-marfaservercontainer` everywhere Cloudflare lists it and
+      // moves on its own if the class is ever renamed. Wrangler matches an
+      // existing application by this name alone, so changing it does not
+      // rename anything: it creates a second application against the same
+      // Durable Object namespace and leaves the first behind. Changing it
+      // means deleting the old application first.
+      "name": "${SERVER_CONTAINER_NAME}",
       "class_name": "MarfaServerContainer",
       "image": "${SERVER_IMAGE}",
       "instance_type": "${SERVER_INSTANCE_TYPE}",
-      "max_instances": ${SERVER_MAX_INSTANCES}
+      "max_instances": ${SERVER_MAX_INSTANCES},
+      // Placement is otherwise decided by whoever wakes a cold container:
+      // Cloudflare starts a new instance in "the location nearest to the
+      // incoming request with a pre-fetched image", and re-decides it every
+      // time the instance stops and restarts. It is not tied to the Durable
+      // Object, which can sit in a different region entirely.
+      //
+      // That default is wrong for this server. Its database and its bucket
+      // are both in Europe and a single write makes many sequential round
+      // trips, so an instance woken by a request from another continent pays
+      // the crossing on every one of them. Production ran in California for
+      // four months on exactly that default, and writes took four seconds.
+      "constraints": { "regions": ["${SERVER_REGION}"] }
     }
   ],
   "durable_objects": {

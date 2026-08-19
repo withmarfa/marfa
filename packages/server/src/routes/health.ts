@@ -16,6 +16,38 @@ interface ComponentStatus {
   providers?: OidcProviderHealth[];
 }
 
+/** Where the platform says this instance is running. */
+interface Placement {
+  region?: string;
+  location?: string;
+  country?: string;
+}
+
+/**
+ * Read the placement the container runtime publishes into its own
+ * environment. Cloudflare Containers sets these; nothing else does, so the
+ * block is absent on a self-hosted deployment rather than carrying empty
+ * strings that would read as a real answer.
+ *
+ * It is here because placement is otherwise invisible from outside the
+ * platform's own API, and getting it wrong produces no error, no failed
+ * deploy and no degraded status — only latency, against a database that then
+ * takes the blame. Production ran a continent away from its data for four
+ * months while every check stayed green, and the one field that would have
+ * said so did not exist.
+ */
+function readPlacement(): Placement | null {
+  const region = process.env.CLOUDFLARE_REGION;
+  const location = process.env.CLOUDFLARE_LOCATION;
+  const country = process.env.CLOUDFLARE_COUNTRY_A2;
+  if (!region && !location && !country) return null;
+  return {
+    ...(region && { region }),
+    ...(location && { location }),
+    ...(country && { country }),
+  };
+}
+
 /**
  * How long a component probe may take before this endpoint stops waiting
  * on it and reports what it knows.
@@ -167,11 +199,13 @@ export function healthRoutes(
     }
 
     const version = await readVersion();
+    const placement = readPlacement();
 
     return c.json({
       status: overall,
       auth_mode: config.authMode,
       components,
+      ...(placement && { placement }),
       ...(version && { version }),
     });
   });
