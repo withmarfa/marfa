@@ -82,6 +82,10 @@
 #   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
 #                               host — override for a jurisdiction-restricted bucket, e.g. EU)
 #   - SERVER_SLEEP_AFTER       (container idle scale-to-zero timer; default "20m")
+#   - V_CONTAINER_INSTANCE     (Durable Object instance name; a generation marker.
+#                               Changing it abandons the pinned object for a fresh
+#                               one, which is the only way to relocate a running
+#                               deployment — see the placement block below)
 #   - V_CONTAINER_WARM         (deliberate warm policy; "true" keeps the single
 #                               instance resident instead of scaling to zero so
 #                               the first request after an idle gap never pays a
@@ -274,6 +278,9 @@ resolve_repo_var() {
 
 if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_WORKER_NAME="marfa-server-staging"
+  # See the placement block below. Staging's Neon project and R2 bucket are in
+  # Europe, so the container belongs there too.
+  export SERVER_REGION="WEUR"
   # Closed, matching prod. An enabled subdomain is a second hostname for the
   # same origin, so anything attached to the named one — WAF rules, zone rate
   # limiting, an access policy — is bypassed by addressing the Worker directly,
@@ -337,6 +344,11 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-staging-${GIT_SHA}}"
 else
   export SERVER_WORKER_NAME="marfa-server"
+  # See the placement block below. This is the environment the setting was
+  # added for: production's container ran in San Jose while its database and
+  # bucket sat in Europe, which cost roughly 135ms on every one of the many
+  # sequential round trips a request makes.
+  export SERVER_REGION="WEUR"
   export SERVER_WORKERS_DEV="false"
   export SERVER_ROUTES='[{"pattern":"api.marfa.so","custom_domain":true}]'
   export V_OTEL_ENVIRONMENT="production"
@@ -377,6 +389,37 @@ else
   export V_CORS_ORIGINS="$PROD_CORS_ORIGINS"
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-prod-${GIT_SHA}}"
 fi
+
+# PLACEMENT — where the container physically runs.
+#
+# Derived here rather than set twice, because the two mechanisms below have to
+# agree and a mismatch is invisible until someone measures latency:
+#
+#   - The Durable Object location hint (lowercase, e.g. "weur") decides where
+#     the object that manages the container is CREATED. It is read only on the
+#     very first call for a given instance name and is a suggestion, not a
+#     guarantee. The container is then scheduled next to its object.
+#   - The container application constraint (uppercase, e.g. ["WEUR"]) is a hard
+#     limit on where the CONTAINER may be scheduled.
+#
+# The two enums are identical apart from case, so one per-env SERVER_REGION
+# renders both and they cannot drift.
+#
+# V_CONTAINER_INSTANCE is a generation marker, not a name anyone reads. A
+# Durable Object is pinned to the region it was first instantiated in and never
+# moves, so changing this string is the ONLY way to relocate an existing
+# deployment — it abandons the pinned object for a fresh one created under the
+# hint above. It is shared rather than per-env deliberately: the environments
+# being byte-identical in every deploy-controlled setting is what made the
+# original divergence diagnosable.
+#
+# Bumping it costs one container replacement. The object's only persisted state
+# is the key recording which image is running, so the next request re-reads it
+# and rolls, exactly as it would after any other cold start. Bump it if an
+# environment is ever found running outside SERVER_REGION.
+export V_CONTAINER_INSTANCE="${V_CONTAINER_INSTANCE:-marfa-server-1}"
+export V_CONTAINER_LOCATION_HINT="$(printf '%s' "$SERVER_REGION" | tr '[:upper:]' '[:lower:]')"
+export SERVER_CONSTRAINT_REGIONS="[\"${SERVER_REGION}\"]"
 
 # Boot guard: the container declares MARFA_DB_POOL_MODE=transaction, so the
 # server refuses to start without MARFA_DATABASE_URL_DIRECT. That refusal is
@@ -452,7 +495,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_CONSTRAINT_REGIONS} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_INSTANCE} ${V_CONTAINER_LOCATION_HINT} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"
@@ -465,7 +508,7 @@ if [[ -n "$UNRESOLVED" ]]; then
 fi
 
 echo "→ Rendered config preview:"
-grep -E '"name"|"image"|"instance_type"|"max_instances"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME' "$RENDERED_JSONC" | sed 's/^/  /'
+grep -E '"name"|"image"|"instance_type"|"max_instances"|"constraints"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME|MARFA_CONTAINER_INSTANCE|MARFA_CONTAINER_LOCATION_HINT' "$RENDERED_JSONC" | sed 's/^/  /'
 
 echo "→ wrangler deploy --config <rendered> ($ENV_NAME)"
 # Capture the output so we can detect the silent-no-roll case below, while still
