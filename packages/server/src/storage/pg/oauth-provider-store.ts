@@ -262,21 +262,26 @@ export class PgOauthProviderStore implements OauthProviderStore {
   }
 
   async mintTokenPair(input: MintTokenPairInput): Promise<void> {
-    const refreshId = generateId();
     const now = new Date();
     const accessExpires = new Date(now.getTime() + input.accessTtlMs);
     const refreshExpires = new Date(now.getTime() + 30 * 86_400_000);
     const scopes = [...input.scopes];
-    await this.db.insert(auth_oauth_refresh_token).values({
-      id: refreshId,
-      token: input.refreshTokenHash,
-      clientId: input.clientId,
-      userId: input.authUserId,
-      referenceId: input.referenceId,
-      expiresAt: refreshExpires,
-      createdAt: now,
-      scopes,
-    });
+    // No refresh hash means an access token on its own; `refresh_id` is
+    // nullable precisely so an access token can stand alone.
+    let refreshId: string | null = null;
+    if (input.refreshTokenHash !== undefined) {
+      refreshId = generateId();
+      await this.db.insert(auth_oauth_refresh_token).values({
+        id: refreshId,
+        token: input.refreshTokenHash,
+        clientId: input.clientId,
+        userId: input.authUserId,
+        referenceId: input.referenceId,
+        expiresAt: refreshExpires,
+        createdAt: now,
+        scopes,
+      });
+    }
     await this.db.insert(auth_oauth_access_token).values({
       id: generateId(),
       token: input.accessTokenHash,
