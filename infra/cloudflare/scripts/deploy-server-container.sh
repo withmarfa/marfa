@@ -293,6 +293,7 @@ resolve_repo_var() {
 
 if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_WORKER_NAME="marfa-server-staging"
+  export SERVER_CONTAINER_NAME="marfa-server-staging"
   # Closed, matching prod. An enabled subdomain is a second hostname for the
   # same origin, so anything attached to the named one — WAF rules, zone rate
   # limiting, an access policy — is bypassed by addressing the Worker directly,
@@ -356,6 +357,7 @@ if [[ "$ENV_NAME" == "staging" ]]; then
   export SERVER_IMAGE_TAG="${SERVER_IMAGE_TAG:-staging-${GIT_SHA}}"
 else
   export SERVER_WORKER_NAME="marfa-server"
+  export SERVER_CONTAINER_NAME="marfa-server-production"
   export SERVER_WORKERS_DEV="false"
   export SERVER_ROUTES='[{"pattern":"api.marfa.so","custom_domain":true}]'
   export V_OTEL_ENVIRONMENT="production"
@@ -471,7 +473,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_REGION} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${SERVER_CONTAINER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_REGION} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"
