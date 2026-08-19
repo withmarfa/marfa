@@ -33,8 +33,41 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 # `...` builds the server plus its transitive workspace dependencies.
 RUN pnpm --filter @withmarfa/server... build
+# Build every integration's local-runtime entry and stage the dist trees.
+# The image must carry integrations/<name>/dist/local.js: the loader's
+# default root resolves relative to the monorepo, which does not exist in
+# a packaged image, so without these files the local substrate boots with
+# an empty registration list, silently. Only dist/ is staged, no
+# per-integration node_modules — each entry bundles its whole dependency
+# graph except @withmarfa/runtime-sdk and @withmarfa/shared, and those two
+# must resolve upward to the server's copies in /app/node_modules because
+# both carry module-singleton state. Staging node_modules alongside an
+# entry would shadow that resolution and break handler registration
+# invisibly. Integrations without a src/local.ts (the sync integration,
+# whose agent lives outside the server process) are skipped by the same
+# rule the runtime loader applies.
+#
+# This build runs before the deploy prune below: `pnpm deploy` rewrites
+# the workspace's modules state, and any later `pnpm run` then fails the
+# verify-deps-before-run guard.
+RUN pnpm --filter "@withmarfa/integration-*" run build
+RUN mkdir /integrations-staged && \
+    for dir in integrations/*/; do \
+      name=$(basename "$dir"); \
+      if [ -f "$dir/src/local.ts" ]; then \
+        if [ ! -f "$dir/dist/local.js" ]; then \
+          echo "ERROR: $name has src/local.ts but built no dist/local.js" >&2; \
+          exit 1; \
+        fi; \
+        mkdir -p "/integrations-staged/$name" && \
+        cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
+      else \
+        echo "skipping $name: no src/local.ts (not a local-substrate integration)"; \
+      fi; \
+    done
 # Prune to a self-contained production deploy at /app/out
 # (dist + drizzle + a flattened node_modules; dev-only workspace deps dropped).
+# Last of the pnpm steps deliberately; see the note above the integration build.
 RUN pnpm --filter @withmarfa/server --legacy --prod deploy /app/out
 
 FROM node:${NODE_VERSION}-slim AS runtime
@@ -48,12 +81,21 @@ ARG VERSION_SHA=dev
 ENV MARFA_VERSION_SHA=${VERSION_SHA}
 WORKDIR /app
 COPY --from=build --chown=node:node /app/out ./
+# In-tree integrations for the local substrate, dist-only trees (see the
+# build-stage note on why node_modules must not ride along).
+COPY --from=build --chown=node:node /integrations-staged ./integrations
+ENV MARFA_INTEGRATIONS_ROOT=/app/integrations
+COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
 RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \
   # Make /app writable by the non-root user. Hosted uses R2 (BLOB_BACKEND=s3),
   # but the fs blob fallback (and any cwd-relative write) needs a writable dir.
   && mkdir -p data \
   && chown -R node:node /app
 USER node
+# An image whose integrations cannot load, or whose module resolution
+# duplicates the runtime-sdk singleton, fails to build here rather than
+# booting an empty substrate in production.
+RUN node verify-image-integrations.mjs
 EXPOSE 8600
 # Liveness probe. /health returns 200 (status ok|degraded); slim has no curl,
 # so use Node's global fetch.
