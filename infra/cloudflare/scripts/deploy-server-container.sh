@@ -156,6 +156,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Use the wrangler this repository pins, not whatever is on the operator's
+# PATH. Both are called `wrangler`, so a local deploy silently ran a different
+# version from CI's — which puts this same directory on PATH first — and the
+# two disagreeing about a container field is invisible until the deploy behaves
+# differently from the one that was tested.
+export PATH="$SCRIPT_DIR/../server-container/node_modules/.bin:$SCRIPT_DIR/../../../node_modules/.bin:$PATH"
+
 # Immutable per-build image tag: "<env>-<short-git-sha>". Defaulting to a tag
 # that changes every commit is the whole point — a mutable ":staging" tag lets
 # `wrangler deploy` see an unchanged image reference and skip the roll ("no
@@ -210,6 +217,18 @@ fi
 # come back, silently and without an error anywhere. Scaling out needs a
 # shared lock first — see the consent-skip notes in packages/server/AGENTS.md.
 export SERVER_MAX_INSTANCES="1"
+# Where the container is allowed to run. NOT a preference — Cloudflare picks
+# the location nearest to whichever request wakes a cold container, and picks
+# again on every restart, so without this the region is decided by whoever
+# happens to touch a sleeping environment first. A scheduled probe from another
+# continent is enough. Both environments' data lives in Europe (Neon eu-west-2,
+# R2 WEUR) and the write path is many sequential round trips deep, so an
+# instance on the wrong continent multiplies the crossing by every one of them.
+#
+# Shared rather than per-env deliberately: the two environments being identical
+# in every deploy-controlled setting is what made the original divergence
+# diagnosable. Override per-invocation only to test relocation.
+export SERVER_REGION="${SERVER_REGION:-WEUR}"
 export V_EMAIL_FROM="Marfa <hello@mail.marfa.so>"
 export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"
 # Hosted containers delegate integrations to the Cloudflare substrate (control
@@ -452,7 +471,7 @@ DEPLOY_LOG=""
 cleanup() { rm -f "$RENDERED_JSONC" "${DEPLOY_LOG:-}"; }
 trap cleanup EXIT
 
-TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
+TEMPLATE_VARS='${SERVER_WORKER_NAME} ${CLOUDFLARE_ACCOUNT_ID} ${SERVER_WORKERS_DEV} ${SERVER_ROUTES} ${SERVER_IMAGE} ${SERVER_INSTANCE_TYPE} ${SERVER_MAX_INSTANCES} ${SERVER_REGION} ${SERVER_SLEEP_AFTER} ${V_CONTAINER_WARM} ${V_BLOB_BACKEND} ${V_AUTH_BASE_URL} ${V_CORS_ORIGINS} ${V_RUNTIME_CONTROL_URL} ${V_INTEGRATION_RUNTIME} ${V_EMAIL_FROM} ${V_S3_BUCKET} ${V_S3_ENDPOINT} ${V_OTEL_LOGS_ENDPOINT} ${V_OTEL_ENVIRONMENT}'
 
 echo "→ Rendering server-container/wrangler.jsonc for $ENV_NAME"
 envsubst "$TEMPLATE_VARS" < "$SOURCE_JSONC" > "$RENDERED_JSONC"
@@ -465,9 +484,9 @@ if [[ -n "$UNRESOLVED" ]]; then
 fi
 
 echo "→ Rendered config preview:"
-grep -E '"name"|"image"|"instance_type"|"max_instances"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME' "$RENDERED_JSONC" | sed 's/^/  /'
+grep -E '"name"|"image"|"instance_type"|"max_instances"|"regions"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME' "$RENDERED_JSONC" | sed 's/^/  /'
 
-echo "→ wrangler deploy --config <rendered> ($ENV_NAME)"
+echo "→ wrangler $(wrangler --version 2>/dev/null | tail -1) deploy --config <rendered> ($ENV_NAME)"
 # Capture the output so we can detect the silent-no-roll case below, while still
 # streaming it live. PIPESTATUS preserves wrangler's exit code through the tee.
 DEPLOY_LOG="$(mktemp)"
