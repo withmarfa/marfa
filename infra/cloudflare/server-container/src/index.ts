@@ -1,4 +1,4 @@
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
 import { serveThroughContainer } from "./cold-start.js";
 import { rollIfStale } from "./roll.js";
@@ -31,6 +31,11 @@ const RUNNING_IMAGE_KEY = "running_image";
  */
 interface Env {
   MARFA_SERVER: DurableObjectNamespace<MarfaServerContainer>;
+  // Name of the Durable Object that manages the container, and the region it
+  // is created in. Both are per-env so placement is decided in one place —
+  // see the placement notes above the resolver below.
+  MARFA_CONTAINER_INSTANCE?: string;
+  MARFA_CONTAINER_LOCATION_HINT?: string;
   // Idle scale-to-zero timer; tunable per env without a code change.
   CONTAINER_SLEEP_AFTER?: string;
   // Deliberate warm policy ("true" to enable). When on, the single instance is
@@ -210,9 +215,78 @@ export class MarfaServerContainer extends Container<Env> {
   }
 }
 
+/** The nine regions a Durable Object location hint may name. */
+const LOCATION_HINTS = [
+  "wnam",
+  "enam",
+  "sam",
+  "weur",
+  "eeur",
+  "apac",
+  "oc",
+  "afr",
+  "me",
+] as const satisfies readonly DurableObjectLocationHint[];
+
+/**
+ * Where the container runs, which is decided entirely here.
+ *
+ * The container is scheduled next to the Durable Object that manages it, and
+ * **a Durable Object never moves**: it is pinned to the region it was first
+ * instantiated in, and a location hint is only read on the very first call for
+ * a given name. So placement is fixed by two things and nothing else — the
+ * name the object is addressed by, and the hint passed alongside it.
+ *
+ * This used to be `getContainer(env.MARFA_SERVER)`, whose default name
+ * (`cf-singleton-container`) carries no hint at all, which leaves the object
+ * wherever the first request after a namespace's creation happened to arrive
+ * from. Production's was first woken from North America while its database and
+ * its bucket are both in Europe, so every request paid an ocean crossing on
+ * each of the three edge-to-object hops in front of it and on each of the
+ * ~17 sequential round trips a single write makes. It measured as a slow
+ * database for four months; it was distance.
+ *
+ * `MARFA_CONTAINER_INSTANCE` is therefore a generation marker, not a label.
+ * Bumping it abandons the pinned object for a fresh one, which is the only way
+ * to change where an existing deployment runs. The object's sole persisted
+ * state is the running-image key, so the cost of doing so is one extra
+ * container replacement on the next request.
+ *
+ * The hint is a suggestion rather than a guarantee, so the container
+ * application also carries a hard `constraints.regions` — see
+ * `scripts/deploy-server-container.sh`. The two are complementary rather than
+ * redundant: the constraint governs where the *container* is scheduled, and
+ * only the hint governs where the *object* is created.
+ */
+function resolvePlacement(env: Env): {
+  name: string;
+  locationHint: DurableObjectLocationHint;
+} {
+  const configured = (env.MARFA_CONTAINER_LOCATION_HINT ?? "")
+    .trim()
+    .toLowerCase();
+  const locationHint = (LOCATION_HINTS as readonly string[]).includes(
+    configured,
+  )
+    ? (configured as DurableObjectLocationHint)
+    : // Falls to the side the backing services are on, on purpose. Both
+      // environments' Neon projects and R2 buckets are in Europe, so there is
+      // no deployment for which "no hint" is the right answer — an unhinted
+      // object is placed by whichever edge happens to wake it, which is the
+      // defect this replaced. Same shape as the BLOB_BACKEND fallback above.
+      "weur";
+  return {
+    name: env.MARFA_CONTAINER_INSTANCE ?? "marfa-server-1",
+    locationHint,
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const container = getContainer(env.MARFA_SERVER);
+    const { name, locationHint } = resolvePlacement(env);
+    const container = env.MARFA_SERVER.get(env.MARFA_SERVER.idFromName(name), {
+      locationHint,
+    });
     // Before the wake, not after: a stale instance has to be gone before
     // `startAndWaitForPorts` can bring the deployed image up in its place.
     // The request is then served by the new build after a cold start rather
