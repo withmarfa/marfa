@@ -485,6 +485,14 @@ if [[ -n "$UNRESOLVED" ]]; then
   exit 1
 fi
 
+# Hand the resolved region to later steps in the same job. The deploy gate
+# asserts the container landed in it, and reading it from here rather than
+# restating it means the check and the deployed value cannot drift apart —
+# which is the exact class of defect the check exists to catch.
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  echo "SERVER_REGION=$SERVER_REGION" >> "$GITHUB_ENV"
+fi
+
 echo "→ Rendered config preview:"
 grep -E '"name"|"image"|"instance_type"|"max_instances"|"regions"|workers_dev|routes|BLOB_BACKEND|MARFA_AUTH_BASE_URL|MARFA_INTEGRATION_RUNTIME' "$RENDERED_JSONC" | sed 's/^/  /'
 

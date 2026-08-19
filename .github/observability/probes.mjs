@@ -138,6 +138,13 @@ export function inspectHealthPayload(body) {
   return {
     degraded,
     sha: payload.version?.sha ? String(payload.version.sha) : null,
+    // Absent on a self-hosted server, which publishes no placement at all,
+    // so a caller has to tell "not reported" apart from "reported wrong"
+    // rather than reading a missing field as agreement.
+    region: payload.placement?.region ? String(payload.placement.region) : null,
+    location: payload.placement?.location
+      ? String(payload.placement.location)
+      : null,
   };
 }
 

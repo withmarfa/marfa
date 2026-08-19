@@ -37,6 +37,7 @@ interface HealthBody {
     database?: { status: string; error?: string };
     blob_storage?: { status: string; error?: string };
   };
+  placement?: { region?: string; location?: string; country?: string };
 }
 
 describe("GET /health", () => {
@@ -110,5 +111,84 @@ describe("GET /health", () => {
     // tells an operator whether to look at the database or at the pool.
     expect(body.components.database?.status).toBe("down");
     expect(body.components.database?.error).toContain("connection refused");
+  });
+});
+
+/**
+ * Placement is reported so that something outside the platform can assert it.
+ * A container scheduled a continent away from its database raises no error,
+ * fails no deploy and degrades no status — it only costs latency, which then
+ * gets blamed on whichever component the payload does name. Production ran
+ * that way for four months behind a green pipeline.
+ */
+describe("GET /health placement", () => {
+  const withEnv = async (
+    vars: Record<string, string | undefined>,
+    run: () => Promise<void>,
+  ) => {
+    const saved = { ...process.env };
+    Object.assign(process.env, vars);
+    try {
+      await run();
+    } finally {
+      process.env = saved;
+    }
+  };
+
+  const build = () =>
+    healthRoutes(
+      buildStorage(() => Promise.resolve(1)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+
+  it("reports what the container runtime publishes", async () => {
+    await withEnv(
+      {
+        CLOUDFLARE_REGION: "WEUR",
+        CLOUDFLARE_LOCATION: "mrs05",
+        CLOUDFLARE_COUNTRY_A2: "FR",
+      },
+      async () => {
+        const body = (await (await build().request("/")).json()) as HealthBody;
+        expect(body.placement).toEqual({
+          region: "WEUR",
+          location: "mrs05",
+          country: "FR",
+        });
+      },
+    );
+  });
+
+  // Only Cloudflare Containers sets these. A self-hosted server has to be
+  // able to say nothing rather than say an empty string, because a caller
+  // reading "" as a region would compare it against the expected one and
+  // fail a deploy that is fine.
+  it("omits the block entirely when the platform sets nothing", async () => {
+    await withEnv(
+      {
+        CLOUDFLARE_REGION: undefined,
+        CLOUDFLARE_LOCATION: undefined,
+        CLOUDFLARE_COUNTRY_A2: undefined,
+      },
+      async () => {
+        const body = (await (await build().request("/")).json()) as HealthBody;
+        expect(body.placement).toBeUndefined();
+      },
+    );
+  });
+
+  it("reports a partial placement rather than dropping it", async () => {
+    await withEnv(
+      {
+        CLOUDFLARE_REGION: "WEUR",
+        CLOUDFLARE_LOCATION: undefined,
+        CLOUDFLARE_COUNTRY_A2: undefined,
+      },
+      async () => {
+        const body = (await (await build().request("/")).json()) as HealthBody;
+        expect(body.placement).toEqual({ region: "WEUR" });
+      },
+    );
   });
 });

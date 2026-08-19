@@ -17,13 +17,18 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   classifyFailure,
+  inspectHealthPayload,
   summarizeSamples,
   checkLiveness,
   SAMPLE_COUNT,
   SAMPLE_INTERVAL_MS,
   MAX_SAMPLE_SPREAD_MS,
 } from "./probes.mjs";
-import { waitForDeployedBuild, healthUrlFor } from "./deploy-gate.mjs";
+import {
+  waitForDeployedBuild,
+  healthUrlFor,
+  checkPlacement,
+} from "./deploy-gate.mjs";
 
 const surface = {
   id: "x",
@@ -389,5 +394,83 @@ describe("healthUrlFor", () => {
 
   test("refuses an environment nothing declares", () => {
     assert.throws(() => healthUrlFor("nowhere"), /no server surface/);
+  });
+});
+
+describe("inspectHealthPayload placement", () => {
+  test("reads the region and location the server reports", () => {
+    const { region, location } = inspectHealthPayload(
+      JSON.stringify({
+        status: "ok",
+        placement: { region: "WEUR", location: "mrs05", country: "FR" },
+        version: { sha: "abc1234" },
+      }),
+    );
+    assert.equal(region, "WEUR");
+    assert.equal(location, "mrs05");
+  });
+
+  // A self-hosted server publishes no placement at all. Reporting null rather
+  // than a blank string is what lets the gate tell "not reported" apart from
+  // "reported wrong" — collapsing the two would fail every self-hosted deploy.
+  test("reports null when the payload carries no placement", () => {
+    const { region, location } = inspectHealthPayload(
+      JSON.stringify({ status: "ok", version: { sha: "abc1234" } }),
+    );
+    assert.equal(region, null);
+    assert.equal(location, null);
+  });
+});
+
+describe("checkPlacement", () => {
+  // The case this whole check exists for: production served every request
+  // from Western North America while its database and bucket were in Europe,
+  // for four months, with a green pipeline throughout.
+  test("fails when the container is on the wrong continent", () => {
+    const reason = checkPlacement("WEUR", {
+      region: "WNAM",
+      location: "sjc08",
+    });
+    assert.match(reason, /WNAM/);
+    assert.match(reason, /sjc08/);
+    assert.match(reason, /expected WEUR/);
+  });
+
+  test("passes when the region matches", () => {
+    assert.equal(
+      checkPlacement("WEUR", { region: "WEUR", location: "mrs05" }),
+      null,
+    );
+  });
+
+  // The constraint bounds the region, not the colo, so production moving
+  // between European datacenters is the mechanism working rather than a fault.
+  test("passes on a different colo inside the expected region", () => {
+    assert.equal(
+      checkPlacement("WEUR", { region: "WEUR", location: "mad06" }),
+      null,
+    );
+  });
+
+  // Silence is not a failure. A self-hosted deployment reports no placement,
+  // and a gate that read that as a fault would block every one of them.
+  test("passes when the server reports no region", () => {
+    assert.equal(checkPlacement("WEUR", { region: null }), null);
+    assert.equal(checkPlacement("WEUR", undefined), null);
+  });
+
+  // Nor is an unset expectation. A deploy path that does not declare a region
+  // should not start failing because this check was added.
+  test("passes when no region is expected", () => {
+    assert.equal(checkPlacement(undefined, { region: "WNAM" }), null);
+    assert.equal(checkPlacement("", { region: "WNAM" }), null);
+  });
+
+  // The message has to name both sides. "Container is in WNAM, expected WEUR"
+  // is the sentence that would have ended the four months; a bare assertion
+  // failure would not have.
+  test("names both regions in the failure", () => {
+    const reason = checkPlacement("WEUR", { region: "APAC" });
+    assert.match(reason, /container is in APAC, expected WEUR/);
   });
 });
