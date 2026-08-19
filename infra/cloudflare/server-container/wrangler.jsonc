@@ -19,11 +19,7 @@
       "class_name": "MarfaServerContainer",
       "image": "${SERVER_IMAGE}",
       "instance_type": "${SERVER_INSTANCE_TYPE}",
-      "max_instances": ${SERVER_MAX_INSTANCES},
-      // Hard floor under container placement. The Durable Object location
-      // hint in src/index.ts is a suggestion; this is not. Both point at the
-      // same region, rendered from one per-env value in the deploy script.
-      "constraints": { "regions": ${SERVER_CONSTRAINT_REGIONS} }
+      "max_instances": ${SERVER_MAX_INSTANCES}
     }
   ],
   "durable_objects": {
@@ -39,8 +35,6 @@
   // x max_instances.
   "limits": { "cpu_ms": 30000 },
   "vars": {
-    "MARFA_CONTAINER_INSTANCE": "${V_CONTAINER_INSTANCE}",
-    "MARFA_CONTAINER_LOCATION_HINT": "${V_CONTAINER_LOCATION_HINT}",
     "CONTAINER_SLEEP_AFTER": "${SERVER_SLEEP_AFTER}",
     "MARFA_CONTAINER_WARM": "${V_CONTAINER_WARM}",
     "MARFA_EXPECTED_IMAGE": "${SERVER_IMAGE}",
