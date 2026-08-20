@@ -21,8 +21,12 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    # Healthy, not merely started, so a manual `up` never proxies to a
+    # server still booting. The automated deploy rolls services with
+    # --no-deps and relies on Caddy's own per-request retry instead.
     depends_on:
-      - server
+      server:
+        condition: service_healthy
 
   # One-shot: apply pending migrations, then exit. The server never
   # migrates on boot; the deploy runs this before rolling the server, and
@@ -38,8 +42,11 @@ services:
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     restart: unless-stopped
     env_file: server.env
-    expose:
-      - "8600"
+    # Loopback-only publish: the deploy gate and on-box debugging probe
+    # /health from the host over SSH, and `expose` alone never reaches the
+    # host's network namespace. Caddy stays the only public entry point.
+    ports:
+      - "127.0.0.1:8600:8600"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -67,9 +74,19 @@ services:
       migrate:
         condition: service_completed_successfully
       server:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - server-data:/app/data
+
+# The subnet is pinned so TRUSTED_PROXY_CIDRS in server.env can trust
+# exactly this network. Docker's auto-assigned pools drift onto
+# 192.168.0.0/16 once the 172.16/12 ranges are exhausted on a box, which
+# would silently defeat the x-forwarded-for trust.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   caddy-data:
