@@ -734,13 +734,33 @@ export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
 }
 
 function parseProcessRole(raw: string | undefined): ProcessRole {
-  if (raw === undefined || raw === "") return "both";
-  if (raw === "web" || raw === "worker" || raw === "both") return raw;
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === "") return "both";
+  if (value === "web" || value === "worker" || value === "both") return value;
   // A typo silently defaulting to `both` would run every consumer twice
   // across a split deployment, so an unknown value refuses to boot.
   throw new Error(
-    `Unknown MARFA_PROCESS_ROLE=${raw}. Legal values: web | worker | both.`,
+    `Unknown MARFA_PROCESS_ROLE=${raw ?? ""}. Legal values: web | worker | both.`,
   );
+}
+
+function parseApiUrl(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  // The worker's handlers spend this on every write-back; a malformed
+  // value surfaces there as an opaque fetch failure at dispatch time, so
+  // it refuses at boot instead, matching the sibling knobs.
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`MARFA_API_URL is not a valid URL: ${raw}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `MARFA_API_URL must be http or https, got ${parsed.protocol}//`,
+    );
+  }
+  return raw;
 }
 
 function parseDbPoolSize(raw: string | undefined): number | undefined {
@@ -765,6 +785,7 @@ export function loadConfig(): AppConfig {
   const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
   const processRole = parseProcessRole(process.env.MARFA_PROCESS_ROLE);
   const dbPoolSize = parseDbPoolSize(process.env.MARFA_DB_POOL_SIZE);
+  const apiUrl = parseApiUrl(process.env.MARFA_API_URL);
 
   // The split's coordination is all Postgres: pg-boss pins scheduled and
   // dispatch work to whichever process registered the workers, pg_notify
@@ -859,7 +880,7 @@ export function loadConfig(): AppConfig {
     databaseUrlDirect,
     dbPoolMode,
     processRole,
-    ...(process.env.MARFA_API_URL && { apiUrl: process.env.MARFA_API_URL }),
+    ...(apiUrl !== undefined && { apiUrl }),
     ...(dbPoolSize !== undefined && { dbPoolSize }),
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",

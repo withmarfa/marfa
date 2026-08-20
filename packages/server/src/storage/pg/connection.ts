@@ -183,40 +183,50 @@ export async function createConnection(
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
-  // Dedicated client on the direct (session-mode) endpoint, when configured,
-  // for the work that genuinely needs a session: streaming's `SET ROLE`, and
-  // the session-scoped advisory locks behind `withJobLock`. Neither survives
-  // the app's transaction-mode pooled connections, where a statement is its
-  // own transaction and the backend it landed on is not the one the next
-  // statement gets (see `directConnectionString`).
-  const sessionClient = directConnectionString
-    ? postgres(directConnectionString, {
-        // Sized against what reserves from it: one slot per concurrent
-        // stream plus one per in-flight `withJobLock` tick (job ticks are
-        // short; the process-lifetime holder lives on `jobHolderClient`,
-        // never here). The direct endpoint has a tighter connection
-        // ceiling than the pooler, which is why this stays small — and
-        // why a reservation that cannot be served times out rather than
-        // queueing forever.
-        max: Math.min(options?.maxPoolSize ?? 10, 5),
-        // Same reasoning as the app pool. This one matters more per socket:
-        // between streams it holds its slots open with nothing to show for it.
-        idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
-        max_lifetime: POOL_MAX_LIFETIME_SECONDS,
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        onnotice: () => {},
-      })
-    : client;
-  const jobHolderClient = directConnectionString
-    ? postgres(directConnectionString, {
-        max: 1,
-        // No idle timeout: the whole point of this client is one
-        // reservation held for the process lifetime.
-        max_lifetime: null,
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        onnotice: () => {},
-      })
-    : client;
+  // Dedicated clients for the work that genuinely needs a connection of its
+  // own: streaming's `SET ROLE` reservations, the short-hold advisory locks
+  // behind `withJobLock`, and the process-lifetime election reservation
+  // behind `withLongLivedJobLock`. On a transaction-mode pooler these must
+  // take the direct endpoint (a statement there is its own transaction, so
+  // session state strands — see `directConnectionString`); on a plain
+  // session-mode deployment they take the app's own endpoint but still get
+  // their own pools. They used to alias the app pool in that shape, which
+  // put a bracketing lock's connection and the queries its critical section
+  // runs in one pool — the documented bracketing deadlock, reached at pool
+  // size rather than load, and reached in practice the moment role-split
+  // deployments shrank the app pool: one held election reservation plus a
+  // single job tick wedged a two-connection pool permanently. A lock's
+  // connection must come from a pool the locked work never queries,
+  // whatever the endpoint topology.
+  const sessionModeUrl = directConnectionString || connectionString;
+  const sessionClient = postgres(sessionModeUrl, {
+    // Sized against what reserves from it: one slot per concurrent
+    // stream plus one per in-flight `withJobLock` tick (job ticks are
+    // short; the process-lifetime holder lives on `jobHolderClient`,
+    // never here). This stays small — the endpoints it can point at have
+    // tight connection ceilings — and a reservation that cannot be
+    // served times out rather than queueing forever.
+    max: Math.min(options?.maxPoolSize ?? 10, 5),
+    // Same reasoning as the app pool. This one matters more per socket:
+    // between streams it holds its slots open with nothing to show for it.
+    idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
+    max_lifetime: POOL_MAX_LIFETIME_SECONDS,
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    onnotice: () => {},
+  });
+  const jobHolderClient = postgres(sessionModeUrl, {
+    max: 1,
+    // The idle timeout only ever fires on a process that lost the
+    // election and released its reservation — a held reservation is
+    // exempt by construction — so the loser's probe connection closes
+    // instead of lingering for the process lifetime.
+    idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
+    // No max lifetime: the winner's reservation is held for the process
+    // lifetime and must not be lifecycled out from under it.
+    max_lifetime: null,
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    onnotice: () => {},
+  });
   const baseDb = drizzle(client, { schema });
   const db = wrapDbWithRequestContext(baseDb);
 

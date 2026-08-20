@@ -154,113 +154,120 @@ describe("enqueue-only supervisor shape", () => {
 
 describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
   it("a job enqueued by the enqueue-only side runs on the dispatching side only", async () => {
+    // Everything after the clone runs inside the try so a throw on any
+    // path still drops the database and stops both boss instances.
     const clone = await cloneTemplate();
-    const storage = await createPgStorage(clone.url, {
-      authMode: "keys",
-      maxPoolSize: 3,
-      skipBootstrap: true,
-    });
-    // Two pg-boss instances against one database stand in for the two
-    // containers; what separates roles is which instance registered
-    // workers, exactly as in production.
-    const { PgBoss } = await import("pg-boss");
-    const bossWeb = new PgBoss(clone.url);
-    const bossWorker = new PgBoss(clone.url);
-    for (const b of [bossWeb, bossWorker]) {
-      b.on("error", () => {
-        // Maintenance errors must not crash the runner.
-      });
-      await b.start();
-    }
-
-    const seenByWeb: string[] = [];
-    const seenByWorker: string[] = [];
-    const reg = (
-      seen: string[],
-      name = "test.role-split",
-    ): LocalIntegrationRegistration => ({
-      ...shapeRegistration,
-      name,
-      directDispatch: (request) => {
-        seen.push(request.message.connection_id);
-        return Promise.resolve({
-          result: { ok: true as const },
-          cursorUpdates: {},
-          cursorDeletes: [],
-          threw: false,
-        });
-      },
-    });
-
-    // Both supervisors resolve dispatches against a real Connection so the
-    // mint path works; the integration + connection rows are shared.
-    const integration = await storage.items.create(
-      {
-        type: "system.integration",
-        properties: {
-          manifest_name: "test.role-split",
-          manifest_version: "0.0.1",
-          publisher: "test",
-          manifest: {
-            name: "test.role-split",
-            version: "0.0.1",
-            publisher: "test",
-            description: "role split hand-off test",
-            manifest_schema_version: "1.0.0",
-            direction: "read",
-            runtime_compatibility: ["local"],
-            target_types: ["core.note"],
-            triggers: [{ type: "schedule", config: { cron: "*/5 * * * *" } }],
-            bidirectional_handling: {
-              echo_ttl_seconds: 60,
-              lag_window_seconds: 60,
-              tombstone_mapping: "state-trashed",
-              partial_write_mode: "all-or-nothing",
-            },
-            oauth_requirements: {},
-            webhook_verification: { method: "hmac-sha256" },
-            permissions: {
-              extension: { "connection.runtime": "write" },
-              edge: {},
-            },
-          },
-          registered_at: new Date().toISOString(),
-        },
-      },
-      undefined,
-    );
-    const connection = await storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          integration_ref: integration.id,
-          granted_at: new Date().toISOString(),
-        },
-      },
-      undefined,
-    );
-
-    const supWeb = createSupervisor(storage, {
-      apiUrl: "http://test.local",
-      apiKeySalt: TEST_API_KEY_SALT,
-      authMode: "keys",
-      registrations: [reg(seenByWeb)],
-      executor: noopExecutor,
-      boss: bossWeb,
-      registerWorkers: false,
-    });
-    const supWorker = createSupervisor(storage, {
-      apiUrl: "http://test.local",
-      apiKeySalt: TEST_API_KEY_SALT,
-      authMode: "keys",
-      registrations: [reg(seenByWorker)],
-      executor: noopExecutor,
-      boss: bossWorker,
-    });
-
+    let storage: Awaited<ReturnType<typeof createPgStorage>> | undefined;
+    let bossWeb: PgBoss | undefined;
+    let bossWorker: PgBoss | undefined;
+    let supWeb: ReturnType<typeof createSupervisor> | undefined;
+    let supWorker: ReturnType<typeof createSupervisor> | undefined;
     try {
+      storage = await createPgStorage(clone.url, {
+        authMode: "keys",
+        maxPoolSize: 3,
+        skipBootstrap: true,
+      });
+      // Two pg-boss instances against one database stand in for the two
+      // containers; what separates roles is which instance registered
+      // workers, exactly as in production.
+      const { PgBoss } = await import("pg-boss");
+      bossWeb = new PgBoss(clone.url);
+      bossWorker = new PgBoss(clone.url);
+      for (const b of [bossWeb, bossWorker]) {
+        b.on("error", () => {
+          // Maintenance errors must not crash the runner.
+        });
+        await b.start();
+      }
+
+      const seenByWeb: string[] = [];
+      const seenByWorker: string[] = [];
+      const reg = (
+        seen: string[],
+        name = "test.role-split",
+      ): LocalIntegrationRegistration => ({
+        ...shapeRegistration,
+        name,
+        directDispatch: (request) => {
+          seen.push(request.message.connection_id);
+          return Promise.resolve({
+            result: { ok: true as const },
+            cursorUpdates: {},
+            cursorDeletes: [],
+            threw: false,
+          });
+        },
+      });
+
+      // Both supervisors resolve dispatches against a real Connection so the
+      // mint path works; the integration + connection rows are shared.
+      const integration = await storage.items.create(
+        {
+          type: "system.integration",
+          properties: {
+            manifest_name: "test.role-split",
+            manifest_version: "0.0.1",
+            publisher: "test",
+            manifest: {
+              name: "test.role-split",
+              version: "0.0.1",
+              publisher: "test",
+              description: "role split hand-off test",
+              manifest_schema_version: "1.0.0",
+              direction: "read",
+              runtime_compatibility: ["local"],
+              target_types: ["core.note"],
+              triggers: [{ type: "schedule", config: { cron: "*/5 * * * *" } }],
+              bidirectional_handling: {
+                echo_ttl_seconds: 60,
+                lag_window_seconds: 60,
+                tombstone_mapping: "state-trashed",
+                partial_write_mode: "all-or-nothing",
+              },
+              oauth_requirements: {},
+              webhook_verification: { method: "hmac-sha256" },
+              permissions: {
+                extension: { "connection.runtime": "write" },
+                edge: {},
+              },
+            },
+            registered_at: new Date().toISOString(),
+          },
+        },
+        undefined,
+      );
+      const connection = await storage.items.create(
+        {
+          type: "system.connection",
+          properties: {
+            kind: "integration",
+            status: "active",
+            integration_ref: integration.id,
+            granted_at: new Date().toISOString(),
+          },
+        },
+        undefined,
+      );
+
+      supWeb = createSupervisor(storage, {
+        apiUrl: "http://test.local",
+        apiKeySalt: TEST_API_KEY_SALT,
+        authMode: "keys",
+        registrations: [reg(seenByWeb)],
+        executor: noopExecutor,
+        boss: bossWeb,
+        registerWorkers: false,
+      });
+      supWorker = createSupervisor(storage, {
+        apiUrl: "http://test.local",
+        apiKeySalt: TEST_API_KEY_SALT,
+        authMode: "keys",
+        registrations: [reg(seenByWorker)],
+        executor: noopExecutor,
+        boss: bossWorker,
+      });
+
       await supWeb.start();
       await supWorker.start();
 
@@ -283,8 +290,14 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
         true,
       );
     } finally {
-      await supWorker.stop().catch(() => undefined);
-      await storage.close().catch(() => undefined);
+      // Supervisor stop() also stops its boss (idempotent — the `stopped`
+      // flag makes a second call a no-op); the bare boss stops are the
+      // backstop for a throw before the supervisors existed.
+      await supWeb?.stop().catch(() => undefined);
+      await supWorker?.stop().catch(() => undefined);
+      await bossWeb?.stop({ graceful: false }).catch(() => undefined);
+      await bossWorker?.stop({ graceful: false }).catch(() => undefined);
+      await storage?.close().catch(() => undefined);
       await clone.drop();
     }
   }, 40_000);

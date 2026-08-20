@@ -29,16 +29,18 @@
  *
  * **In-process, and a mutex rather than a lease.** An upload is a user action
  * that has to complete, so a caller waits its turn rather than being told to
- * go away. One server process is the documented precondition for this
- * deployment — the hosted container pins `SERVER_MAX_INSTANCES=1` and a
- * SQLite deployment is covered by construction — which is the same ground
- * `withConsentLock` stands on, and the same place to look first if that
- * precondition ever changes. A `CoordinationStore` lock is the wrong tool
- * here for a concrete reason rather than a stylistic one: `withExclusiveLock`
- * holds a pool connection for the length of its callback, and this callback
- * opens a transaction of its own, so every concurrent upload would need two
- * connections and enough of them would exhaust the pool waiting for slots
- * nobody can release.
+ * go away. One WEB process is the documented precondition here: uploads are
+ * HTTP, so the process-role split changes nothing, but a deployment scaling
+ * to several web copies must first give this lock a cross-process backend —
+ * exactly the move `withConsentLock` already made
+ * (`storage/pg/consent-lock-backend.ts`), and the template to copy when
+ * that day comes. Deployments today hold the precondition by policy (one
+ * web container), and a SQLite deployment is covered by construction. A
+ * `CoordinationStore` lock is the wrong tool here for a concrete reason
+ * rather than a stylistic one: `withExclusiveLock` holds a pool connection
+ * for the length of its callback, and this callback opens a transaction of
+ * its own, so every concurrent upload would need two connections and enough
+ * of them would exhaust the pool waiting for slots nobody can release.
  */
 
 /**

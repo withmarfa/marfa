@@ -184,3 +184,26 @@ jobs:
             "echo 'ssh reachable; the build is not serving'" \
             || echo "ssh itself unreachable" >&2
           exit 1
+
+      # The web poll above proves nothing about the worker: it publishes no
+      # port, and a worker that crash-loops leaves the deploy green while
+      # all scheduled work silently stops. The container's own HEALTHCHECK
+      # (the worker role serves /health on its port inside the network) is
+      # the signal; poll until Docker reports it healthy.
+      - name: Gate on the worker healthy
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+          COMPOSE: ${{ steps.target.outputs.compose }}
+        run: |
+          for i in $(seq 1 24); do
+            STATE=$(ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
+              "cd /opt/marfa && docker inspect --format '{{.State.Health.Status}}' \
+                 \$(docker compose -f $COMPOSE ps -q worker) 2>/dev/null" || true)
+            if [ "$STATE" = "healthy" ]; then
+              echo "worker healthy after ${i} polls"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "worker never reported healthy (last state: ${STATE:-unknown})" >&2
+          exit 1

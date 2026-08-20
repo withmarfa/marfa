@@ -348,7 +348,14 @@ export function createSupervisor(
       for (const reg of config.registrations) {
         if (!reg.scheduleCron) continue;
         const scheduleName = sanitizeQueueName(SCHEDULE_PREFIX + reg.name);
-        await boss.createQueue(scheduleName);
+        // Stately: at most one queued tick per state. pg-boss's timekeeper
+        // fires crons from any process that started the boss — including a
+        // web-role copy that registered no workers — so with the worker
+        // down the ticks keep arriving. Every tick is the same "fan out
+        // now" trigger, so collapsing the backlog to one pending job is
+        // the correct semantics; an unbounded queue would make the
+        // returning worker replay hours of identical fan-outs.
+        await boss.createQueue(scheduleName, { policy: "stately" });
         await boss.work(scheduleName, { batchSize: 1 }, async () => {
           await fanOutSchedule(storage, runtime, reg.name, Date.now());
         });
@@ -382,6 +389,15 @@ export function createSupervisor(
     async enqueue(envelope) {
       if (!config.boss) {
         // No queue (test path or no-boss operator mode) — run synchronously.
+        // Enqueue-only mode has no synchronous fallback to fall to: running
+        // the dispatch here would execute a handler in a process whose role
+        // says it must not. Unreachable in production (a Postgres boot
+        // always has a boss), so this is a contract guard, not a code path.
+        if (config.registerWorkers === false) {
+          throw new Error(
+            "enqueue-only runtime has no boss to enqueue onto; dispatching synchronously would violate the role split",
+          );
+        }
         await dispatchForQueue(envelope);
         return;
       }

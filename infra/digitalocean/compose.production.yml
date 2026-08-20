@@ -46,7 +46,7 @@ services:
       MARFA_PROCESS_ROLE: web
       # Web share of the connection budget; the arithmetic is in
       # server.env.example beside the ceiling it sums under.
-      MARFA_DB_POOL_SIZE: "4"
+      MARFA_DB_POOL_SIZE: "3"
     # Loopback-only publish: the deploy gate and on-box debugging probe
     # /health from the host over SSH, and `expose` alone never reaches the
     # host's network namespace. Caddy stays the only public entry point.
@@ -71,6 +71,12 @@ services:
       MARFA_API_URL: http://server:8600
       # Worker share of the connection budget (see server.env.example).
       MARFA_DB_POOL_SIZE: "2"
+      # The shared heartbeat in server.env is the web tier's dead-man's
+      # switch; two processes pinging one receiver would mask either one
+      # dying, so the worker's is off. Point it at a separate receiver to
+      # page on worker liveness too — the deploy gate checks the worker's
+      # container health on every roll regardless.
+      MARFA_HEARTBEAT_URL: ""
     depends_on:
       migrate:
         condition: service_completed_successfully

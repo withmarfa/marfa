@@ -60,7 +60,7 @@ services:
       # stock connection ceiling, so the budget is looser than
       # production's; matched anyway so the two environments exercise
       # the same shape.
-      MARFA_DB_POOL_SIZE: "4"
+      MARFA_DB_POOL_SIZE: "3"
     # Loopback-only publish for the deploy gate and on-box debugging; see
     # compose.production.yml.
     ports:
@@ -82,6 +82,9 @@ services:
       MARFA_PROCESS_ROLE: worker
       MARFA_API_URL: http://server:8600
       MARFA_DB_POOL_SIZE: "2"
+      # Off for the same reason as production: the shared heartbeat is
+      # the web tier's dead-man's switch.
+      MARFA_HEARTBEAT_URL: ""
     depends_on:
       postgres:
         condition: service_healthy

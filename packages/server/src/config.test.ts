@@ -363,3 +363,25 @@ describe("loadConfig process-role and pool knobs", () => {
     }
   });
 });
+
+describe("loadConfig MARFA_API_URL validation", () => {
+  const saved = { MARFA_API_URL: process.env.MARFA_API_URL };
+
+  afterEach(() => {
+    if (saved.MARFA_API_URL === undefined)
+      Reflect.deleteProperty(process.env, "MARFA_API_URL");
+    else process.env.MARFA_API_URL = saved.MARFA_API_URL;
+  });
+
+  it("refuses a value that does not parse as an http(s) URL", () => {
+    for (const bad of ["http//server:8600", "server:8600", "ftp://x"]) {
+      process.env.MARFA_API_URL = bad;
+      expect(() => loadConfig()).toThrow(/MARFA_API_URL/);
+    }
+  });
+
+  it("accepts a well-formed URL and case-folds the role", () => {
+    process.env.MARFA_API_URL = "http://server:8600";
+    expect(loadConfig().apiUrl).toBe("http://server:8600");
+  });
+});
