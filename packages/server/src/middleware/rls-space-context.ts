@@ -55,12 +55,11 @@ import type { AppEnv } from "./auth.js";
  * fence.
  *
  * **`SET LOCAL` correctness.** `set_config(name, value, true)` is
- * the parameterized form of `SET LOCAL` — safe under
- * postgres-js binding. `SET LOCAL ROLE marfa_app` is hardcoded
- * (role name is not user-controlled), so direct DDL is safe. Both
- * are scoped to the surrounding transaction by definition; on
- * COMMIT or ROLLBACK the connection returns to the pool with the
- * settings cleared.
+ * the parameterized form of `SET LOCAL` — safe under postgres-js
+ * binding, and `role` is an ordinary GUC, so setting it this way IS
+ * `SET LOCAL ROLE` with identical privilege checks. Both settings are
+ * scoped to the surrounding transaction by definition; on COMMIT or
+ * ROLLBACK the connection returns to the pool with them cleared.
  */
 
 interface RlsMiddlewareOptions {
@@ -117,12 +116,15 @@ export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
     }
 
     // Case 3: space-bounded — wrap downstream in a transaction with
-    // SET LOCAL ROLE marfa_app + space_id.
+    // SET LOCAL ROLE marfa_app + space_id. Both settings ride one
+    // statement: set_config('role', …, true) IS `SET LOCAL ROLE` (the
+    // role is an ordinary GUC), and nothing reads a result between the
+    // two, so issuing them separately was one round trip of pure
+    // latency on every space-bounded request.
     await db.transaction(async (tx) => {
       await tx.execute(
-        sql`SELECT set_config('marfa.space_id', ${spaceId}, true)`,
+        sql`SELECT set_config('marfa.space_id', ${spaceId}, true), set_config('role', 'marfa_app', true)`,
       );
-      await tx.execute(sql`SET LOCAL ROLE marfa_app`);
 
       await pgRequestContext.run({ tx }, async () => {
         await next();

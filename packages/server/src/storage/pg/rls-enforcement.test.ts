@@ -30,6 +30,10 @@ import {
 } from "../../test-utils.js";
 import { hashApiKey } from "../../middleware/auth.js";
 import type { PgDb } from "./connection.js";
+import { Hono } from "hono";
+import type { ApiKey } from "@withmarfa/shared";
+import type { AppEnv } from "../../middleware/auth.js";
+import { rlsSpaceContextMiddleware } from "../../middleware/rls-space-context.js";
 
 const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
@@ -174,6 +178,43 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
         headers: { authorization: `Bearer ${spaceBKey}` },
       });
       expect(ownRes.status).toBe(200);
+    });
+
+    it("actually switches the connection to marfa_app inside a space-bounded request", async () => {
+      // Every other case in this file would still pass if the middleware
+      // stopped switching roles: the application-layer space fence
+      // produces the same 404s on its own. This is the one assertion
+      // that regresses if the role flip breaks — a probe route behind
+      // the real middleware reading current_user through the
+      // request-context proxy.
+      const probe = new Hono<AppEnv>();
+      probe.use("*", async (c, next) => {
+        c.set("apiKey", {
+          id: "rls-probe-key",
+          role: "space_admin",
+          space_id: spaceA,
+        } as unknown as ApiKey);
+        await next();
+      });
+      probe.use(
+        "*",
+        rlsSpaceContextMiddleware({
+          rlsEnforce: true,
+          db: ctx.storage.pgDb as PgDb,
+        }),
+      );
+      probe.get("/whoami", async (c) => {
+        const db = ctx.storage.pgDb as PgDb;
+        const rows = (await db.execute(
+          sql`SELECT current_user AS who, current_setting('marfa.space_id', true) AS space`,
+        )) as unknown as { who: string; space: string }[];
+        return c.json(rows[0]);
+      });
+      const res = await probe.request("/whoami");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { who: string; space: string };
+      expect(body.who).toBe("marfa_app");
+      expect(body.space).toBe(spaceA);
     });
   });
 });

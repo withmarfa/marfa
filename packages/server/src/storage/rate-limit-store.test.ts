@@ -203,3 +203,101 @@ describe("RateLimitStore — multi-instance cluster-shared invariant", () => {
     expect(counts).toStrictEqual(Array.from({ length: N }, (_, i) => i + 1));
   });
 });
+
+describe("RateLimitStore — batched increments", () => {
+  it("a fresh batch behaves per-row like three sequential increments", async () => {
+    ctx = await createTestContext();
+    const now = new Date(1_000_000).toISOString();
+    const map = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      ["batch-a", "batch-b", "batch-c"],
+      60_000,
+      now,
+    );
+    expect(map.size).toBe(3);
+    for (const key of ["batch-a", "batch-b", "batch-c"]) {
+      const row = map.get(key);
+      expect(row?.count).toBe(1);
+      expect(new Date(row?.expires_at ?? "").getTime()).toBe(
+        1_000_000 + 60_000,
+      );
+    }
+  });
+
+  it("a mixed batch increments existing rows and creates fresh ones in one call", async () => {
+    ctx = await createTestContext();
+    const now = new Date(1_000_000).toISOString();
+    await ctx.storage.rateLimits.incrementWindow(
+      "rate",
+      "mixed-existing",
+      60_000,
+      now,
+    );
+    const map = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      ["mixed-existing", "mixed-fresh"],
+      60_000,
+      now,
+    );
+    expect(map.get("mixed-existing")?.count).toBe(2);
+    expect(map.get("mixed-fresh")?.count).toBe(1);
+  });
+
+  it("a batch rolls an expired window over while incrementing a live sibling", async () => {
+    ctx = await createTestContext();
+    const early = new Date(1_000_000).toISOString();
+    await ctx.storage.rateLimits.incrementWindow(
+      "rate",
+      "roll-expired",
+      1_000,
+      early,
+    );
+    await ctx.storage.rateLimits.incrementWindow(
+      "rate",
+      "roll-live",
+      600_000,
+      early,
+    );
+    const later = new Date(1_005_000).toISOString();
+    const map = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      ["roll-expired", "roll-live"],
+      60_000,
+      later,
+    );
+    // Past its expiry the window resets to 1 with a fresh horizon; the
+    // still-live sibling increments and keeps its original horizon.
+    expect(map.get("roll-expired")?.count).toBe(1);
+    expect(new Date(map.get("roll-expired")?.expires_at ?? "").getTime()).toBe(
+      1_005_000 + 60_000,
+    );
+    expect(map.get("roll-live")?.count).toBe(2);
+    expect(new Date(map.get("roll-live")?.expires_at ?? "").getTime()).toBe(
+      1_000_000 + 600_000,
+    );
+  });
+
+  it("duplicate keys collapse to one increment, and an empty batch is a no-op", async () => {
+    ctx = await createTestContext();
+    const now = new Date(1_000_000).toISOString();
+    const map = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      ["dup-key", "dup-key", "dup-key"],
+      60_000,
+      now,
+    );
+    // Without deduplication a multi-row upsert on one key is an error on
+    // Postgres ("cannot affect row a second time"), so one entry at
+    // count 1 is the load-bearing assertion.
+    expect(map.size).toBe(1);
+    expect(map.get("dup-key")?.count).toBe(1);
+
+    const empty = await ctx.storage.rateLimits.incrementWindows(
+      "rate",
+      [],
+      60_000,
+      now,
+    );
+    expect(empty.size).toBe(0);
+  });
+});

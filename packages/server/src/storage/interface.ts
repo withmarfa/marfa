@@ -2106,6 +2106,21 @@ export interface RateLimitStore {
     nowIso: string,
   ): Promise<{ count: number; expires_at: string }>;
   /**
+   * `incrementWindow` for several keys in ONE statement, keyed by the
+   * same upsert semantics per row. Exists because the rate-limit
+   * middleware consults up to three windows on every request — same
+   * table, same method, same timestamp — and three sequential round
+   * trips on the hot path were pure multiplier. Keys are deduplicated
+   * and applied in sorted order so two concurrent batches cannot
+   * deadlock on row-lock ordering. Returns a map keyed by window key.
+   */
+  incrementWindows(
+    family: string,
+    keys: string[],
+    windowMs: number,
+    nowIso: string,
+  ): Promise<Map<string, { count: number; expires_at: string }>>;
+  /**
    * Drop every row whose `expires_at` is strictly older than `nowIso`.
    * Called from the `RateLimitWindowCleaner` retention sweep. Returns
    * the number of rows deleted.

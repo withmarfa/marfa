@@ -165,13 +165,61 @@ export function rateLimitMiddleware(
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
 
-    const credentialResult = await config.storage.rateLimits.incrementWindow(
+    // All applicable windows increment in ONE statement — same table,
+    // same timestamp, previously three sequential round trips on every
+    // request. One deliberate semantic shift rides along: a request any
+    // earlier cap rejects still counts against the later windows (and
+    // reaches the per-space ceiling lookup), where before a rejection
+    // stopped the chain. The request did arrive, so counting it is the
+    // honest reading, and a client hammering one tightly-capped path now
+    // exhausts its own aggregate budget too — deliberate backpressure.
+    // The trade to know about: rejected traffic on a 30/min auth path
+    // can now reach the aggregate cap, so on a deployment that has NOT
+    // set TRUSTED_PROXY_CIDRS behind a proxy (where every anonymous
+    // caller collapses onto one identifier) one abuser's rejections can
+    // 429 the shared identifier everywhere. Configured proxy trust keeps
+    // identifiers per-client and the blast radius the abuser's own.
+    const spaceId = apiKey?.space_id;
+    const spaceLimitValue = spaceId ? await spaceRateLimit(spaceId, now) : null;
+    const aggregateWindowKey = `all:${identifier}`;
+    const spaceWindowKey = spaceId ? `space:${spaceId}` : null;
+    const windowKeys = [credentialWindowKey];
+    if (aggregateLimit > 0) windowKeys.push(aggregateWindowKey);
+    if (spaceWindowKey && spaceLimitValue !== null)
+      windowKeys.push(spaceWindowKey);
+    const windows = await config.storage.rateLimits.incrementWindows(
       RATE_FAMILY,
-      credentialWindowKey,
+      windowKeys,
       config.windowMs,
       nowIso,
     );
 
+    const rejectOver = (
+      result: { count: number; expires_at: string } | undefined,
+      cap: number,
+      message: string,
+    ): void => {
+      if (!result || result.count <= cap) return;
+      const retryAfter = Math.ceil(
+        (new Date(result.expires_at).getTime() - now) / 1000,
+      );
+      c.header("Retry-After", String(retryAfter));
+      throw new MarfaError(
+        ErrorCode.RATE_LIMITED,
+        `${message}. Try again in ${String(retryAfter)} seconds`,
+      );
+    };
+
+    // The credential window is unconditionally in the batch, so a miss
+    // is an impossible state — and rate limiting is a security control,
+    // so an impossible state fails loud rather than silently skipping
+    // the cap and the X-RateLimit-* trio.
+    const credentialResult = windows.get(credentialWindowKey);
+    if (!credentialResult) {
+      throw new Error(
+        "rateLimits.incrementWindows: batch missed the credential window",
+      );
+    }
     // Set rate limit headers (per-credential window — the most
     // immediate cap most callers will hit).
     c.header("X-RateLimit-Limit", String(limit));
@@ -183,69 +231,30 @@ export function rateLimitMiddleware(
       "X-RateLimit-Reset",
       String(Math.ceil(new Date(credentialResult.expires_at).getTime() / 1000)),
     );
-
-    if (credentialResult.count > limit) {
-      const retryAfter = Math.ceil(
-        (new Date(credentialResult.expires_at).getTime() - now) / 1000,
-      );
-      c.header("Retry-After", String(retryAfter));
-      throw new MarfaError(
-        ErrorCode.RATE_LIMITED,
-        `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
-      );
-    }
+    rejectOver(credentialResult, limit, "Rate limit exceeded");
 
     // Aggregate per-identifier window — keyed on the identifier with NO
     // path split — so a caller can't multiply its budget by spreading
     // traffic across path groups, and space-less identifiers (IP/anon,
-    // platform admin) still hit a ceiling. Reuses the same store method
-    // and window; only the key (and cap) differ.
+    // platform admin) still hit a ceiling.
     if (aggregateLimit > 0) {
-      const aggregateWindowKey = `all:${identifier}`;
-      const aggregateResult = await config.storage.rateLimits.incrementWindow(
-        RATE_FAMILY,
-        aggregateWindowKey,
-        config.windowMs,
-        nowIso,
+      rejectOver(
+        windows.get(aggregateWindowKey),
+        aggregateLimit,
+        "Rate limit exceeded",
       );
-      if (aggregateResult.count > aggregateLimit) {
-        const retryAfter = Math.ceil(
-          (new Date(aggregateResult.expires_at).getTime() - now) / 1000,
-        );
-        c.header("Retry-After", String(retryAfter));
-        throw new MarfaError(
-          ErrorCode.RATE_LIMITED,
-          `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
-        );
-      }
     }
 
     // Per-space ceiling on top of the per-credential window. A noisy
     // single credential is bounded by the cap above; a space's
     // collective fleet is bounded here. Skipped for space-less keys
     // (single-space self-hosts, platform admin).
-    const spaceId = apiKey?.space_id;
-    if (spaceId) {
-      const spaceLimitValue = await spaceRateLimit(spaceId, now);
-      if (spaceLimitValue !== null) {
-        const spaceWindowKey = `space:${spaceId}`;
-        const spaceResult = await config.storage.rateLimits.incrementWindow(
-          RATE_FAMILY,
-          spaceWindowKey,
-          config.windowMs,
-          nowIso,
-        );
-        if (spaceResult.count > spaceLimitValue) {
-          const retryAfter = Math.ceil(
-            (new Date(spaceResult.expires_at).getTime() - now) / 1000,
-          );
-          c.header("Retry-After", String(retryAfter));
-          throw new MarfaError(
-            ErrorCode.RATE_LIMITED,
-            `Space rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
-          );
-        }
-      }
+    if (spaceWindowKey && spaceLimitValue !== null) {
+      rejectOver(
+        windows.get(spaceWindowKey),
+        spaceLimitValue,
+        "Space rate limit exceeded",
+      );
     }
 
     await next();

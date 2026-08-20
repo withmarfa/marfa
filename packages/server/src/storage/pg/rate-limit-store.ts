@@ -72,6 +72,52 @@ export class PgRateLimitStore implements RateLimitStore {
     return { count: row.count, expires_at: row.expires_at };
   }
 
+  async incrementWindows(
+    family: string,
+    keys: string[],
+    windowMs: number,
+    nowIso: string,
+  ): Promise<Map<string, { count: number; expires_at: string }>> {
+    const result = new Map<string, { count: number; expires_at: string }>();
+    // Sorted and deduplicated so two concurrent batches take their row
+    // locks in one order — unordered multi-row upserts can deadlock.
+    // The retention sweep's bulk DELETE locks in index-scan order and
+    // can still cross a batch mid-flight; hourly cadence and expired-row
+    // targets make that collision rare, and it surfaces as a loud error
+    // rather than a wrong count.
+    const unique = [...new Set(keys)].sort();
+    if (unique.length === 0) return result;
+    const nextExpiresAt = new Date(
+      new Date(nowIso).getTime() + windowMs,
+    ).toISOString();
+    const rows = await this.db
+      .insert(rateLimitWindows)
+      .values(
+        unique.map((key) => ({
+          family,
+          window_key: key,
+          count: 1,
+          expires_at: nextExpiresAt,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [rateLimitWindows.family, rateLimitWindows.window_key],
+        set: {
+          count: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN 1 ELSE ${rateLimitWindows.count} + 1 END`,
+          expires_at: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN ${nextExpiresAt} ELSE ${rateLimitWindows.expires_at} END`,
+        },
+      })
+      .returning({
+        key: rateLimitWindows.window_key,
+        count: rateLimitWindows.count,
+        expires_at: rateLimitWindows.expires_at,
+      });
+    for (const row of rows) {
+      result.set(row.key, { count: row.count, expires_at: row.expires_at });
+    }
+    return result;
+  }
+
   async cleanup(nowIso: string): Promise<number> {
     const rows = await this.db
       .delete(rateLimitWindows)

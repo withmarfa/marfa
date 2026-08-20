@@ -448,3 +448,39 @@ describe("rate-limit response headers survive the error handler", () => {
     expect(res.headers.get("X-Request-ID")).toBeTruthy();
   });
 });
+
+describe("rate-limit batched windows", () => {
+  let batchCtx: Ctx;
+
+  beforeAll(async () => {
+    batchCtx = await buildAggCtx();
+  });
+
+  afterAll(async () => {
+    await batchCtx.cleanup();
+  });
+
+  it("a request the per-credential cap rejects still counts against the aggregate window", async () => {
+    // Deliberate inclusive semantics, pinned so a regression in either
+    // direction is a red test rather than a silent drift: with the
+    // per-path GET cap at 4 and the aggregate also 4, four /items GETs
+    // exhaust both together; the fifth is a per-path 429 AND the
+    // aggregate has advanced with it, so a first request on a sibling
+    // group is refused by the aggregate rather than inheriting a
+    // freshly-usable budget.
+    const hit = (path: string) =>
+      batchCtx.app.request(path, {
+        headers: { Authorization: `Bearer ${batchCtx.adminKey}` },
+      });
+    for (let i = 0; i < 4; i++) {
+      expect((await hit("/items")).status).toBe(200);
+    }
+    // Per-path cap crossed; these rejections keep advancing the
+    // aggregate window.
+    expect((await hit("/items")).status).toBe(429);
+    expect((await hit("/items")).status).toBe(429);
+    // First-ever request on a different path group: its own window is
+    // empty, so only the aggregate can refuse it — and it does.
+    expect((await hit("/types")).status).toBe(429);
+  });
+});

@@ -68,7 +68,7 @@ export async function hydrateBackrefsForItem(
   return groupAndCap(edges, cap);
 }
 
-function groupAndCap(edges: Edge[], cap: number): HydratedEdges {
+export function groupAndCap(edges: Edge[], cap: number): HydratedEdges {
   const out: HydratedEdges = {};
   for (const edge of edges) {
     const block = out[edge.edge_type] ?? { edges: [], has_more: false };
