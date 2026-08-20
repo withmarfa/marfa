@@ -6,7 +6,7 @@ import {
 import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_CONTACTS_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("Google Contacts manifest", () => {
@@ -67,8 +67,10 @@ describe("Google Contacts manifest", () => {
 
   it("defaults to the upstream-fidelity family", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("google");
-    expect(WRITE_FAMILIES.google.contact).toBe("google.contacts.contact");
-    expect(WRITE_FAMILIES.core.contact).toBe("core.entity.person");
+    expect(FAMILY_DEFINITIONS.google.types.contact).toBe(
+      "google.contacts.contact",
+    );
+    expect(FAMILY_DEFINITIONS.core.types.contact).toBe("core.entity.person");
   });
 
   it("publisher namespace is shared with google.calendar / google.tasks", () => {

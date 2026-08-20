@@ -48,7 +48,7 @@ import {
   SUBSCRIPTIONS_PART,
   PLAYLISTS_PART,
   VIDEOS_PART,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -93,7 +93,7 @@ interface ConnectionConfig {
   materialise_playlists: boolean;
 }
 
-const DEFAULT_VIDEO_TYPE = WRITE_FAMILIES.google.video;
+const DEFAULT_VIDEO_TYPE = FAMILY_DEFINITIONS.google.types.video;
 
 function defaultCursor(): YoutubeCursor {
   return {
@@ -358,7 +358,7 @@ function buildChannelInput(
   }
   if (typeof subscribedAt === "string") props.subscribed_at = subscribedAt;
   props.html_link = `https://www.youtube.com/channel/${encodeURIComponent(c.id)}`;
-  return { type: WRITE_FAMILIES.google.channel, properties: props };
+  return { type: FAMILY_DEFINITIONS.google.types.channel, properties: props };
 }
 
 function buildPlaylistInput(p: PlaylistResource): CreateItemInput {
@@ -382,7 +382,7 @@ function buildPlaylistInput(p: PlaylistResource): CreateItemInput {
   if (typeof thumb === "string") props.thumbnail_url = thumb;
   if (typeof p.etag === "string") props.etag = p.etag;
   props.html_link = `https://www.youtube.com/playlist?list=${encodeURIComponent(p.id)}`;
-  return { type: WRITE_FAMILIES.google.playlist, properties: props };
+  return { type: FAMILY_DEFINITIONS.google.types.playlist, properties: props };
 }
 
 // ---------------------------------------------------------------------------

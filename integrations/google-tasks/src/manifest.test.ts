@@ -6,7 +6,7 @@ import {
 import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_TASKS_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("Google Tasks manifest", () => {
@@ -65,8 +65,8 @@ describe("Google Tasks manifest", () => {
 
   it("defaults to the upstream-fidelity family", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("google");
-    expect(WRITE_FAMILIES.google.task).toBe("google.tasks.task");
-    expect(WRITE_FAMILIES.core.task).toBe("core.task");
+    expect(FAMILY_DEFINITIONS.google.types.task).toBe("google.tasks.task");
+    expect(FAMILY_DEFINITIONS.core.types.task).toBe("core.task");
   });
 
   it("publisher namespace is shared with google.calendar so credential_ref reuse works", () => {

@@ -6,7 +6,7 @@ import {
 import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_CALENDAR_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("Google Calendar manifest", () => {
@@ -73,7 +73,7 @@ describe("Google Calendar manifest", () => {
 
   it("defaults to the upstream-fidelity family", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("google");
-    expect(WRITE_FAMILIES.google.event).toBe("google.calendar.event");
-    expect(WRITE_FAMILIES.core.event).toBe("core.event");
+    expect(FAMILY_DEFINITIONS.google.types.event).toBe("google.calendar.event");
+    expect(FAMILY_DEFINITIONS.core.types.event).toBe("core.event");
   });
 });

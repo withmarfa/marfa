@@ -71,7 +71,7 @@ import {
   DEFAULT_CALENDAR_ID,
   DEFAULT_WRITE_FAMILY,
   GOOGLE_CALENDAR_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -236,7 +236,7 @@ async function resolveConnectionConfig(
   // unconfigured connection gets the declared default.
   const family = resolveWriteFamily(GOOGLE_CALENDAR_MANIFEST, cfg);
   const targetType =
-    family?.types.event ?? WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].event;
+    family?.types.event ?? FAMILY_DEFINITIONS[DEFAULT_WRITE_FAMILY].types.event;
 
   // A non-empty selection is the whole signal for multi mode. Requiring
   // `default_write_calendar_id` alongside it meant a connection that named

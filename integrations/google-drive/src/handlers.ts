@@ -57,7 +57,7 @@ import {
   CHANNEL_RENEW_LEEWAY_MS,
   CHANNEL_TTL_MS,
   GOOGLE_DRIVE_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -133,7 +133,7 @@ interface ConnectionConfig {
  */
 export const DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 
-const DEFAULT_FILE_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].file;
+const DEFAULT_FILE_TYPE = FAMILY_DEFINITIONS[DEFAULT_WRITE_FAMILY].types.file;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -1001,8 +1001,8 @@ function buildFileInput(
     properties.blob_ref = blob.hash;
     if (file.webViewLink !== undefined) properties.url = file.webViewLink;
     const type =
-      configuredTargetType === WRITE_FAMILIES.core.file
-        ? WRITE_FAMILIES.core.file
+      configuredTargetType === FAMILY_DEFINITIONS.core.types.file
+        ? FAMILY_DEFINITIONS.core.types.file
         : DEFAULT_FILE_TYPE;
     return { type, properties };
   }

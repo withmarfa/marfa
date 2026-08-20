@@ -6,7 +6,7 @@ import {
 import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_DRIVE_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("Google Drive manifest", () => {
@@ -68,8 +68,8 @@ describe("Google Drive manifest", () => {
 
   it("defaults to the upstream-fidelity family and keeps download_mode independent", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("google");
-    expect(WRITE_FAMILIES.google.file).toBe("google.drive.file");
-    expect(WRITE_FAMILIES.core.file).toBe("core.file");
+    expect(FAMILY_DEFINITIONS.google.types.file).toBe("google.drive.file");
+    expect(FAMILY_DEFINITIONS.core.types.file).toBe("core.file");
     // `download_mode` stays its own key: the core family behaviorally
     // pairs with `all-files`, but the manifest declares no cross-field
     // constraint.
