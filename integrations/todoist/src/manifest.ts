@@ -37,7 +37,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const TODOIST_MANIFEST: IntegrationManifest = {
-  name: "todoist.tasks",
+  name: "todoist/tasks",
   version: "0.1.0",
   manifest_schema_version: "1.1.0",
   publisher: "todoist",

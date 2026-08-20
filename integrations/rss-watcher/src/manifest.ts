@@ -9,7 +9,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.rss-watcher",
+  name: "marfa/rss-watcher",
   version: "0.1.0",
   manifest_schema_version: "1.3.0",
   configuration_schema: {

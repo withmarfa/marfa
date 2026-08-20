@@ -7,7 +7,7 @@ and the proxy stamps it transparently.
 
 ## Identity
 
-- Manifest name: **`todoist.tasks`** (publisher `todoist`, identifier
+- Manifest name: **`todoist/tasks`** (publisher `todoist`, identifier
   `tasks`). The publisher-namespaced grammar (`<publisher>.<type>`) is
   enforced by the manifest schema — single-segment names like
   `todoist` fail validation.

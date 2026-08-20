@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-withmarfa-inbox",
+  "name": "@withmarfa/integration-inbox",
   "version": "0.0.1",
   "private": true,
   "type": "module",

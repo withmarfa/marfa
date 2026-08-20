@@ -17,7 +17,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GITHUB_WEBHOOKS_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.github-webhooks",
+  name: "marfa/github-webhooks",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",

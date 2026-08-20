@@ -19,7 +19,7 @@ Typed data layer. This monorepo holds seven active workspace packages, sixteen i
 **In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fifteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
 - **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
-- **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `withmarfa-inbox` (email capture via Cloudflare Email Routing).
+- **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `inbox` (email capture via Cloudflare Email Routing).
 - **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-sync client installed as a Connection for credentials, configuration, and observability; its items are user-owned and editable, not mirrors — the client itself lives in `withmarfa/sync`).
 
 **Infra (`infra/`):** `digitalocean` — compose files, Caddyfile, env templates, and the deploy shape for the droplet deployments (`deploy-server.yml` targets it).

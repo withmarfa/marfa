@@ -1,4 +1,4 @@
-# withmarfa-inbox
+# inbox
 
 Email-to-Marfa capture. Receives emails sent to a Marfa-managed address
 (`capture@inbox.marfa.so` in single-space v1) via Cloudflare Email
@@ -35,7 +35,7 @@ POST <MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>
 server webhook receipt (cloudflare-email verifier →
       │  idempotency check → local-substrate queue)
       ▼
-withmarfa.inbox integration handler
+marfa/inbox integration handler
       │  decode → buildCapturedEmail → ctx.marfa.createItem
       ▼
 marfa.captured_email item (source_id = Message-ID)
@@ -120,7 +120,7 @@ include:_spf.mx.cloudflare.net ~all`) is present on the
    custom-address rule: `capture@inbox.marfa.so` → "Send to Worker:
    `marfa-inbox-email-worker-staging`".
 3. **Deploy the Email Worker.** Use the deploy wrapper:
-   `scripts/deploy-worker.sh integrations/withmarfa-inbox/email-worker --env staging`
+   `scripts/deploy-worker.sh integrations/inbox/email-worker --env staging`
    after setting three secrets via `wrangler secret put --env staging`:
    `MARFA_API_URL` (the deployment's public API origin),
    `CONNECTION_ID` (the `system.connection` id this Worker dispatches

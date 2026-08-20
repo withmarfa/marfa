@@ -69,8 +69,8 @@ describe("Google Tasks manifest", () => {
     expect(FAMILY_DEFINITIONS.core.types.task).toBe("core.task");
   });
 
-  it("publisher namespace is shared with google.calendar so credential_ref reuse works", () => {
+  it("handle is shared with google/calendar so credential_ref reuse works", () => {
     expect(GOOGLE_TASKS_MANIFEST.publisher).toBe("google");
-    expect(GOOGLE_TASKS_MANIFEST.name.startsWith("google.")).toBe(true);
+    expect(GOOGLE_TASKS_MANIFEST.name.startsWith("google/")).toBe(true);
   });
 });

@@ -71,9 +71,9 @@ describe("Google YouTube manifest", () => {
     );
   });
 
-  it("publisher namespace is shared with google.calendar / google.tasks / google.contacts", () => {
+  it("handle is shared with google/calendar, google/tasks and google/contacts", () => {
     expect(GOOGLE_YOUTUBE_MANIFEST.publisher).toBe("google");
-    expect(GOOGLE_YOUTUBE_MANIFEST.name.startsWith("google.")).toBe(true);
+    expect(GOOGLE_YOUTUBE_MANIFEST.name.startsWith("google/")).toBe(true);
   });
 
   it("grants parent-of edge write permission for channel/playlist hierarchies", () => {

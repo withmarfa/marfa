@@ -19,7 +19,7 @@
 #
 # Example:
 #   CLOUDFLARE_API_TOKEN=<your-token> \
-#     ./scripts/deploy-worker.sh integrations/withmarfa-inbox/email-worker --env staging
+#     ./scripts/deploy-worker.sh integrations/inbox/email-worker --env staging
 #
 # Cloudflare account selection is the caller's job — set
 # CLOUDFLARE_API_TOKEN in the environment before invoking. The script
@@ -30,7 +30,7 @@ set -euo pipefail
 WORKER_DIR="${1:-}"
 if [[ -z "$WORKER_DIR" ]]; then
   echo "Usage: $0 <worker-dir> [wrangler-args...]" >&2
-  echo "Example: $0 integrations/withmarfa-inbox/email-worker --env staging" >&2
+  echo "Example: $0 integrations/inbox/email-worker --env staging" >&2
   exit 1
 fi
 shift

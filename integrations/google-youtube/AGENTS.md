@@ -2,7 +2,7 @@
 
 Inbound-only YouTube sync via the YouTube Data API v3. Fourth
 instance of the `google.*` publisher family — sibling to
-`google.calendar`, `google.tasks`, and `google.contacts`.
+`google/calendar`, `google/tasks`, and `google/contacts`.
 
 Schedule-only — YouTube Data API has no push-notification surface for
 the liked-videos / subscriptions / playlists collections this
@@ -11,7 +11,7 @@ quota ceiling.
 
 ## Identity
 
-- Manifest name: **`google.youtube`** (publisher `google`).
+- Manifest name: **`google/youtube`** (publisher `google`).
 - Target types: `google.youtube.video`, `google.youtube.playlist`,
   `google.youtube.channel`. Default written type for videos is
   `google.youtube.video` — when a future ticket adds a `core.media`
@@ -162,7 +162,7 @@ channel-creation CTA (e.g. "Create channel" on the avatar menu) →
 publish at least one playlist or comment to lock the channel in →
 re-trigger the sweep.
 
-The pre-flight applies to ALL `google.youtube` installs — flag it
+The pre-flight applies to ALL `google/youtube` installs — flag it
 during install whenever the connected account is fresh. Verify by
 calling the proxy directly before arming the schedule:
 

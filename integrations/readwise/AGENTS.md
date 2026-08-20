@@ -5,7 +5,7 @@ token-credential install seam with a non-default `auth_scheme`.
 
 ## Identity
 
-- Manifest name: **`readwise.highlights`** (publisher `readwise`,
+- Manifest name: **`readwise/highlights`** (publisher `readwise`,
   identifier `highlights`). The schema requires publisher-namespaced
   grammar; `readwise` alone would fail.
 - Target types: `readwise.highlight` + `readwise.book` (one parent
@@ -88,7 +88,7 @@ manifest direction (`write` or `both`) + handler change.
 ## Reader vs Highlights
 
 Readwise's **Reader** product is a separate API (`/reader_api/`) and
-this integration does not consume it. A `readwise.reader` integration
+this integration does not consume it. A `readwise/reader` integration
 under the same publisher is a follow-on if Reader access is needed.
 
 ## Validation

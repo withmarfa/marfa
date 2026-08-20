@@ -11,7 +11,7 @@ import {
   PAGE_SIZE,
 } from "./manifest.js";
 
-describe("readwise.reader manifest", () => {
+describe("readwise/reader manifest", () => {
   it("parses through the canonical schema", () => {
     const parsed = IntegrationManifestSchema.safeParse(
       READWISE_READER_MANIFEST,
@@ -19,10 +19,10 @@ describe("readwise.reader manifest", () => {
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
   });
 
-  it("is publisher-namespaced under readwise, distinct from the highlights integration", () => {
-    expect(INTEGRATION_NAME).toBe("readwise.reader");
+  it("sits under the readwise handle, distinct from the highlights integration", () => {
+    expect(INTEGRATION_NAME).toBe("readwise/reader");
     expect(READWISE_READER_MANIFEST.publisher).toBe("readwise");
-    expect(INTEGRATION_NAME).not.toBe("readwise.highlights");
+    expect(INTEGRATION_NAME).not.toBe("readwise/highlights");
   });
 
   it("declares both directions and the triggers that carry them", () => {

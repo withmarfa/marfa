@@ -63,12 +63,12 @@ describe("migrateSyncJsonToConnection", () => {
 
       const pointer = report.pointer!;
 
-      // System.integration exists with manifest_name = withmarfa.sync.
+      // System.integration exists with manifest_name = marfa/sync.
       const integration = await ctx.storage.items.get(pointer.integration_id);
       expect(integration?.type).toBe("system.integration");
       expect(
         (integration?.properties as { manifest_name?: string }).manifest_name,
-      ).toBe("withmarfa.sync");
+      ).toBe("marfa/sync");
 
       // System.credential is kind: api_key with secret_encrypted that
       // round-trips through decryptSecret under apiKeyCredential domain.

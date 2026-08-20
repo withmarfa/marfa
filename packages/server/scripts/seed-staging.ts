@@ -37,7 +37,7 @@ const DIRS = [
   "google-tasks",
   "google-youtube",
   "task-auto-archive",
-  "withmarfa-inbox",
+  "inbox",
   "sync",
 ];
 

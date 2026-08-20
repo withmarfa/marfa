@@ -26,7 +26,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.sync",
+  name: "marfa/sync",
   version: "0.1.1",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",
