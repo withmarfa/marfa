@@ -38,11 +38,17 @@ const sampleJob: DeadLetterJob = {
   failed_at: "2026-08-20T10:05:00.000Z",
 };
 
-function stubOps(): DeadLetterOps & { replayed: string[] } {
+function stubOps(): DeadLetterOps & {
+  replayed: string[];
+  limits: number[];
+} {
   const replayed: string[] = [];
+  const limits: number[] = [];
   return {
     replayed,
+    limits,
     list(limit: number) {
+      limits.push(limit);
       return Promise.resolve([sampleJob].slice(0, limit));
     },
     replay(id: string) {
@@ -122,15 +128,29 @@ describe("admin runtime dead-letter routes", () => {
     expect(body.jobs).toEqual([sampleJob]);
   });
 
-  it("respects the limit query parameter", async () => {
+  it("threads the limit to the ops layer, defaulting to 50", async () => {
+    // The listing happy path above ran with no limit param — the schema
+    // default must have reached the ops layer.
+    expect(ops.limits).toContain(50);
+
     const res = await request(
+      ctx.app,
+      "GET",
+      "/admin/runtime/dead-letters?limit=7",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    expect(ops.limits).toContain(7);
+
+    // Below the schema's minimum — clean validation error, ops untouched.
+    const invalid = await request(
       ctx.app,
       "GET",
       "/admin/runtime/dead-letters?limit=0",
       { key: ctx.adminKey },
     );
-    // limit=0 is below the schema's minimum — clean validation error.
-    expect(res.status).toBe(400);
+    expect(invalid.status).toBe(400);
+    expect(ops.limits).not.toContain(0);
   });
 
   it("replays a job once and refuses the second replay with 409", async () => {

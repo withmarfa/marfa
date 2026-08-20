@@ -24,11 +24,42 @@ import {
   type PgTemplateClone,
 } from "../../storage/pg/test-template.js";
 import type { PgDb } from "../../storage/pg/connection.js";
-import { createDeadLetterOps, type DeadLetterOps } from "./dead-letters.js";
+import {
+  createDeadLetterOps,
+  reasonFromOutput,
+  type DeadLetterOps,
+} from "./dead-letters.js";
 import { QUEUE_NAME } from "./supervisor.js";
 import type { PgBoss as PgBossType } from "pg-boss";
 
 const isPg = process.env.DB_DIALECT === "pg";
+
+describe("reasonFromOutput", () => {
+  it("reads every failure shape pg-boss actually writes", () => {
+    // A worker throw, serialized by pg-boss (serialize-error shape).
+    expect(
+      reasonFromOutput({
+        name: "Error",
+        message: "retryable: upstream 500",
+        stack: "…",
+      }),
+    ).toBe("retryable: upstream 500");
+    // The expiration and heartbeat sweeps write pre-wrapped literals.
+    expect(reasonFromOutput({ value: { message: "job timed out" } })).toBe(
+      "job timed out",
+    );
+    expect(
+      reasonFromOutput({ value: { message: "job heartbeat timeout" } }),
+    ).toBe("job heartbeat timeout");
+    // `fail` with a string payload stores `{ value: <string> }`.
+    expect(reasonFromOutput({ value: "pg-boss shut down while active" })).toBe(
+      "pg-boss shut down while active",
+    );
+    // Unusual shapes stay visible rather than vanishing.
+    expect(reasonFromOutput(null)).toBe("(no failure output)");
+    expect(reasonFromOutput({ value: 42 })).toBe('{"value":42}');
+  });
+});
 
 describe.skipIf(!isPg)("dead-letter ops (real pg-boss)", () => {
   let clone: PgTemplateClone;
@@ -89,8 +120,10 @@ describe.skipIf(!isPg)("dead-letter ops (real pg-boss)", () => {
     expect(row?.kind).toBe("schedule");
     expect(row?.reason).toBe("retryable: upstream returned 500");
     expect(row?.attempts).toBeGreaterThanOrEqual(1);
-    expect(row?.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(row?.failed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // The API's timestamp profile: millisecond precision, Z suffix.
+    const isoMs = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    expect(row?.created_at).toMatch(isoMs);
+    expect(row?.failed_at).toMatch(isoMs);
 
     // Replay: the job leaves `failed`, so it disappears from the listing
     // and pg-boss will hand it to the dispatch worker again.
@@ -137,8 +170,9 @@ describe.skipIf(!isPg)("dead-letter ops (real pg-boss)", () => {
       await boss.fail(QUEUE_NAME, jobId!, {
         message: `failure ${String(i)}`,
       });
-      // completed_on has millisecond resolution; space the failures out
-      // so the ordering assertion cannot tie.
+      // Each fail is its own transaction so completed_on already differs
+      // (microsecond clock); the pause just keeps the ordering assertion
+      // unambiguous under any timestamp rounding.
       await new Promise((r) => setTimeout(r, 15));
     }
 

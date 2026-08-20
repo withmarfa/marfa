@@ -57,21 +57,40 @@ export interface DeadLetterOps {
 }
 
 /** The SQL renders timestamps through `to_json`, which always emits ISO
- *  8601 text — driver-independent, where a bare timestamptz column comes
- *  back as `Date` or a PG-format string depending on parser config. */
+ *  8601 text (driver-independent) but with Postgres's microsecond + numeric
+ *  offset profile. Re-parse to the millisecond `Z` profile every other
+ *  endpoint emits, so this surface matches the API's timestamp convention. */
 function toIso(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+  }
   return null;
 }
 
-/** pg-boss serializes a worker throw as `{ message, stack, ... }` and
- *  stores whatever `fail(name, id, data)` was handed. Prefer the message;
- *  fall back to the raw JSON so an unusual shape is still visible. */
-function reasonFromOutput(output: unknown): string {
-  if (typeof output === "object" && output !== null) {
-    const message = (output as Record<string, unknown>).message;
+function messageOf(node: unknown): string | null {
+  if (typeof node === "object" && node !== null) {
+    const message = (node as Record<string, unknown>).message;
     if (typeof message === "string" && message.length > 0) return message;
+  }
+  return null;
+}
+
+/** pg-boss serializes a worker throw as `{ name, message, stack }`, but its
+ *  own failure paths write a wrapped shape: `fail` with a non-object payload
+ *  stores `{ value: <payload> }`, and the expiration / heartbeat sweeps
+ *  write `{ value: { message: "job timed out" } }` literals. Read the
+ *  top-level message first, then unwrap one `value` level; fall back to the
+ *  raw JSON so an unusual shape is still visible. */
+export function reasonFromOutput(output: unknown): string {
+  const topMessage = messageOf(output);
+  if (topMessage) return topMessage;
+  if (typeof output === "object" && output !== null && "value" in output) {
+    const value = (output as Record<string, unknown>).value;
+    if (typeof value === "string" && value.length > 0) return value;
+    const wrappedMessage = messageOf(value);
+    if (wrappedMessage) return wrappedMessage;
   }
   if (output === null || output === undefined) return "(no failure output)";
   return JSON.stringify(output);
@@ -90,8 +109,9 @@ interface FailedJobRow {
 export function createDeadLetterOps(boss: PgBoss, db: PgDb): DeadLetterOps {
   return {
     async list(limit: number): Promise<DeadLetterJob[]> {
-      // `pgboss.job` is the partitioned parent; the queue-name predicate
-      // prunes to the dispatch queue's partition. Failed rows stamp
+      // `pgboss.job` is the partitioned parent; non-partitioned queues all
+      // share its default partition, so the name predicate narrows via the
+      // primary-key index rather than partition pruning. Failed rows stamp
       // `completed_on` when they fail, so it orders the listing.
       const rows = await db.execute<FailedJobRow>(
         sql`SELECT id, data, output, retry_count,
