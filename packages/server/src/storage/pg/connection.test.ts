@@ -116,6 +116,42 @@ describe("createConnection pool-mode guard", () => {
     await conn.close();
   });
 
+  it("disables prepared statements on the pooled client in transaction mode", async () => {
+    // The pool mode used to be validated by the guards above and then
+    // discarded before this constructor, leaving the driver's
+    // prepare-by-default live against a pooler that cannot support it.
+    // The direct clients own their backends and keep preparation.
+    const conn = await createConnection(POOLED, {
+      poolMode: "transaction",
+      directConnectionString: DIRECT,
+      skipBootstrap: true,
+    });
+    try {
+      const prepareOf = (c: unknown): boolean =>
+        (c as { options: { prepare: boolean } }).options.prepare;
+      expect(prepareOf(conn.client)).toBe(false);
+      expect(prepareOf(conn.sessionClient)).toBe(true);
+      expect(prepareOf(conn.jobHolderClient)).toBe(true);
+    } finally {
+      await conn.close();
+    }
+  });
+
+  it("keeps prepared statements on a session-mode (direct) endpoint", async () => {
+    const conn = await createConnection(DIRECT, {
+      poolMode: "session",
+      skipBootstrap: true,
+    });
+    try {
+      expect(
+        (conn.client as unknown as { options: { prepare: boolean } }).options
+          .prepare,
+      ).toBe(true);
+    } finally {
+      await conn.close();
+    }
+  });
+
   it("closes idle connections and recycles long-lived ones, on both pools", async () => {
     // postgres.js never closes an idle connection by default, so the pool holds
     // its sockets for the life of the process. A serverless Postgres only
