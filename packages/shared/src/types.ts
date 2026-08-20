@@ -268,11 +268,15 @@ export interface ApiKey {
   item_source?: string;
   role: MarfaRole;
   /**
-   * Platform-credential gate. When `true`, the credential may register and
-   * write `core.*`, `system.*`, and `marfa.*` types. The first credential
-   * created at server install is the seed platform credential; only an
-   * existing platform credential may mint another. Defaults to `false` for
-   * ordinary space admin and member keys.
+   * Platform-credential gate. When `true`, the credential may write items
+   * of the reserved-namespace types (`core.*`, `system.*`, `marfa.*`) and
+   * is exempt from the publisher-handle ownership rule at type
+   * registration. It does not admit reserved-namespace registration:
+   * `POST /types` refuses a reserved-root type for every credential,
+   * platform included — those types arrive with the build. The first
+   * credential created at server install is the seed platform credential;
+   * only an existing platform credential may mint another. Defaults to
+   * `false` for ordinary space admin and member keys.
    */
   is_platform: boolean;
   /**

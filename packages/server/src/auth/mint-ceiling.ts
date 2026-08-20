@@ -55,10 +55,15 @@ export const SESSION_CRITICAL_SCOPES: readonly string[] = [
 
 /**
  * What a dynamic client registration gets when it omits `scope`: the
- * configured bundle expansion — exactly the set a consent screen would
- * present — rather than the entire allowlist, plus the session scopes
- * above. Wider scopes (the global wildcards, metadata, edge grants) stay
- * requestable, explicitly.
+ * configured bundle expansion — the instance-wide curated set — rather
+ * than the entire allowlist, plus the session scopes above. Wider scopes
+ * (the global wildcards, metadata, edge grants) stay requestable,
+ * explicitly, and so do a space's runtime handle namespaces: a hosted
+ * consent screen derives those per space at render, so this ceiling is
+ * deliberately narrower than what a consent screen may present. A client
+ * that wants a handle namespace names it at registration; a generic
+ * registration does not silently inherit reach into namespaces it never
+ * asked for.
  */
 export function dcrDefaultScopes(): string[] {
   return withSessionScopes(expandBundlesToScopes(getPermissionBundles()));
