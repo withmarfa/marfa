@@ -1,7 +1,7 @@
 /**
  * Minimal in-memory implementation of `CursorStorageAdapter` for unit
  * tests. A lightweight shim for exercising the SDK's storage-backed
- * pieces (cursor store, echo suppression, per-connection state core)
+ * pieces (cursor store, echo suppression)
  * without pulling in the full runtime-test harness.
  */
 import type { CursorStorageAdapter } from "./cursor-store.js";

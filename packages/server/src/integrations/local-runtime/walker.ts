@@ -108,7 +108,7 @@ async function resolveManifestName(
   const validated = validateManifest(intProps.manifest);
   if (!validated.ok) return null;
   // The integration is only eligible for the local substrate if its
-  // manifest opts in. The CF substrate fans out independently; an
+  // manifest opts in. Nothing else fans out any more; an
   // integration declaring only `"hosted"` stays exclusively on
   // Cloudflare.
   if (!validated.manifest.runtime_compatibility.includes("local")) return null;

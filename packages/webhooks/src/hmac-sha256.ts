@@ -12,8 +12,9 @@
  * bare hex string for callers that don't follow it.
  *
  * The `X-Marfa-` prefix is the canonical header convention for signed
- * receipts. The server's webhook-receipt route and the email capture
- * Worker both emit it, so one receipt shape covers every producer.
+ * receipts: the email capture Worker emits the headers and the server's
+ * webhook-receipt route verifies them, so one receipt shape covers
+ * every producer.
  */
 import type { Verifier } from "./types.js";
 import { constantTimeEqualsHex, hmacSha256Hex } from "./crypto.js";

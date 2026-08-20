@@ -72,9 +72,8 @@ const CREDENTIAL_TTL_MARGIN_SECONDS = 300;
  * rather than a retry.
  *
  * Bounding TTL by the job expiry makes expiry structurally unable to bite a
- * live dispatch, which is what buys the right to enforce it at all. The
- * hosted substrate has a real refresh path (`env.mintCredential` through the
- * lease broker) and so is not subject to this constraint.
+ * live dispatch, which is what buys the right to enforce it at all — the
+ * runtime has no mid-dispatch refresh, so the TTL is the whole guarantee.
  */
 export const DEFAULT_RUNTIME_CREDENTIAL_TTL_MS =
   (DISPATCH_JOB_EXPIRY_SECONDS + CREDENTIAL_TTL_MARGIN_SECONDS) * 1000;

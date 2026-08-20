@@ -36,8 +36,8 @@ function lifecycleLockName(connectionId: string): string {
  *
  * This shape holds a pool connection of its own for the length of `fn`,
  * which is why it is reserved for the rare paths. They earn it: uninstall
- * and pause both call the runtime control plane while holding the lock,
- * and a database transaction held open across a network round trip is the
+ * and pause both run multi-step pipelines while holding the lock,
+ * and a database transaction held open across the whole pipeline is the
  * worse trade. Mints take {@link withConnectionLifecycleLockInTransaction}
  * instead — they are pure database work and they run on every dispatch.
  */

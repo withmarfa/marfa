@@ -36,9 +36,9 @@ function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
 }
 
 /** The `connection.runtime` namespace is reserved for the
- *  per-Connection runtime credential's hot state. Only credentials
- *  minted by the lease broker (is_runtime_credential + connection_id
- *  stamped) can write it; admin keys can read but not write so
+ *  per-Connection runtime credential's hot state. Only runtime
+ *  credentials (is_runtime_credential + connection_id
+ *  stamped at mint) can write it; admin keys can read but not write so
  *  operators can inspect runtime state in the UI without corrupting
  *  it. */
 const RUNTIME_NAMESPACE = "connection.runtime";
@@ -391,7 +391,7 @@ export function extensionRoutes(storage: Storage) {
     requireRowWritable(apiKey, item);
 
     // connection.runtime is the runtime credential's hot-state subtree.
-    // Only credentials minted by the lease broker may write it, and
+    // Only the connection's own runtime credential may write it, and
     // only to the matching connection's item. Admin keys can read but
     // not write so operators can inspect runtime state without
     // corrupting it.

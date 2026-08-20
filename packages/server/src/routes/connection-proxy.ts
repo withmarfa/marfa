@@ -649,13 +649,11 @@ async function requireConnectionProxyAccess(
   //      synthetic credentials minted in middleware/auth.ts with
   //      `source: "oauth:<connectionId>"`.
   //   2. Runtime credentials minted for a kind:integration connection by
-  //      the install pipeline (source `integration:<id>`) or the
-  //      lease broker (source `runtime-<prefix>-<ts>`). Both carry
-  //      `is_runtime_credential: true` and `connection_id` stamped at
-  //      mint time, so the gate matches on that pair rather than the
-  //      free-form source string. Without this widening, every
-  //      hosted-substrate integration Worker's `ctx.marfa.proxyRequest`
-  //      call 403s on dispatch.
+  //      the install pipeline or the supervisor's in-process mint. Both
+  //      carry `is_runtime_credential: true` and `connection_id` stamped
+  //      at mint time, so the gate matches on that pair rather than the
+  //      free-form source string. Without this widening, an
+  //      integration's `proxyRequest` call 403s on dispatch.
   const isIntegration =
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);

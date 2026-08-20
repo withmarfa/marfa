@@ -82,7 +82,7 @@ export function assertMintableSpaceScope(
  * Revoke every other runtime credential on this connection.
  *
  * A mint means a dispatch is starting, and dispatches on one connection are
- * serialised: the supervisor takes `connection-dispatch:<id>` around the
+ * serialized: the supervisor takes `connection-dispatch:<id>` around the
  * whole dispatch and mints inside it, and the install pipeline mints
  * through the connection lifecycle lock. So a mint arriving is evidence that no
  * earlier dispatch on this connection is still holding its credential, and

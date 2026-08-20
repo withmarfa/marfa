@@ -23,7 +23,8 @@ export interface ConnectionContext {
   /** Authenticated Marfa API client scoped to this Connection. */
   marfa: ConnectionClient;
 
-  /** Read/write opaque cursor state from the per-Connection DO. */
+  /** Read/write opaque cursor state from the connection's runtime
+   *  storage. */
   cursor: CursorStore;
 
   /** Emit `system.activity` rows attributed to this Connection. */

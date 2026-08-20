@@ -96,8 +96,8 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
 
   it("excludes a bracketing holder and a transaction-riding one from each other", async () => {
     // The two shapes coexist: uninstall and pause keep the bracketing
-    // form because they call the control plane while holding the lock,
-    // and a transaction held open across a network round trip is the
+    // form because they run multi-step pipelines while holding the lock,
+    // and a transaction held open across the whole pipeline is the
     // worse trade. They must still exclude each other, which they do by
     // taking the same advisory key.
     const storage = await createPgStorage(url, { maxPoolSize: POOL });

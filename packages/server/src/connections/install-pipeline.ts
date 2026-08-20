@@ -23,8 +23,8 @@
  * Internal-call bypass — the runtime credential mint at step 2 calls
  * `storage.keys.createRuntimeCredential` directly; there is no HTTP
  * mint route. At install time the caller is the better-auth
- * session user (a human approving a connection), not the control-plane
- * lease broker. Documented here so future readers don't read the
+ * session user (a human approving a connection), not a machine mint
+ * path. Documented here so future readers don't read the
  * bypass as an oversight.
  *
  * Only the caller check is bypassed. What a minted credential may reach,
@@ -62,8 +62,8 @@ import { assertMintableSpaceScope } from "./runtime-credential-lifecycle.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
-/** TTL for the seed runtime credential the install mints. The control
- *  plane's lease broker re-mints on 401, so this only needs to outlast
+/** TTL for the seed runtime credential the install mints. The
+ *  supervisor re-mints per dispatch, so this only needs to outlast
  *  the gap between install and first scheduled poll — 1 hour is comfortable
  *  for any realistic schedule cadence. */
 const INSTALL_CREDENTIAL_TTL_SECONDS = 3600;

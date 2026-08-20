@@ -1,24 +1,20 @@
 /**
- * Per-Connection state for the local runtime, stored in reserved
- * extension namespaces on the `system.connection` item. The Cloudflare
- * substrate keeps the same state in its per-Connection Durable Object;
- * the local substrate reads / writes the extensions directly via the
- * storage layer.
+ * Per-Connection state for the runtime, stored in reserved extension
+ * namespaces on the `system.connection` item, read and written
+ * directly via the storage layer.
  *
- * State is split across two namespaces along the same seam the hosted
- * substrate splits on, because the two halves have different writers:
+ * State is split across two namespaces because the two halves have
+ * different writers:
  *
  *   `connection.runtime` — dispatch-owned. Written by the supervisor
- *   while it holds the per-Connection advisory lock (hosted: the
- *   Durable Object).
+ *   while it holds the per-Connection advisory lock.
  *
  *     { cursors: { [key]: unknown },
  *       recent_errors: [{ timestamp_ms, reason }],
  *       next_run_at_ms: number | null }
  *
  *   `connection.runtime.idempotency` — receipt-owned. Written by the
- *   inbound webhook route on the HTTP thread, which takes no lock
- *   (hosted: a KV namespace, physically separate from the DO).
+ *   inbound webhook route on the HTTP thread, which takes no lock.
  *
  *     { [delivery_key]: recorded_at_ms }
  *
@@ -59,10 +55,9 @@ const RECENT_ERRORS_SIZE = 16;
 /**
  * Idempotency cache size — drop the oldest entries past this.
  *
- * A deliberate divergence from the hosted substrate, which stores one KV
- * key per delivery and bounds the window by TTL alone. The local window
- * is a single JSON value that is read and rewritten on every receipt, so
- * it needs a size bound as well as a TTL bound. A Connection taking more
+ * The window is a single JSON value that is read and rewritten on
+ * every receipt (not one row per delivery), so it needs a size bound
+ * as well as a TTL bound. A Connection taking more
  * than this many distinct deliveries inside the TTL evicts its oldest
  * entries early, and a redelivery of an evicted key re-processes; echo
  * suppression and handler-side idempotency are the backstop.
