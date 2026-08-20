@@ -75,7 +75,9 @@ interface ManifestTrigger {
  *     publish the status change, and the bridge's invalidation
  *     subscriber re-evaluates the entry — that event is load-bearing;
  *     a bare storage write would leave the cached entry in place.
- *     Inbound webhook receipt is deliberately not gated by pause.
+ *     Inbound webhook receipt gates on pause too, at its own route: a
+ *     retryable 503 before any idempotency slot is recorded, so the
+ *     sender redelivers after resume.
  *
  * The entry snapshots the persisted manifest (name, target_types), so
  * cached entries assume manifests are immutable per version — which the

@@ -12,10 +12,12 @@ import {
   performResume,
   PauseError,
 } from "../connections/pause-pipeline.js";
+import type { PauseResult } from "../connections/pause-pipeline.js";
 import {
   performUninstall,
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
+import type { UninstallResult } from "../connections/uninstall-pipeline.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import {
   computeEffectiveHopCount,
@@ -226,7 +228,7 @@ const resumeRoute = createRoute({
   tags: ["Connections"],
   summary: "Resume a paused integration connection",
   description:
-    "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler and reactive fan-out pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
+    "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler, reactive fan-out, and inbound webhook receipt all pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: pauseResponses,
@@ -646,7 +648,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     clientIp: string | null,
   ) => {
     const run = verb === "pause" ? performPause : performResume;
-    let result;
+    let result: PauseResult;
     try {
       result = await run(storage, {
         apiKeyId: apiKey.id,
@@ -707,7 +709,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
 
-    let uninstalled;
+    let uninstalled: UninstallResult;
     try {
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,

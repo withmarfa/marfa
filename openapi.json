@@ -18789,7 +18789,7 @@
           "Connections"
         ],
         "summary": "Resume a paused integration connection",
-        "description": "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler and reactive fan-out pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
+        "description": "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler, reactive fan-out, and inbound webhook receipt all pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
         "security": [
           {
             "bearerAuth": []

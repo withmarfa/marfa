@@ -470,10 +470,10 @@ describe("local-runtime supervisor", () => {
   });
 
   it("acks a queued schedule message for a paused Connection without dispatching", async () => {
-    // Whatever enqueued the message — a pre-pause tick, an in-flight
-    // webhook, a dead-letter replay — a paused connection dispatches
-    // nothing, and the skip is a clean ack rather than an error so
-    // resume does not inherit a backlog of burned retries.
+    // A queued schedule tick for a paused connection is skipped with a
+    // clean ack — the schedule is an ongoing stream, so dropping the
+    // residue is a no-op and resume does not inherit burned retries.
+    // (Webhooks differ: see the retry case below.)
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);
     const row = await ctx.storage.items.get(connectionId, undefined);
