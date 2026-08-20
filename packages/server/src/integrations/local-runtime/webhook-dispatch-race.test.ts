@@ -28,6 +28,7 @@ import {
   type CursorStorageAdapter,
   type HandlerResult,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { createTestContext, TEST_API_KEY_SALT } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
@@ -201,6 +202,7 @@ function buildCursorRegistration(page: number): LocalIntegrationRegistration {
         cursor: createCursorStore(adapter),
         activity: createActivitySink(client, request.message.connection_id),
         echo: createEchoSuppression(adapter, request.echo),
+        mapping: familyOnlyMappingResolver(),
         cycle: null,
       };
       _resetHandlers();

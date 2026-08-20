@@ -9,6 +9,7 @@ export * from "./scopes.js";
 export * from "./query-parser.js";
 export * from "./diff-type-schemas.js";
 export * from "./integration-manifest.js";
+export * from "./connection-mapping.js";
 export * from "./in-tree-integrations.js";
 export * from "./broker-auth.js";
 export * from "./worker-identity.js";

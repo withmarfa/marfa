@@ -25,6 +25,7 @@ import {
   type ConnectionContext,
   type HandlerResult,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { createSupervisor } from "./supervisor.js";
 import type {
@@ -179,6 +180,7 @@ function buildRegistration(
         cursor: createCursorStore(cursorAdapter),
         activity: createActivitySink(client, request.message.connection_id),
         echo: createEchoSuppression(cursorAdapter, request.echo),
+        mapping: familyOnlyMappingResolver(),
         cycle: null,
       };
       // Register and dispatch via the SDK registry so the same code

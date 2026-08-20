@@ -57,7 +57,13 @@ import {
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
-import { TASKS_API_BASE, DEFAULT_TARGET_TYPE } from "./manifest.js";
+import { resolveWriteFamily } from "@withmarfa/shared";
+import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_TASKS_MANIFEST,
+  TASKS_API_BASE,
+  WRITE_FAMILIES,
+} from "./manifest.js";
 
 const CURSOR_KEY = "main";
 
@@ -106,10 +112,12 @@ interface ConnectionConfig {
    *  on each sweep (the Tasks API caps lists at a few dozen per
    *  account; iteration is cheap). */
   selected_task_list_ids: string[];
-  /** Target type for inbound items. Default `google.tasks.task` for
-   *  upstream fidelity. */
+  /** Type inbound tasks land as: the task role of the connection's
+   *  resolved write family. */
   target_type: string;
 }
+
+const DEFAULT_TASK_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].task;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -129,20 +137,21 @@ async function resolveConnectionConfig(
       cfg.default_write_task_list_id.length > 0
         ? cfg.default_write_task_list_id
         : DEFAULT_TASK_LIST_ID;
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : DEFAULT_TARGET_TYPE;
+    // The manifest's declared families decide the type: a configured
+    // `write_family` names one, a legacy stored `target_type` resolves to
+    // the family containing it, and an unconfigured connection gets the
+    // declared default.
+    const family = resolveWriteFamily(GOOGLE_TASKS_MANIFEST, cfg);
     return {
       default_write_task_list_id: defaultWrite,
       selected_task_list_ids: selected,
-      target_type: targetType,
+      target_type: family?.types.task ?? DEFAULT_TASK_TYPE,
     };
   } catch {
     return {
       default_write_task_list_id: DEFAULT_TASK_LIST_ID,
       selected_task_list_ids: [],
-      target_type: DEFAULT_TARGET_TYPE,
+      target_type: DEFAULT_TASK_TYPE,
     };
   }
 }

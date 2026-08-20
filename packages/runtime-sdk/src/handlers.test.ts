@@ -1,3 +1,4 @@
+import { familyOnlyMappingResolver } from "@withmarfa/runtime-sdk";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   registerScheduleHandler,
@@ -16,6 +17,7 @@ import type {
 const FAKE_CTX = {
   connection_id: "conn_x",
   integration_name: "demo",
+  mapping: familyOnlyMappingResolver(),
   cycle: null,
 } as unknown as ConnectionContext;
 

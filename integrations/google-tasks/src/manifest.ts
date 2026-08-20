@@ -32,16 +32,48 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+/**
+ * The two families a connection chooses between, declared once and carried
+ * on the manifest itself so the platform validates family coherence
+ * centrally and the configure surface derives the chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "google" | "core",
+  { description: string; types: { task: string } }
+> = {
+  google: {
+    description:
+      "The Google Tasks type, which keeps the full Tasks field set for an exact round trip.",
+    types: { task: "google.tasks.task" },
+  },
+  core: {
+    description:
+      "The core task type, readable by any app that understands core tasks; drops Tasks-only fields that type cannot hold.",
+    types: { task: "core.task" },
+  },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  google: FAMILY_DEFINITIONS.google.types,
+  core: FAMILY_DEFINITIONS.core.types,
+} as const;
+
+export type WriteFamily = keyof typeof WRITE_FAMILIES;
+
+export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
+
 export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
   name: "google.tasks",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
-    target_type: {
+    write_family: {
       type: "string",
-      description: "Item type synced tasks land as.",
-      from_target_types: true,
-      default: "google.tasks.task",
+      description:
+        "Item family synced tasks land as. The google family keeps the full Tasks field set; the core family is the cross-app shape other apps read, and drops what that type cannot hold.",
+      from_write_families: true,
+      default: DEFAULT_WRITE_FAMILY,
     },
     selected_task_list_ids: {
       type: "string_array",
@@ -58,14 +90,14 @@ export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
     "Bidirectional sync between Google Tasks and Marfa. Polls every task list under the connected account on a 10-minute schedule and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
-  // `google.tasks.task` is the upstream-fidelity type (full Tasks
-  // field set, the recommended default). `core.task` is the cross-app
-  // shared shape; the runtime credential is granted write permission
-  // on both so either is reachable at handler time. The install-time
-  // configuration step picks which target type new inbound items land
-  // as (default `google.tasks.task` for upstream fidelity;
-  // `core.task` for cross-app interop).
-  target_types: ["core.task", "google.tasks.task"],
+  // The runtime credential is granted write permission on both families'
+  // types so either is reachable at handler time; the install-time
+  // configuration chooses which family a connection actually writes.
+  target_types: [WRITE_FAMILIES.core.task, WRITE_FAMILIES.google.task],
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
+  },
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },
@@ -117,6 +149,3 @@ export const RECOMMENDED_OAUTH_SCOPES = [
 
 export const GOOGLE_TASKS_OAUTH_SCOPES_STRING =
   RECOMMENDED_OAUTH_SCOPES.join(" ");
-
-/** Default target type when configuration is absent — upstream-fidelity. */
-export const DEFAULT_TARGET_TYPE = "google.tasks.task";

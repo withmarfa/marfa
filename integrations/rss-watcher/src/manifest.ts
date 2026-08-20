@@ -11,7 +11,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   name: "withmarfa.rss-watcher",
   version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
     feed_url: {
       type: "string",
@@ -25,6 +25,7 @@ export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
   target_types: ["core.bookmark"],
+  supports_user_mappings: true,
   triggers: [
     {
       type: "schedule",

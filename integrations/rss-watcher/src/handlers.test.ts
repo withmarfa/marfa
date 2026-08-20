@@ -17,6 +17,7 @@ import {
   type CreateItemInput,
   type ItemResource,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import {
   createScheduleHandler,
@@ -118,6 +119,7 @@ function buildContext(opts: BuildOptions = {}): BuiltContext {
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created };

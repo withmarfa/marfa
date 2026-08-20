@@ -43,16 +43,48 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+/**
+ * The two families a connection chooses between, declared once and carried
+ * on the manifest itself so the platform validates family coherence
+ * centrally and the configure surface derives the chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "google" | "core",
+  { description: string; types: { event: string } }
+> = {
+  google: {
+    description:
+      "The Google Calendar type, which keeps the full Calendar field set for an exact round trip.",
+    types: { event: "google.calendar.event" },
+  },
+  core: {
+    description:
+      "The core event type, readable by any app that understands core events; lossier, dropping Calendar-only fields such as the etag.",
+    types: { event: "core.event" },
+  },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  google: FAMILY_DEFINITIONS.google.types,
+  core: FAMILY_DEFINITIONS.core.types,
+} as const;
+
+export type WriteFamily = keyof typeof WRITE_FAMILIES;
+
+export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
+
 export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   name: "google.calendar",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
-    target_type: {
+    write_family: {
       type: "string",
-      description: "Item type synced events land as.",
-      from_target_types: true,
-      default: "google.calendar.event",
+      description:
+        "Item family synced events land as. The google family keeps the full Calendar field set; the core family is the cross-app shape other apps read, and drops what that type cannot hold.",
+      from_write_families: true,
+      default: DEFAULT_WRITE_FAMILY,
     },
     selected_calendar_ids: {
       type: "string_array",
@@ -74,13 +106,14 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
     "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
-  // `google.calendar.event` is the upstream-fidelity type (full Calendar
-  // field set, the recommended default). `core.event` is the cross-app
-  // shared shape (lossier — no recurrence, no timezone, no etag); the
-  // install-time picker lets the user opt into it when cross-app interop
-  // matters more than fidelity. The runtime credential is granted write
-  // permission on both so either is reachable at handler time.
-  target_types: ["core.event", "google.calendar.event"],
+  // The runtime credential is granted write permission on both families'
+  // types so either is reachable at handler time; the install-time picker
+  // chooses which family a connection actually writes.
+  target_types: [WRITE_FAMILIES.core.event, WRITE_FAMILIES.google.event],
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
+  },
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },

@@ -38,15 +38,17 @@ import {
   type HandlerResult,
   type CreateItemInput,
 } from "@withmarfa/runtime-sdk";
+import { resolveWriteFamily } from "@withmarfa/shared";
 import {
   YOUTUBE_API_BASE,
-  DEFAULT_TARGET_TYPE,
   BATCH_FETCH_MAX,
   CHANNELS_LIST_PART,
+  GOOGLE_YOUTUBE_MANIFEST,
   PLAYLIST_ITEMS_PART,
   SUBSCRIPTIONS_PART,
   PLAYLISTS_PART,
   VIDEOS_PART,
+  WRITE_FAMILIES,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -85,9 +87,13 @@ export interface YoutubeCursor {
 }
 
 interface ConnectionConfig {
+  /** Type liked / playlist-walked videos land as: the video role of the
+   *  manifest's single write family. */
   target_type: string;
   materialise_playlists: boolean;
 }
+
+const DEFAULT_VIDEO_TYPE = WRITE_FAMILIES.google.video;
 
 function defaultCursor(): YoutubeCursor {
   return {
@@ -110,18 +116,21 @@ async function resolveConnectionConfig(
       | { configuration?: Record<string, unknown> }
       | undefined;
     const cfg = props?.configuration ?? {};
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : DEFAULT_TARGET_TYPE;
+    // One declared family, so resolution always answers it; going through
+    // `resolveWriteFamily` keeps the manifest the single statement of what
+    // this connection writes rather than restating the type here.
+    const family = resolveWriteFamily(GOOGLE_YOUTUBE_MANIFEST, cfg);
     const materialize =
       typeof cfg.materialise_playlists === "boolean"
         ? cfg.materialise_playlists
         : false;
-    return { target_type: targetType, materialise_playlists: materialize };
+    return {
+      target_type: family?.types.video ?? DEFAULT_VIDEO_TYPE,
+      materialise_playlists: materialize,
+    };
   } catch {
     return {
-      target_type: DEFAULT_TARGET_TYPE,
+      target_type: DEFAULT_VIDEO_TYPE,
       materialise_playlists: false,
     };
   }
@@ -349,7 +358,7 @@ function buildChannelInput(
   }
   if (typeof subscribedAt === "string") props.subscribed_at = subscribedAt;
   props.html_link = `https://www.youtube.com/channel/${encodeURIComponent(c.id)}`;
-  return { type: "google.youtube.channel", properties: props };
+  return { type: WRITE_FAMILIES.google.channel, properties: props };
 }
 
 function buildPlaylistInput(p: PlaylistResource): CreateItemInput {
@@ -373,7 +382,7 @@ function buildPlaylistInput(p: PlaylistResource): CreateItemInput {
   if (typeof thumb === "string") props.thumbnail_url = thumb;
   if (typeof p.etag === "string") props.etag = p.etag;
   props.html_link = `https://www.youtube.com/playlist?list=${encodeURIComponent(p.id)}`;
-  return { type: "google.youtube.playlist", properties: props };
+  return { type: WRITE_FAMILIES.google.playlist, properties: props };
 }
 
 // ---------------------------------------------------------------------------

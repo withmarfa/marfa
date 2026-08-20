@@ -27,6 +27,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent, __internals } from "./handlers.js";
 
@@ -166,6 +167,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created, updated, transitions, formCalls, jsonCalls };

@@ -208,6 +208,14 @@ const ConfigurationFieldSchema = z
      * actually write.
      */
     from_target_types: z.boolean().optional(),
+    /**
+     * Derive the closed value set from the manifest's declared write
+     * families — manifest 1.3.0. The right shape for a key that selects
+     * WHICH COHERENT SET of types a connection writes: `from_target_types`
+     * offers individual types, which for a multi-type integration is a
+     * choice between half-answers.
+     */
+    from_write_families: z.boolean().optional(),
     default: z
       .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
       .optional(),
@@ -224,6 +232,37 @@ export type ConfigurationFieldSpec = z.infer<typeof ConfigurationFieldSchema>;
 export const RESERVED_CONFIGURATION_KEYS: ReadonlySet<string> = new Set([
   "upstream_base_url_override",
 ]);
+
+/**
+ * One write family: a named, coherent set of target types chosen together —
+ * manifest 1.3.0. `types` maps the author's role vocabulary (`show`,
+ * `episode`, or just `item` for a single-type integration) to the type each
+ * role writes under this family, so a handler indexes the selected family
+ * by role instead of hardcoding identifiers.
+ */
+const WriteFamilySchema = z
+  .object({
+    description: z
+      .string()
+      .min(1, "write families describe themselves to the configure surface"),
+    types: z.record(
+      z.string().min(1),
+      z.string().refine((s) => isValidTypeIdentifier(s), {
+        message: "write family types must be valid type identifiers",
+      }),
+    ),
+  })
+  .strict();
+
+const WriteFamiliesSchema = z
+  .object({
+    families: z.record(z.string().min(1), WriteFamilySchema),
+    /** Family selected when a connection configures none. */
+    default: z.string().min(1),
+  })
+  .strict();
+
+export type WriteFamilies = z.infer<typeof WriteFamiliesSchema>;
 
 export const IntegrationManifestSchema = z
   .object({
@@ -264,6 +303,21 @@ export const IntegrationManifestSchema = z
     configuration_schema: z
       .record(z.string().min(1), ConfigurationFieldSchema)
       .optional(),
+    /**
+     * Named write families — manifest 1.3.0 additive field. Cross-field
+     * coherence (default exists, families cover target_types exactly) is
+     * enforced by `validateWriteFamilies`, kept outside the Zod schema so
+     * the generated JSON Schema artifact stays derivable.
+     */
+    write_families: WriteFamiliesSchema.optional(),
+    /**
+     * Whether this integration's handlers consult the per-connection user
+     * mapping (`ctx.mapping`) on their write path — manifest 1.3.0. The
+     * mapping-configuration surface refuses integrations that do not, so
+     * a stored mapping can never be silently ignored by a handler that
+     * predates the mechanism.
+     */
+    supports_user_mappings: z.boolean().optional(),
   })
   .strict();
 
@@ -328,8 +382,119 @@ export function declaredConfigurationDefault(
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Cross-field coherence for a manifest's write families. Kept beside the
+ * Zod schema rather than inside it (the generated JSON Schema artifact
+ * must stay derivable from the plain object schema); the server's
+ * manifest validation and the shared manifest test convention both call
+ * it, which is what retires the per-integration pair-membership tests
+ * that used to stand in for a schema feature.
+ */
+export function validateWriteFamilies(
+  manifest: Pick<
+    IntegrationManifest,
+    "write_families" | "target_types" | "configuration_schema"
+  >,
+): string[] {
+  const issues: string[] = [];
+  const wf = manifest.write_families;
+  const declaresSelector = Object.values(
+    manifest.configuration_schema ?? {},
+  ).some((spec) => spec.from_write_families === true);
+  if (!wf) {
+    if (declaresSelector) {
+      issues.push(
+        "a configuration field sets from_write_families but the manifest declares no write_families",
+      );
+    }
+    return issues;
+  }
+  const names = Object.keys(wf.families);
+  if (names.length === 0) {
+    issues.push("write_families.families must declare at least one family");
+    return issues;
+  }
+  if (!wf.families[wf.default]) {
+    issues.push(
+      `write_families.default "${wf.default}" is not a declared family`,
+    );
+  }
+  const targets = new Set(manifest.target_types);
+  const covered = new Set<string>();
+  for (const [name, family] of Object.entries(wf.families)) {
+    const members = Object.values(family.types);
+    if (members.length === 0) {
+      issues.push(`write family "${name}" declares no types`);
+    }
+    for (const member of members) {
+      covered.add(member);
+      if (!targets.has(member)) {
+        issues.push(
+          `write family "${name}" names "${member}", which is not in target_types`,
+        );
+      }
+    }
+  }
+  for (const target of targets) {
+    if (!covered.has(target)) {
+      issues.push(
+        `target type "${target}" belongs to no write family; every target travels in one`,
+      );
+    }
+  }
+  return issues;
+}
+
+/** A write family resolved for one connection: its name and role map. */
+export interface ResolvedWriteFamily {
+  name: string;
+  types: Record<string, string>;
+}
+
+/**
+ * Resolve which write family a connection uses. Precedence:
+ *
+ * 1. A configured `write_family` naming a declared family.
+ * 2. Legacy read: a `target_type` value written by the pre-families
+ *    configuration shape resolves to the unique family containing that
+ *    type. Exists only because stored connection configuration cannot be
+ *    rewritten while the hosting move holds data still; remove it with
+ *    the post-cutover config rewrite. An ambiguous or unknown legacy
+ *    value falls through to the default rather than guessing.
+ * 3. The manifest's declared default family.
+ *
+ * Returns null for a manifest that declares no families, which is what
+ * lets handlers that have not migrated keep their own resolution.
+ */
+export function resolveWriteFamily(
+  manifest: Pick<IntegrationManifest, "write_families">,
+  configuration: Record<string, unknown> | undefined,
+): ResolvedWriteFamily | null {
+  const wf = manifest.write_families;
+  if (!wf) return null;
+  const pick = (name: string): ResolvedWriteFamily => ({
+    name,
+    types: wf.families[name]?.types ?? {},
+  });
+  const configured = configuration?.write_family;
+  if (typeof configured === "string" && wf.families[configured]) {
+    return pick(configured);
+  }
+  const legacy = configuration?.target_type;
+  if (typeof legacy === "string" && legacy.length > 0) {
+    const hits = Object.entries(wf.families).filter(([, family]) =>
+      Object.values(family.types).includes(legacy),
+    );
+    if (hits.length === 1 && hits[0]) return pick(hits[0][0]);
+  }
+  return pick(wf.default);
+}
+
 export function validateConnectionConfiguration(
-  manifest: Pick<IntegrationManifest, "configuration_schema" | "target_types">,
+  manifest: Pick<
+    IntegrationManifest,
+    "configuration_schema" | "target_types" | "write_families"
+  >,
   configuration: Record<string, unknown>,
   options?: { requireRequired?: boolean },
 ): ConfigurationIssue[] {
@@ -361,9 +526,11 @@ export function validateConnectionConfiguration(
       });
       continue;
     }
-    const allowed = spec.from_target_types
-      ? manifest.target_types
-      : spec.values;
+    const allowed = spec.from_write_families
+      ? Object.keys(manifest.write_families?.families ?? {})
+      : spec.from_target_types
+        ? manifest.target_types
+        : spec.values;
     if (allowed && typeof value === "string" && !allowed.includes(value)) {
       issues.push({
         key,

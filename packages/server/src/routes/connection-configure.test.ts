@@ -10,7 +10,7 @@
  *       * connection-not-found (404),
  *       * non-google.calendar manifest (400),
  *       * validation rejections (no selection / no default /
- *         default-not-in-selected / unknown target_type),
+ *         default-not-in-selected / unknown write_family),
  *       * happy path (200 + persisted configuration + audit row).
  *   - GET end-to-end via a dedicated mini-app with an injected
  *     `fetchCalendars` stub (avoids re-entering the OAuth proxy).
@@ -65,7 +65,7 @@ afterAll(async () => {
 // Pure-function tests
 // ---------------------------------------------------------------------------
 
-const VALID_TARGET_TYPES = new Set(["core.event", "google.calendar.event"]);
+const VALID_WRITE_FAMILIES = new Set(["core", "google"]);
 
 describe("parseConfigurePayload", () => {
   it("accepts a well-formed submission", () => {
@@ -73,9 +73,9 @@ describe("parseConfigurePayload", () => {
       {
         selected_calendar_ids: ["primary", "team@example.com"],
         default_write_calendar_id: "primary",
-        target_type: "google.calendar.event",
+        write_family: "google",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -84,7 +84,7 @@ describe("parseConfigurePayload", () => {
         "team@example.com",
       ]);
       expect(result.payload.default_write_calendar_id).toBe("primary");
-      expect(result.payload.target_type).toBe("google.calendar.event");
+      expect(result.payload.write_family).toBe("google");
     }
   });
 
@@ -93,9 +93,9 @@ describe("parseConfigurePayload", () => {
       {
         selected_calendar_ids: "primary",
         default_write_calendar_id: "primary",
-        target_type: "core.event",
+        write_family: "core",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(true);
   });
@@ -105,9 +105,9 @@ describe("parseConfigurePayload", () => {
       {
         selected_calendar_ids: [],
         default_write_calendar_id: "primary",
-        target_type: "core.event",
+        write_family: "core",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/at least one calendar/i);
@@ -117,9 +117,9 @@ describe("parseConfigurePayload", () => {
     const result = parseConfigurePayload(
       {
         selected_calendar_ids: ["primary"],
-        target_type: "core.event",
+        write_family: "core",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/default write target/i);
@@ -130,22 +130,22 @@ describe("parseConfigurePayload", () => {
       {
         selected_calendar_ids: ["primary"],
         default_write_calendar_id: "team@example.com",
-        target_type: "core.event",
+        write_family: "core",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/must also be ticked/i);
   });
 
-  it("rejects an unknown target_type", () => {
+  it("rejects an unknown write_family", () => {
     const result = parseConfigurePayload(
       {
         selected_calendar_ids: ["primary"],
         default_write_calendar_id: "primary",
-        target_type: "evil.event",
+        write_family: "evil",
       },
-      VALID_TARGET_TYPES,
+      VALID_WRITE_FAMILIES,
     );
     expect(result.ok).toBe(false);
     if (!result.ok)
@@ -173,13 +173,13 @@ describe("renderGoogleCalendarPicker", () => {
     const html = renderGoogleCalendarPicker({
       connectionId: "conn_abc",
       calendars: sampleCalendars,
-      targetTypeChoices: ["core.event", "google.calendar.event"],
-      defaultTargetType: "google.calendar.event",
+      writeFamilyChoices: ["core", "google"],
+      defaultWriteFamily: "google",
     });
     expect(html).toContain("oblix.cyzr@gmail.com");
     expect(html).toContain("team@example.com");
     expect(html).toContain('value="primary" checked');
-    expect(html).toContain('value="google.calendar.event"');
+    expect(html).toContain('value="google" selected');
   });
 
   it("escapes special characters in calendar names", () => {
@@ -188,8 +188,8 @@ describe("renderGoogleCalendarPicker", () => {
       calendars: [
         { id: "x", summary: "<script>alert('x')</script>", primary: true },
       ],
-      targetTypeChoices: ["core.event"],
-      defaultTargetType: "core.event",
+      writeFamilyChoices: ["core"],
+      defaultWriteFamily: "core",
     });
     expect(html).not.toContain("<script>alert");
     expect(html).toContain("&lt;script&gt;");
@@ -199,18 +199,18 @@ describe("renderGoogleCalendarPicker", () => {
     const html = renderGoogleCalendarPicker({
       connectionId: "conn_abc",
       calendars: sampleCalendars,
-      targetTypeChoices: ["core.event", "google.calendar.event"],
-      defaultTargetType: "google.calendar.event",
+      writeFamilyChoices: ["core", "google"],
+      defaultWriteFamily: "google",
       prior: {
         selectedCalendarIds: ["team@example.com"],
         defaultWriteCalendarId: "team@example.com",
-        targetType: "core.event",
+        writeFamily: "core",
       },
     });
     // 'team@example.com' should be checked; 'primary' should NOT be the
     // pre-tick fallback now that prior selections are present.
     expect(html).toContain('value="team@example.com" checked');
-    expect(html).toContain('value="core.event" selected');
+    expect(html).toContain('value="core" selected');
   });
 });
 
@@ -316,7 +316,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -339,7 +339,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -358,7 +358,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -377,7 +377,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -386,7 +386,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
 });
 
 describe("POST /connections/:id/configure — happy path + persistence", () => {
-  it("writes selection + default_write + target_type onto properties.configuration", async () => {
+  it("writes selection + default_write + write_family onto properties.configuration", async () => {
     const { connectionId } = await seedGoogleCalendarConnection();
     const res = await request(
       ctx.app,
@@ -397,7 +397,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
         form: {
           selected_calendar_ids: ["primary", "team@example.com"],
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -412,7 +412,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
     expect(cfg).toMatchObject({
       selected_calendar_ids: ["primary", "team@example.com"],
       default_write_calendar_id: "primary",
-      target_type: "google.calendar.event",
+      write_family: "google",
     });
   });
 
@@ -423,7 +423,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
       form: {
         selected_calendar_ids: "primary",
         default_write_calendar_id: "primary",
-        target_type: "core.event",
+        write_family: "core",
       },
     });
     const audits = await waitForAudit(
@@ -439,7 +439,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
       manifest_name: "google.calendar",
       selected_count: 1,
       default_write_calendar_id: "primary",
-      target_type: "core.event",
+      write_family: "core",
     });
   });
 });
@@ -455,7 +455,7 @@ describe("POST /connections/:id/configure — error paths", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -475,7 +475,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       {
         key: ctx.adminKey,
         form: {
-          target_type: "google.calendar.event",
+          write_family: "google",
           default_write_calendar_id: "primary",
         },
       },
@@ -486,7 +486,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       conn?.properties as { configuration?: Record<string, unknown> }
     ).configuration;
     expect(cfg).toMatchObject({
-      target_type: "google.calendar.event",
+      write_family: "google",
       default_write_calendar_id: "primary",
     });
   });
@@ -501,9 +501,10 @@ describe("POST /connections/:id/configure — error paths", () => {
       `/connections/${connectionId}/configure`,
       {
         key: ctx.adminKey,
-        // from_target_types pins target_type to the manifest's own list, so
-        // a value outside it is the declared-contract violation.
-        form: { target_type: "acme.not-a-target" },
+        // from_write_families pins write_family to the manifest's declared
+        // families, so a value outside them is the declared-contract
+        // violation.
+        form: { write_family: "not-a-family" },
       },
     );
     expect(res.status).toBe(400);
@@ -521,7 +522,7 @@ describe("POST /connections/:id/configure — error paths", () => {
         key: ctx.adminKey,
         form: {
           default_write_calendar_id: "primary",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     );
@@ -530,7 +531,7 @@ describe("POST /connections/:id/configure — error paths", () => {
     expect(html).toContain("Pick at least one calendar");
   });
 
-  it("400s when target_type is not in the manifest's target_types", async () => {
+  it("400s when write_family is not one of the manifest's declared families", async () => {
     const { connectionId } = await seedGoogleCalendarConnection();
     const res = await request(
       ctx.app,
@@ -541,7 +542,7 @@ describe("POST /connections/:id/configure — error paths", () => {
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
-          target_type: "evil.event",
+          write_family: "evil",
         },
       },
     );
@@ -550,7 +551,7 @@ describe("POST /connections/:id/configure — error paths", () => {
     // Apostrophes are HTML-escaped to `&#39;` in the rendered page, so
     // assert against a substring that survives escaping.
     expect(html).toContain("not one of the integration");
-    expect(html).toContain("declared target types");
+    expect(html).toContain("declared write families");
   });
 });
 

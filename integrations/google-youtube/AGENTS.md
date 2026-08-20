@@ -15,7 +15,7 @@ quota ceiling.
 - Target types: `google.youtube.video`, `google.youtube.playlist`,
   `google.youtube.channel`. Default written type for videos is
   `google.youtube.video` — when a future ticket adds a `core.media`
-  shape, install-time `target_type` can switch to that.
+  shape, it arrives as a second write family and the chooser returns.
 - Direction: `read` — consumer surface only. Liking videos,
   subscribing, and writing playlists is out of scope for v1.
 
@@ -68,8 +68,10 @@ the existing credential via `credential_ref` on
 
 Driven by `connection.properties.configuration`:
 
-- `target_type: string` — `google.youtube.video` (default) or, once
-  added, a `core.media` type for cross-app interop.
+- One `google` write family (video, playlist, channel roles) and no
+  chooser: the old `target_type` option offered playlist and channel as
+  choices for the video write, which was never a real choice. A core
+  video projection would arrive as a second family.
 - `materialise_playlists: boolean` — default `false`
   (ticket-recommended). When `true`, the handler walks each
   user-created playlist's video membership and lands those videos

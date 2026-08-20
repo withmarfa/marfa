@@ -23,6 +23,7 @@ import {
   type ItemState,
   type ScheduleMessage,
   type ItemEventMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent, __internals } from "./handlers.js";
 import { FABRICATED_URL_PREFIX, MAX_PAGES_PER_SWEEP } from "./manifest.js";
@@ -181,6 +182,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, storage, emitted, created, updated, proxyCalls, bulkCalls };

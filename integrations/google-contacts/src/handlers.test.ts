@@ -28,6 +28,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 import { GOOGLE_CONTACTS_MANIFEST } from "./manifest.js";
@@ -154,6 +155,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created, updated, transitions, proxyCalls };
@@ -183,6 +185,64 @@ const ITEM_EVENT = (
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
+
+/** One-contact connections.list page, enough for the ingest path. */
+function singleContactPage(): Response {
+  return jsonResponse({
+    connections: [
+      {
+        resourceName: "people/c9",
+        etag: "etag-9",
+        names: [{ givenName: "Joan", displayName: "Joan Clarke" }],
+      },
+    ],
+    nextSyncToken: "sync-token-9",
+  });
+}
+
+describe("google-contacts handlers — the type a connection writes", () => {
+  it("writes the configured family's type when the install names one", async () => {
+    const { ctx, created } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: { write_family: "core" },
+        },
+      },
+      proxyResponses: [() => singleContactPage()],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("core.entity.person");
+  });
+
+  it("honors a legacy stored target_type by resolving its family", async () => {
+    // Pins the legacy stored-configuration read: connections configured
+    // before write families carry `target_type` rather than
+    // `write_family`, and that value must keep deciding what they write
+    // until the post-cutover configuration rewrite removes it.
+    const { ctx, created } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: { target_type: "core.entity.person" },
+        },
+      },
+      proxyResponses: [() => singleContactPage()],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("core.entity.person");
+  });
+});
 
 describe("google-contacts handleSchedule", () => {
   it("sweeps connections.list, upserts as google.contacts.contact, persists syncToken", async () => {

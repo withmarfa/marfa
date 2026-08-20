@@ -63,27 +63,16 @@ import {
 } from "@withmarfa/runtime-sdk";
 import {
   dateInZoneToInstant,
-  declaredConfigurationDefault,
   instantToDateInZone,
+  resolveWriteFamily,
 } from "@withmarfa/shared";
 import {
   CALENDAR_API_BASE,
   DEFAULT_CALENDAR_ID,
+  DEFAULT_WRITE_FAMILY,
   GOOGLE_CALENDAR_MANIFEST,
+  WRITE_FAMILIES,
 } from "./manifest.js";
-
-/**
- * The target type an unconfigured connection writes, read from the manifest
- * rather than restated so the two cannot drift.
- *
- * Only reachable for a connection installed before the manifest's declared
- * defaults were written into `configuration` at install time. Every new
- * install carries an explicit `target_type`, so this is a floor for old rows
- * rather than a decision made here.
- */
-const DEFAULT_TARGET_TYPE =
-  declaredConfigurationDefault(GOOGLE_CALENDAR_MANIFEST, "target_type") ??
-  "google.calendar.event";
 
 const CURSOR_KEY = "main";
 
@@ -136,10 +125,10 @@ interface ConnectionConfig {
   default_write_calendar_id: string;
   /** All calendars to sync from. Single-entry array in single mode. */
   selected_calendar_ids: string[];
-  /** Target type for inbound items, as the manifest declares it. Not a
-   *  function of mode: a connection moves between single and multi, and a
-   *  target type that moved with it would split one corpus across two types
-   *  with no way back. */
+  /** Type inbound items land as: the event role of the connection's
+   *  resolved write family. Not a function of mode: a connection moves
+   *  between single and multi, and a target type that moved with it would
+   *  split one corpus across two types with no way back. */
   target_type: string;
 }
 
@@ -241,10 +230,13 @@ async function resolveConnectionConfig(
     cfg.default_write_calendar_id.length > 0
       ? cfg.default_write_calendar_id
       : null;
+  // The manifest's declared families are the one statement of what a
+  // connection writes: a configured `write_family` names one, a legacy
+  // stored `target_type` resolves to the family containing it, and an
+  // unconfigured connection gets the declared default.
+  const family = resolveWriteFamily(GOOGLE_CALENDAR_MANIFEST, cfg);
   const targetType =
-    typeof cfg.target_type === "string" && cfg.target_type.length > 0
-      ? cfg.target_type
-      : null;
+    family?.types.event ?? WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].event;
 
   // A non-empty selection is the whole signal for multi mode. Requiring
   // `default_write_calendar_id` alongside it meant a connection that named
@@ -259,14 +251,14 @@ async function resolveConnectionConfig(
         mode: "multi",
         selected_calendar_ids: selected,
         default_write_calendar_id: defaultWrite ?? firstSelected,
-        target_type: targetType ?? DEFAULT_TARGET_TYPE,
+        target_type: targetType,
       },
     };
   }
 
   // No selection: the primary calendar, which is what an install that
-  // configures nothing asks for. The target type is the manifest's, the same
-  // as the branch above: this one used to answer `core.event`, so the same
+  // configures nothing asks for. The write family is resolved identically
+  // in both branches: this one used to answer `core.event`, so the same
   // connection wrote one type until the picker saved and the other after.
   return {
     ok: true,
@@ -274,7 +266,7 @@ async function resolveConnectionConfig(
       mode: "single",
       selected_calendar_ids: [DEFAULT_CALENDAR_ID],
       default_write_calendar_id: DEFAULT_CALENDAR_ID,
-      target_type: targetType ?? DEFAULT_TARGET_TYPE,
+      target_type: targetType,
     },
   };
 }
@@ -1466,13 +1458,10 @@ async function handleItemEventMulti(
 /**
  * Build the Marfa-side `CreateItemInput` from a Calendar event.
  *
- * `targetType` defaults to `"core.event"` so single-calendar callers
- * write cross-app `core.event` items. Multi-calendar mode passes the
- * configured target type — usually `"google.calendar.event"` for
- * upstream-fidelity round-trip. When the target is
- * `google.calendar.event` the function additionally writes the
- * Google-specific fields the type carries (timezone, all_day, etag,
- * html_link, source_calendar_id, recurrence, etc.).
+ * `targetType` is the event role of the connection's resolved write
+ * family. When it is `google.calendar.event` the function additionally
+ * writes the Google-specific fields the type carries (etag, html_link,
+ * source_calendar_id, recurring_event_id, etc.).
  *
  * `sourceCalendarId` is the Calendar id the event lives on. Only
  * meaningful when the target type knows about it
@@ -1480,7 +1469,7 @@ async function handleItemEventMulti(
  */
 function buildEventInput(
   event: CalendarEvent,
-  targetType = "core.event",
+  targetType: string,
   sourceCalendarId?: string,
 ): CreateItemInput {
   const properties: Record<string, unknown> = {

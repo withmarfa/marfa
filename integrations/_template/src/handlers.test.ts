@@ -16,6 +16,7 @@ import {
   type ConnectionContext,
   type ConnectionClient,
   type CreateItemInput,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook, handleItemEvent } from "./handlers.js";
 
@@ -64,6 +65,7 @@ function buildContext(connectionId = "conn_template_test"): {
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted };

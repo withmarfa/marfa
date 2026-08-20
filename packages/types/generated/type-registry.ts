@@ -1002,6 +1002,7 @@ const systemConnection: TypeSchema = {
     next_run_at: { type: "datetime", description: "For kind: integration — next scheduled run, when applicable" },
     last_error_at: { type: "datetime", description: "For kind: integration — most recent failure timestamp (cleared on next success)" },
     feed_activity: { type: "boolean", description: "For kind: integration — when true, system.activity items emitted by this integration are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)" },
+    mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Platform-validated as a whole document at PUT /connections/{id}/mapping; shape and semantics live with the shared mapping module, not this schema." },
   },
 };
 

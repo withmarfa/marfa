@@ -15,7 +15,7 @@
  *
  *   - `POST /connections/:id/configure` — form submit. Validates the
  *     selection (at least one calendar, the default-write target is
- *     one of the selected, target_type is a recognized type), then
+ *     one of the selected, write_family is a declared family), then
  *     `storage.items.update`s the connection's `properties.configuration`
  *     and renders a success page that links to the connection's runtime
  *     view.
@@ -33,7 +33,6 @@ import { Hono } from "hono";
 import {
   MarfaError,
   ErrorCode,
-  declaredConfigurationDefault,
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -44,7 +43,11 @@ import {
   resolveSpaceAdminCaller,
 } from "./_space-caller.js";
 import type { Storage } from "../storage/interface.js";
-import type { ConfigurationFieldSpec, Item } from "@withmarfa/shared";
+import type {
+  ConfigurationFieldSpec,
+  WriteFamilies,
+  Item,
+} from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
 import { renderAuthLayout } from "./auth-layout.js";
 
@@ -67,18 +70,17 @@ export interface GoogleCalendarPickerParams {
   connectionId: string;
   calendars: CalendarListEntry[];
   /**
-   * The set of `target_type` values the picker offers. Comes from the
-   * integration manifest's `target_types`. Default first entry in the
-   * list is preselected.
+   * The family names the picker offers. Comes from the integration
+   * manifest's declared `write_families`.
    */
-  targetTypeChoices: string[];
-  /** Default target type if no override is offered or chosen. */
-  defaultTargetType: string;
+  writeFamilyChoices: string[];
+  /** Family preselected when the connection has not chosen one. */
+  defaultWriteFamily: string;
   /** Pre-fill existing selections when the user re-visits the page. */
   prior?: {
     selectedCalendarIds: string[];
     defaultWriteCalendarId: string | null;
-    targetType: string | null;
+    writeFamily: string | null;
   };
 }
 
@@ -116,7 +118,8 @@ export function renderGoogleCalendarPicker(
     params.calendars.find((c) => c.primary)?.id ??
     params.calendars[0]?.id ??
     "";
-  const priorTargetType = params.prior?.targetType ?? params.defaultTargetType;
+  const priorWriteFamily =
+    params.prior?.writeFamily ?? params.defaultWriteFamily;
 
   // Each calendar renders as a selectable card: a `<label>` wraps the
   // include checkbox plus the dot + name, so clicking anywhere on the row
@@ -162,10 +165,10 @@ export function renderGoogleCalendarPicker(
     )
     .join("");
 
-  const targetTypeOptions = params.targetTypeChoices
+  const writeFamilyOptions = params.writeFamilyChoices
     .map(
-      (t) =>
-        `<option value="${esc(t)}" ${t === priorTargetType ? "selected" : ""}>${esc(t)}</option>`,
+      (f) =>
+        `<option value="${esc(f)}" ${f === priorWriteFamily ? "selected" : ""}>${esc(f)}</option>`,
     )
     .join("");
 
@@ -187,9 +190,9 @@ export function renderGoogleCalendarPicker(
         </div>
 
         <div class="defrow">
-          <label class="label" for="target_type">Write events as</label>
-          <select name="target_type" id="target_type">
-            ${targetTypeOptions}
+          <label class="label" for="write_family">Write events as</label>
+          <select name="write_family" id="write_family">
+            ${writeFamilyOptions}
           </select>
         </div>
         <p class="label__hint">Keep the Google format to preserve everything Google tracks, including repeats and time zones. Choose the standard format if other apps need to read these events too.</p>
@@ -242,18 +245,23 @@ export function renderConfigurationFields(
     .map(([key, spec]) => {
       const name = `${prefix}${key}`;
       const value = current[key];
-      const allowed = spec.from_target_types
-        ? manifest.target_types
-        : spec.values;
+      const families = spec.from_write_families
+        ? (manifest.write_families?.families ?? {})
+        : null;
+      const allowed = families
+        ? Object.keys(families)
+        : spec.from_target_types
+          ? manifest.target_types
+          : spec.values;
       let control: string;
       if (spec.type === "boolean") {
         control = `<input type="checkbox" name="${esc(name)}" value="true"${value === true ? " checked" : ""}>`;
       } else if (allowed) {
         const opts = allowed
-          .map(
-            (v) =>
-              `<option value="${esc(v)}"${value === v ? " selected" : ""}>${esc(v)}</option>`,
-          )
+          .map((v) => {
+            const detail = families?.[v]?.description;
+            return `<option value="${esc(v)}"${value === v ? " selected" : ""}${detail ? ` title="${esc(detail)}"` : ""}>${esc(v)}</option>`;
+          })
           .join("");
         control = `<select name="${esc(name)}">${opts}</select>`;
       } else if (spec.type === "number") {
@@ -361,7 +369,7 @@ export function renderConfigureError(message: string): string {
 interface ConfigurationPayload {
   selected_calendar_ids: string[];
   default_write_calendar_id: string;
-  target_type: string;
+  write_family: string;
 }
 
 /**
@@ -371,7 +379,7 @@ interface ConfigurationPayload {
  */
 export function parseConfigurePayload(
   form: Record<string, unknown>,
-  validTargetTypes: ReadonlySet<string>,
+  validWriteFamilies: ReadonlySet<string>,
 ): { ok: true; payload: ConfigurationPayload } | { ok: false; error: string } {
   const rawSelected = form.selected_calendar_ids;
   const selected: string[] = Array.isArray(rawSelected)
@@ -401,17 +409,17 @@ export function parseConfigurePayload(
     };
   }
 
-  const targetType = form.target_type;
-  if (typeof targetType !== "string" || targetType.length === 0) {
+  const writeFamily = form.write_family;
+  if (typeof writeFamily !== "string" || writeFamily.length === 0) {
     return {
       ok: false,
-      error: "Pick a target type for events written into Marfa.",
+      error: "Pick a write family for events written into Marfa.",
     };
   }
-  if (!validTargetTypes.has(targetType)) {
+  if (!validWriteFamilies.has(writeFamily)) {
     return {
       ok: false,
-      error: `Target type '${targetType}' is not one of the integration's declared target types.`,
+      error: `Write family '${writeFamily}' is not one of the integration's declared write families.`,
     };
   }
 
@@ -420,7 +428,7 @@ export function parseConfigurePayload(
     payload: {
       selected_calendar_ids: selected,
       default_write_calendar_id: defaultWrite,
-      target_type: targetType,
+      write_family: writeFamily,
     },
   };
 }
@@ -429,6 +437,7 @@ interface IntegrationManifestShape {
   name: string;
   target_types: string[];
   configuration_schema?: Record<string, ConfigurationFieldSpec>;
+  write_families?: WriteFamilies;
 }
 
 interface ConnectionPropertiesShape {
@@ -451,6 +460,7 @@ async function resolveIntegrationManifest(
       name?: string;
       target_types?: string[];
       configuration_schema?: Record<string, ConfigurationFieldSpec>;
+      write_families?: WriteFamilies;
     };
   };
   const manifest = integrationProps.manifest;
@@ -461,6 +471,12 @@ async function resolveIntegrationManifest(
     target_types: manifest.target_types,
     ...(manifest.configuration_schema !== undefined
       ? { configuration_schema: manifest.configuration_schema }
+      : {}),
+    // Threaded through because both the family chooser and the generic
+    // form's `from_write_families` fields derive their options from it;
+    // dropping it here rendered choosers with no choices.
+    ...(manifest.write_families !== undefined
+      ? { write_families: manifest.write_families }
       : {}),
   };
 }
@@ -602,32 +618,29 @@ export function connectionConfigureRoutes(
       typeof cfg.default_write_calendar_id === "string"
         ? cfg.default_write_calendar_id
         : null;
-    const priorTargetType =
-      typeof cfg.target_type === "string" ? cfg.target_type : null;
+    const priorWriteFamily =
+      typeof cfg.write_family === "string" ? cfg.write_family : null;
     // The manifest is the one statement of what this integration writes by
-    // default. Falling back to the first offered type keeps the picker
-    // renderable for a manifest that declares none; it is not a preference.
-    // The schema requires at least one target type, so the last fallback is
-    // for the type checker rather than a state a manifest can reach.
-    const declaredTargetType =
-      declaredConfigurationDefault(manifest, "target_type") ??
-      manifest.target_types[0] ??
-      "";
+    // default. The first declared family keeps the picker renderable for a
+    // stored manifest predating write families; it is not a preference.
+    const familyNames = Object.keys(manifest.write_families?.families ?? {});
+    const declaredWriteFamily =
+      manifest.write_families?.default ?? familyNames[0] ?? "";
 
     setNoStore(c);
     return c.html(
       renderGoogleCalendarPicker({
         connectionId: id,
         calendars,
-        targetTypeChoices: manifest.target_types,
+        writeFamilyChoices: familyNames,
         // Read from the manifest, not named here. A hardcoded preference
         // agrees with the declared default only by coincidence, and the
         // picker is where an operator learns what the integration intends.
-        defaultTargetType: declaredTargetType,
+        defaultWriteFamily: declaredWriteFamily,
         prior: {
           selectedCalendarIds: priorSelected,
           defaultWriteCalendarId: priorDefaultWrite,
-          targetType: priorTargetType,
+          writeFamily: priorWriteFamily,
         },
       }),
     );
@@ -731,7 +744,9 @@ export function connectionConfigureRoutes(
       );
     }
 
-    const validTargetTypes = new Set(manifest.target_types);
+    const validWriteFamilies = new Set(
+      Object.keys(manifest.write_families?.families ?? {}),
+    );
     // `parseBody({ all: true })` returns arrays for repeated form fields
     // (the checkbox group `selected_calendar_ids` sends one entry per
     // checked calendar). The default `parseBody()` picks only the last
@@ -739,7 +754,7 @@ export function connectionConfigureRoutes(
     // would then complain the default-write calendar isn't ticked
     // (because it lost the rest of the array).
     const form = await c.req.parseBody({ all: true });
-    const parsed = parseConfigurePayload(form, validTargetTypes);
+    const parsed = parseConfigurePayload(form, validWriteFamilies);
     if (!parsed.ok) {
       setNoStore(c);
       return c.html(renderConfigureError(parsed.error), 400);
@@ -751,7 +766,7 @@ export function connectionConfigureRoutes(
       ...existingCfg,
       selected_calendar_ids: parsed.payload.selected_calendar_ids,
       default_write_calendar_id: parsed.payload.default_write_calendar_id,
-      target_type: parsed.payload.target_type,
+      write_family: parsed.payload.write_family,
     };
     // The picker validates its own UI semantics; the declared contract is
     // still the authority on what may be written, through the same gate
@@ -784,7 +799,7 @@ export function connectionConfigureRoutes(
         manifest_name: manifest.name,
         selected_count: parsed.payload.selected_calendar_ids.length,
         default_write_calendar_id: parsed.payload.default_write_calendar_id,
-        target_type: parsed.payload.target_type,
+        write_family: parsed.payload.write_family,
       },
     });
 

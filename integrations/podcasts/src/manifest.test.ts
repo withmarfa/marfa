@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { IntegrationManifestSchema } from "@withmarfa/shared";
+import {
+  IntegrationManifestSchema,
+  validateWriteFamilies,
+} from "@withmarfa/shared";
 import {
   DEFAULT_WRITE_FAMILY,
   EPISODE_BATCH_SIZE,
@@ -34,24 +37,16 @@ describe("podcasts manifest", () => {
     });
   });
 
-  // The manifest schema has no way to say "these target types are chosen
-  // together", so the pairing is asserted here instead. Without this a
-  // family could name a type the credential is not permitted to write.
-  it("every write family names types the manifest actually targets", () => {
-    for (const [family, pair] of Object.entries(WRITE_FAMILIES)) {
-      expect(PODCASTS_MANIFEST.target_types, `${family}.show`).toContain(
-        pair.show,
-      );
-      expect(PODCASTS_MANIFEST.target_types, `${family}.episode`).toContain(
-        pair.episode,
-      );
-    }
-  });
-
-  it("offers exactly the families the configuration lets a connection pick", () => {
-    const values = PODCASTS_MANIFEST.configuration_schema?.write_family?.values;
-    expect(new Set(values)).toEqual(new Set(Object.keys(WRITE_FAMILIES)));
-    expect(PODCASTS_MANIFEST.configuration_schema?.write_family?.default).toBe(
+  // Family coherence — pairs travel together, the chooser derives from
+  // the declared families — is validated centrally now that the manifest
+  // can say it. This asserts the manifest passes that validation, not the
+  // pairing itself.
+  it("declares coherent write families", () => {
+    expect(validateWriteFamilies(PODCASTS_MANIFEST)).toEqual([]);
+    expect(
+      PODCASTS_MANIFEST.configuration_schema?.write_family?.from_write_families,
+    ).toBe(true);
+    expect(PODCASTS_MANIFEST.write_families?.default).toBe(
       DEFAULT_WRITE_FAMILY,
     );
   });

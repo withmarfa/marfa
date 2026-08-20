@@ -50,6 +50,12 @@ export type {
 export { createCursorStore } from "./cursor-store.js";
 export type { CursorStore, CursorStorageAdapter } from "./cursor-store.js";
 
+export {
+  createMappingResolver,
+  familyOnlyMappingResolver,
+  type MappingResolver,
+  type MappingResolution,
+} from "./mapping.js";
 export { createActivitySink } from "./activity.js";
 export type {
   ActivitySink,

@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@withmarfa/shared";
-import { GOOGLE_CALENDAR_MANIFEST } from "./manifest.js";
+import {
+  IntegrationManifestSchema,
+  validateWriteFamilies,
+} from "@withmarfa/shared";
+import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_CALENDAR_MANIFEST,
+  WRITE_FAMILIES,
+} from "./manifest.js";
 
 describe("Google Calendar manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
@@ -38,12 +45,35 @@ describe("Google Calendar manifest", () => {
   it("targets both core.event (cross-app shape) and google.calendar.event (upstream-fidelity shape); direction is both", () => {
     // Both target types are declared so the install pipeline grants the
     // runtime credential permission to write either. The user picks
-    // which is actually written via the install-time configure form
-    // (default: google.calendar.event for full fidelity).
+    // which family is actually written via the install-time configure
+    // form (default: the google family for full fidelity).
     expect(GOOGLE_CALENDAR_MANIFEST.target_types).toEqual([
       "core.event",
       "google.calendar.event",
     ]);
     expect(GOOGLE_CALENDAR_MANIFEST.direction).toBe("both");
+  });
+
+  // Family coherence — the default exists, every target type travels in a
+  // family, the chooser derives from the declared families — is validated
+  // centrally now that the manifest can say it.
+  it("declares coherent write families with a family chooser", () => {
+    expect(validateWriteFamilies(GOOGLE_CALENDAR_MANIFEST)).toEqual([]);
+    expect(
+      GOOGLE_CALENDAR_MANIFEST.configuration_schema?.write_family
+        ?.from_write_families,
+    ).toBe(true);
+    expect(
+      GOOGLE_CALENDAR_MANIFEST.configuration_schema?.write_family?.default,
+    ).toBe(DEFAULT_WRITE_FAMILY);
+    expect(GOOGLE_CALENDAR_MANIFEST.write_families?.default).toBe(
+      DEFAULT_WRITE_FAMILY,
+    );
+  });
+
+  it("defaults to the upstream-fidelity family", () => {
+    expect(DEFAULT_WRITE_FAMILY).toBe("google");
+    expect(WRITE_FAMILIES.google.event).toBe("google.calendar.event");
+    expect(WRITE_FAMILIES.core.event).toBe("core.event");
   });
 });

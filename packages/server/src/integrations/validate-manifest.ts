@@ -2,6 +2,7 @@ import {
   IntegrationManifestSchema,
   MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR,
   parseManifestSchemaMajor,
+  validateWriteFamilies,
 } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -39,6 +40,17 @@ export function validateManifest(input: unknown): ValidateManifestResult {
       errors: parsed.error.issues.map((issue) => ({
         path: issue.path.join(".") || "_root",
         message: issue.message,
+      })),
+    };
+  }
+
+  const familyIssues = validateWriteFamilies(parsed.data);
+  if (familyIssues.length > 0) {
+    return {
+      ok: false,
+      errors: familyIssues.map((message) => ({
+        path: "write_families",
+        message,
       })),
     };
   }

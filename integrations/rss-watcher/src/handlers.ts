@@ -128,9 +128,20 @@ export function createScheduleHandler(
     const created: ItemResource[] = [];
     for (const entry of newEntries) {
       try {
-        const item = await ctx.marfa.createItem(
-          buildBookmarkInput(entry, parsed),
-        );
+        // The user's mapping routes on the parsed entry itself — the
+        // upstream-faithful record — so a rule can condition on any feed
+        // field. Family fallthrough is the bookmark shape below; a skip
+        // still counts as seen, or the entry would be re-offered forever.
+        const routed = await ctx.mapping.resolve(entry);
+        if (routed.kind === "skip") {
+          recordSeen(cursor, entry);
+          continue;
+        }
+        const input =
+          routed.kind === "user"
+            ? { ...routed.input, source_id: entry.id }
+            : buildBookmarkInput(entry, parsed);
+        const item = await ctx.marfa.createItem(input);
         created.push(item);
         recordSeen(cursor, entry);
       } catch (err) {

@@ -46,16 +46,46 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+/**
+ * One family only, so there is no `write_family` chooser: a single option
+ * needs no configuration key. The old `target_type` chooser offered all
+ * three target types as choices for the video write, and playlist and
+ * channel were never valid answers for that role — a core video
+ * projection, when one exists, arrives as a second family rather than as
+ * a loose type in a chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "google",
+  {
+    description: string;
+    types: { video: string; playlist: string; channel: string };
+  }
+> = {
+  google: {
+    description:
+      "The YouTube types, which keep everything the Data API carries for videos, playlists, and channels.",
+    types: {
+      video: "google.youtube.video",
+      playlist: "google.youtube.playlist",
+      channel: "google.youtube.channel",
+    },
+  },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  google: FAMILY_DEFINITIONS.google.types,
+} as const;
+
+export type WriteFamily = keyof typeof WRITE_FAMILIES;
+
+export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
+
 export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   name: "google.youtube",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
-    target_type: {
-      type: "string",
-      description: "Item type synced videos land as.",
-      from_target_types: true,
-    },
     materialise_playlists: {
       type: "boolean",
       description: "Whether playlists land as items joined to their videos.",
@@ -68,10 +98,14 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
   target_types: [
-    "google.youtube.video",
-    "google.youtube.playlist",
-    "google.youtube.channel",
+    WRITE_FAMILIES.google.video,
+    WRITE_FAMILIES.google.playlist,
+    WRITE_FAMILIES.google.channel,
   ],
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
+  },
   triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
   bidirectional_handling: {
     // Inbound-only — echo / lag windows aren't meaningfully exercised,
@@ -101,9 +135,6 @@ export const INTEGRATION_NAME = GOOGLE_YOUTUBE_MANIFEST.name;
  * other google.* integrations).
  */
 export const YOUTUBE_API_BASE = "/youtube/v3";
-
-/** Default target type for liked / playlist-walked videos. */
-export const DEFAULT_TARGET_TYPE = "google.youtube.video";
 
 /** YouTube `videos.list?id=<csv>` accepts up to 50 ids per call. */
 export const BATCH_FETCH_MAX = 50;

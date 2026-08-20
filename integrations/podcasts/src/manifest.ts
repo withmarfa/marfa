@@ -21,16 +21,36 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
-/** Item families a connection can choose between. */
-export const WRITE_FAMILIES = {
+/**
+ * The two families a connection chooses between, declared once and carried
+ * on the manifest itself so the platform validates family coherence
+ * centrally and the configure surface derives the chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "podcast" | "core",
+  { description: string; types: { show: string; episode: string } }
+> = {
   podcast: {
-    show: "withmarfa.podcast.show",
-    episode: "withmarfa.podcast.episode",
+    description: "The podcast types, which keep everything a feed carries.",
+    types: {
+      show: "withmarfa.podcast.show",
+      episode: "withmarfa.podcast.episode",
+    },
   },
   core: {
-    show: "core.media.series",
-    episode: "core.media.episode",
+    description:
+      "The core media types, readable by any app that understands core media; drops what those types cannot hold.",
+    types: {
+      show: "core.media.series",
+      episode: "core.media.episode",
+    },
   },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  podcast: FAMILY_DEFINITIONS.podcast.types,
+  core: FAMILY_DEFINITIONS.core.types,
 } as const;
 
 export type WriteFamily = keyof typeof WRITE_FAMILIES;
@@ -39,8 +59,8 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "podcast";
 
 export const PODCASTS_MANIFEST: IntegrationManifest = {
   name: "withmarfa.podcasts",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   publisher: "withmarfa",
   description:
     "Polls podcast RSS feeds on a schedule and mirrors each show and its episodes, joined by in-collection edges. Writes its own podcast types by default, or the core media types when a connection chooses interoperability over fidelity. Read-only.",
@@ -69,9 +89,13 @@ export const PODCASTS_MANIFEST: IntegrationManifest = {
       type: "string",
       description:
         "Item family shows and episodes land as. The podcast family keeps everything a feed carries; the core family is readable by any app that understands core media, and drops what those types cannot hold.",
-      values: ["podcast", "core"],
+      from_write_families: true,
       default: DEFAULT_WRITE_FAMILY,
     },
+  },
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
   },
   /**
    * A feed dropping an item is indistinguishable from a feed that publishes

@@ -11,6 +11,7 @@ import type { ConnectionClient } from "./connection-client.js";
 import type { CursorStore } from "./cursor-store.js";
 import type { ActivitySink } from "./activity.js";
 import type { EchoSuppression } from "./echo-suppression.js";
+import type { MappingResolver } from "./mapping.js";
 import type { CycleMetadata } from "./types.js";
 
 export interface ConnectionContext {
@@ -30,6 +31,11 @@ export interface ConnectionContext {
 
   /** Bidirectional-handling helpers (echo suppression, lag window). */
   echo: EchoSuppression;
+
+  /** The per-connection user-mapping resolver. Handlers present each
+   *  upstream-faithful record before building its write; the answer is
+   *  the user's routing, the family fallthrough, or a counted skip. */
+  mapping: MappingResolver;
 
   /** Hop budget metadata for this run, if it originated from an
    *  item-event. Schedule + webhook runs leave this null because they

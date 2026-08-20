@@ -48,13 +48,16 @@ import {
   type HandlerResult,
   type CreateItemInput,
 } from "@withmarfa/runtime-sdk";
+import { resolveWriteFamily } from "@withmarfa/shared";
 import {
   DRIVE_API_BASE,
-  DEFAULT_TARGET_TYPE,
+  DEFAULT_WRITE_FAMILY,
   FILES_FIELDS,
   CHANGES_FIELDS,
   CHANNEL_RENEW_LEEWAY_MS,
   CHANNEL_TTL_MS,
+  GOOGLE_DRIVE_MANIFEST,
+  WRITE_FAMILIES,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -92,6 +95,9 @@ interface ChannelState {
 }
 
 interface ConnectionConfig {
+  /** Type inbound files land as: the file role of the connection's
+   *  resolved write family. `buildFileInput` still routes byte-less files
+   *  to the fidelity type whatever this says. */
   target_type: string;
   /** `metadata` (default) | `all-files` | `glob:<pattern>`.
    *  `metadata` and `all-files` are both wired; `glob:<pattern>`
@@ -127,6 +133,8 @@ interface ConnectionConfig {
  */
 export const DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 
+const DEFAULT_FILE_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].file;
+
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
 ): Promise<ConnectionConfig> {
@@ -136,10 +144,12 @@ async function resolveConnectionConfig(
       | { configuration?: Record<string, unknown> }
       | undefined;
     const cfg = props?.configuration ?? {};
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : DEFAULT_TARGET_TYPE;
+    // The manifest's declared families decide the type: a configured
+    // `write_family` names one, a legacy stored `target_type` resolves to
+    // the family containing it, and an unconfigured connection gets the
+    // declared default.
+    const family = resolveWriteFamily(GOOGLE_DRIVE_MANIFEST, cfg);
+    const targetType = family?.types.file ?? DEFAULT_FILE_TYPE;
     const downloadMode =
       typeof cfg.download_mode === "string" && cfg.download_mode.length > 0
         ? cfg.download_mode
@@ -172,7 +182,7 @@ async function resolveConnectionConfig(
     };
   } catch {
     return {
-      target_type: DEFAULT_TARGET_TYPE,
+      target_type: DEFAULT_FILE_TYPE,
       download_mode: "metadata",
       initial_sync_max_files: DEFAULT_INITIAL_SYNC_MAX_FILES,
       max_file_size_bytes: DEFAULT_MAX_FILE_SIZE_BYTES,
@@ -991,11 +1001,13 @@ function buildFileInput(
     properties.blob_ref = blob.hash;
     if (file.webViewLink !== undefined) properties.url = file.webViewLink;
     const type =
-      configuredTargetType === "core.file" ? "core.file" : DEFAULT_TARGET_TYPE;
+      configuredTargetType === WRITE_FAMILIES.core.file
+        ? WRITE_FAMILIES.core.file
+        : DEFAULT_FILE_TYPE;
     return { type, properties };
   }
 
-  return { type: DEFAULT_TARGET_TYPE, properties };
+  return { type: DEFAULT_FILE_TYPE, properties };
 }
 
 function contentHashForFile(file: DriveFile): string {

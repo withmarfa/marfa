@@ -466,7 +466,10 @@ export function runtimeCredentialRoutes(
             label: body.label.trim(),
             source: body.source.trim(),
             role: "member",
-            type_permissions: buildTypePermissions(manifest),
+            type_permissions: buildTypePermissions(
+              manifest,
+              connection.properties,
+            ),
             extension_permissions: buildExtensionPermissions(manifest),
             edge_permissions: buildEdgePermissions(manifest),
             connection_id: body.connection_id,
