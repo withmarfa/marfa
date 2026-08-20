@@ -55,6 +55,50 @@ export class SqliteRateLimitStore implements RateLimitStore {
     return { count: row.count, expires_at: row.expires_at };
   }
 
+  async incrementWindows(
+    family: string,
+    keys: string[],
+    windowMs: number,
+    nowIso: string,
+  ): Promise<Map<string, { count: number; expires_at: string }>> {
+    const result = new Map<string, { count: number; expires_at: string }>();
+    // Sorted and deduplicated to match the PG sibling's lock-order
+    // discipline; SQLite's single writer makes it moot but identical
+    // code keeps the dialects honest mirrors.
+    const unique = [...new Set(keys)].sort();
+    if (unique.length === 0) return result;
+    const nextExpiresAt = new Date(
+      new Date(nowIso).getTime() + windowMs,
+    ).toISOString();
+    const rows = await this.db
+      .insert(rateLimitWindows)
+      .values(
+        unique.map((key) => ({
+          family,
+          window_key: key,
+          count: 1,
+          expires_at: nextExpiresAt,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [rateLimitWindows.family, rateLimitWindows.window_key],
+        set: {
+          count: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN 1 ELSE ${rateLimitWindows.count} + 1 END`,
+          expires_at: sql`CASE WHEN ${rateLimitWindows.expires_at} <= ${nowIso} THEN ${nextExpiresAt} ELSE ${rateLimitWindows.expires_at} END`,
+        },
+      })
+      .returning({
+        key: rateLimitWindows.window_key,
+        count: rateLimitWindows.count,
+        expires_at: rateLimitWindows.expires_at,
+      })
+      .all();
+    for (const row of rows) {
+      result.set(row.key, { count: row.count, expires_at: row.expires_at });
+    }
+    return result;
+  }
+
   async cleanup(nowIso: string): Promise<number> {
     const result = await this.db
       .delete(rateLimitWindows)

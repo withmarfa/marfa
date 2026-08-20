@@ -117,12 +117,15 @@ export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
     }
 
     // Case 3: space-bounded — wrap downstream in a transaction with
-    // SET LOCAL ROLE marfa_app + space_id.
+    // SET LOCAL ROLE marfa_app + space_id. Both settings ride one
+    // statement: set_config('role', …, true) IS `SET LOCAL ROLE` (the
+    // role is an ordinary GUC), and nothing reads a result between the
+    // two, so issuing them separately was one round trip of pure
+    // latency on every space-bounded request.
     await db.transaction(async (tx) => {
       await tx.execute(
-        sql`SELECT set_config('marfa.space_id', ${spaceId}, true)`,
+        sql`SELECT set_config('marfa.space_id', ${spaceId}, true), set_config('role', 'marfa_app', true)`,
       );
-      await tx.execute(sql`SET LOCAL ROLE marfa_app`);
 
       await pgRequestContext.run({ tx }, async () => {
         await next();

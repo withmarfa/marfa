@@ -16,7 +16,7 @@ import {
   isTypeInStrictMode,
   getSourceAllowlist,
 } from "@withmarfa/shared";
-import type { Item, ItemState, Metadata } from "@withmarfa/shared";
+import type { Edge, Item, ItemState, Metadata } from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -47,6 +47,8 @@ import {
   hydrateEdgesForItem,
   hydrateEdgesForItems,
   hydrateBackrefsForItem,
+  groupAndCap,
+  HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
 import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
@@ -1326,68 +1328,88 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      // The reservation is the first thing in this transaction and holds for
-      // the rest of it, so the count it reads includes every create already
-      // committed against this space's ceiling.
-      await reserveQuota(c, storage, [{ resource: "items", increment: 1 }]);
-      const created = await storage.items.create(
-        {
-          type,
-          properties,
-          id: body.id,
-          state: body.state as ItemState | undefined,
-          tier: tierValue,
-          timestamp: body.timestamp,
-          source: stampedSource,
-          source_id: body.source_id,
-          device: body.device,
-          capture_latitude: body.capture_latitude,
-          capture_longitude: body.capture_longitude,
-          tags: body.tags,
-        },
-        spaceId,
-      );
-
-      // Atomic edges: for each entry, this item is the source; listed ids
-      // are targets. assertEdgesCanBeCreated enforces cardinality / type
-      // constraints / cycle rules across the whole batch in grouped queries;
-      // failure rolls the entire transaction.
-      if (body.edges) {
-        const proposals = Object.entries(body.edges).flatMap(
-          ([edgeType, targets]) =>
-            targets.map((targetId) => ({
-              source_id: created.id,
-              target_id: targetId,
-              edge_type: edgeType,
-            })),
+    const { item, metadata, createdEdges } = await storage.runInTransaction(
+      async () => {
+        // The reservation is the first thing in this transaction and holds for
+        // the rest of it, so the count it reads includes every create already
+        // committed against this space's ceiling.
+        await reserveQuota(c, storage, [{ resource: "items", increment: 1 }]);
+        const created = await storage.items.create(
+          {
+            type,
+            properties,
+            id: body.id,
+            state: body.state as ItemState | undefined,
+            tier: tierValue,
+            timestamp: body.timestamp,
+            source: stampedSource,
+            source_id: body.source_id,
+            device: body.device,
+            capture_latitude: body.capture_latitude,
+            capture_longitude: body.capture_longitude,
+            tags: body.tags,
+          },
+          spaceId,
         );
-        if (proposals.length > 0) {
-          await assertEdgesCanBeCreated(
-            storage.edges,
-            storage.items,
-            proposals,
-            { space_id: spaceId },
+
+        // Atomic edges: for each entry, this item is the source; listed ids
+        // are targets. assertEdgesCanBeCreated enforces cardinality / type
+        // constraints / cycle rules across the whole batch in grouped queries;
+        // failure rolls the entire transaction. The created rows are kept:
+        // they are the complete outbound-edge set of an item born this
+        // instant, so the response hydration below needs no read.
+        const createdEdges: Edge[] = [];
+        if (body.edges) {
+          const proposals = Object.entries(body.edges).flatMap(
+            ([edgeType, targets]) =>
+              targets.map((targetId) => ({
+                source_id: created.id,
+                target_id: targetId,
+                edge_type: edgeType,
+              })),
           );
-          for (const p of proposals) {
-            await storage.edges.createRaw(
-              {
-                source_id: p.source_id,
-                target_id: p.target_id,
-                edge_type: p.edge_type,
-              },
-              spaceId,
+          if (proposals.length > 0) {
+            await assertEdgesCanBeCreated(
+              storage.edges,
+              storage.items,
+              proposals,
+              { space_id: spaceId },
             );
+            for (const p of proposals) {
+              createdEdges.push(
+                await storage.edges.createRaw(
+                  {
+                    source_id: p.source_id,
+                    target_id: p.target_id,
+                    edge_type: p.edge_type,
+                  },
+                  spaceId,
+                ),
+              );
+            }
           }
         }
-      }
 
-      const meta = await storage.metadata.get(created.id);
-      return { item: created, metadata: meta };
-    });
+        // A fresh create's metadata layer is exactly what the create wrote:
+        // its tags (stored verbatim, `input.tags ?? []`) over empty
+        // extensions. Reading it back re-fetched the row written one
+        // statement earlier in this same transaction.
+        return {
+          item: created,
+          metadata: {
+            item_id: created.id,
+            tags: body.tags ?? [],
+            extensions: {},
+          },
+          createdEdges,
+        };
+      },
+    );
 
-    const hydrated = await hydrateEdgesForItem(storage, item.id);
-    const itemWithEdges = { ...item, edges: hydrated };
+    const itemWithEdges = {
+      ...item,
+      edges: groupAndCap(createdEdges, HYDRATE_PER_TYPE_CAP),
+    };
 
     await publish({
       type: "created",
