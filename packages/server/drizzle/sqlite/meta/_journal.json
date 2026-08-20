@@ -498,6 +498,13 @@
       "when": 1786700000000,
       "tag": "0070_auth_one_seven_shape",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1787228090000,
+      "tag": "0071_backfill_connection_scoped_spaces",
+      "breakpoints": true
     }
   ]
 }

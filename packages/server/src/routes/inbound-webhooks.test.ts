@@ -325,7 +325,6 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   }
 
   it("space_admin subscribes against a platform-scoped integration item", async () => {
-    if (!ctx.storage.spaces) return;
     const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,
@@ -339,7 +338,6 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   });
 
   it("platform-admin create stamps the connection's space, not its own", async () => {
-    if (!ctx.storage.spaces) return;
     const { spaceId, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,
@@ -356,6 +354,21 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
       spaceId,
     );
     expect(rows.map((r) => r.id)).toContain(created.id);
+  });
+
+  it("space_admin from another space cannot reach the connection", async () => {
+    // The fence on the connection lookup is what makes stamping the
+    // connection's space safe: a caller only ever reaches connections
+    // whose space it shares, so the stamp cannot cross a boundary.
+    const { connectionId } = await spaceScopedConnection();
+    const { spaceKey: otherSpaceKey } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: otherSpaceKey, body: { events: ["thing.created"] } },
+    );
+    expect(res.status).toBe(404);
   });
 });
 

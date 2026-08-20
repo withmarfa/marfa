@@ -100,7 +100,15 @@ async function requireConnectionAccess(
   c: import("hono").Context<AppEnv>,
   storage: Storage,
   connectionId: string,
-): Promise<{ spaceId: string | undefined }> {
+): Promise<{
+  spaceId: string | undefined;
+  /** The connection's own space, distinct from the caller's: a platform
+   *  admin carries no space, but a lease row must live in the
+   *  connection's space or the space-fenced list and revoke lookups —
+   *  and the uninstall pipeline's revocation sweep — can never reach
+   *  it. */
+  connectionSpaceId: string | undefined;
+}> {
   const key = requireAuth(c);
   // Space-bounded admin authority, matching the sibling connection
   // routes: leased tokens belong to a connection, and a connection
@@ -139,7 +147,7 @@ async function requireConnectionAccess(
       "Caller cannot manage leased tokens on this connection",
     );
   }
-  return { spaceId };
+  return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +408,11 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
   r.openapi(issueLeaseRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
+    const { spaceId, connectionSpaceId } = await requireConnectionAccess(
+      c,
+      storage,
+      connectionId,
+    );
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
@@ -433,7 +445,11 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     const row = await storage.connectionLeasedTokens.create({
       id,
       connection_id: connectionId,
-      space_id: spaceId,
+      // The connection's space, not the caller's: a platform admin has
+      // no space, and a space-less lease row is invisible to the fenced
+      // list and revoke lookups and to the uninstall pipeline's sweep,
+      // while validate keeps answering active until the TTL runs out.
+      space_id: connectionSpaceId,
       capability_id: body.capability_id,
       lease_token_hash: hashLease(rawLease),
       scopes: body.scopes ?? [],

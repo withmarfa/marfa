@@ -8,7 +8,11 @@ import {
   type InboundWebhook,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
+import {
+  requireAuth,
+  hasSpaceAdminAuthority,
+  hasPlatformAuthority,
+} from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
@@ -90,6 +94,30 @@ async function requireConnectionAccess(
   connectionSpaceId: string | undefined;
 }> {
   const key = requireAuth(c);
+  // Same widening as `requireConnectionProxyAccess` in
+  // `routes/connection-proxy.ts` — accept runtime credentials minted
+  // for this connection alongside the OAuth-app-grant shape.
+  const isIntegration =
+    key.source === `oauth:${connectionId}` ||
+    (key.is_runtime_credential === true && key.connection_id === connectionId);
+  // Defense-in-depth, matching the leased-tokens sibling: a credential
+  // that resolves to an undefined spaceId below reads "any space" at the
+  // storage call sites, and since subscription rows land in the
+  // CONNECTION's space, a space-less caller admitted here would create a
+  // live subscription inside a space it does not belong to. Platform
+  // authority and connection-bound credentials are the only space-less
+  // shapes entitled to that reach.
+  if (
+    !key.space_id &&
+    !isIntegration &&
+    !hasPlatformAuthority(key) &&
+    !key.is_platform
+  ) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Space scope required for this credential",
+    );
+  }
   const spaceId = key.space_id ?? undefined;
   const connection = await storage.items.get(connectionId, spaceId);
   if (connection?.type !== "system.connection") {
@@ -103,12 +131,6 @@ async function requireConnectionAccess(
   // on `key.space_id`, so rank decides what the caller may do and the
   // fence decides which connections it can see.
   const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
-  // Same widening as `requireConnectionProxyAccess` in
-  // `routes/connection-proxy.ts` — accept runtime credentials minted
-  // for this connection alongside the OAuth-app-grant shape.
-  const isIntegration =
-    key.source === `oauth:${connectionId}` ||
-    (key.is_runtime_credential === true && key.connection_id === connectionId);
   if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -447,7 +469,10 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
+      // The subscription's own space, so the owning space's audit view
+      // shows the event that created a row inside it even when a
+      // platform (space-less) caller created it.
+      space_id: connectionSpaceId ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.create",
       resource_type: "inbound_webhook",
