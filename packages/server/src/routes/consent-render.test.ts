@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen, SCOPE_LABELS, OIDC_LABELS } from "./consent.js";
+import {
+  renderConsentScreen,
+  SCOPE_LABELS,
+  OIDC_LABELS,
+  humanizeType,
+} from "./consent.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 
 /**
@@ -152,10 +157,14 @@ describe("renderConsentScreen — soft-tile groups", () => {
     }
   });
 
-  it("every default-bundle scope has a curated toggle label", () => {
-    // Registry descriptions are sentences, not labels — a bundle scope
-    // without a curated entry ships an auto-humanized toggle. Widening a
-    // bundle therefore has to widen the label map with it.
+  it("every default-bundle scope resolves to a human toggle label", () => {
+    // The bundles derive from the registry now, so requiring a CURATED
+    // label per scope would just recreate the hand list the derivation
+    // deleted. What must hold instead: every derived scope resolves to
+    // some human label through the same chain the renderer uses —
+    // curated map first, humanized type name as the floor. The curated
+    // map stays as better copy for the shipped set; this pins that the
+    // chain never leaves a scope unlabeled.
     for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
       for (const literal of bundle.scopes) {
         const parsed = parseScope(literal);
@@ -164,8 +173,9 @@ describe("renderConsentScreen — soft-tile groups", () => {
         const label =
           parsed.kind === "oidc"
             ? OIDC_LABELS[parsed.oidcScope ?? parsed.typePattern]
-            : SCOPE_LABELS[parsed.typePattern];
-        expect(label, `no curated label for ${literal}`).toBeTruthy();
+            : (SCOPE_LABELS[parsed.typePattern] ??
+              humanizeType(parsed.typePattern));
+        expect(label, `no label resolves for ${literal}`).toBeTruthy();
       }
     }
   });

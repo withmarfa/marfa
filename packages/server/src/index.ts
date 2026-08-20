@@ -2,7 +2,11 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { loadConfig } from "./config.js";
+import { loadConfig, setActivePermissionBundles } from "./config.js";
+import {
+  buildDefaultPermissionBundles,
+  resolveRuntimeCustomNamespaces,
+} from "./auth/default-bundles.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
@@ -862,6 +866,19 @@ async function main() {
   // is a supported topology, not a hazard.
   if (config.storageDialect === "sqlite") {
     checkMultiReplica();
+  }
+
+  // Fold the runtime custom-type namespaces into the active permission
+  // bundles, so a custom type under a claimed publisher handle is offerable
+  // through the default consent set rather than only `user.*`. Read once at
+  // boot, matching the scope allowlist's restart-re-enumeration model. The
+  // operator override outranks the derivation and skips it entirely.
+  if (!process.env.MARFA_PERMISSION_BUNDLES) {
+    const bundles = buildDefaultPermissionBundles(
+      await resolveRuntimeCustomNamespaces(storage),
+    );
+    setActivePermissionBundles(bundles);
+    config.permissionBundles = bundles;
   }
 
   // The web role serves the full app; the worker role serves only /health

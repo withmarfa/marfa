@@ -249,7 +249,7 @@ function scopeLiteralFor(scope: ParsedScope): string {
 
 /** Title-case the most specific segment of a dotted type pattern, for scopes
  *  outside the curated label map (e.g. a third-party app's custom request). */
-function humanizeType(typePattern: string): string {
+export function humanizeType(typePattern: string): string {
   if (typePattern === "*") return "Everything";
   const base = typePattern.replace(/\.\*$/, "");
   const seg = base.split(".").filter(Boolean).pop() ?? base;
