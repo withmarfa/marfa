@@ -226,10 +226,14 @@ describe.skipIf(!isPg)("expiry ceiling against the real boss", () => {
           runOnce: () => Promise.resolve(),
         };
         await startPgBossSchedules(boss, [daily, oversized], FAST);
+        const queues = await boss.getQueues();
         for (const job of [daily, oversized]) {
-          const queues = await boss.getQueues();
           const queue = queues.find((q) => q.name === queueNameFor(job.name));
           expect(queue).toBeDefined();
+          // The type check keeps this loud: if a pg-boss upgrade renames
+          // the returned field, the assertion fails rather than passing
+          // vacuously through the optional chain.
+          expect(queue?.expireInSeconds).toBeTypeOf("number");
           expect(queue?.expireInSeconds ?? 0).toBeLessThan(86_400);
         }
       } finally {

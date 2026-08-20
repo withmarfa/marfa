@@ -46,6 +46,7 @@
  */
 import type { PgBoss } from "pg-boss";
 import { logJobTickFailure } from "../storage/job-tick.js";
+import { log } from "../middleware/logger.js";
 
 export interface ScheduledJobSpec {
   /**
@@ -72,9 +73,12 @@ export interface ScheduledJobSpec {
    * abandoned and frees the active slot for the successor. Defaults to
    * twice the interval, floored at sixty seconds; set explicitly for
    * jobs whose ticks legitimately outrun that (enrichment's batch of
-   * per-item OCR timeouts). An expired-but-still-running tick can
-   * overlap its successor, which is why every job keeps its own
-   * cross-process coordination lock rather than leaning on the queue.
+   * per-item OCR timeouts). Values at or above 24 hours are clamped to
+   * the longest expiry pg-boss accepts, with a warn log naming the job,
+   * so a tick budgeted past the clamp can be marked abandoned while
+   * still running. An expired-but-still-running tick can overlap its
+   * successor, which is why every job keeps its own cross-process
+   * coordination lock rather than leaning on the queue.
    */
   expireInSeconds?: number;
   /** One tick. Failures are caught, logged and do not break the chain. */
@@ -114,9 +118,9 @@ const REPAIR_CRON = "* * * * *";
  */
 const SEED_DELAY_SECONDS = 10;
 
-/** pg-boss refuses `expireInSeconds` at or above 24 hours — its assert is
- *  `hours < 24`, strictly — so the ceiling here sits one second under.
- *  Exactly 86 400 crashed `createQueue` at boot for every daily-interval
+/** pg-boss refuses `expireInSeconds` at or above 24 hours (its assert is
+ *  `hours < 24`, strictly), so the ceiling here sits one second under.
+ *  Exactly 86_400 crashed `createQueue` at boot for every daily-interval
  *  job, on the first deployment that ran this code against a real boss. */
 const MAX_EXPIRE_SECONDS = 86_399;
 
@@ -131,10 +135,9 @@ function intervalSeconds(ms: number): number {
 }
 
 function defaultExpireSeconds(job: ScheduledJobSpec): number {
-  return Math.min(
-    MAX_EXPIRE_SECONDS,
-    Math.max(60, intervalSeconds(job.intervalMs) * 2),
-  );
+  // Unclamped on purpose: the single clamp lives at the createQueue call
+  // every value (default or explicit) passes through.
+  return Math.max(60, intervalSeconds(job.intervalMs) * 2);
 }
 
 /**
@@ -200,14 +203,20 @@ export async function startPgBossSchedules(
 
   for (const job of jobs) {
     const queue = queueNameFor(job.name);
+    const requestedExpire = job.expireInSeconds ?? defaultExpireSeconds(job);
+    // The single clamp point: a spec asking for more than the boss allows
+    // degrades to the longest legal expiry instead of crashing boot. Loud,
+    // because a clamped tick can be marked abandoned while still running.
+    if (requestedExpire > MAX_EXPIRE_SECONDS) {
+      log("warn", "Scheduled job expiry clamped to pg-boss's ceiling", {
+        job: job.name,
+        requested_seconds: requestedExpire,
+        clamped_seconds: MAX_EXPIRE_SECONDS,
+      });
+    }
     await boss.createQueue(queue, {
       policy: "stately",
-      // Explicit values clamp too: a spec asking for more than the boss
-      // allows must degrade to the longest legal expiry, not crash boot.
-      expireInSeconds: Math.min(
-        job.expireInSeconds ?? defaultExpireSeconds(job),
-        MAX_EXPIRE_SECONDS,
-      ),
+      expireInSeconds: Math.min(requestedExpire, MAX_EXPIRE_SECONDS),
     });
     const workOptions = {
       batchSize: 1,
