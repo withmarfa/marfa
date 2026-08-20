@@ -114,8 +114,11 @@ const REPAIR_CRON = "* * * * *";
  */
 const SEED_DELAY_SECONDS = 10;
 
-/** pg-boss caps `expireInSeconds` at 24 hours. */
-const MAX_EXPIRE_SECONDS = 86_400;
+/** pg-boss refuses `expireInSeconds` at or above 24 hours — its assert is
+ *  `hours < 24`, strictly — so the ceiling here sits one second under.
+ *  Exactly 86 400 crashed `createQueue` at boot for every daily-interval
+ *  job, on the first deployment that ran this code against a real boss. */
+const MAX_EXPIRE_SECONDS = 86_399;
 
 export function queueNameFor(jobName: string): string {
   return `${QUEUE_PREFIX}${jobName}`;
@@ -199,7 +202,12 @@ export async function startPgBossSchedules(
     const queue = queueNameFor(job.name);
     await boss.createQueue(queue, {
       policy: "stately",
-      expireInSeconds: job.expireInSeconds ?? defaultExpireSeconds(job),
+      // Explicit values clamp too: a spec asking for more than the boss
+      // allows must degrade to the longest legal expiry, not crash boot.
+      expireInSeconds: Math.min(
+        job.expireInSeconds ?? defaultExpireSeconds(job),
+        MAX_EXPIRE_SECONDS,
+      ),
     });
     const workOptions = {
       batchSize: 1,
