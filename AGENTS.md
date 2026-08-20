@@ -21,7 +21,7 @@ Typed data layer. This monorepo holds eight active workspace packages, sixteen i
 
 - **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
 - **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `withmarfa-inbox` (email capture via Cloudflare Email Routing).
-- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-to-Marfa bridge re-presented as a Connection; the agent itself lives in `withmarfa/sync`).
+- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-sync client installed as a Connection for credentials, configuration, and observability; its items are user-owned and editable, not mirrors — the client itself lives in `withmarfa/sync`).
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` plus deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
 
