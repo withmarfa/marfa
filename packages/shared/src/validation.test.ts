@@ -7,6 +7,8 @@ import {
   isValidEmail,
   isValidLanguageCode,
   isValidTypeIdentifier,
+  isValidIntegrationIdentifier,
+  isValidTypePattern,
   isValidHandle,
   isReservedHandle,
   deriveHandleFromEmail,
@@ -518,5 +520,69 @@ describe("isReservedHandle", () => {
   it("returns false for non-string input", () => {
     expect(isReservedHandle(undefined as unknown as string)).toBe(false);
     expect(isReservedHandle(null as unknown as string)).toBe(false);
+  });
+});
+
+describe("isValidIntegrationIdentifier", () => {
+  it("accepts handle-slash-name", () => {
+    expect(isValidIntegrationIdentifier("readwise/reader")).toBe(true);
+    expect(isValidIntegrationIdentifier("marfa/rss-watcher")).toBe(true);
+    expect(isValidIntegrationIdentifier("google/calendar")).toBe(true);
+  });
+
+  it("accepts a dotted name half, so a family can carry a sub-namespace", () => {
+    expect(isValidIntegrationIdentifier("acme/calendar.events")).toBe(true);
+  });
+
+  it("does not judge reserved words — that is registration's question", () => {
+    // The platform's own integrations live under `marfa/`, and `google` and
+    // `todoist` are reserved handle words. Refusing them syntactically would
+    // refuse most of the shipped set; whether a publisher may claim a handle
+    // is answered where the credential is in hand.
+    expect(isValidIntegrationIdentifier("marfa/podcasts")).toBe(true);
+    expect(isValidIntegrationIdentifier("todoist/tasks")).toBe(true);
+  });
+
+  it("takes exactly one slash, never a path", () => {
+    expect(isValidIntegrationIdentifier("acme/deep/name")).toBe(false);
+    expect(isValidIntegrationIdentifier("/leading")).toBe(false);
+    expect(isValidIntegrationIdentifier("trailing/")).toBe(false);
+  });
+
+  it("holds the handle to the handle grammar", () => {
+    expect(isValidIntegrationIdentifier("ab/short-handle")).toBe(false);
+    expect(isValidIntegrationIdentifier("do--uble/name")).toBe(false);
+    expect(isValidIntegrationIdentifier("Upper/name")).toBe(false);
+    expect(isValidIntegrationIdentifier("-lead/name")).toBe(false);
+  });
+
+  it("still accepts the legacy dot form while stored names are migrating", () => {
+    expect(isValidIntegrationIdentifier("readwise.reader")).toBe(true);
+    expect(isValidIntegrationIdentifier("withmarfa.inbox")).toBe(true);
+  });
+
+  it("refuses what the legacy form refuses", () => {
+    expect(isValidIntegrationIdentifier("nodot")).toBe(false);
+    expect(isValidIntegrationIdentifier("core.note")).toBe(false);
+  });
+
+  it("caps length and refuses non-strings", () => {
+    expect(isValidIntegrationIdentifier(`acme/${"a".repeat(200)}`)).toBe(false);
+    expect(isValidIntegrationIdentifier(undefined as unknown as string)).toBe(
+      false,
+    );
+  });
+});
+
+describe("the two grammars stay apart", () => {
+  it("a type identifier never admits a slash", () => {
+    // The whole reason integration names got their own validator: a slash
+    // reaching the type grammar would reach every scope literal and
+    // permission-map key, where it can only ever name something that does
+    // not exist.
+    expect(isValidTypeIdentifier("readwise/reader")).toBe(false);
+    expect(isValidTypeIdentifier("core/note")).toBe(false);
+    expect(isValidTypePattern("core/note")).toBe(false);
+    expect(isValidTypePattern("core/media.*")).toBe(false);
   });
 });
