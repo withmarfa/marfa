@@ -21,10 +21,8 @@
  * reverses them in reverse order. The compensations are idempotent.
  *
  * Internal-call bypass — the runtime credential mint at step 2 calls
- * `storage.keys.createRuntimeCredential` directly rather than going
- * through the HTTP `POST /system/runtime-credentials` route. This
- * intentionally bypasses the broker-key (`is_platform: true`) check
- * that route enforces — at install time the caller is the better-auth
+ * `storage.keys.createRuntimeCredential` directly; there is no HTTP
+ * mint route. At install time the caller is the better-auth
  * session user (a human approving a connection), not the control-plane
  * lease broker. Documented here so future readers don't read the
  * bypass as an oversight.
@@ -288,8 +286,7 @@ export async function performInstall(
 
   // -------------------------------------------------------------------
   // Step 2: mint runtime credential bound to the new connection id.
-  // Internal call bypasses the broker-key check on POST
-  // /system/runtime-credentials — see file docstring for rationale.
+  // Direct storage call — see the file docstring for rationale.
   // -------------------------------------------------------------------
   const rawKey = generateRawKey();
   const keyHash = hashApiKey(rawKey, salt);
@@ -419,82 +416,6 @@ export async function performInstall(
     credential_id: credential.id,
     activity_id: activity.id,
   };
-}
-
-/**
- * Best-effort: ask the control plane to arm the per-Connection alarm
- * for a freshly-installed integration that has a `schedule` trigger.
- *
- * Called by the install route after `performInstall` completes. Failures
- * here do NOT roll back the install — instead they surface as a
- * `system.activity` of severity `action_required` so an operator sees
- * the dangling install and can retry. A scheduled integration whose
- * alarm wasn't armed sits silent rather than firing; arming is
- * idempotent so a manual re-call is the recovery path.
- */
-export async function armScheduleForInstall(
-  storage: Storage,
-  args: {
-    manifest: IntegrationManifest;
-    connectionId: string;
-    spaceId?: string;
-    controlPlaneUrl: string;
-    runtimeBrokerKey: string;
-  },
-): Promise<void> {
-  const hasSchedule = args.manifest.triggers.some((t) => t.type === "schedule");
-  if (!hasSchedule) return;
-
-  const url = `${args.controlPlaneUrl.replace(/\/$/, "")}/connections/${args.connectionId}/arm-schedule`;
-  let outcome: "ok" | "failed" = "failed";
-  let detail: Record<string, unknown>;
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${args.runtimeBrokerKey}`,
-      },
-      body: JSON.stringify({ integration_name: args.manifest.name }),
-    });
-    const body = (await res.json()) as { ok?: boolean; status?: number };
-    detail = { control_plane_status: res.status, result: body };
-    if (res.ok && body.ok !== false) {
-      outcome = "ok";
-    }
-  } catch (err) {
-    detail = {
-      reason: "control_plane_unreachable",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-
-  if (outcome === "ok") return;
-
-  // Surface as action_required so the operator can investigate +
-  // retry. The connection is otherwise installed correctly.
-  try {
-    await storage.items.create(
-      {
-        type: "system.activity",
-        properties: {
-          connection_id: args.connectionId,
-          severity: "action_required" as const,
-          summary: `Schedule alarm not armed for ${args.manifest.name}`,
-          detail: {
-            ...detail,
-            integration_name: args.manifest.name,
-            arm_url: url,
-          },
-        },
-      },
-      args.spaceId,
-    );
-  } catch {
-    // Activity emission failure is non-fatal — the install itself
-    // succeeded.
-  }
 }
 
 export { INSTALL_CREDENTIAL_TTL_SECONDS };

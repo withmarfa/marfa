@@ -2,7 +2,7 @@
 
 Scheduled poll of podcast RSS feeds. One connection holds many subscriptions; each tick takes a few in rotation and writes a show and its episodes, joined by `in-collection` edges.
 
-Read-only. A feed is a document a publisher serves, so there is nothing to write back to: no item-event trigger, and no reactive-run queue in `wrangler.toml`.
+Read-only. A feed is a document a publisher serves, so there is nothing to write back to: no item-event trigger.
 
 Distinct from `rss-watcher`, which turns any feed into `core.bookmark`. That one stays as it is.
 

@@ -11,8 +11,8 @@
  * with a 409 naming its actual state, so a replay can never run twice.
  *
  * Mounted unconditionally so the OpenAPI reflection sees the routes in
- * every configuration; deployments without the local substrate (SQLite,
- * `MARFA_INTEGRATION_RUNTIME=hosted`) answer 503
+ * every configuration; deployments without the integration runtime
+ * (SQLite) answer 503
  * `local_runtime_not_available`. Platform-admin only: dead-letter rows
  * span every space, so a space-bound credential is refused.
  */

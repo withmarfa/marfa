@@ -19,7 +19,7 @@
 #
 # Example:
 #   CLOUDFLARE_API_TOKEN=<your-token> \
-#     ./scripts/deploy-worker.sh integrations/google-contacts --env staging
+#     ./scripts/deploy-worker.sh integrations/withmarfa-inbox/email-worker --env staging
 #
 # Cloudflare account selection is the caller's job — set
 # CLOUDFLARE_API_TOKEN in the environment before invoking. The script
@@ -30,7 +30,7 @@ set -euo pipefail
 WORKER_DIR="${1:-}"
 if [[ -z "$WORKER_DIR" ]]; then
   echo "Usage: $0 <worker-dir> [wrangler-args...]" >&2
-  echo "Example: $0 integrations/google-contacts --env staging" >&2
+  echo "Example: $0 integrations/withmarfa-inbox/email-worker --env staging" >&2
   exit 1
 fi
 shift
@@ -53,10 +53,7 @@ echo "→ Pre-building workspace deps for $PKG_NAME"
 # (i.e. the things <pkg> imports). `...<pkg>` (the opposite — `...`
 # before) selects <pkg>'s dependents, which is the wrong direction
 # for pre-deploy.
-# `--if-present` skips packages without a `build` script (e.g.
-# runtime-control bundles via wrangler and has no `build`;
-# integration Workers do have a `build` that emits `dist/local.js`
-# for the local-runtime substrate path).
+# `--if-present` skips packages without a `build` script.
 #
 # `--workspace-concurrency=1` is what actually orders the builds, and
 # it is load-bearing rather than a throughput choice. Run in parallel,
@@ -73,9 +70,8 @@ pnpm --filter "$PKG_NAME..." --workspace-concurrency=1 --if-present build
 
 # Working-dir handling: if the worker dir carries its own wrangler.toml
 # / wrangler.jsonc, cd in so wrangler picks it up automatically. If
-# not (e.g. `packages/runtime-control` whose deploy uses
-# `infra/cloudflare/wrangler.control.toml`), stay at the repo root and
-# let the caller pass `--config <path>` through the extra args.
+# not, stay at the repo root and let the caller pass `--config <path>`
+# through the extra args.
 if [[ -f "$WORKER_DIR/wrangler.toml" || -f "$WORKER_DIR/wrangler.jsonc" ]]; then
   echo "→ wrangler deploy in $WORKER_DIR ($*)"
   cd "$WORKER_DIR"

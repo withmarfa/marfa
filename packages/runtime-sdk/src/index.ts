@@ -1,16 +1,9 @@
 /**
- * `@withmarfa/runtime-sdk` — substrate-agnostic public surface.
+ * `@withmarfa/runtime-sdk` — the surface integrations import.
  *
  * Imported by integration handler modules (`integrations/<name>/src/handlers.ts`)
- * and by both substrates (Cloudflare per-Integration Workers via
- * `@withmarfa/runtime-sdk/cloudflare`; the local-runtime supervisor inside
- * `@withmarfa/server`). This entry has no dependency on
- * `@cloudflare/workers-types` runtime symbols — handler code written
- * against it is portable across substrates.
- *
- * The Cloudflare-specific bootstrap (`createIntegrationWorker`,
- * `PerConnectionState` Durable Object, the DO storage proxy) lives at
- * `@withmarfa/runtime-sdk/cloudflare`.
+ * and by the local-runtime supervisor inside `@withmarfa/server`, which
+ * drives dispatch through `consumeBatch`'s semantics.
  */
 export { PerConnectionStateCore } from "./per-connection-state.js";
 export type {
@@ -73,12 +66,6 @@ export type { ConnectionContext } from "./connection-context.js";
 
 export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
 export type { ConsumerEnvironment, DlqProducer } from "./queue-consumer.js";
-
-export { verifyHandler } from "./verify-handler.js";
-export type {
-  VerifyRequestBody,
-  VerifyResponseBody,
-} from "./verify-handler.js";
 
 export type {
   CycleMetadata,

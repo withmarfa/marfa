@@ -66,83 +66,12 @@ To install end-to-end:
 2. Admin calls `POST /connections/install` with `{ integration_id, credential_ref: credential_id }`, returning `{ connection_id }`. The connection is immediately active; no consent step.
 3. Subsequent scheduled / reactive runs call `ctx.marfa.proxyRequest(...)`; the server stamps the bearer transparently.
 
-## Worker-to-Worker calls: Service Bindings, not HTTP fetch
+## Runtime contract
 
-When a Cloudflare Worker in this monorepo calls another in the same account, declare a Service Binding in the caller's `wrangler.toml` and dispatch via `env.<BINDING>.fetch(request)`. Never `fetch(<workers.dev URL>, ...)` or `fetch(<custom-domain>, ...)`. Service Bindings dispatch directly to the bound Worker's `fetch` handler with no DNS, TLS, or edge hop, so they:
+Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The manifest declares `runtime_compatibility`; the runtime loads integrations that include `"local"`. Build invariants:
 
-- **Sidestep custom-domain availability incidents** (522-class errors from workers.dev URLs triggered this pattern).
-- **Avoid leaking deployment topology** through `<service>.<account>.workers.dev` URLs.
-- **Type-check the binding target at deploy time** (`binding target not found` is a hard failure, not a silent 404).
-
-The synthetic host in the constructed `Request` URL is ignored by the binding; only path, headers, and body reach the bound Worker. Convention: use `https://<binding-name-lowercase>` as the placeholder host so tests and logs make the binding shape obvious.
-
-The rule covers Worker-to-Worker hops inside the account. The withmarfa-inbox Email Worker is the deliberate exception that marks the scope: its target is the Marfa server, not a sibling Worker, so it dispatches over real HTTPS to the server's webhook receipt route.
-
-## Each Worker has its own identity
-
-A Worker's credential is `MARFA_WORKER_IDENTITY_KEY`, derived by the control plane as `HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, <integration name>)`. It authenticates the hop in both directions: the Worker presents it when leasing a runtime credential, and the control plane derives the same value when it dispatches in.
-
-It replaces the platform broker key, which every Worker used to hold. That key carries `is_platform: true` and mints a runtime credential for any Connection in any space, so one copy per Worker meant thirteen platform principals per environment and a compromise of any one of them reached every customer's data. A derived key authenticates one integration; HMAC is one-way, so holding one does not let a Worker compute a sibling's.
-
-The lease broker forwards the integration name a Worker proves to the Marfa server, which checks it against the manifest persisted on the requested Connection. A Worker that learns another integration's Connection id still cannot lease it.
-
-## The Worker `fetch` surface requires that identity key
-
-A Service Binding authenticates by topology, and topology is not a gate the route controls. `workers_dev`, `preview_urls`, a `routes` entry, or a new binding all re-expose the same `fetch` handler without touching its source, so the handler verifies its caller as well.
-
-Every request into a per-Integration Worker's `fetch` handler must carry `Authorization: Bearer <MARFA_WORKER_IDENTITY_KEY>`. `createIntegrationWorker(...)` applies the gate once at the entry, before routing, so a route added later is covered the moment it exists rather than the moment someone remembers to gate it. Nothing to opt into: an integration built on the standard entry point inherits it.
-
-Consequences worth knowing when writing or debugging one:
-
-- **Unknown paths return 404, not the banner.** Only `GET /` answers with the informational payload. A `POST` to a route this deployment does not have used to come back `200 {ok: true}`, and every caller read that as success.
-- **A Worker with no `MARFA_WORKER_IDENTITY_KEY` returns 503 `worker_misconfigured`**, distinct from the 401 a wrong key gets, so missing secrets are diagnosable from the response alone.
-- **`queue`, `alarm`, and `email` handlers are unaffected.** Queue delivery, Durable Object alarms, and Email Routing never enter `fetch`, so webhook-driven and scheduled work needs no credential.
-- **Configs set `workers_dev = false` and `preview_urls = false`** at the top level and in every named environment. `preview_urls` has no dependable default and has to be stated; the freshness test in `packages/runtime-control/src/integration-wrangler-config.test.ts` enforces both across every config found under `integrations/`.
-
-Gating a `fetch` surface outside the standard entry point (a sibling Worker with its own handler, say) uses the same helper rather than a fresh comparison:
-
-```ts
-import { brokerAuthFailure } from "@withmarfa/runtime-sdk/cloudflare";
-
-const refusal = await brokerAuthFailure(request, env.MARFA_WORKER_IDENTITY_KEY);
-if (refusal) return refusal;
-```
-
-It returns the `Response` to hand back, or `null` when the caller is authorized. The rule it applies lives in `@withmarfa/shared`'s `isBrokerAuthorized`, shared with the control plane's own gate so the two ends of the hop cannot drift apart.
-
-## First-deploy operator setup (hosted substrate)
-
-Every per-integration Worker needs three secrets set before the first queue dispatch will succeed:
-
-- **`MARFA_API_URL`** — the deployed Marfa API URL the in-Worker `ConnectionClient` calls back into.
-- **`MARFA_RUNTIME_CONTROL_URL`** — the runtime-control Worker's URL, where the consumer mints per-connection runtime credentials via the `/lease/:connection_id/runtime` broker.
-- **`MARFA_WORKER_IDENTITY_KEY`** — this Worker's own identity key, presented to that lease endpoint and required on its own `fetch` surface. Derived, not invented: `HMAC-SHA256(MARFA_WORKER_IDENTITY_SECRET, <this integration's name>)`, where the root is the control plane's per-env secret. The helper below computes it; never set it by hand.
-
-Without these, the queue consumer's `mintCredential()` throws on the first dispatch with a URL like `undefined/lease/<id>/runtime`. A `console.error` surfaces it via `wrangler tail` (grep `[runtime-sdk:consumeBatch] dispatch threw`), but messages silently retry into the DLQ: no items land, no `system.activity` appears (the activity-emit path needs a working `ConnectionClient`, which needs the broker secrets, a circular dependency in the degraded mode). Set the secrets first.
-
-A helper at `infra/cloudflare/scripts/init-integration-worker-secrets.sh` reads the three values from the calling shell's environment and runs `wrangler secret put` for each:
-
-```bash
-# Source your per-machine secrets file first so MARFA_API_URL,
-# MARFA_RUNTIME_CONTROL_URL, MARFA_WORKER_IDENTITY_SECRET and
-# CLOUDFLARE_API_TOKEN are exported. The identity KEY is derived by the
-# script from the config's INTEGRATION_NAME; only the ROOT is supplied.
-./infra/cloudflare/scripts/init-integration-worker-secrets.sh \
-  integrations/google-contacts staging
-```
-
-Re-run the helper for every integration whenever the identity root rotates — a root rotation invalidates every derived key at once, so a Worker missed in the sweep 401s on every lease until it is redeployed. Each integration's `wrangler.toml` carries a comment block listing the same three secrets as a reminder.
-
-Deploy the control plane before the Workers. It has to know the new root before any Worker presents a key derived from it; the reverse order leaves every lease refused until the control plane catches up. Refusals are 401s, which the Worker treats as transient, so the window costs retries rather than torn-down schedules.
-
-**An uninstall inside the window completes with the alarm still armed.** The hop runs the other way for a disarm — the control plane presents a key derived from the new root to a Worker that still holds one derived from the old — and the Worker refuses it like any other wrong credential. A disarm failure deliberately does not fail the uninstall, so the Connection ends up revoked, the user sees the uninstall succeed, and the per-Connection alarm keeps firing. The refusal is recorded: `schedules_disarmed: false` plus `schedule_disarm_error` on the uninstall result, an `action_required` activity row, and the audit row. Disarm is idempotent, so the recovery is to re-run it once the sweep is finished. Sweep every integration promptly and check for `action_required` rows afterwards rather than assuming the window was quiet: a schedule left ticking on a revoked Connection is unbounded on any Worker running a bundle that predates terminal-lease handling.
-
-## Substrate parity
-
-`@withmarfa/server`'s `MARFA_INTEGRATION_RUNTIME` env var picks the substrate at deploy time: `hosted` (Cloudflare Workers + Queues + Durable Objects) or `local` (in-process Node + pg-boss + worker_threads). The handler-authoring surface is identical; the same `dist/local.js` registers handlers on both. The manifest declares supported tiers via `runtime_compatibility: ["hosted", "local"]`. Build invariants:
-
-- `tsup.config.ts` emits `dist/local.js` for the local substrate.
-- The hosted substrate consumes `src/worker.ts` directly via `wrangler` at deploy time.
+- `tsup.config.ts` emits `dist/local.js`, which the server's supervisor loads at boot.
+- `@cloudflare/workers-types` remains a types-only devDependency: handler code types upstream responses through its generic `json<T>()` fetch typings. Nothing Cloudflare-specific runs; the runtime is Node.
 - `@withmarfa/runtime-sdk` and `@withmarfa/shared` MUST stay external in every bundle that loads integrations alongside them; the handler `REGISTRY` and shared registries are module-singleton state.
 - `pnpm --filter @withmarfa/server run smoke:worker-entry` guards both invariants at build time.
 

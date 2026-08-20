@@ -62,7 +62,7 @@ export const PODCASTS_MANIFEST: IntegrationManifest = {
   description:
     "Polls podcast RSS feeds on a schedule and mirrors each show and its episodes, joined by in-collection edges. Writes its own podcast types by default, or the core media types when a connection chooses interoperability over fidelity. Read-only.",
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: [
     FAMILY_DEFINITIONS.podcast.types.show,
     FAMILY_DEFINITIONS.podcast.types.episode,

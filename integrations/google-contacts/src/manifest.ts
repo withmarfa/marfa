@@ -83,7 +83,7 @@ export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Contacts (People API) and Marfa. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Marfa-side mutations back via OAuth proxy with etag-based concurrency.",
   direction: "both",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time
   // configuration chooses which family a connection actually writes.

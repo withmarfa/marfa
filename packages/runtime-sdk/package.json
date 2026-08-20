@@ -3,15 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "SDK that Connections integrations import. Per-Connection Durable Object, typed handler API, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",
+  "description": "SDK that Connections integrations import. Typed handler API, per-connection state, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./cloudflare": {
-      "types": "./dist/cloudflare/index.d.ts",
-      "import": "./dist/cloudflare/index.js"
     }
   },
   "files": [

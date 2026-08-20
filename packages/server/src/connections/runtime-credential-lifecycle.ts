@@ -79,62 +79,6 @@ export function assertMintableSpaceScope(
 }
 
 /**
- * Confirm the caller is asking for a Connection belonging to the
- * integration it authenticated as.
- *
- * The control plane authenticates an integration Worker against a key
- * derived from that integration's name, then forwards the name it
- * proved. This is where the claim is checked against state neither the
- * Worker nor the control plane can edit: the manifest persisted on the
- * Connection at install time. A Worker that has somehow reached the
- * broker for a sibling's Connection — a queue envelope carrying the
- * wrong id, a Service Binding wired to the wrong Worker, a compromised
- * Worker walking Connection ids — is refused by the one party that
- * knows which integration the Connection was installed for.
- *
- * Resolution failure is a refusal, not a pass. A Connection whose
- * `integration_ref` no longer resolves cannot be shown to belong to the
- * caller, and "cannot prove" has to read as "no" for a check whose
- * whole job is proving ownership.
- */
-export async function assertConnectionBelongsToIntegration(
-  storage: Storage,
-  connection: Item,
-  integrationName: string,
-): Promise<void> {
-  const integrationRef = (connection.properties as ConnectionProperties)
-    .integration_ref;
-  const integration = integrationRef
-    ? await storage.items.get(
-        integrationRef,
-        connection.space_id ?? undefined,
-        {
-          includePlatformScoped: true,
-        },
-      )
-    : null;
-  const persistedName =
-    integration?.type === "system.integration"
-      ? (integration.properties as IntegrationProperties).manifest_name
-      : undefined;
-
-  if (typeof persistedName !== "string" || persistedName.length === 0) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Connection ${connection.id} has no resolvable integration manifest to check the caller against`,
-      { connection_id: connection.id },
-    );
-  }
-  if (persistedName !== integrationName) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      `Connection ${connection.id} belongs to a different integration than the caller`,
-      { connection_id: connection.id },
-    );
-  }
-}
-
-/**
  * Revoke every other runtime credential on this connection.
  *
  * A mint means a dispatch is starting, and dispatches on one connection are

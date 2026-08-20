@@ -256,12 +256,6 @@ export interface AppConfig {
    *  so test contexts constructing `AppConfig` literals don't have to
    *  supply it; `loadConfig` always populates it. */
   errorWebhookTimeoutMs?: number;
-  /** Per-fetch timeout (ms) for the reactive-run bridge's Cloudflare
-   *  Queues producer call. Env override `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`.
-   *  Default 5000. Threaded into `BridgeConfig.sendTimeoutMs` at bridge
-   *  construction so operators can tune it for real Queues latency.
-   *  Optional on the type for the same reason as `errorWebhookTimeoutMs`. */
-  reactiveRunSendTimeoutMs?: number;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
@@ -360,24 +354,6 @@ export interface AppConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpSecure?: boolean;
-  /**
-   * Integration runtime substrate. `"hosted"` runs against the
-   * Cloudflare control plane + per-Integration Workers (set
-   * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` + `CLOUDFLARE_QUEUES_API_TOKEN`).
-   * `"local"` runs the in-process Node substrate (`pg-boss` for
-   * scheduling, `worker_thread` pool for handler execution); requires
-   * Postgres.
-   *
-   * Defaults to `"local"` — fresh self-host `docker compose up` works
-   * without a Cloudflare account. Hosted Marfa deployments + any
-   * operator that wants the Cloudflare path sets the env var explicitly
-   * to `"hosted"`.
-   *
-   * Optional on the type so test contexts constructing `AppConfig`
-   * literals don't have to supply it; `index.ts` applies the
-   * `"local"` fallback.
-   */
-  integrationRuntime?: "hosted" | "local";
   /**
    * Worker threads per integration on the local substrate
    * (`MARFA_INTEGRATION_WORKER_THREADS`). Sets the executor's
@@ -921,10 +897,6 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
       5000,
     ),
-    reactiveRunSendTimeoutMs: envNumber(
-      process.env.MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS,
-      5000,
-    ),
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
@@ -963,9 +935,6 @@ export function loadConfig(): AppConfig {
     smtpUser: process.env.MARFA_SMTP_USER ?? "",
     smtpPass: process.env.MARFA_SMTP_PASS ?? "",
     smtpSecure: process.env.MARFA_SMTP_SECURE === "true",
-    integrationRuntime: parseIntegrationRuntime(
-      process.env.MARFA_INTEGRATION_RUNTIME,
-    ),
     integrationWorkerThreads: parseIntegrationWorkerThreads(
       process.env.MARFA_INTEGRATION_WORKER_THREADS,
     ),
@@ -1012,27 +981,6 @@ export function parseSseMaxViewers(raw: string | undefined): number {
     );
   }
   return Number(trimmed);
-}
-
-/**
- * Parse `MARFA_INTEGRATION_RUNTIME`. Unset → `"local"` — fresh
- * self-hosters using `docker compose up` pick up the Node substrate
- * without needing a Cloudflare account. Hosted Marfa + any deployment
- * that wants the Cloudflare path sets the env var explicitly to
- * `"hosted"`. Unknown values warn and fall back to `"local"` so a
- * typo doesn't silently start the wrong substrate.
- */
-export function parseIntegrationRuntime(
-  raw: string | undefined,
-): "hosted" | "local" {
-  if (raw === "hosted" || raw === "local") return raw;
-  if (raw && raw.length > 0) {
-    console.warn(
-      `Unknown MARFA_INTEGRATION_RUNTIME=${raw}; falling back to "local". ` +
-        `Legal values: hosted | local.`,
-    );
-  }
-  return "local";
 }
 
 /**

@@ -1,9 +1,7 @@
 /**
- * `mintCredential` short-circuit for the local runtime. The Cloudflare
- * substrate goes through the runtime-control lease broker → POST
- * `/system/runtime-credentials` → cached on the per-Connection Durable
- * Object. The local substrate skips the HTTP round-trip and calls
- * `storage.keys.createRuntimeCredential` directly.
+ * `mintCredential` for the integration runtime: no HTTP round-trip,
+ * the supervisor calls `storage.keys.createRuntimeCredential` directly
+ * for each dispatch it routes.
  *
  * Permissions are translated from the Integration manifest via the same
  * builders the hosted install pipeline uses (`manifest-permissions.ts`),
@@ -24,6 +22,7 @@
  * per-dispatch minting cannot accumulate live keys.
  */
 import { randomBytes } from "node:crypto";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
 import { hashApiKey } from "../../middleware/auth.js";
 import {
@@ -125,16 +124,21 @@ export async function mintLocalRuntimeCredential(
     async () => {
       const connection = await storage.items.get(connectionId);
       if (connection?.type !== "system.connection") {
-        throw new Error(`Connection ${connectionId} not found`);
+        throw new MarfaError(
+          ErrorCode.CONNECTION_NOT_FOUND,
+          `Connection ${connectionId} not found`,
+        );
       }
       if (connection.state !== "active") {
-        throw new Error(
+        throw new MarfaError(
+          ErrorCode.CONNECTION_NOT_ACTIVE,
           `Connection ${connectionId} is ${connection.state}; cannot mint runtime credential`,
         );
       }
       const props = connection.properties as ConnectionProperties;
       if (props.kind !== "integration") {
-        throw new Error(
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
           `Connection ${connectionId} is not of kind integration (got ${props.kind ?? "undefined"})`,
         );
       }

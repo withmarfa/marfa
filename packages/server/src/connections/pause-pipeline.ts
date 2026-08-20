@@ -22,14 +22,13 @@
  * with the permission fixed. `runtime_status` already carries `paused`,
  * which is what it is for.
  *
- * **Pausing disarms.** A status field that stops nothing would be a lie the
- * operator acts on, so pause cancels the schedule through the same
- * control-plane call uninstall uses, and resume re-arms it. The reactive
- * dispatch path gates on `runtime_status` so item events stop as well.
+ * **Pausing stops the runtime through state alone.** The scheduler's
+ * walker and the reactive dispatch path both gate on `runtime_status`,
+ * so a paused connection simply stops being scheduled and stops
+ * receiving item events; there is no alarm to cancel.
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
-import { setConnectionSchedule } from "./schedule-control.js";
 
 export interface PauseInput {
   /** The api_keys row id of the caller (audit trail). */
@@ -38,24 +37,11 @@ export interface PauseInput {
   spaceId?: string;
   connectionId: string;
   clientIp?: string | null;
-  /** Which substrate runs integrations; only `hosted` has alarms to cancel. */
-  integrationRuntime?: "hosted" | "local";
-  controlPlaneUrl?: string;
-  runtimeBrokerKey?: string;
 }
 
 export interface PauseResult {
   connection_id: string;
   runtime_status: "paused" | "healthy";
-  /** True when a Durable Object attested the alarm changed state. False
-   *  when there was nothing to change (the local substrate, or an
-   *  integration deploying no Worker) and false when the attempt failed —
-   *  the two are told apart by `schedule_error`. */
-  schedule_changed: boolean;
-  /** Present only when the schedule call ran and failed. The status write
-   *  still happened: a paused connection that failed to disarm is worse
-   *  reported than hidden, and the operator can retry. */
-  schedule_error?: string;
   activity_id: string;
 }
 
@@ -126,10 +112,6 @@ async function applyRuntimeState(
     );
   }
 
-  // Status first, schedule second. The order matters on a partial failure:
-  // a connection recorded as paused whose alarm is still armed is visibly
-  // wrong and retryable, while an alarm cancelled with nothing recording
-  // why looks like an integration that silently stopped working.
   await storage.items.update(
     input.connectionId,
     {
@@ -138,36 +120,18 @@ async function applyRuntimeState(
     input.spaceId,
   );
 
-  const schedule = await setConnectionSchedule(storage, {
-    connectionId: input.connectionId,
-    spaceId: input.spaceId,
-    integrationRef: connection.properties.integration_ref as string | undefined,
-    integrationRuntime: input.integrationRuntime ?? "local",
-    ...(input.controlPlaneUrl !== undefined
-      ? { controlPlaneUrl: input.controlPlaneUrl }
-      : {}),
-    ...(input.runtimeBrokerKey !== undefined
-      ? { runtimeBrokerKey: input.runtimeBrokerKey }
-      : {}),
-    armed: target === "healthy",
-  });
-
   const activity = await storage.items.create(
     {
       type: "system.activity",
       properties: {
         connection_id: input.connectionId,
-        severity: schedule.error
-          ? ("action_required" as const)
-          : ("info" as const),
+        severity: "info" as const,
         summary:
           target === "paused"
             ? `Paused connection ${input.connectionId}`
             : `Resumed connection ${input.connectionId}`,
         detail: {
           runtime_status: target,
-          schedule_changed: schedule.changed,
-          ...(schedule.error ? { schedule_error: schedule.error } : {}),
         },
       },
     },
@@ -183,16 +147,12 @@ async function applyRuntimeState(
     resource_id: input.connectionId,
     details: {
       runtime_status: target,
-      schedule_changed: schedule.changed,
-      ...(schedule.error ? { schedule_error: schedule.error } : {}),
     },
   });
 
   return {
     connection_id: input.connectionId,
     runtime_status: target,
-    schedule_changed: schedule.changed,
-    ...(schedule.error ? { schedule_error: schedule.error } : {}),
     activity_id: activity.id,
   };
 }

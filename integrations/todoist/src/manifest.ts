@@ -44,7 +44,7 @@ export const TODOIST_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Todoist and Marfa. Polls Todoist's Sync API for incremental task changes on a 10-minute schedule and writes Marfa-side mutations back via the REST API + Sync commands.",
   direction: "both",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   // `todoist.task` is the upstream-fidelity type (full Todoist field
   // set, the recommended default). `core.task` is the cross-app shared
   // shape; the runtime credential is granted write permission on both

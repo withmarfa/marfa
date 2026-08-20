@@ -43,28 +43,21 @@ withmarfa.captured_email item (source_id = Message-ID)
 
 The Worker exists because Email Routing can only deliver inbound mail
 to a Worker or forward it to a mailbox — it cannot POST to a server.
-It is the one Cloudflare Worker the hosted deployment keeps.
+It is the one Cloudflare Worker the platform keeps.
 
-## Two Workers, one integration
+## One integration, one adjacent Email Worker
 
-This directory is one logical integration with two deployable Workers:
+This directory is one logical integration plus one deployable Worker:
 
-- **`./src/`** — the standard per-Integration Worker (consumes
-  `marfa-webhook-receipt-withmarfa-inbox-<env>` — its own dedicated
-  queue; CF Queues allow only one consumer per queue, so every
-  inbound-webhook integration gets its own). Bound under
-  `INTEGRATION_WITHMARFA_INBOX` in `wrangler.control.toml`. The control
-  plane's webhook receipt route resolves the producer binding
-  (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`) by `integration_name`.
+- **`./src/`** — the integration package: manifest, handlers, and the
+  `dist/local.js` entry the server's integration runtime loads.
 - **`./email-worker/`** — the Cloudflare Email Worker that converts
-  inbound email → signed JSON webhook. Distinct Cloudflare product
-  (Email Worker), distinct wrangler.toml, distinct deploy command,
-  distinct npm workspace package. Dispatches over real HTTPS to the
+  inbound email → signed JSON webhook. Its own wrangler.toml, deploy
+  command, and npm workspace package. Dispatches over real HTTPS to the
   Marfa server's webhook receipt route,
   `<MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>`, and holds no
   binding to anything: its three secrets (`MARFA_API_URL`,
-  `CONNECTION_ID`, `WEBHOOK_SECRET`) are the whole of its coupling,
-  so it deploys independently of every other Worker.
+  `CONNECTION_ID`, `WEBHOOK_SECRET`) are the whole of its coupling.
 
 ## Space routing (v1)
 

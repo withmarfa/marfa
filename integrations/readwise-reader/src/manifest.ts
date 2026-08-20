@@ -26,7 +26,7 @@ export const READWISE_READER_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync with Readwise Reader. Polls the v3 documents API hourly with an `updatedAfter` watermark and mirrors saved documents as readwise.document items; pushes creates, edits and trashes back to Reader. Feed items are excluded unless configured in.",
   direction: "both",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: ["readwise.document"],
   triggers: [
     { type: "schedule", config: { cron: "0 * * * *" } }, // hourly

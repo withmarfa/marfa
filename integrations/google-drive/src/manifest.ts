@@ -108,7 +108,7 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   // Flipping to "both" is the outbound follow-on's first change
   // (manifest direction + handlers + tests). Documented in CLAUDE.md.
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   // Both families' types are granted so the install-time configuration
   // can pick. `core.file` requires a real `blob_ref`, so the handler
   // routes byte-less files to `google.drive.file` whatever the family

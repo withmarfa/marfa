@@ -4,10 +4,6 @@
  * Single source of truth for the dispatch sites that would otherwise
  * each maintain a structurally-identical list of integrations:
  *
- *   - `packages/runtime-control/src/routes/arm-schedule.ts`
- *   - `packages/runtime-control/src/routes/verify.ts`
- *   - `packages/runtime-control/src/routes/webhooks.ts`
- *   - `infra/cloudflare/provision.ts`
  *   - `packages/server/src/integrations/local-runtime/registrations.ts`
  *
  * Adding a new in-tree integration: add one entry below and the five

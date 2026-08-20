@@ -7,8 +7,8 @@
  *
  * Pipeline-level mechanics live in
  * `connections/install-pipeline.test.ts` and
- * `connections/uninstall-pipeline.test.ts`; reactive-run-bridge fanout
- * tests cover the queue-producer side. This file pins the route-layer
+ * `connections/uninstall-pipeline.test.ts`; the local-runtime bridge
+ * suite covers fanout. This file pins the route-layer
  * behavior: auth gating, request-shape validation, error mapping, and
  * the JSON response shapes the SDK consumes.
  */

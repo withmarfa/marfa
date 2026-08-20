@@ -4,16 +4,15 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                                                    | Description                                                            |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`@withmarfa/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
-| [`@withmarfa/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
-| [`@withmarfa/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |
-| [`@withmarfa/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                 |
-| [`@withmarfa/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only) |
-| [`@withmarfa/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate  |
-| [`@withmarfa/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                          |
-| [`@withmarfa/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                         |
+| Package                                              | Description                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------- |
+| [`@withmarfa/types`](./packages/types)               | Core type + edge JSON schemas; emits the runtime registries |
+| [`@withmarfa/shared`](./packages/shared)             | Wire types, Zod validation schemas, error codes             |
+| [`@withmarfa/server`](./packages/server)             | Hono HTTP server with SQLite and Postgres support           |
+| [`@withmarfa/sdk`](./packages/sdk)                   | TypeScript HTTP client                                      |
+| [`@withmarfa/webhooks`](./packages/webhooks)         | Inbound-webhook signature verification (Web Crypto only)    |
+| [`@withmarfa/runtime-sdk`](./packages/runtime-sdk)   | SDK consumed by integrations                                |
+| [`@withmarfa/runtime-test`](./packages/runtime-test) | Test harness mirroring `runtime-sdk`                        |
 
 `@withmarfa/shared`, `@withmarfa/sdk`, and `@withmarfa/webhooks` publish to npm; the rest stay private.
 

@@ -1,10 +1,8 @@
 /**
  * Local integrations runtime — public entry point.
  *
- * Boots when `MARFA_INTEGRATION_RUNTIME=local`; replaces the Cloudflare
- * substrate (Workers + Queues + Durable Objects + KV) with an in-process
- * Node equivalent backed by Postgres (`pg-boss` for cron + queue) and
- * `worker_thread` per-Integration handler pools.
+ * The in-process integrations substrate: backed by Postgres (`pg-boss`
+ * for cron + queue) and `worker_thread` per-Integration handler pools.
  *
  * Surface:
  *   - `tryStartLocalIntegrationRuntime` — call from `index.ts`. Returns
@@ -96,24 +94,18 @@ export interface StartLocalRuntimeOptions {
  * Build and start the local runtime bundle. Returns the bundle so the
  * caller can stop it on shutdown.
  *
- * Returns `null` when `config.integrationRuntime` is `"hosted"` —
- * the caller stays on the Cloudflare-side bridge. The default is
- * `"local"`; set the env var explicitly to `"hosted"` to opt out.
- *
- * Throws when `DB_DIALECT=sqlite` is paired with
- * `MARFA_INTEGRATION_RUNTIME=local`: the local substrate requires
- * Postgres (advisory locks + pg-boss schema). SQLite self-host must
- * stay on hosted until they switch to PG.
+ * Throws on `DB_DIALECT=sqlite`: the runtime requires Postgres
+ * (advisory locks + pg-boss schema), so the caller gates on dialect
+ * and skips integrations entirely on SQLite.
  */
 export async function tryStartLocalIntegrationRuntime(
   options: StartLocalRuntimeOptions,
 ): Promise<LocalRuntimeBundle | null> {
   const { storage, config } = options;
-  if ((config.integrationRuntime ?? "local") !== "local") return null;
   if (config.storageDialect !== "pg") {
     throw new Error(
-      "MARFA_INTEGRATION_RUNTIME=local requires DB_DIALECT=pg. " +
-        "SQLite self-hosts must keep MARFA_INTEGRATION_RUNTIME=hosted until they migrate to Postgres.",
+      "The integration runtime requires DB_DIALECT=pg. " +
+        "SQLite deployments run without integrations until they migrate to Postgres.",
     );
   }
 

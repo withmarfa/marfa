@@ -270,9 +270,9 @@ export enum ErrorCode {
    */
   CONSENT_CAPACITY_EXHAUSTED = "consent_capacity_exhausted",
   /**
-   * The deployment runs no local integration substrate (SQLite dialect,
-   * or `MARFA_INTEGRATION_RUNTIME=hosted`), so the dead-letter operator
-   * surface has no queue to read. Not retryable without a config change.
+   * The deployment runs no integration runtime (SQLite dialect), so the
+   * dead-letter operator surface has no queue to read. Not retryable
+   * without a config change.
    */
   LOCAL_RUNTIME_NOT_AVAILABLE = "local_runtime_not_available",
   /**

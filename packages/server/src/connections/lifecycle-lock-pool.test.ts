@@ -134,10 +134,7 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
  * Same shape as the advisory-lock scope guard in `storage/pg`.
  */
 describe("credential mints stay on the transaction-riding lock", () => {
-  const mintPaths = [
-    "../routes/runtime-credentials.ts",
-    "../integrations/local-runtime/credentials.ts",
-  ];
+  const mintPaths = ["../integrations/local-runtime/credentials.ts"];
 
   it.each(mintPaths)("%s does not bracket the lock", async (relative) => {
     const source = await readFile(

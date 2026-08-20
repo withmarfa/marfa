@@ -8,8 +8,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
     "build": "tsup"
   },
   "dependencies": {
@@ -19,9 +17,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260602.1",
     "@withmarfa/runtime-test": "workspace:*",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.8",
     "tsup": "^8.5.1",
-    "wrangler": "^4.96.0"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

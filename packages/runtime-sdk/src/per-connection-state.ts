@@ -13,11 +13,9 @@
  *                                     not armed
  *   - runtime_credential_cached     — short-TTL RuntimeCredential
  *
- * This file holds only the substrate-agnostic surface — the storage
- * adapter shape, the state methods, and constants. The Cloudflare
- * Durable Object subclass that wires this into Workers state lives at
- * `@withmarfa/runtime-sdk/cloudflare`. The Node/Postgres-backed local
- * runtime wires the same core against its own storage adapter.
+ * This file holds the storage adapter shape, the state methods, and
+ * constants. The server's integration runtime wires the core against
+ * its own storage adapter.
  */
 import type { CursorStorageAdapter } from "./cursor-store.js";
 import type { RuntimeCredential } from "./types.js";

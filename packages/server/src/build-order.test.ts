@@ -41,7 +41,6 @@ const WORKSPACE_DIRS: Record<string, string> = {
   "@withmarfa/webhooks": "packages/webhooks",
   "@withmarfa/runtime-sdk": "packages/runtime-sdk",
   "@withmarfa/runtime-test": "packages/runtime-test",
-  "@withmarfa/runtime-control": "packages/runtime-control",
   "@withmarfa/sdk": "packages/sdk",
 };
 

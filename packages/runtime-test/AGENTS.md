@@ -1,6 +1,6 @@
 # @withmarfa/runtime-test
 
-In-memory mocks of the Cloudflare runtime primitives (DO storage + alarms, Queues, KV) plus a `createTestHarness` helper. Used by per-Integration test suites to drive their handlers without booting a real Worker runtime.
+In-memory mocks of the runtime's dispatch primitives (per-connection storage, the queue) plus a `createTestHarness` helper. Used by per-Integration test suites to drive their handlers without booting the server.
 
 ## When tests live here vs in the consuming package
 
@@ -8,7 +8,7 @@ In-memory mocks of the Cloudflare runtime primitives (DO storage + alarms, Queue
 - **`src/in-memory-{kv,queue,storage,alarm}.test.ts`** — pins each in-memory primitive in isolation.
 - **`src/e2e-flow.test.ts`** — composes the runtime-sdk consumer with the harness across **two integrations in a chain** (webhook → primary handler → simulated reactive event → secondary handler). The single test that catches regressions in seam-crossings: `integration_name` envelope filter, base64 body decode at the dispatch seam, cycle metadata threading (`originating_connection_id`, `hop_count`).
 
-The control-plane verify+enqueue side of the webhook flow lives in `runtime-control/src/webhook-flow.test.ts` — that pins the `integration_name` stamp at the source. `e2e-flow.test.ts` picks up where that one leaves off (queue → handler → reactive → handler).
+The verify+enqueue side of the webhook flow is pinned by the server's webhook-receipt suite — that covers the `integration_name` stamp at the source. `e2e-flow.test.ts` picks up where that one leaves off (queue → handler → reactive → handler).
 
 ## Authoring new e2e flows
 

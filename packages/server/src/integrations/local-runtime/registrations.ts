@@ -55,9 +55,9 @@ export function resolveLocalEntry(
 
 /**
  * Load every in-tree integration's `local.ts` entry from
- * `integrations/<name>/dist/local.js`. Skips integrations that haven't
- * landed a local entry yet — they continue running on Cloudflare under
- * `runtime_compatibility: ["hosted"]`.
+ * `integrations/<name>/dist/local.js`. Skips integrations that ship no
+ * local entry or whose manifest does not declare `"local"` — those do
+ * not run, and the skip is logged loudly.
  *
  * The default integration list mirrors the in-tree set; callers can
  * override for tests or alternate self-host bundles.
@@ -99,13 +99,13 @@ export async function loadInTreeRegistrations(options: {
       continue;
     }
     if (!validated.manifest.runtime_compatibility.includes("local")) {
-      // Hosted-only integration that happens to have a local.ts —
-      // refuse to register it on the local substrate so the manifest's
-      // declared compatibility is honored.
+      // The manifest's declared compatibility is honored even though no
+      // other substrate exists: an integration that opts out of "local"
+      // is deliberately not run, loudly, rather than silently.
       console.warn(
         `[local-runtime] ${dir} declares runtime_compatibility=${JSON.stringify(
           validated.manifest.runtime_compatibility,
-        )}; skipping local registration.`,
+        )} without "local"; it will not run anywhere until that changes.`,
       );
       continue;
     }

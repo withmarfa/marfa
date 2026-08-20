@@ -83,7 +83,7 @@ export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Tasks and Marfa. Polls every task list under the connected account on a 10-minute schedule and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time
   // configuration chooses which family a connection actually writes.
