@@ -36,6 +36,13 @@ services:
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     command: ["node", "dist/migrate.js"]
     env_file: server.env
+    volumes:
+      # The managed database presents a certificate from DigitalOcean's
+      # private per-project CA, which no default trust store carries. The
+      # box holds the CA (fetched via doctl at first deploy); server.env's
+      # NODE_EXTRA_CA_CERTS points at this mounted path so both Postgres
+      # drivers verify the chain rather than one refusing to boot on it.
+      - /opt/marfa/do-pg-ca.crt:/app/do-pg-ca.crt:ro
     restart: "no"
 
   server:
@@ -62,6 +69,12 @@ services:
         condition: service_completed_successfully
     volumes:
       - server-data:/app/data
+      # The managed database presents a certificate from DigitalOcean's
+      # private per-project CA, which no default trust store carries. The
+      # box holds the CA (fetched via doctl at first deploy); server.env's
+      # NODE_EXTRA_CA_CERTS points at this mounted path so both Postgres
+      # drivers verify the chain rather than one refusing to boot on it.
+      - /opt/marfa/do-pg-ca.crt:/app/do-pg-ca.crt:ro
 
   # The worker container: same image, scheduled work and integration
   # dispatch only. The image healthcheck holds unchanged — the worker role
@@ -94,6 +107,12 @@ services:
         condition: service_healthy
     volumes:
       - server-data:/app/data
+      # The managed database presents a certificate from DigitalOcean's
+      # private per-project CA, which no default trust store carries. The
+      # box holds the CA (fetched via doctl at first deploy); server.env's
+      # NODE_EXTRA_CA_CERTS points at this mounted path so both Postgres
+      # drivers verify the chain rather than one refusing to boot on it.
+      - /opt/marfa/do-pg-ca.crt:/app/do-pg-ca.crt:ro
 
 # The subnet is pinned so TRUSTED_PROXY_CIDRS in server.env can trust
 # exactly this network. Docker's auto-assigned pools drift onto
