@@ -210,3 +210,43 @@ jobs:
           done
           echo "worker never reported healthy (last state: ${STATE:-unknown})" >&2
           exit 1
+
+  notify:
+    # Reports a failed deploy to aic-alerts. Deploys are operator-dispatched
+    # and usually watched, but a deploy left running unattended that fails is
+    # exactly the moment nobody is looking. Runs hosted rather than on the
+    # self-hosted pool deliberately: when the pool is the thing that broke,
+    # a notifier living on it cannot tell anyone. The alert key carries the
+    # environment so staging and prod track separately, and a later green
+    # deploy to the same environment resolves it.
+    needs: [build-push, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report outcome to aic-alerts
+        env:
+          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
+          WORKFLOW: ${{ github.workflow }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case ",$RESULTS," in
+            *,failure,*|*,timed_out,*) STATE=open ;;
+            *,cancelled,*) exit 0 ;;
+            *) STATE=resolved ;;
+          esac
+          if [ "$STATE" = open ]; then
+            TITLE="$WORKFLOW ($ENVIRONMENT) failed on $REPO"
+          else
+            TITLE="$WORKFLOW ($ENVIRONMENT) is green again on $REPO"
+          fi
+          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW/$ENVIRONMENT" \
+                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg e "$ENVIRONMENT" --arg j "$RESULTS" \
+            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+              fields:{Repository:$r,Workflow:$w,Environment:$e,Jobs:$j}}' \
+          | curl -sS --max-time 20 -X POST https://alerts.cyzr.me/alert \
+              -H "Authorization: Bearer $ALERTS_SECRET" \
+              -H "Content-Type: application/json" --data @- \
+          || echo "Could not reach aic-alerts; not failing the run over it."
