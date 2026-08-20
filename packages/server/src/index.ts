@@ -474,7 +474,12 @@ async function main() {
           config.dbPoolMode === "transaction" && config.databaseUrlDirect
             ? config.databaseUrlDirect
             : config.databaseUrl;
-        const boss = new PgBoss(bossUrl);
+        // The pool is bounded because the direct endpoint has the tighter
+        // connection ceiling (see the session pool's sizing note in
+        // storage/pg/connection.ts). pg-boss's underlying pg.Pool defaults
+        // to 10, which would double the endpoint's entire existing budget
+        // for a polling loop that needs almost nothing.
+        const boss = new PgBoss({ connectionString: bossUrl, max: 2 });
         await boss.start();
         localRuntime = await tryStartLocalIntegrationRuntime({
           storage,

@@ -697,7 +697,14 @@ export function loadConfig(): AppConfig {
   const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
   const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
   const databaseUrl = process.env.DATABASE_URL ?? "";
-  const databaseUrlDirect = process.env.MARFA_DATABASE_URL_DIRECT ?? "";
+  // Trimmed here so every consumer sees the same value the guards below
+  // judged: createConnection trims its copy, and an untrimmed
+  // whitespace-only value passing this check would hand downstream
+  // consumers (the pg-boss endpoint choice) a string that is truthy and
+  // useless.
+  const databaseUrlDirect = (
+    process.env.MARFA_DATABASE_URL_DIRECT ?? ""
+  ).trim();
 
   if (storageDialect === "pg" && dbPoolMode === "transaction") {
     // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;

@@ -35,6 +35,15 @@
  * share a backend, and with a larger pool they get one each — a session-
  * scoped lock then excludes correctly and the case fails, reporting a
  * pooler-safe database rather than a misconfigured fixture.
+ *
+ * The pooled client's other pooler hazard — named prepared statements
+ * executing on a backend that never saw the PREPARE — is deliberately NOT
+ * pinned here, because this fixture cannot reproduce it: with one backend
+ * every execution lands where the PREPARE did, so a prepare-enabled
+ * client passes regardless and the case would be theatre. That wiring is
+ * pinned at the constructor instead (`connection.test.ts` asserts the
+ * pooled client disables preparation in transaction mode), which runs on
+ * every CI pass rather than only when this fixture is up.
  */
 import { describe, expect, it } from "vitest";
 import postgres from "postgres";
