@@ -49,6 +49,28 @@ function lockKey(clientId: string, authUserId: string): string {
 }
 
 /**
+ * Cross-process extension of this lock. The in-process queue below fully
+ * covers a single process; run two against one database and a revoked
+ * permission can silently come back (see the module doc). A backend set
+ * here is composed INSIDE the in-process queue, so on Postgres the lock
+ * holds across every process while local callers still serialize without
+ * touching the database twice. SQLite deployments set none: one process
+ * is the deployment there.
+ */
+export type ConsentLockBackend = <T>(
+  key: string,
+  fn: () => Promise<T>,
+) => Promise<T>;
+
+let crossProcessBackend: ConsentLockBackend | null = null;
+
+export function setConsentLockBackend(
+  backend: ConsentLockBackend | null,
+): void {
+  crossProcessBackend = backend;
+}
+
+/**
  * How many callers are holding or queued on each key.
  *
  * This exists for the tests that pin an interleaving. To show that a
@@ -96,7 +118,8 @@ export async function withConsentLock<T>(
   depth.set(key, (depth.get(key) ?? 0) + 1);
   if (predecessor) await predecessor;
   try {
-    return await fn();
+    const backend = crossProcessBackend;
+    return backend ? await backend(key, fn) : await fn();
   } finally {
     release();
     if (inFlight.get(key) === held) inFlight.delete(key);

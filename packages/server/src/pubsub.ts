@@ -91,11 +91,22 @@ export interface ItemEventWithId extends ItemEvent {
   /** event_log.id assigned by storage. `bigint` so values above
    *  Number.MAX_SAFE_INTEGER round-trip without truncation. */
   eventId?: bigint;
+  /**
+   * True when this event was published by ANOTHER process and replicated
+   * here through the database (see event-replication.ts). Subscribers
+   * that produce side effects exactly once per event — outbound webhook
+   * delivery — skip remote events, because the origin process already
+   * produced them; pure fan-out (SSE, the reactive bridge's elected
+   * drainer) treats local and remote alike.
+   */
+  remote?: boolean;
 }
 
 export interface EdgeEventWithId extends EdgeEvent {
   /** event_log.id assigned by storage. `bigint` — see ItemEventWithId. */
   eventId?: bigint;
+  /** Replicated from another process — see ItemEventWithId.remote. */
+  remote?: boolean;
 }
 
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
@@ -128,6 +139,7 @@ let getHopBudget: (spaceId: string | undefined) => Promise<number> = () =>
 let onHopOverflow:
   | ((event: PubsubEvent, budget: number) => Promise<void>)
   | null = null;
+let notifyRemote: ((eventId: bigint) => Promise<void>) | null = null;
 
 export interface InitEventLogOptions {
   /**
@@ -142,6 +154,14 @@ export interface InitEventLogOptions {
    * surface can show the loop detection.
    */
   onHopOverflow?: (event: PubsubEvent, budget: number) => Promise<void>;
+  /**
+   * Cross-process announcement of a freshly-appended event, fired after
+   * the event_log append with the id it assigned. The Postgres wiring
+   * issues pg_notify on the request-context connection, so the
+   * announcement joins the surrounding transaction and is delivered only
+   * on commit. Unset on SQLite, where one process is the deployment.
+   */
+  notifyRemote?: (eventId: bigint) => Promise<void>;
 }
 
 /** Call once at startup to enable event persistence + cycle detection. */
@@ -152,6 +172,7 @@ export function initEventLog(
   eventLogStore = store;
   if (options?.getHopBudget) getHopBudget = options.getHopBudget;
   if (options?.onHopOverflow) onHopOverflow = options.onHopOverflow;
+  notifyRemote = options?.notifyRemote ?? null;
 }
 
 /**
@@ -381,6 +402,10 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     });
   }
 
+  if (eventId !== undefined && notifyRemote) {
+    await notifyRemote(eventId);
+  }
+
   emitter.emit("ITEM_CHANGED", {
     ...event,
     originatingConnectionId: cycle.originatingConnectionId,
@@ -420,6 +445,10 @@ export async function publishEdge(
     });
   }
 
+  if (eventId !== undefined && notifyRemote) {
+    await notifyRemote(eventId);
+  }
+
   emitter.emit("EDGE_CHANGED", {
     ...event,
     originatingConnectionId: cycle.originatingConnectionId,
@@ -427,6 +456,22 @@ export async function publishEdge(
     eventId,
   });
   return eventId;
+}
+
+/**
+ * Emit an event replicated from another process into this process's
+ * subscribers, marked `remote: true`. No event_log append and no remote
+ * announcement: the origin process did both, and repeating either here
+ * would duplicate the row or echo the event around the cluster forever.
+ * Only event-replication.ts calls this.
+ */
+export function emitReplicated(event: PubsubEventWithId): void {
+  const marked = { ...event, remote: true };
+  if (event.type === "edge_created" || event.type === "edge_deleted") {
+    emitter.emit("EDGE_CHANGED", marked);
+  } else {
+    emitter.emit("ITEM_CHANGED", marked);
+  }
 }
 
 export interface SubscribeOptions {
