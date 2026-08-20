@@ -862,6 +862,9 @@ export interface PreviewEventRequest {
  *   - `ok`: would dispatch; `envelope` is populated.
  *   - `self_event`: subscriber is the connection that originated the event.
  *   - `cross_space`: subscriber's space doesn't match the event's space.
+ *   - `type_not_targeted`: the item's type is not in the subscriber
+ *     manifest's `target_types` — its runtime credential could not read
+ *     the item, so the dispatch could only fail.
  *   - `hop_budget_exceeded`: per-space `max_event_hop_budget` would
  *     refuse to publish the event upstream of the bridge — applies to
  *     every subscriber when the gate trips.
@@ -882,6 +885,7 @@ export interface PreviewEventEnvelope {
     /** The event is a `system.*` row — the platform's own bookkeeping,
      *  which never fans out to reactive handlers. */
     | "system_type"
+    | "type_not_targeted"
     | "hop_budget_exceeded"
     | "subscription_inactive";
   /**

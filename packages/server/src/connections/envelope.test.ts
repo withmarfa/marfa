@@ -14,6 +14,7 @@ const SUBSCRIBER: SubscriptionEntry = {
   connection_id: "conn_subscriber",
   integration_name: "example.integration",
   space_id: "space_1",
+  target_types: ["core.note", "example.document"],
 };
 
 function event(
@@ -65,7 +66,10 @@ describe("evaluateDispatch", () => {
 
   it("still dispatches a type that merely starts with the same letters", () => {
     expect(
-      evaluateDispatch(event({ itemType: "systemic.note" }), SUBSCRIBER),
+      evaluateDispatch(event({ itemType: "systemic.note" }), {
+        ...SUBSCRIBER,
+        target_types: ["systemic.note"],
+      }),
     ).toEqual({ would_dispatch: true });
   });
 
@@ -102,5 +106,34 @@ describe("evaluateDispatch", () => {
         space_id: null,
       }),
     ).toEqual({ would_dispatch: true });
+  });
+
+  it("does not dispatch a type the subscriber's manifest never declares", () => {
+    // The subscriber's runtime credential is minted to exactly its
+    // manifest's types, so this dispatch could only fail in the handler
+    // — as a 403 the moment it reads the item back.
+    expect(
+      evaluateDispatch(event({ itemType: "other.podcast" }), SUBSCRIBER),
+    ).toEqual({ would_dispatch: false, reason: "type_not_targeted" });
+  });
+
+  it("dispatches every type the manifest declares, not just the first", () => {
+    expect(
+      evaluateDispatch(event({ itemType: "example.document" }), SUBSCRIBER),
+    ).toEqual({ would_dispatch: true });
+  });
+
+  it("keeps the more specific reason when several gates refuse", () => {
+    // An undeclared type from the subscriber's own event still reads
+    // self_event: the type gate runs last so existing reasons hold.
+    expect(
+      evaluateDispatch(
+        event({
+          itemType: "other.podcast",
+          originatingConnectionId: SUBSCRIBER.connection_id,
+        }),
+        SUBSCRIBER,
+      ),
+    ).toEqual({ would_dispatch: false, reason: "self_event" });
   });
 });
