@@ -6,7 +6,13 @@ import type {
   WebhookDeliveryStore,
   WebhookStore,
 } from "../storage/interface.js";
-import { publish, type ItemEvent } from "../pubsub.js";
+import {
+  publish,
+  publishEdge,
+  emitReplicated,
+  type ItemEvent,
+  type EdgeEventWithId,
+} from "../pubsub.js";
 import {
   WebhookConsumer,
   WebhookPoller,
@@ -582,5 +588,159 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
         .digest("hex");
       expect(sig).toBe(expected);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WebhookConsumer — replicated events are the origin process's to deliver
+// ---------------------------------------------------------------------------
+
+describe("WebhookConsumer remote-event skip", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("never schedules a delivery for an event replicated from another process", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy;
+
+    let scheduled = 0;
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: () => {
+        scheduled += 1;
+        return Promise.resolve("del_remote");
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+
+    const webhook: Webhook = {
+      id: "wh_remote",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["item.created", "edge.created"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+
+    emitReplicated({
+      type: "created",
+      item: {
+        id: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        type: "core.note",
+        version: 1,
+        state: "active",
+        tier: "library",
+        source: "test",
+        properties: { title: "replicated elsewhere" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as unknown as Item,
+      originatingConnectionId: null,
+      hopCount: 0,
+      eventId: 42n,
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    consumer.stop();
+
+    expect(scheduled).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips a replicated edge event but still delivers a local one, so the filter cannot over-reach", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy;
+
+    let scheduled = 0;
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: () => {
+        scheduled += 1;
+        return Promise.resolve(`del_edge_${String(scheduled)}`);
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+
+    const webhook: Webhook = {
+      id: "wh_edge",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["edge.created"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+
+    const edge = {
+      id: "edge_remote_skip",
+      edge_type: "references",
+      source_id: "01HAAAAAAAAAAAAAAAAAAAAAAA",
+      target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
+      created_at: new Date().toISOString(),
+    } as unknown as EdgeEventWithId["edge"];
+
+    emitReplicated({
+      type: "edge_created",
+      edge,
+      originatingConnectionId: null,
+      hopCount: 0,
+      eventId: 43n,
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const scheduledAfterRemote = scheduled;
+
+    await publishEdge({ type: "edge_created", edge });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    consumer.stop();
+
+    expect(scheduledAfterRemote).toBe(0);
+    expect(scheduled).toBe(1);
   });
 });

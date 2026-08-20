@@ -29,6 +29,14 @@ import {
 } from "./storage/retention.js";
 import type { SpaceFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
+import {
+  createPgEventNotifier,
+  startEventReplication,
+  type EventReplication,
+} from "./event-replication.js";
+import { setConsentLockBackend } from "./auth/consent-lock.js";
+import { createPgConsentLockBackend } from "./storage/pg/consent-lock-backend.js";
+import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import {
   tryStartLocalIntegrationRuntime,
@@ -140,7 +148,58 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
-  initEventLog(storage.eventLog, defaultCycleDetectionWiring(storage));
+  // On Postgres every published event is announced to sibling processes
+  // over pg_notify and their announcements are hydrated back into this
+  // process's emitter (event-replication.ts), so SSE and the reactive
+  // bridge see the whole deployment's events, not one process's. The
+  // announcement rides the publishing transaction; the listener holds the
+  // session-mode client, whose LISTEN connection postgres.js keeps apart
+  // from the pool — one extra backend against the direct endpoint's
+  // ceiling, not a pool slot. SQLite is one process and wires none of
+  // this.
+  const pgSessionClient =
+    ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
+    null;
+  initEventLog(storage.eventLog, {
+    ...defaultCycleDetectionWiring(storage),
+    ...(storage.pgDb !== undefined && {
+      notifyRemote: createPgEventNotifier(storage.pgDb as PgDb),
+    }),
+  });
+  let eventReplication: EventReplication | null = null;
+  let consentLockClient: PgClient | null = null;
+  if (pgSessionClient) {
+    // A copy that cannot hear its siblings silently drops their events,
+    // which is the exact defect this closes — a listen failure at boot is
+    // fatal on purpose.
+    eventReplication = await startEventReplication(
+      pgSessionClient,
+      storage.eventLog,
+    );
+    // The consent lock's cross-process backend: a blocking advisory lock
+    // held for the critical section, so two web copies cannot interleave
+    // grant read-modify-write cycles. It reserves from its own tiny
+    // client, never a pool the critical section's own queries run on —
+    // holding a lock connection from the pool the locked work needs is
+    // the documented bracketing deadlock, reached at pool size. Session
+    // mode is required (a session lock needs a session), so on a
+    // transaction-mode pooler this takes the direct endpoint.
+    const { default: postgresCtor } = await import("postgres");
+    const sessionModeUrl =
+      config.dbPoolMode === "transaction" && config.databaseUrlDirect
+        ? config.databaseUrlDirect
+        : config.databaseUrl;
+    consentLockClient = postgresCtor(sessionModeUrl, {
+      max: 2,
+      idle_timeout: 30,
+      max_lifetime: 30 * 60,
+      onnotice: () => {
+        // Advisory-lock warnings surface through the backend's own
+        // destroy-on-doubt handling; the default notice logger is noise.
+      },
+    });
+    setConsentLockBackend(createPgConsentLockBackend(consentLockClient));
+  }
 
   // Opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS + CLOUDFLARE_QUEUES_API_TOKEN;
   // returns null (self-hoster path) when either is unset.
@@ -772,6 +831,14 @@ async function main() {
     webhookConsumer.stop();
     webhookPoller.stop();
     heartbeat?.stop();
+    if (eventReplication) {
+      // Unlisten is a courtesy to the connection; the storage close below
+      // ends it regardless, so a failure here changes nothing.
+      void eventReplication.stop().catch(() => undefined);
+    }
+    if (consentLockClient) {
+      void consentLockClient.end({ timeout: 5 }).catch(() => undefined);
+    }
     // Null on Postgres, where these jobs ran through pg-boss instead of
     // timers; their queued chains persist across the restart by design.
     if (eventLogCleanupDelay) clearTimeout(eventLogCleanupDelay);

@@ -10,7 +10,11 @@
  * So the count is checked here directly rather than trusted.
  */
 import { describe, it, expect } from "vitest";
-import { withConsentLock, consentLockDepth } from "./consent-lock.js";
+import {
+  withConsentLock,
+  consentLockDepth,
+  setConsentLockBackend,
+} from "./consent-lock.js";
 
 /** A promise plus its resolver, for holding a critical section open. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -73,5 +77,48 @@ describe("consentLockDepth", () => {
       }),
     ).rejects.toThrow("boom");
     expect(consentLockDepth("client_c", "user_c")).toBe(0);
+  });
+});
+
+describe("cross-process backend composition", () => {
+  it("routes the critical section through the backend, composed inside the in-process queue", async () => {
+    // The load-bearing ordering claim: the in-process queue serializes
+    // same-key callers BEFORE the backend runs, so the backend never has
+    // two concurrent invocations for one key even when the backend
+    // itself provides no exclusion (this stub deliberately does not).
+    let inBackend = 0;
+    let peak = 0;
+    const keys: string[] = [];
+    setConsentLockBackend(async (key, fn) => {
+      keys.push(key);
+      inBackend += 1;
+      peak = Math.max(peak, inBackend);
+      try {
+        return await fn();
+      } finally {
+        inBackend -= 1;
+      }
+    });
+    try {
+      const results = await Promise.all([
+        withConsentLock("client_d", "user_d", async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          return "first";
+        }),
+        withConsentLock("client_d", "user_d", () => Promise.resolve("second")),
+      ]);
+      expect(results).toEqual(["first", "second"]);
+      expect(peak).toBe(1);
+      expect(keys).toEqual(["client_d:user_d", "client_d:user_d"]);
+    } finally {
+      setConsentLockBackend(null);
+    }
+  });
+
+  it("runs the critical section directly when no backend is set", async () => {
+    const result = await withConsentLock("client_e", "user_e", () =>
+      Promise.resolve(42),
+    );
+    expect(result).toBe(42);
   });
 });

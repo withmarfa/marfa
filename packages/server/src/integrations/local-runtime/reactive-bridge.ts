@@ -38,16 +38,31 @@ export interface LocalBridgeRuntime {
  * `disableCoordinationLock: true` — the test then calls `start()` and
  * drives events without contending with another harness instance.
  */
+const ELECTION_RETRY_MS = 30_000;
+
 export function createLocalReactiveBridge(
   storage: Storage,
   runtime: LocalRuntime,
-  options: { disableCoordinationLock?: boolean } = {},
+  options: { disableCoordinationLock?: boolean; electionRetryMs?: number } = {},
 ): LocalBridgeRuntime {
   const subscriptions = new Map<string, SubscriptionEntry>();
   let running = false;
   let stopRequested = false;
   let drainerIter: AsyncIterator<unknown> | null = null;
   let invalidationIter: AsyncIterator<unknown> | null = null;
+  let wakeElectionRetry: (() => void) | null = null;
+  const waitBeforeElectionRetry = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        wakeElectionRetry = null;
+        resolve();
+      }, ms);
+      wakeElectionRetry = () => {
+        clearTimeout(timer);
+        wakeElectionRetry = null;
+        resolve();
+      };
+    });
   let drainerExit: Promise<void> | null = null;
 
   const refreshConnection = async (connectionId: string): Promise<void> => {
@@ -178,21 +193,62 @@ export function createLocalReactiveBridge(
           err instanceof Error ? err.message : String(err),
         );
       }
-      const driver = options.disableCoordinationLock
-        ? runDrainer()
-        : storage.coordination
-            .withJobLock("local-reactive-bridge", runDrainer)
-            .then(() => undefined);
-      drainerExit = driver.catch((err: unknown) => {
-        console.error(
-          "[local-reactive-bridge] drainer threw:",
-          err instanceof Error ? err.message : String(err),
-        );
-      });
+      if (options.disableCoordinationLock) {
+        drainerExit = runDrainer().catch((err: unknown) => {
+          console.error(
+            "[local-reactive-bridge] drainer threw:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+      } else {
+        // The election is retried, never attempted once: a loser that
+        // treated the loss as permanent stayed up, healthy and silent
+        // for its whole lifetime, and a winner's death left no takeover.
+        // Long-lived rather than the tick-shaped try-lock because the
+        // holder keeps the lock for the process lifetime, and that
+        // primitive reserves from its own single-connection client
+        // instead of subtracting a session-pool slot forever.
+        const retryMs = options.electionRetryMs ?? ELECTION_RETRY_MS;
+        // A closure, not the variable: `stopRequested` flips from stop()
+        // across async boundaries the control-flow analysis cannot see.
+        const isStopping = (): boolean => stopRequested;
+        drainerExit = (async () => {
+          for (;;) {
+            if (isStopping()) return;
+            const outcome = { elected: false };
+            try {
+              await storage.coordination.withLongLivedJobLock(
+                "local-reactive-bridge",
+                async () => {
+                  outcome.elected = true;
+                  await runDrainer();
+                },
+              );
+            } catch (err: unknown) {
+              console.error(
+                "[local-reactive-bridge] drainer threw:",
+                err instanceof Error ? err.message : String(err),
+              );
+            }
+            if (isStopping()) return;
+            if (!outcome.elected) {
+              console.warn(
+                "[local-reactive-bridge] not elected; will retry in",
+                retryMs,
+                "ms",
+              );
+            }
+            await waitBeforeElectionRetry(retryMs);
+          }
+        })();
+      }
     },
     async stop() {
       stopRequested = true;
       running = false;
+      // Wake an instance parked between election attempts, so stop() is
+      // not held for the length of a retry window.
+      wakeElectionRetry?.();
       subscriptions.clear();
       const drainer = drainerIter;
       const invalidation = invalidationIter;
