@@ -22,9 +22,9 @@ describe("withmarfa.inbox manifest", () => {
     );
   });
 
-  it("targets withmarfa.captured_email, read-only, no OAuth, no token", () => {
+  it("targets marfa.captured_email, read-only, no OAuth, no token", () => {
     expect(WITHMARFA_INBOX_MANIFEST.target_types).toEqual([
-      "withmarfa.captured_email",
+      "marfa.captured_email",
     ]);
     expect(WITHMARFA_INBOX_MANIFEST.direction).toBe("read");
     expect(WITHMARFA_INBOX_MANIFEST.oauth_requirements).toEqual({});

@@ -14,7 +14,7 @@
  *      the bounded ring on the cursor store. The server's own
  *      `connection.runtime.idempotency` map is the primary defense;
  *      this is the second wall, mirroring github-webhooks.
- *   3. Build a `withmarfa.captured_email` item:
+ *   3. Build a `marfa.captured_email` item:
  *      - `source_id = Message-ID` (or the harness-supplied delivery
  *        id when Message-ID is absent, e.g. from a CC-only message
  *        synthesized at relay time)
@@ -238,8 +238,8 @@ function buildCapturedEmail(
       : undefined;
 
   return sourceId === undefined
-    ? { type: "withmarfa.captured_email", properties }
-    : { type: "withmarfa.captured_email", source_id: sourceId, properties };
+    ? { type: "marfa.captured_email", properties }
+    : { type: "marfa.captured_email", source_id: sourceId, properties };
 }
 
 async function recordDelivery(

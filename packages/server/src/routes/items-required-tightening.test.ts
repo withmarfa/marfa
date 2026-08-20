@@ -114,7 +114,7 @@ describe("tightening required on a type with existing items", () => {
   });
 });
 
-describe("withmarfa.captured_email keeps bodyless captures editable", () => {
+describe("marfa.captured_email keeps bodyless captures editable", () => {
   it("accepts a capture with no body and lets it be patched afterwards", async () => {
     // The type is shaped for `core.note` and mirrors `text_body` into `body`,
     // but does not require `body` and does not claim the compatibility, both
@@ -123,7 +123,7 @@ describe("withmarfa.captured_email keeps bodyless captures editable", () => {
     const created = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
-        type: "withmarfa.captured_email",
+        type: "marfa.captured_email",
         properties: {
           from_address: "sender@example.com",
           to_address: "capture@example.com",

@@ -53,9 +53,7 @@ describe("podcasts manifest", () => {
 
   it("defaults to its own types rather than the core ones", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("podcast");
-    expect(FAMILY_DEFINITIONS.podcast.types.show).toBe(
-      "withmarfa.podcast.show",
-    );
+    expect(FAMILY_DEFINITIONS.podcast.types.show).toBe("marfa.podcast.show");
     expect(FAMILY_DEFINITIONS.core.types.episode).toBe("core.media.episode");
   });
 

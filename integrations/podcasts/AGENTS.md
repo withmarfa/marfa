@@ -10,7 +10,7 @@ Distinct from `rss-watcher`, which turns any feed into `core.bookmark`. That one
 
 `target_types` names four types and a connection picks a family with `write_family`.
 
-- **`podcast`** (the default) writes `withmarfa.podcast.show` and `withmarfa.podcast.episode`, which keep everything a feed carries.
+- **`podcast`** (the default) writes `marfa.podcast.show` and `marfa.podcast.episode`, which keep everything a feed carries.
 - **`core`** writes `core.media.series` and `core.media.episode`, which any app understanding core media can read.
 
 Core mode is lossy and the loss is deliberate: the enclosure's MIME type and claimed size, the raw duration string, explicitness, categories and episode type have no home on the core types and are dropped. `media_url` and `mime_type` exist on `core.media.episode` because this integration needed them; before that a core episode had nowhere to put its audio.

@@ -667,6 +667,138 @@ describe("POST /items — platform-credential gate", () => {
     expect(connectionRes.status).toBe(403);
   });
 
+  it("admits a runtime credential writing a marfa.* type its manifest granted verbatim", async () => {
+    // The platform's own integrations write items of marfa.* types on
+    // the user's behalf, and their credentials project each manifest
+    // target type as an exact literal. That literal opens the fence for
+    // precisely that type; everything else about the refusal stands.
+    const grantedKey = "marfa_k1_test_runtime_marfa_grant";
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "runtime-marfa-grant",
+        source: "runtime-marfa-grant",
+        role: "member",
+        type_permissions: {
+          "system.activity": "write",
+          "marfa.captured_email": "write",
+        },
+        connection_id: "conn_test_marfa_grant",
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({
+          name: "conn_test_marfa_grant",
+        }),
+      },
+      hashApiKey(grantedKey, TEST_API_KEY_SALT),
+      "space-x",
+    );
+
+    const res = await request(ctx.app, "POST", "/items", {
+      key: grantedKey,
+      body: {
+        type: "marfa.captured_email",
+        properties: {
+          from_address: "sender@example.com",
+          to_address: "inbox@example.com",
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("refuses a wildcard grant at the marfa.* fence — only the exact literal qualifies", async () => {
+    const wildcardKey = "marfa_k1_test_runtime_marfa_wildcard";
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "runtime-marfa-wildcard",
+        source: "runtime-marfa-wildcard",
+        role: "member",
+        type_permissions: { "system.activity": "write", "*": "write" },
+        connection_id: "conn_test_marfa_wildcard",
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({
+          name: "conn_test_marfa_wildcard",
+        }),
+      },
+      hashApiKey(wildcardKey, TEST_API_KEY_SALT),
+      "space-x",
+    );
+    const res = await request(ctx.app, "POST", "/items", {
+      key: wildcardKey,
+      body: {
+        type: "marfa.captured_email",
+        properties: {
+          from_address: "sender@example.com",
+          to_address: "inbox@example.com",
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses the same exact literal on a credential that is not runtime-minted", async () => {
+    // The admit rides the manifest projection, and only runtime mints
+    // project. A hand-minted member key naming the literal does not
+    // carry the platform's declaration and stays outside the fence.
+    const humanKey = "marfa_k1_test_human_marfa_literal";
+    await ctx.storage.keys.create(
+      {
+        label: "human-marfa-literal",
+        source: "human-marfa-literal",
+        role: "member",
+        type_permissions: { "marfa.captured_email": "write" },
+      },
+      hashApiKey(humanKey, TEST_API_KEY_SALT),
+      "space-x",
+    );
+    const res = await request(ctx.app, "POST", "/items", {
+      key: humanKey,
+      body: {
+        type: "marfa.captured_email",
+        properties: {
+          from_address: "sender@example.com",
+          to_address: "inbox@example.com",
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("keeps system.* fully fenced even for an exact runtime grant", async () => {
+    const sysKey = "marfa_k1_test_runtime_system_literal";
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "runtime-system-literal",
+        source: "runtime-system-literal",
+        role: "member",
+        type_permissions: {
+          "system.activity": "write",
+          "system.connection": "write",
+        },
+        connection_id: "conn_test_system_literal",
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({
+          name: "conn_test_system_literal",
+        }),
+      },
+      hashApiKey(sysKey, TEST_API_KEY_SALT),
+      "space-x",
+    );
+    const res = await request(ctx.app, "POST", "/items", {
+      key: sysKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          client_id: "x",
+          scopes: [],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
   it("does not gate reads to system.* (space admin can list its own system.connection rows)", async () => {
     // Reads to reserved-namespace items are unrestricted (filtered by
     // space scoping at the storage layer); only writes need

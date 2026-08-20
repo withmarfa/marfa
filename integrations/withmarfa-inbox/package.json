@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address (inbox.marfa.so) via Cloudflare Email Routing → Email Worker, signs them with HMAC-SHA256, and lands each delivery as a `withmarfa.captured_email` item. Substrate-shaped: no upstream API, no OAuth, no token — the substrate itself IS the upstream.",
+  "description": "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address (inbox.marfa.so) via Cloudflare Email Routing → Email Worker, signs them with HMAC-SHA256, and lands each delivery as a `marfa.captured_email` item. Substrate-shaped: no upstream API, no OAuth, no token — the substrate itself IS the upstream.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -3,7 +3,7 @@
 Email-to-Marfa capture. Receives emails sent to a Marfa-managed address
 (`capture@inbox.marfa.so` in single-space v1) via Cloudflare Email
 Routing → Email Worker → signed JSON webhook → Marfa handler. Each
-delivery lands as a `withmarfa.captured_email` item.
+delivery lands as a `marfa.captured_email` item.
 
 This integration is **substrate-shaped**, not OAuth- or token-shaped:
 there is no upstream API to talk to. Cloudflare Email Routing IS the
@@ -38,7 +38,7 @@ server webhook receipt (cloudflare-email verifier →
 withmarfa.inbox integration handler
       │  decode → buildCapturedEmail → ctx.marfa.createItem
       ▼
-withmarfa.captured_email item (source_id = Message-ID)
+marfa.captured_email item (source_id = Message-ID)
 ```
 
 The Worker exists because Email Routing can only deliver inbound mail
