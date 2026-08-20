@@ -41,6 +41,12 @@ export class VersionThinner {
     }
   }
 
+  /** One tick, for schedulers that own the cadence themselves. Keeps the
+   *  coordination lock and failure logging the timer path applies. */
+  runOnce(): Promise<void> {
+    return this.poll();
+  }
+
   private async poll(): Promise<void> {
     try {
       if (this.coordination) {

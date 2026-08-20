@@ -272,6 +272,12 @@ export class TextEnrichmentSweeper {
     }
   }
 
+  /** Scheduler entry point: the same locked, logged tick the timer path
+   *  drives — `runOnce()` alone is the bare test seam and has neither. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
   private async poll(): Promise<void> {
     try {
       const result = await this.opts.storage.coordination.withJobLock(

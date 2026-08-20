@@ -125,6 +125,12 @@ export class TrashPurger {
     return this.items.purgeTrashedOlderThan(cutoff);
   }
 
+  /** Scheduler entry point: the same locked, logged tick the timer path
+   *  drives — `runOnce()` alone is the bare test seam and has neither. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
   private async poll(): Promise<void> {
     try {
       const deleted = this.fanout
@@ -193,6 +199,11 @@ export class AuthSessionCleaner {
    *  before the injected clock. */
   async runOnce(): Promise<number> {
     return this.store.deleteExpired(this.nowFn());
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
   }
 
   private async poll(): Promise<void> {
@@ -297,6 +308,11 @@ export class PendingDeletePurger {
     return purged;
   }
 
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
   private async poll(): Promise<void> {
     try {
       const purged = this.coordination
@@ -359,6 +375,11 @@ export class RateLimitWindowCleaner {
   /** Test entry point — drops every expired window row. */
   async runOnce(): Promise<number> {
     return this.storage.rateLimits.cleanup(this.nowFn().toISOString());
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
   }
 
   private async poll(): Promise<void> {
@@ -443,6 +464,11 @@ export class DcrClientCleaner {
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
     return provider.deleteGrantlessClientsOlderThan(cutoff);
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
   }
 
   private async poll(): Promise<void> {
@@ -556,6 +582,11 @@ export class RuntimeCredentialReaper {
   /** Test entry point for the scheduled path — the lock handshake and the
    *  error swallowing only exist here, not in `runOnce`. */
   async pollForTest(): Promise<void> {
+    return this.poll();
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
     return this.poll();
   }
 
