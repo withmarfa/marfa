@@ -556,6 +556,7 @@ describe("local-runtime supervisor", () => {
         delivery_id: "queued-before-pause",
         headers: {},
         body_base64: Buffer.from("{}").toString("base64"),
+        verified_at_ms: Date.now(),
       },
     });
     expect(result).toEqual({
