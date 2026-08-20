@@ -469,6 +469,104 @@ describe("local-runtime supervisor", () => {
     expect(String(threw)).toMatch(/revoked|cannot mint/i);
   });
 
+  it("acks a queued schedule message for a paused Connection without dispatching", async () => {
+    // A queued schedule tick for a paused connection is skipped with a
+    // clean ack — the schedule is an ongoing stream, so dropping the
+    // residue is a no-op and resume does not inherit burned retries.
+    // (Webhooks differ: see the retry case below.)
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    const row = await ctx.storage.items.get(connectionId, undefined);
+    await ctx.storage.items.update(
+      connectionId,
+      { properties: { ...row!.properties, runtime_status: "paused" } },
+      undefined,
+    );
+
+    let handlerRan = false;
+    const registration = buildRegistration(() => {
+      handlerRan = true;
+      return Promise.resolve({ ok: true });
+    });
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    });
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+  });
+
+  it("retries a queued webhook for a paused Connection instead of dropping it", async () => {
+    // A webhook delivery is a one-off the sender already handed over —
+    // ack-and-drop would lose it silently (the receipt route's dedup
+    // window swallows the redelivery). Retrying pushes it toward the
+    // dead-letter surface if the pause outlasts the ladder: visible and
+    // replayable.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    const row = await ctx.storage.items.get(connectionId, undefined);
+    await ctx.storage.items.update(
+      connectionId,
+      { properties: { ...row!.properties, runtime_status: "paused" } },
+      undefined,
+    );
+
+    let handlerRan = false;
+    const registration = buildRegistration(() => {
+      handlerRan = true;
+      return Promise.resolve({ ok: true });
+    });
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "webhook",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        delivery_id: "queued-before-pause",
+        headers: {},
+        body_base64: Buffer.from("{}").toString("base64"),
+        verified_at_ms: Date.now(),
+      },
+    });
+    expect(result).toEqual({
+      ok: false,
+      retry: true,
+      reason: "connection_paused",
+    });
+    expect(handlerRan).toBe(false);
+  });
+
   it("ignores integrations with no registration (envelope filter)", async () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",

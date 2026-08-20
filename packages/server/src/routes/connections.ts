@@ -12,10 +12,12 @@ import {
   performResume,
   PauseError,
 } from "../connections/pause-pipeline.js";
+import type { PauseResult } from "../connections/pause-pipeline.js";
 import {
   performUninstall,
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
+import type { UninstallResult } from "../connections/uninstall-pipeline.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import {
   computeEffectiveHopCount,
@@ -171,7 +173,7 @@ const pauseResponses = {
   200: {
     content: { "application/json": { schema: PauseResultSchema } },
     description:
-      "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
+      "Runtime status updated. The scheduler, reactive fan-out, and inbound webhook receipt all gate on it; queued schedule and item-event work is discarded, and a queued webhook dispatch retries toward the dead-letter surface.",
   },
   400: {
     content: {
@@ -180,7 +182,7 @@ const pauseResponses = {
       },
     },
     description:
-      "Connection is not an integration, is revoked, or is already in the requested state.",
+      "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
   },
   401: {
     content: {
@@ -213,7 +215,7 @@ const pauseRoute = createRoute({
   tags: ["Connections"],
   summary: "Pause an integration connection",
   description:
-    "Stops a connection without tearing it down: sets `runtime_status` to `paused` and disarms its schedule, so scheduled runs and item-event dispatches both stop. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
+    "Stops a connection without tearing it down: sets `runtime_status` to `paused` — the scheduler skips it, reactive fan-out drops it, and new inbound webhook deliveries are refused with a retryable 503 so the sender redelivers after resume. Queued schedule and item-event work is discarded without running; a queued webhook dispatch retries and dead-letters if the pause outlasts it. Credentials and the upstream OAuth grant are left intact, so `resume` restores everything without a fresh consent round trip. Pausing an already-paused connection returns 400.",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: pauseResponses,
@@ -226,7 +228,7 @@ const resumeRoute = createRoute({
   tags: ["Connections"],
   summary: "Resume a paused integration connection",
   description:
-    "Reverses `pause`: sets `runtime_status` back to `healthy` and re-arms the schedule. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
+    "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler, reactive fan-out, and inbound webhook receipt all pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: pauseResponses,
@@ -332,6 +334,7 @@ const PreviewEventEnvelopeSchema = z.object({
     "type_not_targeted",
     "hop_budget_exceeded",
     "subscription_inactive",
+    "subscription_paused",
   ]),
   envelope: PreviewEventQueueBodySchema.optional(),
 });
@@ -533,13 +536,20 @@ export function connectionRoutes(storage: Storage, salt: string) {
       >
         ? T
         : never,
+      runtimeStatus?: string,
     ): void => {
       if (!entryOrNull) {
         envelopes.push({
           connection_id: connectionId,
           integration_name: "",
           would_dispatch: false,
-          dispatch_reason: "subscription_inactive",
+          // Pause is the one inactive cause an operator flips on purpose
+          // and can flip back, so it earns its own reason — "why did
+          // nothing fire" is exactly what this route exists to answer.
+          dispatch_reason:
+            runtimeStatus === "paused"
+              ? "subscription_paused"
+              : "subscription_inactive",
         });
         return;
       }
@@ -588,7 +598,11 @@ export function connectionRoutes(storage: Storage, salt: string) {
         properties: conn.properties,
         space_id: conn.space_id ?? null,
       });
-      considerSubscriber(conn.id, entry);
+      considerSubscriber(
+        conn.id,
+        entry,
+        (conn.properties as { runtime_status?: string }).runtime_status,
+      );
     } else {
       let cursor: string | undefined;
       const PAGE = 200;
@@ -634,8 +648,9 @@ export function connectionRoutes(storage: Storage, salt: string) {
     clientIp: string | null,
   ) => {
     const run = verb === "pause" ? performPause : performResume;
+    let result: PauseResult;
     try {
-      return await run(storage, {
+      result = await run(storage, {
         apiKeyId: apiKey.id,
         spaceId: apiKey.space_id ?? undefined,
         connectionId,
@@ -652,6 +667,21 @@ export function connectionRoutes(storage: Storage, salt: string) {
       }
       throw err;
     }
+    // Publish the status flip so the reactive bridge's invalidation
+    // subscriber re-evaluates its cached subscription entry. The write
+    // above is a plain storage update, which publishes nothing on its
+    // own — without this event the elected drainer's in-memory map
+    // keeps (or keeps missing) the connection until the next rebuild,
+    // and pause reports success while fanout carries on. Outside the
+    // try, deliberately: a publish failure here must not be mapped to a
+    // pause error the write did not have.
+    const spaceId = apiKey.space_id ?? undefined;
+    const connection = await storage.items.get(connectionId, spaceId);
+    if (connection) {
+      const metadata = await storage.metadata.get(connection.id);
+      await publish({ type: "updated", item: connection, metadata, spaceId });
+    }
+    return result;
   };
 
   r.openapi(pauseRoute, async (c) => {
@@ -679,6 +709,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
 
+    let uninstalled: UninstallResult;
     try {
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
@@ -686,7 +717,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
         connectionId,
         clientIp,
       });
-      return c.json(result, 200);
+      uninstalled = result;
     } catch (err) {
       if (err instanceof UninstallError) {
         if (err.code === "connection_not_found") {
@@ -698,6 +729,20 @@ export function connectionRoutes(storage: Storage, salt: string) {
       }
       throw err;
     }
+    // Same invalidation contract as pause/resume above: the pipeline's
+    // transition is a storage write, so the bridge only drops the
+    // revoked connection's subscription entry if the route says so.
+    const revoked = await storage.items.get(connectionId, spaceId);
+    if (revoked) {
+      const metadata = await storage.metadata.get(revoked.id);
+      await publish({
+        type: "state_changed",
+        item: revoked,
+        metadata,
+        spaceId,
+      });
+    }
+    return c.json(uninstalled, 200);
   });
 
   return r;

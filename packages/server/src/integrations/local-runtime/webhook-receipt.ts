@@ -19,11 +19,13 @@
  *      dispatch lock — see `pg-cursor-store.ts`.
  *   5. Enqueue a `WebhookMessage` onto the local runtime's queue.
  *
- * Responses match the Cloudflare side exactly:
+ * Responses:
  *   - 202 on accept (`{ ok: true, connection_id, delivery_id }`)
  *   - 200 + `duplicate: true` when the delivery is already on file
  *   - 401 on verification failure
  *   - 404 when the connection has no matching subscriptions
+ *   - 410 when the connection is revoked
+ *   - 503 + `Retry-After` when the connection is paused
  *   - 500 when the subscription has no resolvable integration name
  */
 import { Hono } from "hono";
@@ -87,6 +89,23 @@ export function registerWebhookReceiptRoute(
     const props = connection.properties as ConnectionProperties;
     if (props.kind !== "integration") {
       return c.json({ error: "connection_not_integration_kind" }, 400);
+    }
+    // A paused connection refuses deliveries with a retryable status,
+    // BEFORE any idempotency slot is recorded. Accepting-and-dropping
+    // would consume the sender's delivery id, so their redelivery inside
+    // the dedup window would be swallowed as a duplicate — the event
+    // gone, not deferred. A 503 keeps the sender's own retry schedule in
+    // charge: resume within their window and the delivery lands.
+    // Answered before signature verification, deliberately — the 404 and
+    // 410 above already disclose lifecycle state pre-auth, and the
+    // Retry-After hint is worth more to a legitimate sender than the
+    // paused/active bit is to a prober.
+    if ((props as { runtime_status?: string }).runtime_status === "paused") {
+      return c.json(
+        { error: "connection_paused", connection_id: connectionId },
+        503,
+        { "Retry-After": "300" },
+      );
     }
     if (!props.integration_ref) {
       return c.json({ error: "integration_ref_missing" }, 400);

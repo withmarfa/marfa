@@ -66,10 +66,18 @@ interface ManifestTrigger {
  *   - The manifest is invalid (validateManifest rejects it)
  *   - The manifest declares no `item-event` trigger
  *   - The connection's `properties.status` is set and not `active`
- *   - The connection's `properties.runtime_status` is `failing` (the
- *     subscriber tripped the bridge's sustained-failure escalation;
- *     dispatch stays gated until an operator clears the field or
- *     transitions it back to a non-failing value)
+ *   - The connection's `properties.runtime_status` is `failing`.
+ *     Nothing in-tree writes that value any more (the sustained-failure
+ *     escalation went with the retired hosted bridge); the gate stays
+ *     so a pre-existing value keeps its meaning.
+ *   - The connection's `properties.runtime_status` is `paused` (the
+ *     operator asked it to stop). The pause/resume/uninstall routes
+ *     publish the status change, and the bridge's invalidation
+ *     subscriber re-evaluates the entry — that event is load-bearing;
+ *     a bare storage write would leave the cached entry in place.
+ *     Inbound webhook receipt gates on pause too, at its own route: a
+ *     retryable 503 before any idempotency slot is recorded, so the
+ *     sender redelivers after resume.
  *
  * The entry snapshots the persisted manifest (name, target_types), so
  * cached entries assume manifests are immutable per version — which the
@@ -100,6 +108,7 @@ export async function buildEntryForConnection(
   if (props.kind !== "integration") return null;
   if (props.status && props.status !== "active") return null;
   if (props.runtime_status === "failing") return null;
+  if (props.runtime_status === "paused") return null;
   const ref = props.integration_ref;
   if (!ref) return null;
   const integration = await storage.items.get(ref);

@@ -125,6 +125,31 @@ export function createSupervisor(
     const result = await storage.coordination.withJobLock(
       lockName,
       async () => {
+        // The gate that survives any stale cache upstream: whatever
+        // enqueued this message, a paused connection dispatches nothing.
+        // The verdict differs by kind. Schedule ticks and item events are
+        // ongoing streams — dropping the queued residue is semantically a
+        // no-op, so they ack cleanly. A webhook delivery is a one-off the
+        // sender already handed over (the receipt route refuses NEW
+        // deliveries while paused, but this one predates the pause), so
+        // it retries instead: resume inside the retry ladder and it
+        // dispatches; outlast the ladder and it lands on the dead-letter
+        // surface, visible and replayable rather than silently gone.
+        const target = await storage.items.get(message.connection_id);
+        if (
+          target?.type === "system.connection" &&
+          (target.properties as { runtime_status?: string }).runtime_status ===
+            "paused"
+        ) {
+          if (message.kind === "webhook") {
+            return {
+              ok: false as const,
+              retry: true,
+              reason: "connection_paused",
+            };
+          }
+          return { ok: true as const };
+        }
         const credential = await mintLocalRuntimeCredential(
           storage,
           config.apiKeySalt,

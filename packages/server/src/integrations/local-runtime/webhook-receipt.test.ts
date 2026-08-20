@@ -211,6 +211,46 @@ describe("POST /runtime/webhook/:connection_id", () => {
     expect(setup.enqueued).toHaveLength(0);
   });
 
+  it("refuses a paused Connection with a retryable 503, burning no idempotency slot", async () => {
+    // Accepting-and-dropping would record the sender's delivery id and
+    // swallow their redelivery as a duplicate — the event gone, not
+    // deferred. The 503 keeps the sender's retry schedule in charge:
+    // the same delivery lands cleanly once the connection resumes.
+    const setup = await setupConnection();
+    const row = await ctx.storage.items.get(setup.connectionId);
+    await ctx.storage.items.update(setup.connectionId, {
+      properties: { ...row!.properties, runtime_status: "paused" },
+    });
+
+    const body = JSON.stringify({ delivery: "paused-window" });
+    const headers = {
+      "content-type": "application/json",
+      "x-marfa-signature": `sha256=${signBody(body, setup.secret)}`,
+      "x-delivery-id": "paused-delivery-1",
+    };
+    const refused = await setup.app.request(
+      `/runtime/webhook/${setup.connectionId}`,
+      { method: "POST", body, headers },
+    );
+    expect(refused.status).toBe(503);
+    expect(setup.enqueued).toHaveLength(0);
+
+    // Resume, then the sender's redelivery of the SAME delivery id must
+    // land as a fresh delivery, not a duplicate.
+    const paused = await ctx.storage.items.get(setup.connectionId);
+    await ctx.storage.items.update(setup.connectionId, {
+      properties: { ...paused!.properties, runtime_status: "healthy" },
+    });
+    const landed = await setup.app.request(
+      `/runtime/webhook/${setup.connectionId}`,
+      { method: "POST", body, headers },
+    );
+    expect(landed.status).toBe(202);
+    const landedBody = (await landed.json()) as { duplicate?: boolean };
+    expect(landedBody.duplicate ?? false).toBe(false);
+    expect(setup.enqueued).toHaveLength(1);
+  });
+
   it("returns 404 when the Connection has no inbound subscriptions", async () => {
     const integration = await ctx.storage.items.create(
       {

@@ -1748,8 +1748,12 @@ export class MarfaClient {
     },
     /**
      * Pause an `integration` connection: sets `runtime_status` to
-     * `paused` and disarms its schedule, so scheduled runs and
-     * item-event dispatches both stop.
+     * `paused` — the scheduler skips it, reactive item-event fan-out
+     * drops it, and new inbound webhook deliveries are refused with a
+     * retryable 503 so the sender redelivers after resume. Queued
+     * schedule and item-event work is discarded without running; a
+     * queued webhook dispatch retries and dead-letters if the pause
+     * outlasts it.
      *
      * Credentials and the upstream OAuth grant survive, which is the
      * point — `resume` restores the connection without a fresh consent
@@ -1769,7 +1773,9 @@ export class MarfaClient {
     },
     /**
      * Resume a paused `integration` connection: restores
-     * `runtime_status` to `healthy` and re-arms its schedule.
+     * `runtime_status` to `healthy`; the scheduler, reactive fan-out,
+     * and inbound webhook receipt all pick it up again with nothing to
+     * re-arm.
      *
      * Rejects with 400 on a connection that is not paused, and on one
      * that is revoked — reviving a revoked connection is what

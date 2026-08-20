@@ -862,11 +862,15 @@ export interface PreviewEventRequest {
  *   - `subscription_inactive`: the operator filtered to a connection id
  *     that isn't currently a subscriber (revoked, wrong kind, manifest
  *     missing an `item-event` trigger, etc.).
+ *   - `subscription_paused`: the filtered connection is paused — the
+ *     one inactive cause an operator flips on purpose; resume restores
+ *     dispatch.
  */
 export interface PreviewEventEnvelope {
   connection_id: string;
   /** Manifest name from the connection's bound integration; "" when the
-   *  connection is not a subscriber (only on `subscription_inactive`). */
+   *  connection is not a subscriber (`subscription_inactive` /
+   *  `subscription_paused`). */
   integration_name: string;
   would_dispatch: boolean;
   dispatch_reason:
@@ -878,7 +882,8 @@ export interface PreviewEventEnvelope {
     | "system_type"
     | "type_not_targeted"
     | "hop_budget_exceeded"
-    | "subscription_inactive";
+    | "subscription_inactive"
+    | "subscription_paused";
   /**
    * The wire envelope the bridge would POST to Cloudflare Queues, present
    * iff `would_dispatch === true`. Mirrors the bridge's internal

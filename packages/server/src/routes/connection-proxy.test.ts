@@ -473,6 +473,35 @@ describe("POST /connections/:id/proxy/* — refresh on 401", () => {
     const conn = await ctx.storage.items.get(connectionId);
     expect(conn?.properties.runtime_status).toBe("reauth_required");
   });
+
+  it("never overwrites an operator's pause with reauth_required", async () => {
+    // The window this pins: a connection paused because it is
+    // misbehaving is exactly the one whose retrying dispatches produce a
+    // terminal 401. If that stamp rewrote the field, pause ended without
+    // anyone asking and the walker resumed scheduling on the next tick.
+    const connectionId = await createConnection();
+    await seedToken(connectionId, {
+      accessPlain: "stale",
+      refreshPlain: null,
+    });
+    const row = await ctx.storage.items.get(connectionId);
+    await ctx.storage.items.update(connectionId, {
+      properties: { ...row!.properties, runtime_status: "paused" },
+    });
+
+    installFetchScript([() => jsonResponse(401, { error: "invalid_token" })]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy/things`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(401);
+
+    const conn = await ctx.storage.items.get(connectionId);
+    expect(conn?.properties.runtime_status).toBe("paused");
+  });
 });
 
 // ---------------------------------------------------------------------------
