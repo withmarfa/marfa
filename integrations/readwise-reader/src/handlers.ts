@@ -544,8 +544,9 @@ export async function handleItemEvent(
     return deleteUpstreamIfMapped(ctx, cursor, message.item_id);
   }
 
-  // The item-event trigger delivers every item event in the space, not
-  // just this type's, so the gate is the handler's job.
+  // The bridge already filters events to the manifest's target_types;
+  // this check is the defensive layer for anything that bypasses it (a
+  // replayed dead letter, a manual dispatch).
   if (item.type !== DEFAULT_TARGET_TYPE) return { ok: true };
 
   const externalId = findExternalIdFor(cursor, item.id);

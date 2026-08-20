@@ -1112,8 +1112,8 @@ describe("outbound item events", () => {
   });
 
   it("ignores an event for a type it does not own", async () => {
-    // The trigger delivers every item event in the space, so this gate
-    // is the handler's and nobody else's.
+    // The bridge filters to the manifest's target types upstream; this
+    // pins the handler's own defensive check for anything bypassing it.
     const built = buildContext({
       items: {
         mit_8: {

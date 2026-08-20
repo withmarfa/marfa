@@ -451,7 +451,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
 
 // ---------------------------------------------------------------------------
 // `POST /connections/preview-event` — render bridge envelopes for a
-// synthetic event without dispatch. Auth gate, the four `dispatch_reason`s
+// synthetic event without dispatch. Auth gate, the `dispatch_reason`s
 // the route surfaces, and the unfiltered walk's silence on non-subscribers.
 // Cross-space gating is exercised by the bridge's own tests; the preview
 // route's single-space tests don't recreate that fixture.
@@ -466,6 +466,8 @@ interface PreviewBody {
       | "ok"
       | "self_event"
       | "cross_space"
+      | "system_type"
+      | "type_not_targeted"
       | "hop_budget_exceeded"
       | "subscription_inactive";
     envelope?: {
@@ -730,6 +732,34 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
     expect(row.would_dispatch).toBe(false);
     expect(row.dispatch_reason).toBe("self_event");
     expect(body.hop_budget.used).toBe(1);
+  });
+
+  it("reports `type_not_targeted` for an item type outside the manifest's target_types", async () => {
+    const { connectionId } = await installItemEventConnection();
+    // The manifest declares core.note only; a bookmark is a real,
+    // non-system type the subscriber never claimed.
+    const bookmark = await ctx.storage.items.create(
+      {
+        type: "core.bookmark",
+        properties: { url: "https://example.com/preview" },
+      },
+      undefined,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: bookmark.id,
+        event_type: "created",
+        connection_id: connectionId,
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    const row = body.envelopes[0]!;
+    expect(row.would_dispatch).toBe(false);
+    expect(row.dispatch_reason).toBe("type_not_targeted");
+    expect(row.envelope).toBeUndefined();
   });
 
   it("reports `hop_budget_exceeded` when the synthetic event would have been dropped upstream of the bridge", async () => {

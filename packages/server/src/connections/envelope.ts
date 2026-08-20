@@ -70,6 +70,13 @@ interface ManifestTrigger {
  *     subscriber tripped the bridge's sustained-failure escalation;
  *     dispatch stays gated until an operator clears the field or
  *     transitions it back to a non-failing value)
+ *
+ * The entry snapshots the persisted manifest (name, target_types), so
+ * cached entries assume manifests are immutable per version — which the
+ * registration route enforces. An in-place edit of a system.integration
+ * item's manifest through the generic item routes bypasses the
+ * system.connection invalidation events and leaves entries stale until
+ * the next rebuild.
  */
 export async function buildEntryForConnection(
   storage: Storage,
@@ -155,6 +162,8 @@ export type DispatchOutcome =
  *   1. system type (the event is the platform's own bookkeeping)
  *   2. self-event (the subscriber is the connection that originated the event)
  *   3. cross-space (the subscriber's space doesn't match the event's)
+ *   4. type-not-targeted (the item's type is outside the subscriber
+ *      manifest's target_types — its credential could not read the item)
  *
  * Returns `{ would_dispatch: true }` when every gate passes — the caller
  * may then build the envelope. Hop-budget enforcement is upstream of the
