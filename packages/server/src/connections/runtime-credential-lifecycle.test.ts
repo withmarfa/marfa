@@ -24,8 +24,14 @@
  * deployment that has spaces.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { MarfaError } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -40,10 +46,9 @@ afterAll(async () => {
 
 const INTEGRATION = "acme.lifecycle";
 
-interface MintResponse {
-  id: string;
-  api_key: string;
-}
+type MintOutcome =
+  | { ok: true; api_key: string }
+  | { ok: false; code: string; message: string };
 
 interface ErrorResponse {
   error: { code: string; message: string };
@@ -110,20 +115,28 @@ async function makeConnection(
   return connection.id;
 }
 
-async function mint(
-  connectionId: string,
-  integrationName = INTEGRATION,
-): Promise<Response> {
-  const suffix = Math.random().toString(36).slice(2, 10);
-  return request(ctx.app, "POST", "/system/runtime-credentials", {
-    key: ctx.adminKey,
-    body: {
-      connection_id: connectionId,
-      integration_name: integrationName,
-      label: `lifecycle ${suffix}`,
-      source: `lifecycle-${suffix}`,
-    },
-  });
+async function mint(connectionId: string): Promise<MintOutcome> {
+  // The runtime's own mint path — the only way a runtime credential is
+  // created since the HTTP mint route was retired with the hosted
+  // substrate.
+  try {
+    const cred = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionId,
+      "hosted",
+    );
+    return { ok: true, api_key: cred.api_key };
+  } catch (err) {
+    if (err instanceof MarfaError) {
+      return { ok: false, code: err.code, message: err.message };
+    }
+    return {
+      ok: false,
+      code: "mint_failed",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 describe("a runtime credential is fenced by a space", () => {
@@ -145,10 +158,10 @@ describe("a runtime credential is fenced by a space", () => {
     const connectionId = await makeConnection(undefined);
     const res = await mint(connectionId);
 
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as ErrorResponse;
-    expect(body.error.code).toBe("forbidden");
-    expect(body.error.message).toMatch(/no space/i);
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.code).toBe("forbidden");
+    expect(res.message).toMatch(/no space/i);
   });
 
   it("refuses the install pipeline's mint for a space-less Connection", async () => {
@@ -186,7 +199,7 @@ describe("a runtime credential is fenced by a space", () => {
     // install.
     const space = await ctx.storage.spaces!.create("scoped");
     const connectionId = await makeConnection(space.id);
-    expect((await mint(connectionId)).status).toBe(201);
+    expect((await mint(connectionId)).ok).toBe(true);
   });
 });
 
@@ -195,7 +208,9 @@ describe("item provenance survives a credential rotation", () => {
     const space = await ctx.storage.spaces!.create("provenance");
     const connectionId = await makeConnection(space.id);
 
-    const first = (await (await mint(connectionId)).json()) as MintResponse;
+    const first = await mint(connectionId);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
     const created = await request(ctx.app, "POST", "/items", {
       key: first.api_key,
       body: {
@@ -209,8 +224,10 @@ describe("item provenance survives a credential rotation", () => {
       (await created.json()) as { item: { id: string; source: string } }
     ).item;
 
-    // The refresh the broker performs on every cache miss.
-    const second = (await (await mint(connectionId)).json()) as MintResponse;
+    // The rotation the runtime performs across dispatches.
+    const second = await mint(connectionId);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("unreachable");
     const rewritten = await request(ctx.app, "POST", "/items", {
       key: second.api_key,
       body: {
@@ -241,7 +258,7 @@ describe("a mint cannot outlive the uninstall it raced", () => {
     const connectionId = await makeConnection(space.id);
 
     let settled = false;
-    let result: Response | null = null;
+    let result: MintOutcome | null = null;
 
     // Hold the lock the uninstall pipeline takes for the whole of its
     // run, and revoke inside it exactly as step 7 of that pipeline does.
@@ -279,10 +296,10 @@ describe("a mint cannot outlive the uninstall it raced", () => {
       { timeout: 15_000 },
     );
     expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
-    expect(((await result!.json()) as ErrorResponse).error.code).toBe(
-      "connection_not_active",
-    );
+    const settledResult = result!;
+    expect(settledResult.ok).toBe(false);
+    if (settledResult.ok) throw new Error("unreachable");
+    expect(settledResult.message).toMatch(/is revoked; cannot mint/);
   });
 });
 
@@ -292,12 +309,10 @@ describe("a runtime credential speaks only for its own Connection", () => {
     name: string,
   ): Promise<{ key: string; connectionId: string }> {
     const connectionId = await makeConnection(spaceId, name);
-    const res = await mint(connectionId, name);
-    expect(res.status).toBe(201);
-    return {
-      key: ((await res.json()) as MintResponse).api_key,
-      connectionId,
-    };
+    const res = await mint(connectionId);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    return { key: res.api_key, connectionId };
   }
 
   it("refuses to create activity attributed to a sibling", async () => {

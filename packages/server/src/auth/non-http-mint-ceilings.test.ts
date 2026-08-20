@@ -150,7 +150,6 @@ describe("in-process mint call sites are pinned", () => {
     const KNOWN = new Set([
       "connections/install-pipeline.ts",
       "integrations/local-runtime/credentials.ts",
-      "routes/runtime-credentials.ts",
     ]);
 
     const srcRoot = fileURLToPath(new URL("..", import.meta.url));

@@ -27,7 +27,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { IntegrationManifest } from "@withmarfa/shared";
 import {
   createTestContext,
   markEmailVerified,
@@ -67,62 +66,6 @@ async function mintSpaceAdmin(spaceId: string): Promise<string> {
     spaceId,
   );
   return raw;
-}
-
-function manifest(name: string): IntegrationManifest {
-  return {
-    name,
-    version: "1.0.0",
-    publisher: "Acme",
-    description: "Mint-door ceiling fixture",
-    direction: "read",
-    triggers: [{ type: "manual" }],
-    target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
-    bidirectional_handling: {
-      echo_ttl_seconds: 60,
-      lag_window_seconds: 60,
-      tombstone_mapping: "state-trashed",
-      partial_write_mode: "all-or-nothing",
-    },
-    oauth_requirements: {},
-    webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
-    permissions: {},
-  };
-}
-
-async function connectionFor(
-  name: string,
-  spaceId: string | undefined,
-): Promise<string> {
-  const m = manifest(name);
-  const integration = await ctx.storage.items.create(
-    {
-      type: "system.integration",
-      properties: {
-        manifest_name: m.name,
-        manifest_version: m.version,
-        publisher: m.publisher,
-        manifest: m,
-        registered_at: new Date().toISOString(),
-      },
-    },
-    undefined,
-  );
-  const connection = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        integration_ref: integration.id,
-      },
-    },
-    spaceId,
-  );
-  return connection.id;
 }
 
 /** Sign up + verify + sign in; returns the session cookie. Hosted
@@ -242,64 +185,6 @@ const DOORS: MintDoor[] = [
       // The platform flag never rides through this door: a space-bound
       // admin is deliberately less than the platform tier.
       expect(body.is_platform ?? false).toBe(false);
-    },
-  },
-  {
-    name: "POST /system/runtime-credentials — breadth is the manifest, space is the connection's",
-    // Filtered out of the published spec as an internal operation, so it
-    // is pinned against the live route table instead.
-    specRoute: null,
-    ceiling: async () => {
-      const spaceId = `t-mint-rt-${Math.random().toString(36).slice(2, 10)}`;
-      const name = `acme.door${Math.random().toString(36).slice(2, 6)}`;
-
-      // At the ceiling: an active, spaced connection mints, and the
-      // credential's breadth is exactly the manifest projection — the
-      // declared target types plus the activity channel, no wildcard.
-      const spaced = await connectionFor(name, spaceId);
-      const minted = await request(
-        ctx.app,
-        "POST",
-        "/system/runtime-credentials",
-        {
-          key: ctx.adminKey,
-          body: {
-            connection_id: spaced,
-            integration_name: name,
-            label: "rt-door",
-            source: `rt-door-${Math.random().toString(36).slice(2, 8)}`,
-          },
-        },
-      );
-      expect(minted.status).toBe(201);
-      // The response carries the bearer once; breadth is asserted on the
-      // stored row, which is what the gates consult.
-      const mintedBody = (await minted.json()) as { id: string };
-      const storedRows = await ctx.storage.keys.list();
-      const storedCred = storedRows.find((k) => k.id === mintedBody.id);
-      const grantedTypes = Object.keys(storedCred?.type_permissions ?? {});
-      expect(grantedTypes.sort()).toEqual(["core.note", "system.activity"]);
-      expect(grantedTypes).not.toContain("*");
-
-      // Over the ceiling: a space-less connection on a hosted deployment
-      // would yield a credential the storage layer treats as unbounded.
-      const name2 = `acme.door${Math.random().toString(36).slice(2, 6)}`;
-      const spaceless = await connectionFor(name2, undefined);
-      const refused = await request(
-        ctx.app,
-        "POST",
-        "/system/runtime-credentials",
-        {
-          key: ctx.adminKey,
-          body: {
-            connection_id: spaceless,
-            integration_name: name2,
-            label: "rt-door-wide",
-            source: `rt-door-${Math.random().toString(36).slice(2, 8)}`,
-          },
-        },
-      );
-      expect(refused.status).toBeGreaterThanOrEqual(400);
     },
   },
   {
@@ -459,7 +344,6 @@ const PINNED_HONO_MINT_ROUTES = [
   "POST /auth/keys",
   "POST /auth/device/token",
   "POST /auth/oauth2/register",
-  "POST /system/runtime-credentials",
 ];
 
 describe("every way of asking for a credential is accounted for", () => {

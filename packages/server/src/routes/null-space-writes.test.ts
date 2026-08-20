@@ -25,7 +25,12 @@
  * reintroduces the gap would pass every existing test and fail this one.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -93,21 +98,13 @@ async function runtimeCredential(
     },
     spaceId,
   );
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
-    key: ctx.adminKey,
-    body: {
-      connection_id: connection.id,
-      integration_name: name,
-      label: `null-space ${suffix}`,
-      source: `null-space-${suffix}`,
-    },
-  });
-  expect(res.status).toBe(201);
-  return {
-    key: ((await res.json()) as { api_key: string }).api_key,
-    connectionId: connection.id,
-  };
+  const cred = await mintLocalRuntimeCredential(
+    ctx.storage,
+    TEST_API_KEY_SALT,
+    connection.id,
+    "hosted",
+  );
+  return { key: cred.api_key, connectionId: connection.id };
 }
 
 /** Every row of a type with no owning space, asked of the storage layer
@@ -236,16 +233,13 @@ describe("a runtime credential's writes belong to its space", () => {
       },
       undefined,
     );
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
-      key: ctx.adminKey,
-      body: {
-        connection_id: orphan.id,
-        integration_name: name,
-        label: `orphan ${suffix}`,
-        source: `orphan-${suffix}`,
-      },
-    });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    await expect(
+      mintLocalRuntimeCredential(
+        ctx.storage,
+        TEST_API_KEY_SALT,
+        orphan.id,
+        "hosted",
+      ),
+    ).rejects.toThrow(/no space/i);
   });
 });

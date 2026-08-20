@@ -16,7 +16,12 @@ import {
   createCursorStore,
 } from "@withmarfa/runtime-sdk";
 import { createInMemoryStorage } from "@withmarfa/runtime-test";
-import { createTestContext, request } from "../test-utils.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -30,7 +35,6 @@ afterAll(async () => {
 });
 
 interface MintResp {
-  id: string;
   api_key: string;
   connection_id: string;
   expires_at: string;
@@ -57,22 +61,17 @@ function makeAppFetch(app: TestContext["app"], apiUrl: string): typeof fetch {
 const ACCEPTANCE_INTEGRATION = "acme.acceptance";
 
 async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
-    key: ctx.adminKey,
-    body: {
-      connection_id: connectionId,
-      integration_name: ACCEPTANCE_INTEGRATION,
-      label: `acceptance ${suffix}`,
-      source: `acceptance-${suffix}`,
-    },
-  });
-  expect(res.status).toBe(201);
-  return (await res.json()) as MintResp;
+  // The runtime's own mint path — the supervisor's, since the HTTP mint
+  // route retired with the hosted substrate.
+  return mintLocalRuntimeCredential(
+    ctx.storage,
+    TEST_API_KEY_SALT,
+    connectionId,
+    "keys",
+  );
 }
 
-// The mint endpoint requires a real, active system.connection whose
-// persisted manifest names the integration the caller claims to be.
+// The mint requires a real, active system.connection.
 async function createActiveConnection(): Promise<string> {
   const integration = await ctx.storage.items.create(
     {

@@ -28,10 +28,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { IntegrationManifest, Item } from "@withmarfa/shared";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 import {
   createTestContext,
   request,
   runBulkActionAsync,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -111,21 +113,18 @@ async function credentialFor(
     },
     spaceId,
   );
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
-    key: ctx.adminKey,
-    body: {
-      connection_id: connection.id,
-      integration_name: name,
-      label: `door ${suffix}`,
-      source: `door-${suffix}`,
-    },
-  });
-  expect(res.status).toBe(201);
+  const cred = await mintLocalRuntimeCredential(
+    ctx.storage,
+    TEST_API_KEY_SALT,
+    connection.id,
+    "hosted",
+  );
   return {
-    key: ((await res.json()) as { api_key: string }).api_key,
+    key: cred.api_key,
     connectionId: connection.id,
-    itemSource: `integration:${connection.id}`,
+    // The provenance stamp every item write carries — keyed on the
+    // manifest name, stable across mints (`runtimeCredentialItemSource`).
+    itemSource: `integration:${name}`,
   };
 }
 
