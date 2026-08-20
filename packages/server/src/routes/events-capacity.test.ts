@@ -12,7 +12,7 @@ import { MarfaError } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog } from "../pubsub.js";
+import { emitWake, type ItemEventWithId } from "../pubsub.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { PgClient } from "../storage/pg/connection.js";
@@ -24,7 +24,6 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  initEventLog(ctx.storage.eventLog);
 });
 
 afterAll(async () => {
@@ -155,7 +154,7 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
     }
   }, 30_000);
 
-  it("releases the replay reservation while the stream stays open", async () => {
+  it("runs the replay, releases its reservation, and keeps delivering live", async () => {
     const pgClient = (ctx.storage.pgStreamClient ??
       ctx.storage.pgClient) as PgClient;
     const app = makeApp({
@@ -163,25 +162,61 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
       pgClient,
       streamReserveTimeoutMs: 1_000,
     });
-    await ctx.storage.eventLog.append({
+    // Two rows, cursor at the first: a cursor below the space's oldest
+    // retained id takes the terminal catchup_too_old exit instead, and
+    // the replay — the code path under test — never runs.
+    const firstId = await ctx.storage.eventLog.append({
       event_type: "created",
-      item_id: "evt-cap-item",
+      item_id: "evt-cap-anchor",
       space_id: SPACE_ID,
       payload: JSON.stringify({
         type: "item.created",
-        item: { id: "evt-cap-item", type: "core.note" },
+        item: { id: "evt-cap-anchor", type: "core.note" },
+      }),
+    });
+    await ctx.storage.eventLog.append({
+      event_type: "created",
+      item_id: "evt-cap-replayed",
+      space_id: SPACE_ID,
+      payload: JSON.stringify({
+        type: "item.created",
+        item: { id: "evt-cap-replayed", type: "core.note" },
       }),
     });
 
-    const stream = await openStream(app, { "Last-Event-ID": "0" });
-    expect(stream.status).toBe(200);
+    const res = await app.request("/events", {
+      headers: { "Last-Event-ID": String(firstId) },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toBeNull();
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
     try {
-      // Once the replay has finished, the whole pool must be reservable
-      // even though the stream is still open. Poll: replay runs
-      // asynchronously behind the first chunk.
-      const deadline = Date.now() + 10_000;
+      // 1. The replay genuinely runs: the second row arrives as a frame.
+      const replayDeadline = Date.now() + 15_000;
+      while (
+        !received.includes("evt-cap-replayed") &&
+        Date.now() < replayDeadline
+      ) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
+            setTimeout(() => {
+              r({ done: false });
+            }, 500),
+          ),
+        ]);
+        if (chunk.value) received += decoder.decode(chunk.value);
+        if (chunk.done) break;
+      }
+      expect(received).toContain("evt-cap-replayed");
+
+      // 2. The reservation came back: the whole pool is reservable while
+      // the stream is still open.
+      const drainDeadline = Date.now() + 20_000;
       let drained = false;
-      while (!drained && Date.now() < deadline) {
+      while (!drained && Date.now() < drainDeadline) {
         const held = [];
         try {
           for (let i = 0; i < 3; i++) {
@@ -199,8 +234,36 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
         }
       }
       expect(drained).toBe(true);
+
+      // 3. The stream is still live after the release: a fresh event
+      // reaches it through the emitter.
+      emitWake({
+        type: "created",
+        item: {
+          id: "evt-cap-live",
+          type: "core.note",
+          properties: {},
+        } as unknown as ItemEventWithId["item"],
+        spaceId: SPACE_ID,
+        originatingConnectionId: null,
+        hopCount: 0,
+      });
+      const liveDeadline = Date.now() + 10_000;
+      while (!received.includes("evt-cap-live") && Date.now() < liveDeadline) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
+            setTimeout(() => {
+              r({ done: false });
+            }, 500),
+          ),
+        ]);
+        if (chunk.value) received += decoder.decode(chunk.value);
+        if (chunk.done) break;
+      }
+      expect(received).toContain("evt-cap-live");
     } finally {
-      await stream.close();
+      await reader.cancel();
     }
-  }, 30_000);
+  }, 60_000);
 });

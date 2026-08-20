@@ -407,7 +407,7 @@ export interface AppConfig {
    *  supervised server into a crash loop. Only connection-shaped
    *  failures wait; misconfiguration still fails immediately. */
   dbStartupWaitMs?: number;
-  /** Ceiling on concurrent SSE viewers per process
+  /** Ceiling on concurrent SSE viewers per server instance
    *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
    *  memory bound: viewers hold no database connection, so any limit is
    *  a stated choice rather than a pool artifact. */
@@ -996,8 +996,25 @@ export function loadConfig(): AppConfig {
       60_000,
     ),
     dbStartupWaitMs: envNumber(process.env.MARFA_DB_STARTUP_WAIT_MS, 90_000),
-    sseMaxViewers: envNumber(process.env.MARFA_SSE_MAX_VIEWERS, 0),
+    sseMaxViewers: parseSseMaxViewers(process.env.MARFA_SSE_MAX_VIEWERS),
   };
+}
+
+/**
+ * Refuses to boot on a value that is not a non-negative integer.
+ * `envNumber` would resolve garbage to NaN, and `NaN > 0` is false, so
+ * a typo would silently switch a stated viewer ceiling OFF — the exact
+ * fail-open the worker-threads parser refuses for the same reason.
+ */
+export function parseSseMaxViewers(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return 0;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `MARFA_SSE_MAX_VIEWERS must be a non-negative integer (0 = uncapped); got "${raw}"`,
+    );
+  }
+  return Number(trimmed);
 }
 
 /**
