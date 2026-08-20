@@ -34,6 +34,11 @@ import {
 import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
+import {
+  startPgBossSchedules,
+  type ScheduledJobSpec,
+} from "./scheduled/pg-boss-schedules.js";
+import type { PgBoss } from "pg-boss";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -168,6 +173,51 @@ async function main() {
   // job carries the same flag on itself.
   let shuttingDown = false;
 
+  // pg-boss carries two duties on Postgres: the scheduled background jobs
+  // below, on every Postgres deployment, and the local integration
+  // substrate's queues when that substrate is enabled. One instance serves
+  // both. On a transaction-mode pooler it takes the direct endpoint, which
+  // the boot guard guarantees is set: its core path tolerates a pooler,
+  // but its schema migration deserves a connection that owns its backend,
+  // and polling never benefits from pooling. The pool is bounded because
+  // the direct endpoint has the tighter connection ceiling (see the
+  // session pool's sizing note in storage/pg/connection.ts); a poll is a
+  // fast statement, so many queues share two connections comfortably.
+  let boss: PgBoss | null = null;
+  if (config.storageDialect === "pg") {
+    // pg-boss 12 is ESM with a named `PgBoss` export (no default).
+    const { PgBoss: PgBossCtor } = await import("pg-boss");
+    const bossUrl =
+      config.dbPoolMode === "transaction" && config.databaseUrlDirect
+        ? config.databaseUrlDirect
+        : config.databaseUrl;
+    boss = new PgBossCtor({ connectionString: bossUrl, max: 2 });
+    // Maintenance errors surface on 'error'; an unhandled 'error' event
+    // would crash the process over a transient the next tick absorbs.
+    boss.on("error", (err) => {
+      log("error", "pg-boss error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    await boss.start();
+  }
+
+  // On Postgres the recurring background jobs run as pg-boss chains
+  // (scheduled/pg-boss-schedules.ts), so exactly one process executes each
+  // tick however many share the database, and — once containers split by
+  // role — the queue is what pins this work to the worker container. On
+  // SQLite each job keeps its own in-process timer: pg-boss is
+  // Postgres-only, and a SQLite deployment is single-process by
+  // definition. Every job construction below routes through this helper.
+  const scheduledJobs: ScheduledJobSpec[] = [];
+  const scheduleJob = (
+    spec: ScheduledJobSpec,
+    startTimer: () => void,
+  ): void => {
+    if (boss) scheduledJobs.push(spec);
+    else startTimer();
+  };
+
   const auditFanout: SpaceFanout | undefined = storage.spaces
     ? { spaces: storage.spaces, configField: "audit_retention_days" }
     : undefined;
@@ -180,8 +230,8 @@ async function main() {
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
-  const runEventLogCleanup = () => {
-    void runSpaceCleanup({
+  const runEventLogCleanup = () =>
+    runSpaceCleanup({
       jobName: "event-log-cleanup",
       coordination: storage.coordination,
       fanout: eventLogFanout,
@@ -200,15 +250,28 @@ async function main() {
       .catch((err: unknown) => {
         logJobTickFailure("Event-log cleanup", err, shuttingDown);
       });
-  };
-  const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
-  const eventLogCleanupInterval = setInterval(
-    runEventLogCleanup,
-    config.eventLogCleanupIntervalMs ?? 3_600_000,
+  let eventLogCleanupDelay: ReturnType<typeof setTimeout> | null = null;
+  let eventLogCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  scheduleJob(
+    {
+      name: "event-log-cleanup",
+      intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
+      runOnce: runEventLogCleanup,
+    },
+    () => {
+      eventLogCleanupDelay = setTimeout(
+        () => void runEventLogCleanup(),
+        10_000,
+      );
+      eventLogCleanupInterval = setInterval(
+        () => void runEventLogCleanup(),
+        config.eventLogCleanupIntervalMs ?? 3_600_000,
+      );
+    },
   );
 
-  const runAuditCleanup = () => {
-    void runSpaceCleanup({
+  const runAuditCleanup = () =>
+    runSpaceCleanup({
       jobName: "audit-cleanup",
       coordination: storage.coordination,
       fanout: auditFanout,
@@ -226,11 +289,21 @@ async function main() {
       .catch((err: unknown) => {
         logJobTickFailure("Audit cleanup", err, shuttingDown);
       });
-  };
-  const auditCleanupDelay = setTimeout(runAuditCleanup, 5_000);
-  const auditCleanupInterval = setInterval(
-    runAuditCleanup,
-    config.auditCleanupIntervalMs,
+  let auditCleanupDelay: ReturnType<typeof setTimeout> | null = null;
+  let auditCleanupInterval: ReturnType<typeof setInterval> | null = null;
+  scheduleJob(
+    {
+      name: "audit-cleanup",
+      intervalMs: config.auditCleanupIntervalMs,
+      runOnce: runAuditCleanup,
+    },
+    () => {
+      auditCleanupDelay = setTimeout(() => void runAuditCleanup(), 5_000);
+      auditCleanupInterval = setInterval(
+        () => void runAuditCleanup(),
+        config.auditCleanupIntervalMs,
+      );
+    },
   );
 
   const webhookConsumer = new WebhookConsumer(
@@ -240,7 +313,19 @@ async function main() {
   webhookConsumer.start();
 
   const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
-  webhookPoller.start();
+  // The one background job with no cross-process coordination of its own:
+  // two timer-driven copies double-deliver, which is why this job in
+  // particular must run through the queue on Postgres.
+  scheduleJob(
+    {
+      name: "webhook-poll",
+      intervalMs: 30_000,
+      runOnce: () => webhookPoller.runOnce(),
+    },
+    () => {
+      webhookPoller.start();
+    },
+  );
 
   // Opt-in liveness heartbeat: off unless the operator names a receiver.
   const heartbeat = config.heartbeatUrl
@@ -262,7 +347,16 @@ async function main() {
     config.versionThinningIntervalMs,
     storage.coordination,
   );
-  versionThinner.start();
+  scheduleJob(
+    {
+      name: "version-thinning",
+      intervalMs: config.versionThinningIntervalMs,
+      runOnce: () => versionThinner.runOnce(),
+    },
+    () => {
+      versionThinner.start();
+    },
+  );
 
   const trashPurger = new TrashPurger(
     storage.items,
@@ -272,7 +366,16 @@ async function main() {
     storage.coordination,
     trashFanout,
   );
-  trashPurger.start();
+  scheduleJob(
+    {
+      name: "trash-purge",
+      intervalMs: config.trashPurgeIntervalMs,
+      runOnce: () => trashPurger.runOnce(),
+    },
+    () => {
+      trashPurger.start();
+    },
+  );
 
   // Gated on authSessions being wired; test contexts that skip better-auth omit it.
   const authSessionCleaner = storage.authSessions
@@ -283,7 +386,18 @@ async function main() {
         storage.coordination,
       )
     : undefined;
-  authSessionCleaner?.start();
+  if (authSessionCleaner) {
+    scheduleJob(
+      {
+        name: "auth-session-cleanup",
+        intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
+        runOnce: () => authSessionCleaner.runOnce(),
+      },
+      () => {
+        authSessionCleaner.start();
+      },
+    );
+  }
 
   // Gated on accountLifecycle being wired; test stubs that omit it skip this job.
   const pendingDeletePurger = storage.accountLifecycle
@@ -295,7 +409,18 @@ async function main() {
         storage.coordination,
       )
     : undefined;
-  pendingDeletePurger?.start();
+  if (pendingDeletePurger) {
+    scheduleJob(
+      {
+        name: "account-deletion-purge",
+        intervalMs: config.accountDeletionPurgeIntervalMs ?? 3_600_000,
+        runOnce: () => pendingDeletePurger.runOnce(),
+      },
+      () => {
+        pendingDeletePurger.start();
+      },
+    );
+  }
 
   // GC keeps the table bounded; expired rows are correctness-safe (upsert path
   // overwrites them transparently).
@@ -305,7 +430,16 @@ async function main() {
     undefined,
     storage.coordination,
   );
-  rateLimitCleaner.start();
+  scheduleJob(
+    {
+      name: "rate-limit-cleanup",
+      intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
+      runOnce: () => rateLimitCleaner.runOnce(),
+    },
+    () => {
+      rateLimitCleaner.start();
+    },
+  );
 
   // Reap grantless DCR clients so unauthenticated registration doesn't grow
   // `auth_oauth_client` unbounded. Gated on a positive retention window
@@ -322,7 +456,18 @@ async function main() {
           storage.coordination,
         )
       : undefined;
-  dcrClientCleaner?.start();
+  if (dcrClientCleaner) {
+    scheduleJob(
+      {
+        name: "dcr-client-cleanup",
+        intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
+        runOnce: () => dcrClientCleaner.runOnce(),
+      },
+      () => {
+        dcrClientCleaner.start();
+      },
+    );
+  }
 
   // Runtime credentials are minted per dispatch, so the table grows with
   // traffic unless something retires them. The mint path supersedes its own
@@ -341,7 +486,18 @@ async function main() {
           storage.coordination,
         )
       : undefined;
-  runtimeCredentialReaper?.start();
+  if (runtimeCredentialReaper) {
+    scheduleJob(
+      {
+        name: "runtime-credential-reap",
+        intervalMs: runtimeCredentialReaperIntervalMs,
+        runOnce: () => runtimeCredentialReaper.runOnce(),
+      },
+      () => {
+        runtimeCredentialReaper.start();
+      },
+    );
+  }
 
   // Text extraction from uploaded files, on by default: a document nobody
   // can find is barely stored. The OCR engine is constructed eagerly but
@@ -365,7 +521,18 @@ async function main() {
           maxAttempts: config.enrichmentMaxAttempts ?? 3,
         })
       : undefined;
-  enrichmentSweeper?.start();
+  if (enrichmentSweeper) {
+    scheduleJob(
+      {
+        name: "enrichment-sweep",
+        intervalMs: config.enrichmentIntervalMs ?? 30_000,
+        runOnce: () => enrichmentSweeper.runOnce(),
+      },
+      () => {
+        enrichmentSweeper.start();
+      },
+    );
+  }
 
   const bulkActionWorker = new BulkActionWorker({
     storage,
@@ -387,7 +554,27 @@ async function main() {
     undefined,
     storage.coordination,
   );
-  bulkActionGc.start();
+  scheduleJob(
+    {
+      name: "bulk-action-jobs-gc",
+      intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
+      runOnce: () => bulkActionGc.runOnce(),
+    },
+    () => {
+      bulkActionGc.start();
+    },
+  );
+
+  // Register the queue workers and seed the chains once every job above
+  // has contributed its spec. Idempotent across processes and restarts.
+  if (boss) {
+    await startPgBossSchedules(boss, scheduledJobs, {
+      isShuttingDown: () => shuttingDown,
+    });
+    log("info", "Scheduled jobs running on pg-boss", {
+      jobs: scheduledJobs.length,
+    });
+  }
 
   // Construct the email transport once at boot and thread it into
   // createApp. The factory's sender-domain check fails loud here if
@@ -461,26 +648,15 @@ async function main() {
               "Set MARFA_INTEGRATION_RUNTIME=hosted to use the Cloudflare substrate instead.",
           );
         }
-        // pg-boss 12 is ESM with a named `PgBoss` export (no default).
-        const { PgBoss } = await import("pg-boss");
-        // pg-boss claims jobs with SELECT FOR UPDATE SKIP LOCKED and takes
-        // only transaction-scoped advisory locks, so its core path
-        // tolerates a transaction-mode pooler — but its schema migration
-        // and maintenance deserve a connection that owns its backend, and
-        // the direct endpoint is guaranteed present in transaction mode by
-        // the boot guard. Handing it the pooled URL would also spend
-        // pooler slots on polling that never benefits from pooling.
-        const bossUrl =
-          config.dbPoolMode === "transaction" && config.databaseUrlDirect
-            ? config.databaseUrlDirect
-            : config.databaseUrl;
-        // The pool is bounded because the direct endpoint has the tighter
-        // connection ceiling (see the session pool's sizing note in
-        // storage/pg/connection.ts). pg-boss's underlying pg.Pool defaults
-        // to 10, which would double the endpoint's entire existing budget
-        // for a polling loop that needs almost nothing.
-        const boss = new PgBoss({ connectionString: bossUrl, max: 2 });
-        await boss.start();
+        // The shared pg-boss instance always exists on this branch: it is
+        // constructed for every Postgres deployment above (with the
+        // direct-endpoint and bounded-pool handling that used to live
+        // here), and this block is unreachable on SQLite.
+        if (!boss) {
+          throw new Error(
+            "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",
+          );
+        }
         localRuntime = await tryStartLocalIntegrationRuntime({
           storage,
           config,
@@ -543,10 +719,12 @@ async function main() {
     webhookConsumer.stop();
     webhookPoller.stop();
     heartbeat?.stop();
-    clearTimeout(eventLogCleanupDelay);
-    clearInterval(eventLogCleanupInterval);
-    clearTimeout(auditCleanupDelay);
-    clearInterval(auditCleanupInterval);
+    // Null on Postgres, where these jobs ran through pg-boss instead of
+    // timers; their queued chains persist across the restart by design.
+    if (eventLogCleanupDelay) clearTimeout(eventLogCleanupDelay);
+    if (eventLogCleanupInterval) clearInterval(eventLogCleanupInterval);
+    if (auditCleanupDelay) clearTimeout(auditCleanupDelay);
+    if (auditCleanupInterval) clearInterval(auditCleanupInterval);
     versionThinner.stop();
     trashPurger.stop();
     authSessionCleaner?.stop();
@@ -565,6 +743,11 @@ async function main() {
     if (localRuntime) {
       void localRuntime.bridge.stop().catch(() => undefined);
       void localRuntime.runtime.stop().catch(() => undefined);
+    } else if (boss) {
+      // The supervisor's stop() drains the shared pg-boss when the local
+      // runtime is up; with the hosted substrate only the scheduled jobs
+      // ride it, so it is stopped here instead.
+      void boss.stop({ graceful: true, timeout: 5_000 }).catch(() => undefined);
     }
 
     let exitCode = 0;

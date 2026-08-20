@@ -473,6 +473,11 @@ export class WebhookPoller {
     }
   }
 
+  /** One poll, for schedulers that own the cadence themselves. */
+  runOnce(): Promise<void> {
+    return this.poll();
+  }
+
   private async poll(): Promise<void> {
     try {
       const pending = await this.deliveryStore.getPending(
