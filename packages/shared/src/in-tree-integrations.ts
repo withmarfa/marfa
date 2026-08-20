@@ -1,183 +1,107 @@
 /**
- * Registry of the in-tree integrations shipped in this monorepo.
+ * The integrations shipped in this monorepo, and the names they answer to.
  *
- * Single source of truth for the dispatch sites that would otherwise
- * each maintain a structurally-identical list of integrations:
+ * Two things need this table. The local runtime resolves each integration's
+ * source directory from it, and — while the identifier rename is in flight —
+ * dispatch resolves an integration by either of its two spellings.
  *
- *   - `packages/server/src/integrations/local-runtime/registrations.ts`
+ * **Why two spellings exist at all.** Dispatch routes by manifest name, but a
+ * connection resolves the manifest *frozen on its catalog row* rather than
+ * the one in the running build. Those move in separate steps, so for the
+ * length of the rename one integration is legitimately known by two names.
+ * Anything matching on the name has to accept both, or dispatch stops with no
+ * error and no activity row.
  *
- * Adding a new in-tree integration: add one entry below and the five
- * sites above pick it up automatically.
+ * The correspondence cannot be derived. `readwise.reader` to `readwise/reader`
+ * is punctuation, but the first-party set changes publisher too
+ * (`withmarfa.podcasts` to `marfa/podcasts`), so it is written down.
  *
- * The `triggers` array mirrors the manifest's declared trigger types
- * verbatim. Drift between the registry and the manifest manifests as
- * either a routing bug (a webhook lands on no queue) or a dead queue
- * (the provisioner mints a queue no Worker consumes), so review
- * keeps these in sync. The `<integration>/src/manifest.test.ts`
- * sibling parses the manifest through `IntegrationManifestSchema`,
- * which catches manifest-shape drift independently.
+ * `legacyName` is temporary by construction: it goes when every stored name
+ * has moved, and `integrationNameSpellings` goes with it.
  *
- * For npm consumers of `@withmarfa/shared` this is implementation
- * detail; the tree-shaker drops the table for any consumer that
- * doesn't reference `IN_TREE_INTEGRATIONS` or its helpers.
+ * For npm consumers of `@withmarfa/shared` this is implementation detail; the
+ * tree-shaker drops the table for anyone who does not reference it.
  */
 
-/** Trigger types declared in `IntegrationManifestSchema.triggers`. */
-export type IntegrationTriggerType =
-  | "webhook"
-  | "schedule"
-  | "item-event"
-  | "manual";
-
 export interface InTreeIntegration {
-  /** Manifest `name` (publisher-dot grammar, e.g. `google.calendar`). */
+  /** Manifest `name` under the integration-identifier grammar,
+   *  `<handle>/<name>` (e.g. `google/calendar`). */
   name: string;
-  /** Directory under `integrations/` containing this integration's
-   *  source. Matches the kebab-case suffix used in queue and Worker
-   *  names (e.g. `google-calendar`). */
+  /** The dot-form name this integration shipped under before the rename.
+   *  Present until every catalog row and every stored provenance string
+   *  carries `name` instead. */
+  legacyName?: string;
+  /** Directory under `integrations/` holding this integration's source. */
   dirName: string;
-  /** Trigger types the manifest declares. Mirror of the manifest's
-   *  `triggers` array — kept in sync by review. */
-  triggers: readonly IntegrationTriggerType[];
-  /** True when the integration deploys as a Cloudflare Worker (hosted
-   *  substrate). False for local-only integrations like `withmarfa.sync`. */
-  hasWorker: boolean;
-  /** `ControlPlaneEnv` field for the Service Binding the control
-   *  plane uses to call `/arm-schedule` and `/verify` on this
-   *  integration's Worker. Set when `hasWorker` is true. */
-  serviceBinding?: string;
-  /** `ControlPlaneEnv` field for the dedicated per-integration
-   *  webhook-receipt queue producer. Set only when this integration
-   *  consumes from its own queue; undefined means it uses the shared
-   *  `WEBHOOK_RECEIPT_QUEUE` (currently just
-   *  `withmarfa.github-webhooks`). */
-  webhookQueueBinding?: string;
-  /** Override for the scheduled-poll queue slug. Defaults to
-   *  `dirName` for integrations declaring a `schedule` trigger. The
-   *  only override today is `todoist` → `todoist-tasks` because the
-   *  consumer's `wrangler.toml` uses that slug rather than the
-   *  manifest-derived one. */
-  scheduledPollQueueSlug?: string;
 }
 
 export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
   {
-    name: "withmarfa.podcasts",
+    name: "marfa/podcasts",
+    legacyName: "withmarfa.podcasts",
     dirName: "podcasts",
-    triggers: ["schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_PODCASTS",
   },
   {
-    name: "withmarfa.rss-watcher",
+    name: "marfa/rss-watcher",
+    legacyName: "withmarfa.rss-watcher",
     dirName: "rss-watcher",
-    triggers: ["schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_RSS_WATCHER",
   },
   {
-    name: "withmarfa.github-webhooks",
+    name: "marfa/github-webhooks",
+    legacyName: "withmarfa.github-webhooks",
     dirName: "github-webhooks",
-    triggers: ["webhook"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GITHUB_WEBHOOKS",
-    // No `webhookQueueBinding` — consumes from the shared queue.
-    // Moving to a dedicated queue is a separate operational task
-    // (consumer-side queue switch + drain of the shared queue).
   },
   {
-    name: "withmarfa.task-auto-archive",
+    name: "marfa/task-auto-archive",
+    legacyName: "withmarfa.task-auto-archive",
     dirName: "task-auto-archive",
-    triggers: ["item-event", "schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_TASK_AUTO_ARCHIVE",
   },
   {
-    name: "google.calendar",
-    dirName: "google-calendar",
-    triggers: ["schedule", "item-event", "webhook"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GOOGLE_CALENDAR",
-    webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR",
-  },
-  {
-    name: "google.tasks",
-    dirName: "google-tasks",
-    triggers: ["schedule", "item-event"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GOOGLE_TASKS",
-  },
-  {
-    name: "google.drive",
-    dirName: "google-drive",
-    triggers: ["schedule", "item-event", "webhook"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GOOGLE_DRIVE",
-    webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE",
-  },
-  {
-    name: "google.contacts",
-    dirName: "google-contacts",
-    triggers: ["schedule", "item-event"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GOOGLE_CONTACTS",
-  },
-  {
-    name: "google.youtube",
-    dirName: "google-youtube",
-    triggers: ["schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_GOOGLE_YOUTUBE",
-  },
-  {
-    name: "todoist.tasks",
-    dirName: "todoist",
-    triggers: ["schedule", "item-event"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_TODOIST_TASKS",
-    scheduledPollQueueSlug: "todoist-tasks",
-  },
-  {
-    name: "readwise.highlights",
-    dirName: "readwise",
-    triggers: ["schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_READWISE",
-  },
-  {
-    name: "readwise.reader",
-    dirName: "readwise-reader",
-    triggers: ["schedule", "item-event"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_READWISE_READER",
-  },
-  {
-    name: "raindrop.bookmarks",
-    dirName: "raindrop",
-    triggers: ["schedule"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_RAINDROP",
-  },
-  {
-    name: "withmarfa.inbox",
+    name: "marfa/inbox",
+    legacyName: "withmarfa.inbox",
     dirName: "withmarfa-inbox",
-    triggers: ["webhook"],
-    hasWorker: true,
-    serviceBinding: "INTEGRATION_WITHMARFA_INBOX",
-    webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX",
+  },
+  { name: "marfa/sync", legacyName: "withmarfa.sync", dirName: "sync" },
+  {
+    name: "google/calendar",
+    legacyName: "google.calendar",
+    dirName: "google-calendar",
+  },
+  { name: "google/tasks", legacyName: "google.tasks", dirName: "google-tasks" },
+  { name: "google/drive", legacyName: "google.drive", dirName: "google-drive" },
+  {
+    name: "google/contacts",
+    legacyName: "google.contacts",
+    dirName: "google-contacts",
   },
   {
-    name: "withmarfa.sync",
-    dirName: "sync",
-    triggers: ["manual"],
-    hasWorker: false,
-    // No `serviceBinding` — local-substrate only, no deployed Worker.
+    name: "google/youtube",
+    legacyName: "google.youtube",
+    dirName: "google-youtube",
+  },
+  { name: "todoist/tasks", legacyName: "todoist.tasks", dirName: "todoist" },
+  {
+    name: "readwise/highlights",
+    legacyName: "readwise.highlights",
+    dirName: "readwise",
+  },
+  {
+    name: "readwise/reader",
+    legacyName: "readwise.reader",
+    dirName: "readwise-reader",
+  },
+  {
+    name: "raindrop/bookmarks",
+    legacyName: "raindrop.bookmarks",
+    dirName: "raindrop",
   },
 ];
 
-/** Resolve a registry entry by manifest name (`google.calendar`). */
+/** Resolve a registry entry by manifest name, in either spelling. */
 export function findIntegration(name: string): InTreeIntegration | undefined {
-  return IN_TREE_INTEGRATIONS.find((i) => i.name === name);
+  return IN_TREE_INTEGRATIONS.find(
+    (i) => i.name === name || i.legacyName === name,
+  );
 }
 
 /** Resolve a registry entry by directory name (`google-calendar`). */
@@ -187,20 +111,16 @@ export function findIntegrationByDir(
   return IN_TREE_INTEGRATIONS.find((i) => i.dirName === dirName);
 }
 
-/** All integrations that declare the given trigger type. */
-export function integrationsWithTrigger(
-  triggerType: IntegrationTriggerType,
-): InTreeIntegration[] {
-  return IN_TREE_INTEGRATIONS.filter((i) => i.triggers.includes(triggerType));
-}
-
-/** All integrations that deploy as Cloudflare Workers. */
-export function deployedWorkers(): InTreeIntegration[] {
-  return IN_TREE_INTEGRATIONS.filter((i) => i.hasWorker);
-}
-
-/** Scheduled-poll queue slug for an integration. Falls back to
- *  `dirName` when no override is declared. */
-export function scheduledPollSlugFor(integration: InTreeIntegration): string {
-  return integration.scheduledPollQueueSlug ?? integration.dirName;
+/**
+ * Every spelling one integration answers to, canonical first.
+ *
+ * Used wherever a stored name meets a running build: the runtime's by-name
+ * registration lookup is the one that matters, because a miss there is a
+ * silent skip rather than an error. An unknown name answers for itself only,
+ * so a third-party integration is unaffected.
+ */
+export function integrationNameSpellings(name: string): string[] {
+  const entry = findIntegration(name);
+  if (!entry) return [name];
+  return entry.legacyName ? [entry.name, entry.legacyName] : [entry.name];
 }

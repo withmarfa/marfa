@@ -6,11 +6,15 @@
  *
  * The `manifest.test.ts` sibling parses this object through
  * `IntegrationManifestSchema` so future drift is caught locally.
+ *
+ * The name is deliberately a third party's, not the platform's: this is
+ * what a contributor copies, and the shape they should copy is
+ * `<their-handle>/<name>` rather than anything under `marfa/`.
  */
 export const TEMPLATE_MANIFEST = {
-  name: "marfa.template",
+  name: "acme/template",
   version: "0.0.1",
-  publisher: "marfa",
+  publisher: "acme",
   description:
     "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end.",
   manifest_schema_version: "1.2.0",

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { isValidTypeIdentifier } from "./validation.js";
+import {
+  isValidIntegrationIdentifier,
+  isValidTypeIdentifier,
+} from "./validation.js";
 
 /**
  * Integration manifest — Zod schema is the canonical definition.
@@ -58,15 +61,26 @@ const SemverSchema = z.string().regex(SEMVER_RE, {
 });
 
 /**
- * Manifest `name` must follow the publisher-namespaced type-identifier
- * grammar (e.g. `acme.calendar-sync`). This keeps the marketplace dedupe
- * key stable, matches Marfa's identifier conventions, and lets the server
- * reuse `isValidTypeIdentifier` for the format check.
+ * Manifest `name` follows the integration-identifier grammar,
+ * `<handle>/<name>` (e.g. `acme/calendar-sync`): dots name data, the slash
+ * names an installable. The dedupe key stays the name, so this is what the
+ * catalog is keyed on.
+ *
+ * This is deliberately no longer `isValidTypeIdentifier`. The two grammars
+ * were the same function while an integration was spelled like a type, and
+ * loosening the type validator to admit a slash would have reached every
+ * scope literal and permission-map key in the system.
+ *
+ * The legacy dot form is still accepted, because installed connections
+ * resolve the manifest frozen on their catalog row and those rows move in
+ * their own step. The tolerance is temporary and goes when they have.
  */
-const ManifestNameSchema = z.string().refine((s) => isValidTypeIdentifier(s), {
-  message:
-    "manifest name must follow publisher-namespaced grammar (e.g. acme.calendar-sync)",
-});
+const ManifestNameSchema = z
+  .string()
+  .refine((s) => isValidIntegrationIdentifier(s), {
+    message:
+      "manifest name must follow handle-slash-name grammar (e.g. acme/calendar-sync)",
+  });
 
 const RuntimeCompatibilityValue = z.enum(["hosted", "self-hosted", "local"]);
 

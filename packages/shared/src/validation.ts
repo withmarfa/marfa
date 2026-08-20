@@ -266,6 +266,53 @@ export function isValidTypeIdentifier(value: string): boolean {
   }
 }
 
+// The name half of an integration identifier: one or more dot-joined
+// segments, so a family can carry a sub-namespace the way types do.
+const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
+
+/**
+ * Returns true if the value is a syntactically valid integration
+ * identifier: `<handle>/<name>`, for example `readwise/reader` or
+ * `marfa/rss-watcher`.
+ *
+ * **Dots name data; the slash names an installable.** A type identifier is
+ * dotted all the way down and never carries a slash; an integration is the
+ * one thing a person installs, so it gets the character that says so. The
+ * two grammars are deliberately separate functions rather than one loosened
+ * regex, because a slash admitted into `isValidTypeIdentifier` would reach
+ * every scope literal and permission-map key in the system.
+ *
+ * Reserved words are **not** checked here, matching
+ * `isValidTypeIdentifier`: whether a publisher may claim `google` is an
+ * authorization question answered at registration, where the credential is
+ * in hand. A syntactic validator that refused reserved handles would refuse
+ * the platform's own integrations, which live under `marfa/`.
+ *
+ * The legacy dot form (`readwise.reader`) is accepted for now — the two
+ * spellings coexist only while installed connections are migrated onto the
+ * new one, and this fallback is removed when that finishes. It refuses a
+ * reserved root, which the type grammar admits and an integration never
+ * could: `core.note` names a type, and nothing has ever published under it.
+ */
+export function isValidIntegrationIdentifier(value: string): boolean {
+  if (typeof value !== "string") return false;
+  if (value.length > 128) return false;
+  const slash = value.indexOf("/");
+  if (slash === -1) {
+    const root = value.split(".")[0] ?? "";
+    if (RESERVED_ROOTS.has(root)) return false;
+    return isValidTypeIdentifier(value);
+  }
+  // Exactly one slash: the handle is a single segment, never a path.
+  if (value.slice(slash + 1).includes("/")) return false;
+  const handle = value.slice(0, slash);
+  const name = value.slice(slash + 1);
+  if (handle.length < 3 || handle.length > 32) return false;
+  if (handle.includes("--")) return false;
+  if (!HANDLE_RE.test(handle)) return false;
+  return INTEGRATION_NAME.test(name);
+}
+
 // A dotted run of identifier segments with no arity rule — the prefix half of
 // a subtree wildcard, which names a namespace rather than a concrete type.
 const TYPE_ID_PREFIX = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
