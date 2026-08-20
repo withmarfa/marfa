@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadConfig } from "./config.js";
@@ -66,7 +67,9 @@ import {
   BulkActionWorker,
   setBulkJobEnqueueListener,
   BulkActionJobGcSweeper,
+  BULK_JOB_WAKE_CHANNEL,
 } from "./bulk-actions/index.js";
+import { sql } from "drizzle-orm";
 
 async function main() {
   const config = loadConfig();
@@ -86,6 +89,19 @@ async function main() {
   } catch {
     log("info", "Server version", { sha: "dev" });
   }
+
+  // What this process does. `web` serves HTTP and enqueues; `worker` runs
+  // the pg-boss consumers behind a minimal health endpoint; `both` (the
+  // default) is the single-container self-host shape. Everything below
+  // that is role-specific gates on these two flags; everything ungated
+  // runs in every role on purpose — event replication and the outbound
+  // webhook consumer in particular, because each process delivers exactly
+  // the events it originated (delivery skips replicated events), and both
+  // roles originate writes.
+  const processRole = config.processRole ?? "both";
+  const runsWeb = processRole !== "worker";
+  const runsWorker = processRole !== "web";
+  log("info", "Process role", { role: processRole });
 
   // A database that is merely slow to come back (a rebooting host, a
   // pooler warming up) must not turn a supervised server into a crash
@@ -115,6 +131,9 @@ async function main() {
         authMode: config.authMode,
         directConnectionString: directUrl,
         poolMode: config.dbPoolMode,
+        ...(config.dbPoolSize !== undefined && {
+          maxPoolSize: config.dbPoolSize,
+        }),
       }),
     );
     // Which endpoint streaming RLS reserves from is not otherwise observable
@@ -183,22 +202,26 @@ async function main() {
     // holding a lock connection from the pool the locked work needs is
     // the documented bracketing deadlock, reached at pool size. Session
     // mode is required (a session lock needs a session), so on a
-    // transaction-mode pooler this takes the direct endpoint.
-    const { default: postgresCtor } = await import("postgres");
-    const sessionModeUrl =
-      config.dbPoolMode === "transaction" && config.databaseUrlDirect
-        ? config.databaseUrlDirect
-        : config.databaseUrl;
-    consentLockClient = postgresCtor(sessionModeUrl, {
-      max: 2,
-      idle_timeout: 30,
-      max_lifetime: 30 * 60,
-      onnotice: () => {
-        // Advisory-lock warnings surface through the backend's own
-        // destroy-on-doubt handling; the default notice logger is noise.
-      },
-    });
-    setConsentLockBackend(createPgConsentLockBackend(consentLockClient));
+    // transaction-mode pooler this takes the direct endpoint. Web-role
+    // only: consent flows are HTTP, so a worker-role process would hold
+    // this client's slice of the connection budget for nothing.
+    if (runsWeb) {
+      const { default: postgresCtor } = await import("postgres");
+      const sessionModeUrl =
+        config.dbPoolMode === "transaction" && config.databaseUrlDirect
+          ? config.databaseUrlDirect
+          : config.databaseUrl;
+      consentLockClient = postgresCtor(sessionModeUrl, {
+        max: 2,
+        idle_timeout: 30,
+        max_lifetime: 30 * 60,
+        onnotice: () => {
+          // Advisory-lock warnings surface through the backend's own
+          // destroy-on-doubt handling; the default notice logger is noise.
+        },
+      });
+      setConsentLockBackend(createPgConsentLockBackend(consentLockClient));
+    }
   }
 
   // Opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS + CLOUDFLARE_QUEUES_API_TOKEN;
@@ -648,10 +671,30 @@ async function main() {
   // Enqueue wakes the worker. The route cannot hold a worker reference —
   // the app is constructed before the worker exists — so the signal is
   // registered here, where both are in scope.
+  // Enqueue wakes the worker wherever it runs. In-process when this role
+  // carries one; over pg_notify otherwise, so a job enqueued on a web-role
+  // container does not wait out the worker's idle backoff (up to 60s). The
+  // notify is best-effort on top of the poll loop — the enqueue has already
+  // committed, so a lost wake costs latency, never the job.
   setBulkJobEnqueueListener(() => {
-    bulkActionWorker.wake();
+    if (runsWorker) bulkActionWorker.wake();
+    if (storage.pgDb !== undefined) {
+      void (storage.pgDb as PgDb)
+        .execute(sql`SELECT pg_notify(${BULK_JOB_WAKE_CHANNEL}, '')`)
+        .catch(() => undefined);
+    }
   });
-  await bulkActionWorker.start();
+  if (runsWorker) {
+    if (pgSessionClient) {
+      // Rides the same session-mode client event replication listens on;
+      // postgres.js multiplexes channels over one LISTEN connection and
+      // re-listens after a reconnect.
+      await pgSessionClient.listen(BULK_JOB_WAKE_CHANNEL, () => {
+        bulkActionWorker.wake();
+      });
+    }
+    await bulkActionWorker.start();
+  }
   const bulkActionGc = new BulkActionJobGcSweeper(
     storage,
     config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000,
@@ -679,11 +722,18 @@ async function main() {
 
   // Register the queue workers and seed the chains once every job above
   // has contributed its spec. Idempotent across processes and restarts.
-  if (boss) {
+  // Worker-role only: registering the workers is what pins scheduled
+  // execution to a process, so a web-role copy contributes nothing here
+  // and the queued chains simply wait for whichever process did register.
+  if (boss && runsWorker) {
     await startPgBossSchedules(boss, scheduledJobs, {
       isShuttingDown: () => shuttingDown,
     });
     log("info", "Scheduled jobs running on pg-boss", {
+      jobs: scheduledJobs.length,
+    });
+  } else if (boss) {
+    log("info", "Scheduled jobs deferred to the worker role", {
       jobs: scheduledJobs.length,
     });
   }
@@ -774,10 +824,18 @@ async function main() {
           config,
           registrations,
           boss,
-          apiUrl: `http://localhost:${String(config.port)}`,
+          // Handlers write back over HTTP. Localhost is right whenever the
+          // web tier shares the process; a split worker container points
+          // MARFA_API_URL at the web service instead.
+          apiUrl: config.apiUrl ?? `http://localhost:${String(config.port)}`,
+          // The web role keeps the enqueue side (webhook receipt, the
+          // dead-letter admin surface, the bridge election) but registers
+          // no queue workers, so dispatch runs only where the role says.
+          dispatch: runsWorker,
         });
         log("info", "Local integration runtime started", {
           registrations: registrations.length,
+          dispatch: runsWorker,
         });
       } catch (err) {
         log("error", "Local integration runtime failed to start", {
@@ -796,24 +854,50 @@ async function main() {
     corsOrigins: config.corsOrigins,
   });
 
-  // Boot guard: warn loud when several server processes appear to share one
-  // database. Realtime delivery is process-local, so the extra processes drop
-  // events silently — nothing surfaces at the API, so nothing else would say.
-  checkMultiReplica();
+  // Boot guard, SQLite only: warn loud when several server processes appear
+  // to share one database. On SQLite realtime delivery is process-local, so
+  // the extra processes drop events silently — nothing surfaces at the API,
+  // so nothing else would say. Postgres deployments replicate events over
+  // pg_notify and coordinate through the database, so any process mix there
+  // is a supported topology, not a hazard.
+  if (config.storageDialect === "sqlite") {
+    checkMultiReplica();
+  }
 
-  const app = createApp(
-    storage,
-    blobBackend,
-    config,
-    emailTransport,
-    oidcSigner,
-    localRuntime?.app,
-    localRuntime?.deadLetterOps,
-  );
-
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    log("info", `Marfa server listening on port ${String(info.port)}`);
-  });
+  // The web role serves the full app; the worker role serves only /health
+  // on the same port, so the container image's HEALTHCHECK and the compose
+  // wiring stay identical across roles. The worker's health answer is
+  // process liveness — its real work is judged by the queues, not by HTTP.
+  let server: ReturnType<typeof serve>;
+  if (runsWeb) {
+    const app = createApp(
+      storage,
+      blobBackend,
+      config,
+      emailTransport,
+      oidcSigner,
+      localRuntime?.app,
+      localRuntime?.deadLetterOps,
+    );
+    server = serve({ fetch: app.fetch, port: config.port }, (info) => {
+      log("info", `Marfa server listening on port ${String(info.port)}`);
+    });
+  } else {
+    const healthApp = new Hono();
+    healthApp.get("/health", (c) =>
+      c.json({
+        status: "ok",
+        role: "worker",
+        version: { sha: config.versionSha ?? "dev" },
+      }),
+    );
+    server = serve({ fetch: healthApp.fetch, port: config.port }, (info) => {
+      log(
+        "info",
+        `Marfa worker health endpoint listening on port ${String(info.port)}`,
+      );
+    });
+  }
 
   const shutdown = (): void => {
     // A second signal must not restart the sequence. The platform sends

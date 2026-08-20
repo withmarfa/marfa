@@ -54,6 +54,13 @@ services:
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     restart: unless-stopped
     env_file: server.env
+    environment:
+      MARFA_PROCESS_ROLE: web
+      # Staging's Postgres is the compose-internal container with the
+      # stock connection ceiling, so the budget is looser than
+      # production's; matched anyway so the two environments exercise
+      # the same shape.
+      MARFA_DB_POOL_SIZE: "4"
     # Loopback-only publish for the deploy gate and on-box debugging; see
     # compose.production.yml.
     ports:
@@ -66,16 +73,15 @@ services:
     volumes:
       - server-data:/app/data
 
-  # See compose.production.yml for why this sits behind a profile until
-  # the runtime role flag ships in the image.
+  # Same image, worker role; see compose.production.yml.
   worker:
-    profiles: ["split"]
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     restart: unless-stopped
     env_file: server.env
     environment:
       MARFA_PROCESS_ROLE: worker
       MARFA_API_URL: http://server:8600
+      MARFA_DB_POOL_SIZE: "2"
     depends_on:
       postgres:
         condition: service_healthy

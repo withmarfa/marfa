@@ -101,17 +101,16 @@ jobs:
         # --no-deps precisely so compose never re-evaluates migrate's
         # completion condition (which it judges against a container the
         # --rm run already deleted, re-running migrations after the old
-        # server is torn down). The worker service joins these lists in
-        # lockstep with the runtime role flag shipping.
+        # server is torn down).
         run: |
           if [ "$ENVIRONMENT" = "prod" ]; then
             echo "ssh=$PROD_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
             echo "compose=compose.production.yml" >> "$GITHUB_OUTPUT"
-            echo "services=server caddy" >> "$GITHUB_OUTPUT"
+            echo "services=server worker caddy" >> "$GITHUB_OUTPUT"
           else
             echo "ssh=$STAGING_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
             echo "compose=compose.staging.yml" >> "$GITHUB_OUTPUT"
-            echo "services=postgres server caddy" >> "$GITHUB_OUTPUT"
+            echo "services=postgres server worker caddy" >> "$GITHUB_OUTPUT"
           fi
 
       # The compose shape deploys from the repo on every roll so the box

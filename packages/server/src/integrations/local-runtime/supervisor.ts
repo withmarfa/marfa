@@ -54,7 +54,7 @@ import type { PgBoss } from "pg-boss";
 
 export const QUEUE_NAME = "marfa.integrations.local";
 const SCHEDULE_PREFIX = "marfa.integrations.local.schedule.";
-const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
+export const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
 
 /** pg-boss 12 restricts queue and schedule names to `[A-Za-z0-9_.\-/]` and
  *  throws on anything else. Map stray characters (a `:` or space in an
@@ -80,6 +80,11 @@ export interface SupervisorConfig {
    *  per-Connection serialization is enforced via the advisory lock
    *  regardless. */
   workerBatchSize?: number;
+  /** When `false`, `start()` creates the queues but registers no
+   *  pg-boss workers and seeds no schedule crons — the enqueue-only
+   *  shape the web role runs, keeping dispatch pinned to the worker
+   *  role. Defaults to `true` (the single-process shape). */
+  registerWorkers?: boolean;
 }
 
 export function createSupervisor(
@@ -307,6 +312,12 @@ export function createSupervisor(
         expireInSeconds: DISPATCH_JOB_EXPIRY_SECONDS,
         deadLetter: DEAD_LETTER_QUEUE,
       });
+      // Enqueue-only mode: the queues exist (an enqueue needs somewhere to
+      // land) but no workers are registered and no schedule crons are
+      // seeded, so dispatch runs only in the process that opted in. The
+      // web role uses this to keep the webhook receipt route and the
+      // reactive bridge's enqueue side without ever executing a handler.
+      if (config.registerWorkers === false) return;
       const batchSize = config.workerBatchSize ?? 4;
       // `includeMetadata` carries `retryCount`, which the throw-retry rule
       // needs to tell a first delivery from a redelivery.
@@ -348,15 +359,21 @@ export function createSupervisor(
       if (stopped) return;
       stopped = true;
       if (config.boss) {
-        try {
-          for (const reg of config.registrations) {
-            if (!reg.scheduleCron) continue;
-            await config.boss.unschedule(
-              sanitizeQueueName(SCHEDULE_PREFIX + reg.name),
-            );
+        // Unschedule deletes the cron rows cluster-wide, so only the
+        // process that seeded them may tear them down — an enqueue-only
+        // copy shutting down must not strip the worker's schedules out
+        // from under it.
+        if (config.registerWorkers !== false) {
+          try {
+            for (const reg of config.registrations) {
+              if (!reg.scheduleCron) continue;
+              await config.boss.unschedule(
+                sanitizeQueueName(SCHEDULE_PREFIX + reg.name),
+              );
+            }
+          } catch {
+            // Best-effort on shutdown.
           }
-        } catch {
-          // Best-effort on shutdown.
         }
         await config.boss.stop({ graceful: true, timeout: 5_000 });
       }

@@ -211,11 +211,12 @@ fi
 # timing-sensitive verification should not — so it is set in the per-env blocks
 # below rather than shared here. A shared assignment would run first and
 # silently win over their `:-` defaults.
-# Load-bearing, not a capacity choice. The OAuth consent flows serialize their
-# writes to a user's standing grant through an in-process mutex, which only
-# covers one process. Raise this and a permission the user just revoked can
-# come back, silently and without an error anywhere. Scaling out needs a
-# shared lock first — see the consent-skip notes in packages/server/AGENTS.md.
+# One instance by policy, not necessity. Multi-process is supported since
+# the consent lock gained its cross-process Postgres backend and events
+# replicate over pg_notify (see packages/server/AGENTS.md), but this
+# deployment stays single-instance: scaling it means re-checking the
+# database tier's connection budget, and this platform's roll semantics
+# make a second instance more surface than capacity.
 export SERVER_MAX_INSTANCES="1"
 # Where the container is allowed to run. NOT a preference — Cloudflare picks
 # the location nearest to whichever request wakes a cold container, and picks

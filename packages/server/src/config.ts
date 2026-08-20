@@ -34,6 +34,8 @@ export function envNumber(raw: string | undefined, fallback: number): number {
  */
 export type DbPoolMode = "session" | "transaction";
 
+export type ProcessRole = "web" | "worker" | "both";
+
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -62,6 +64,33 @@ export interface AppConfig {
    * treat `undefined` as `session`, and `loadConfig` always populates it.
    */
   dbPoolMode?: DbPoolMode;
+  /**
+   * What this process does, from `MARFA_PROCESS_ROLE`. `web` serves HTTP
+   * (API, SSE, webhook receipt, consent); `worker` runs the pg-boss
+   * consumers (scheduled jobs, integration dispatch, enrichment, bulk
+   * actions) behind a minimal health endpoint; `both` is the default and
+   * the single-container self-host shape. Coordination goes through
+   * Postgres, so any mix of roles against one database is valid — which
+   * is also why a role other than `both` requires the pg dialect.
+   * Optional on the type so test contexts constructing `AppConfig`
+   * literals compile; readers treat `undefined` as `both`.
+   */
+  processRole?: ProcessRole;
+  /**
+   * Public-to-this-deployment URL the local integration substrate's
+   * handlers write back through, from `MARFA_API_URL`. Defaults to
+   * `http://localhost:<port>`, which is correct whenever the web tier
+   * shares the process (`both`) — a split worker container points this
+   * at the web service instead.
+   */
+  apiUrl?: string;
+  /**
+   * Main Postgres pool cap, from `MARFA_DB_POOL_SIZE` (default 10). The
+   * session/streaming pool follows as `min(this, 5)`. Exists so a split
+   * deployment can budget web + worker under a managed tier's connection
+   * ceiling; the arithmetic lives in the deployment's env template.
+   */
+  dbPoolSize?: number;
   blobPath: string;
   blobBackend: "fs" | "s3";
   /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
@@ -704,12 +733,50 @@ export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
   );
 }
 
+function parseProcessRole(raw: string | undefined): ProcessRole {
+  if (raw === undefined || raw === "") return "both";
+  if (raw === "web" || raw === "worker" || raw === "both") return raw;
+  // A typo silently defaulting to `both` would run every consumer twice
+  // across a split deployment, so an unknown value refuses to boot.
+  throw new Error(
+    `Unknown MARFA_PROCESS_ROLE=${raw}. Legal values: web | worker | both.`,
+  );
+}
+
+function parseDbPoolSize(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const parsed = Number(raw);
+  // The pool cap is a connection-budget control; a NaN or non-positive
+  // value silently falling back to the default would blow exactly the
+  // budget it exists to hold, so it refuses to boot instead.
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(
+      `MARFA_DB_POOL_SIZE must be a positive integer, got ${raw}.`,
+    );
+  }
+  return parsed;
+}
+
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
   const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
   const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
   const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
+  const processRole = parseProcessRole(process.env.MARFA_PROCESS_ROLE);
+  const dbPoolSize = parseDbPoolSize(process.env.MARFA_DB_POOL_SIZE);
+
+  // The split's coordination is all Postgres: pg-boss pins scheduled and
+  // dispatch work to whichever process registered the workers, pg_notify
+  // replicates events between processes, and the consent lock's
+  // cross-process backend is an advisory lock. SQLite has none of that, so
+  // a role other than `both` there would silently run half a deployment.
+  if (processRole !== "both" && storageDialect !== "pg") {
+    throw new Error(
+      `MARFA_PROCESS_ROLE=${processRole} requires DB_DIALECT=pg. ` +
+        "Role-split deployments coordinate through Postgres; SQLite runs one process with the default role (both).",
+    );
+  }
   const databaseUrl = process.env.DATABASE_URL ?? "";
   // Trimmed here so every consumer sees the same value the guards below
   // judged: createConnection trims its copy, and an untrimmed
@@ -791,6 +858,9 @@ export function loadConfig(): AppConfig {
     databaseUrl,
     databaseUrlDirect,
     dbPoolMode,
+    processRole,
+    ...(process.env.MARFA_API_URL && { apiUrl: process.env.MARFA_API_URL }),
+    ...(dbPoolSize !== undefined && { dbPoolSize }),
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),

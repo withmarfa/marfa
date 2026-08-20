@@ -42,6 +42,11 @@ services:
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     restart: unless-stopped
     env_file: server.env
+    environment:
+      MARFA_PROCESS_ROLE: web
+      # Web share of the connection budget; the arithmetic is in
+      # server.env.example beside the ceiling it sums under.
+      MARFA_DB_POOL_SIZE: "4"
     # Loopback-only publish: the deploy gate and on-box debugging probe
     # /health from the host over SSH, and `expose` alone never reaches the
     # host's network namespace. Caddy stays the only public entry point.
@@ -54,22 +59,18 @@ services:
       - server-data:/app/data
 
   # The worker container: same image, scheduled work and integration
-  # dispatch only. Gated behind a profile because it is only safe once the
-  # image understands the runtime role flag — before that, a second
-  # container runs the full both-in-one process, and the one background
-  # job with no cross-process coordination (the outbound webhook poller)
-  # would deliver everything twice. Remove the profile when the role flag
-  # ships and the split becomes this file's default shape.
+  # dispatch only. The image healthcheck holds unchanged — the worker role
+  # serves /health on the same port. Handlers write back over HTTP, so
+  # MARFA_API_URL points at the web container.
   worker:
-    profiles: ["split"]
     image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
     restart: unless-stopped
     env_file: server.env
     environment:
       MARFA_PROCESS_ROLE: worker
-      # Integration handlers write back over HTTP; in the split they must
-      # land on the web container, whose process holds the live event bus.
       MARFA_API_URL: http://server:8600
+      # Worker share of the connection budget (see server.env.example).
+      MARFA_DB_POOL_SIZE: "2"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -20,6 +20,16 @@
 let listener: (() => void) | null = null;
 
 /**
+ * pg_notify channel that carries the same wake between processes. On
+ * Postgres the enqueuing process announces here and whichever process
+ * runs the worker listens, so a job enqueued on a web-role container
+ * does not wait out the worker's idle backoff. Purely a wake — no
+ * payload, and a missed notification costs latency, not correctness,
+ * because the poll loop still finds the job.
+ */
+export const BULK_JOB_WAKE_CHANNEL = "marfa_bulk_jobs";
+
+/**
  * Register the worker's wake. Pass `null` on shutdown so a stopped worker
  * cannot be woken by a late enqueue.
  */
