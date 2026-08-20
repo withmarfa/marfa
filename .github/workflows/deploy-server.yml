@@ -212,13 +212,21 @@ jobs:
           exit 1
 
   notify:
-    # Reports a failed deploy to aic-alerts. Deploys are operator-dispatched
-    # and usually watched, but a deploy left running unattended that fails is
-    # exactly the moment nobody is looking. Runs hosted rather than on the
-    # self-hosted pool deliberately: when the pool is the thing that broke,
-    # a notifier living on it cannot tell anyone. The alert key carries the
-    # environment so staging and prod track separately, and a later green
-    # deploy to the same environment resolves it.
+    # Reports a deploy that did not finish green to aic-alerts. Deploys are
+    # operator-dispatched and usually watched, but a deploy left running
+    # unattended that fails is exactly the moment nobody is looking. Runs
+    # hosted rather than on the self-hosted pool deliberately: when the pool
+    # is the thing that broke, a notifier living on it cannot tell anyone.
+    # The alert key carries the environment so staging and prod track
+    # separately, and a later green deploy to the same environment resolves
+    # it.
+    #
+    # The verdict keys on the deploy job's own result, and `cancelled` opens
+    # an alert rather than staying silent: a deploy queued for a pool that
+    # never picks it up is cancelled by GitHub's queue limit, which is the
+    # pool-down case this job exists for. An operator's deliberate cancel
+    # pays one benign alert that the next green deploy resolves — cheap
+    # against a silently failed production deploy.
     needs: [build-push, deploy]
     if: always()
     runs-on: ubuntu-latest
@@ -226,27 +234,23 @@ jobs:
       - name: Report outcome to aic-alerts
         env:
           ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
           RESULTS: ${{ join(needs.*.result, ',') }}
           WORKFLOW: ${{ github.workflow }}
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'unknown' }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          case ",$RESULTS," in
-            *,failure,*|*,timed_out,*) STATE=open ;;
-            *,cancelled,*) exit 0 ;;
-            *) STATE=resolved ;;
+          case "$DEPLOY_RESULT" in
+            success) STATE=resolved; TITLE="$WORKFLOW ($ENVIRONMENT) is green again on $REPO" ;;
+            cancelled) STATE=open; TITLE="$WORKFLOW ($ENVIRONMENT) did not complete on $REPO" ;;
+            *) STATE=open; TITLE="$WORKFLOW ($ENVIRONMENT) failed on $REPO" ;;
           esac
-          if [ "$STATE" = open ]; then
-            TITLE="$WORKFLOW ($ENVIRONMENT) failed on $REPO"
-          else
-            TITLE="$WORKFLOW ($ENVIRONMENT) is green again on $REPO"
-          fi
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW/$ENVIRONMENT" \
                 --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg e "$ENVIRONMENT" --arg j "$RESULTS" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
               fields:{Repository:$r,Workflow:$w,Environment:$e,Jobs:$j}}' \
-          | curl -sS --max-time 20 -X POST https://alerts.cyzr.me/alert \
+          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
               -H "Authorization: Bearer $ALERTS_SECRET" \
               -H "Content-Type: application/json" --data @- \
-          || echo "Could not reach aic-alerts; not failing the run over it."
+          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
