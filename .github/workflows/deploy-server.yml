@@ -153,7 +153,10 @@ jobs:
           set -euo pipefail
           cd /opt/marfa
           docker compose -f $COMPOSE pull --quiet
-          docker compose -f $COMPOSE run --rm migrate
+          # </dev/null is load-bearing: `compose run` attaches the script's
+          # own stdin to the one-shot, which swallows the rest of this heredoc
+          # — the roll line below never executed and the step still exited 0.
+          docker compose -f $COMPOSE run --rm migrate </dev/null
           docker compose -f $COMPOSE up -d --no-deps $SERVICES
           EOF
 
