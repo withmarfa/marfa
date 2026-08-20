@@ -808,6 +808,7 @@ async function main() {
     emailTransport,
     oidcSigner,
     localRuntime?.app,
+    localRuntime?.deadLetterOps,
   );
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

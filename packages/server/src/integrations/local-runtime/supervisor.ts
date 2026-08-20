@@ -52,9 +52,9 @@ import type {
 import { fanOutSchedule } from "./walker.js";
 import type { PgBoss } from "pg-boss";
 
-const QUEUE_NAME = "marfa.integrations.local";
+export const QUEUE_NAME = "marfa.integrations.local";
 const SCHEDULE_PREFIX = "marfa.integrations.local.schedule.";
-const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
+export const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
 
 /** pg-boss 12 restricts queue and schedule names to `[A-Za-z0-9_.\-/]` and
  *  throws on anything else. Map stray characters (a `:` or space in an

@@ -3,6 +3,7 @@ import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
+import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
 import { cloneTemplate } from "./storage/pg/test-template.js";
@@ -468,10 +469,22 @@ export async function createTestContext(
    * transport is configured — the existing default for most tests.
    */
   emailTransport?: EmailTransport,
+  /**
+   * Optional dead-letter ops for the admin runtime-jobs routes. Wired
+   * into `createApp` as the 7th arg. Left undefined, the routes answer
+   * 503 `local_runtime_not_available`, matching a deployment without
+   * the local substrate.
+   */
+  deadLetterOps?: DeadLetterOps,
 ): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   try {
-    return await buildTestContext(tmpDir, overrides, emailTransport);
+    return await buildTestContext(
+      tmpDir,
+      overrides,
+      emailTransport,
+      deadLetterOps,
+    );
   } catch (error) {
     // The only thing that removes this directory on the happy path is the
     // `cleanup` closure, and that closure does not exist until the build
@@ -487,6 +500,7 @@ async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
   emailTransport?: EmailTransport,
+  deadLetterOps?: DeadLetterOps,
 ): Promise<TestContext> {
   const dialect = process.env.DB_DIALECT ?? "sqlite";
   const blobPath = join(tmpDir, "blobs");
@@ -556,6 +570,8 @@ async function buildTestContext(
     config,
     emailTransport,
     oidcSigner,
+    undefined,
+    deadLetterOps,
   );
 
   const suffix = Math.random().toString(36).slice(2, 14);

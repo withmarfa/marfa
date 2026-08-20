@@ -26,6 +26,8 @@ import {
   type LocalBridgeRuntime,
 } from "./reactive-bridge.js";
 import { createSupervisor } from "./supervisor.js";
+import { createDeadLetterOps, type DeadLetterOps } from "./dead-letters.js";
+import type { PgDb } from "../../storage/pg/connection.js";
 import type { PgBoss } from "pg-boss";
 import type { LocalIntegrationRegistration, LocalRuntime } from "./types.js";
 import { registerWebhookReceiptRoute } from "./webhook-receipt.js";
@@ -58,6 +60,13 @@ export interface LocalRuntimeBundle {
   runtime: LocalRuntime;
   bridge: LocalBridgeRuntime;
   app: Hono;
+  /**
+   * Operator surface over the substrate's dead-lettered dispatches
+   * (list + replay). `null` when no real pg-boss backs the runtime
+   * (tests driving `dispatchForTest`) — the admin routes then answer
+   * 503 `local_runtime_not_available`.
+   */
+  deadLetterOps: DeadLetterOps | null;
 }
 
 export interface StartLocalRuntimeOptions {
@@ -120,5 +129,13 @@ export async function tryStartLocalIntegrationRuntime(
   const app = new Hono();
   registerWebhookReceiptRoute(app, storage, runtime);
 
-  return { runtime, bridge, app };
+  // The listing reads pg-boss's own job table, so it needs both the real
+  // boss (replay) and the PG Drizzle handle (raw SQL). Both always exist
+  // on a production boot; tests that pass `boss: null` get no ops.
+  const deadLetterOps =
+    options.boss && storage.pgDb
+      ? createDeadLetterOps(options.boss, storage.pgDb as PgDb)
+      : null;
+
+  return { runtime, bridge, app, deadLetterOps };
 }

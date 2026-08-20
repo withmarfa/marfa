@@ -270,6 +270,12 @@ export enum ErrorCode {
    */
   CONSENT_CAPACITY_EXHAUSTED = "consent_capacity_exhausted",
   /**
+   * The deployment runs no local integration substrate (SQLite dialect,
+   * or `MARFA_INTEGRATION_RUNTIME=hosted`), so the dead-letter operator
+   * surface has no queue to read. Not retryable without a config change.
+   */
+  LOCAL_RUNTIME_NOT_AVAILABLE = "local_runtime_not_available",
+  /**
    * The transport returned a non-retryable failure (4xx from
    * Cloudflare Email, permanent SMTP rejection). Distinct from a
    * transient failure (5xx / 429 / network) which the route handler
@@ -372,6 +378,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.CONSENT_CAPACITY_EXHAUSTED]: 503,
+  [ErrorCode.LOCAL_RUNTIME_NOT_AVAILABLE]: 503,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

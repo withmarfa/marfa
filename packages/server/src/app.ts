@@ -38,6 +38,7 @@ import { credentialRoutes } from "./routes/credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
+import { adminRuntimeJobsRoutes } from "./routes/admin-runtime-jobs.js";
 import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
 import {
@@ -97,6 +98,15 @@ export function createApp(
    * subscription's HMAC secret).
    */
   localRuntimeApp?: import("hono").Hono,
+  /**
+   * Dead-letter operator surface from the local integration substrate.
+   * The admin routes mount unconditionally (so the OpenAPI reflection
+   * sees them in every configuration) and answer 503
+   * `local_runtime_not_available` when this is absent.
+   */
+  deadLetterOps?:
+    | import("./integrations/local-runtime/dead-letters.js").DeadLetterOps
+    | null,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -622,6 +632,7 @@ export function createApp(
   );
   app.route("/spaces", spaceRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
+  app.route("/admin", adminRuntimeJobsRoutes(deadLetterOps ?? null));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
   // session-level RLS on a reserved pool connection — for /export's whole
   // bounded response, and for /events only during the replay phase (live
