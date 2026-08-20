@@ -79,6 +79,15 @@ interface ConsentParams {
    * zero-scopes accept bounced back as "tick at least one permission").
    */
   errorMessage?: string;
+  /**
+   * The bundle set to group scopes under. The consent route passes the
+   * consenting space's own derivation here (its runtime custom-namespace
+   * roots folded in), so a space's registered types group under the custom
+   * tile rather than the fallback buckets. Absent, the instance-wide
+   * active bundles apply — correct for keys mode and for callers with no
+   * space to scope to.
+   */
+  bundles?: PermissionBundle[];
 }
 
 /** A rendered soft-tile group: a bundle's scopes, or a fallback bucket for
@@ -334,7 +343,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     </details>`;
   };
 
-  const bundles = getPermissionBundles();
+  const bundles = params.bundles ?? getPermissionBundles();
 
   /** Partition a scope set into bundle-derived groups and render the
    *  non-empty ones, in bundle order, inside a soft-tile stack. */

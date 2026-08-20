@@ -5,8 +5,10 @@ import { resolve } from "node:path";
 import { loadConfig, setActivePermissionBundles } from "./config.js";
 import {
   buildDefaultPermissionBundles,
+  resolveAllRuntimeCustomNamespaces,
   resolveRuntimeCustomNamespaces,
 } from "./auth/default-bundles.js";
+import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
@@ -868,11 +870,21 @@ async function main() {
     checkMultiReplica();
   }
 
+  // Admit every space's runtime custom-namespace roots into the OAuth
+  // scope allowlist, before the auth instance is built. Admission only —
+  // nothing user-visible: the consent screen derives the consenting
+  // space's own roots at render time, and the discovery advertisement is
+  // pinned to the baseline. Installed regardless of the bundle override
+  // below, because whether a space's registered namespaces are grantable
+  // is not the operator's consent-curation lever.
+  setRuntimeNamespaceRoots(await resolveAllRuntimeCustomNamespaces(storage));
+
   // Fold the runtime custom-type namespaces into the active permission
   // bundles, so a custom type under a claimed publisher handle is offerable
-  // through the default consent set rather than only `user.*`. Read once at
-  // boot, matching the scope allowlist's restart-re-enumeration model. The
-  // operator override outranks the derivation and skips it entirely.
+  // through the default consent set rather than only `user.*`. The
+  // space-less bucket read here is the whole story in keys mode; hosted
+  // consent screens re-derive per space at render time (auth-consent.ts).
+  // The operator override outranks the derivation and skips it entirely.
   if (!process.env.MARFA_PERMISSION_BUNDLES) {
     const bundles = buildDefaultPermissionBundles(
       await resolveRuntimeCustomNamespaces(storage),

@@ -20,11 +20,17 @@
  *   `<root>.*` wildcards so a custom type under any handle is offerable,
  *   not just `user.*`.
  *
- * The runtime source is read once at boot, matching the scope allowlist's
- * documented restart-re-enumeration model: a namespace first used after
- * boot becomes offerable on the next restart. Making registry reads live
- * is a separate piece of platform work; this module must not get ahead of
- * it by going per-request.
+ * The runtime source is read on two schedules, because registrations are
+ * space-scoped and consent is per-space. At boot, the space-less bucket is
+ * folded into the instance-wide bundle set — that bucket is where every
+ * registration lands on a single-space self-host, so it is the whole
+ * story in keys mode. In hosted mode a registration belongs to one space,
+ * and folding it in instance-wide would present one space's namespaces on
+ * every other space's consent screen; the consent route instead derives
+ * that space's own roots at render time ({@link resolveRuntimeCustomNamespaces}
+ * with a space id). The scope allowlist, which is an acceptance set rather
+ * than anything a person sees, keeps the boot-time restart-re-enumeration
+ * model over every space's roots ({@link resolveAllRuntimeCustomNamespaces}).
  */
 import {
   TYPE_REGISTRY,
@@ -57,15 +63,46 @@ export function deriveCustomTypeNamespaces(): string[] {
  * and `app.*` are covered structurally, and reserved roots cannot hold a
  * custom type in the first place (belt: filtered anyway, since this reads
  * a table rather than the validator's output).
+ *
+ * With a `spaceId`, the answer is that space's own registrations and
+ * nothing else — the consent screen's question, asked at render time so a
+ * space's registrations are offerable without a restart. Without one, the
+ * answer is the space-less bucket: every registration on a single-space
+ * self-host, and only platform-scoped registrations on a hosted instance.
+ * Never both at once — a space's consent screen deliberately does not
+ * inherit the platform bucket, whose types resolve only for space-less
+ * callers.
  */
 export async function resolveRuntimeCustomNamespaces(
   storage: Storage,
+  spaceId?: string,
 ): Promise<string[]> {
-  const custom = await storage.types.listCustom();
+  const custom = await storage.types.listCustom(spaceId);
+  return namespaceRootsOf(custom.map((schema) => schema.id));
+}
+
+/**
+ * Every space's runtime custom-namespace roots at once, for the OAuth
+ * scope allowlist and nothing user-facing. The allowlist is an acceptance
+ * set — a scope literal outside it is narrowed away before consent — so a
+ * space's roots have to be in it for that space's grants to be issuable
+ * at all, and admitting every space's roots instance-wide reveals nothing:
+ * what a person is shown stays per-space (the consent route), and what the
+ * discovery documents advertise stays pinned to the bundle baseline.
+ */
+export async function resolveAllRuntimeCustomNamespaces(
+  storage: Storage,
+): Promise<string[]> {
+  const loaded = await storage.types.loadCustomTypes();
+  return namespaceRootsOf(loaded.map((row) => row.schema.id));
+}
+
+/** Publisher-tier, non-reserved namespace roots of the given type ids. */
+function namespaceRootsOf(ids: readonly string[]): string[] {
   const roots = new Set<string>();
-  for (const schema of custom) {
-    if (classifyNamespace(schema.id) !== "publisher") continue;
-    const root = schema.id.split(".")[0];
+  for (const id of ids) {
+    if (classifyNamespace(id) !== "publisher") continue;
+    const root = id.split(".")[0];
     if (root && !isReservedRoot(root)) roots.add(root);
   }
   return [...roots].sort();

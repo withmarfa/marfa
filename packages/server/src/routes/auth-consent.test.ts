@@ -22,8 +22,10 @@ import {
   markEmailVerified,
   request,
   waitForAudit,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 import { __test_internals } from "./auth-consent.js";
 
 let ctx: TestContext | undefined;
@@ -440,6 +442,108 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(html).toContain('value="user.*:read"');
     expect(html).toContain("Today this covers Recipes");
     expect(html).toContain("plus any you add later");
+  });
+
+  it("offers a space's own handle namespace through the custom bundle, never a sibling's", async () => {
+    // The regression this pins: the bundle derivation used to read the
+    // space-less custom-types bucket, which hosted-mode registrations
+    // never land in — so a space's registered types could not reach the
+    // custom tile at all, and the coverage collapsed back to `user.*`.
+    // The registration goes through the real hosted path (`POST /types`
+    // under the caller's claimed handle), and the sibling space's
+    // registration proves the derivation never crosses the space fence.
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const clientId = await seedClient(ctx, { name: "Handle Types App" });
+
+    const email = "handle-types@example.com";
+    const password = "correct horse battery";
+    const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: { email, password, name: "Test User" },
+      headers: { origin: ORIGIN },
+    });
+    expect(signUpRes.status).toBe(200);
+    const authUserId = ((await signUpRes.json()) as { user?: { id?: string } })
+      .user?.id;
+    await markEmailVerified(ctx.storage, email);
+    const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: { email, password },
+      headers: { origin: ORIGIN },
+    });
+    expect(signInRes.status).toBe(200);
+    const cookie = (signInRes.headers.get("set-cookie") ?? "")
+      .split(/,\s*(?=[a-zA-Z0-9_-]+=)/)
+      .map((c) => c.split(";")[0])
+      .find((head) => head?.includes("session_token"));
+    expect(cookie).toBeTruthy();
+
+    const userRow = await ctx.storage.users?.getByAuthUserId(authUserId ?? "");
+    expect(userRow).toBeTruthy();
+    const spaceId = userRow?.space_id;
+    expect(spaceId).toBeTruthy();
+    await ctx.storage.users?.setHandle(userRow?.id ?? "", "acme");
+
+    // Register through the API, exercising the handle-ownership gate the
+    // way a real space would.
+    const rawKey = "marfa_k1_test_handle_offer";
+    await ctx.storage.keys.create(
+      {
+        label: "handle-offer",
+        source: "test",
+        role: "member",
+        type_permissions: { "*": "write" },
+        metadata_permissions: { types: "write" },
+      },
+      hashApiKey(rawKey, TEST_API_KEY_SALT),
+      spaceId ?? undefined,
+    );
+    const registerRes = await request(ctx.app, "POST", "/types", {
+      key: rawKey,
+      body: {
+        id: "acme.gadget",
+        version: 1,
+        label: "Gadgets",
+        fields: { name: { type: "string", required: true } },
+      },
+    });
+    expect(registerRes.status).toBe(201);
+
+    // A sibling space's registration, which must stay invisible here.
+    const sibling = await ctx.storage.spaces!.create("sibling-space");
+    await ctx.storage.types.create(
+      {
+        id: "rivalco.thing",
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      },
+      sibling.id,
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${await buildSignedOauthQuery(clientId, "acme.*:read rivalco.*:read openid")}`,
+      { headers: { cookie: cookie ?? "" } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // The space's own root groups under the custom bundle tile.
+    const customTileStart = html.indexOf("Things with your own custom types");
+    expect(customTileStart).toBeGreaterThan(-1);
+    const customTile = html.slice(
+      customTileStart,
+      html.indexOf("</details>", customTileStart),
+    );
+    expect(customTile).toContain('value="acme.*:read"');
+    expect(customTile).toContain("Today this covers Gadgets");
+    // The sibling's root renders as an ungrouped fallback row — grantable
+    // if the space ever holds such types, but never presented as the
+    // consenting space's own.
+    expect(customTile).not.toContain("rivalco");
+    expect(html).toContain('value="rivalco.*:read"');
   });
 
   it("flags a public/DCR client as unverified on the consent screen", async () => {
