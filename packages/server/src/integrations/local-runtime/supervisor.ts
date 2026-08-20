@@ -52,7 +52,7 @@ import type {
 import { fanOutSchedule } from "./walker.js";
 import type { PgBoss } from "pg-boss";
 
-const QUEUE_NAME = "marfa.integrations.local";
+export const QUEUE_NAME = "marfa.integrations.local";
 const SCHEDULE_PREFIX = "marfa.integrations.local.schedule.";
 const DEAD_LETTER_QUEUE = "marfa.integrations.local.deadletter";
 
