@@ -78,8 +78,8 @@ describe("Google Drive manifest", () => {
     ).toEqual(["metadata", "all-files"]);
   });
 
-  it("publisher namespace is shared with the other google.* integrations", () => {
+  it("handle is shared with the other google/ integrations", () => {
     expect(GOOGLE_DRIVE_MANIFEST.publisher).toBe("google");
-    expect(GOOGLE_DRIVE_MANIFEST.name.startsWith("google.")).toBe(true);
+    expect(GOOGLE_DRIVE_MANIFEST.name.startsWith("google/")).toBe(true);
   });
 });

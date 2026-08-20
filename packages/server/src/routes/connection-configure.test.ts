@@ -8,7 +8,7 @@
  *   - POST end-to-end against the test app:
  *       * auth gate (401 unauthenticated / 403 member),
  *       * connection-not-found (404),
- *       * non-google.calendar manifest (400),
+ *       * non-calendar manifest (400),
  *       * validation rejections (no selection / no default /
  *         default-not-in-selected / unknown write_family),
  *       * happy path (200 + persisted configuration + audit row).
@@ -247,7 +247,7 @@ async function seedGoogleCalendarConnection(
     {
       type: "system.integration",
       properties: {
-        manifest_name: opts.manifestName ?? "google.calendar",
+        manifest_name: opts.manifestName ?? "google/calendar",
         manifest_version: "0.1.0",
         publisher: "google",
         direction: "both",
@@ -436,7 +436,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
     const row = audits.data.find((r) => r.resource_id === connectionId);
     expect(row).toBeTruthy();
     expect(row?.details).toMatchObject({
-      manifest_name: "google.calendar",
+      manifest_name: "google/calendar",
       selected_count: 1,
       default_write_calendar_id: "primary",
       write_family: "core",
@@ -464,7 +464,7 @@ describe("POST /connections/:id/configure — error paths", () => {
 
   it("serves the schema-driven path for a non-calendar integration that declares a contract", async () => {
     // The surface works for any integration that declares a schema; the
-    // bespoke picker is a google.calendar refinement, not the gate.
+    // bespoke picker is a google/calendar refinement, not the gate.
     const { connectionId } = await seedGoogleCalendarConnection({
       manifestName: "acme.other",
     });

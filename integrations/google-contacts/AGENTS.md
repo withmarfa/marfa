@@ -7,7 +7,7 @@ the inbound side because the People API does not publish a
 
 ## Identity
 
-- Manifest name: **`google.contacts`** (publisher `google`).
+- Manifest name: **`google/contacts`** (publisher `google`).
 - Target types: `core.entity.person` AND `google.contacts.contact`.
   Default written type is `google.contacts.contact` (upstream
   fidelity); install-time configuration can switch to
@@ -130,7 +130,7 @@ removed.
 
 `google.contacts.contact.photo_url` carries the People API photo URL
 as a string. There is no blob ingest in v1 — the URL is enough for
-display purposes and avoids R2 churn. The `google.drive` integration
+display purposes and avoids R2 churn. The `google/drive` integration
 is the first to handle binary blobs end-to-end.
 
 ## Validation

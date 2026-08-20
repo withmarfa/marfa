@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@withmarfa/integration-withmarfa-inbox-email-worker",
+    name: "@withmarfa/integration-inbox",
     include: ["src/**/*.test.ts"],
   },
 });

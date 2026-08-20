@@ -16,7 +16,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const READWISE_MANIFEST: IntegrationManifest = {
-  name: "readwise.highlights",
+  name: "readwise/highlights",
   version: "0.1.0",
   manifest_schema_version: "1.1.0",
   publisher: "readwise",

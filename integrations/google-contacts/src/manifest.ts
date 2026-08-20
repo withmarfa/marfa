@@ -67,7 +67,7 @@ export type WriteFamily = keyof typeof FAMILY_DEFINITIONS;
 export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
 export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
-  name: "google.contacts",
+  name: "google/contacts",
   version: "0.2.0",
   manifest_schema_version: "1.3.0",
   configuration_schema: {

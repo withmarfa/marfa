@@ -59,7 +59,7 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
   {
     name: "marfa/inbox",
     legacyName: "withmarfa.inbox",
-    dirName: "withmarfa-inbox",
+    dirName: "inbox",
   },
   { name: "marfa/sync", legacyName: "withmarfa.sync", dirName: "sync" },
   {
@@ -109,6 +109,19 @@ export function findIntegrationByDir(
   dirName: string,
 ): InTreeIntegration | undefined {
   return IN_TREE_INTEGRATIONS.find((i) => i.dirName === dirName);
+}
+
+/**
+ * The canonical spelling of an integration name.
+ *
+ * For code comparing a manifest name against a literal. A connection's frozen
+ * manifest can carry the old spelling while the running build carries the new
+ * one, so a bare `===` against either is wrong for the length of the rename.
+ * An unknown name is returned unchanged, so a third-party integration compares
+ * as itself.
+ */
+export function canonicalIntegrationName(name: string): string {
+  return findIntegration(name)?.name ?? name;
 }
 
 /**

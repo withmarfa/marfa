@@ -519,6 +519,13 @@
       "when": 1787264776478,
       "tag": "0073_catalog_manifests_carry_the_type_rename",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "6",
+      "when": 1787267921387,
+      "tag": "0074_integration_identifiers_take_the_slash",
+      "breakpoints": true
     }
   ]
 }

@@ -20,7 +20,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 export const DEFAULT_ARCHIVE_AFTER_DAYS = 30;
 
 export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.task-auto-archive",
+  name: "marfa/task-auto-archive",
   version: "0.1.0",
   manifest_schema_version: "1.2.0",
   configuration_schema: {

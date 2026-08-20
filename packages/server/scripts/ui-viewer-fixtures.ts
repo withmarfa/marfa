@@ -705,7 +705,7 @@ const EMAIL_SCREENS: GalleryScreen[] = [
 /** A manifest shaped like a real one, so the install consent screen renders
  *  the scopes it actually derives rather than a placeholder. */
 const INSTALL_MANIFEST: Record<string, unknown> = {
-  name: "google.calendar",
+  name: "google/calendar",
   version: "1.4.0",
   publisher: "Marfa",
   summary: "Two-way sync between Google Calendar and your events.",

@@ -5,7 +5,7 @@ install seam with a non-default `auth_scheme`.
 
 ## Identity
 
-- Manifest name: **`readwise.reader`** (publisher `readwise`,
+- Manifest name: **`readwise/reader`** (publisher `readwise`,
   identifier `reader`).
 - Target type: `readwise.document`, and only that. The bridge filters
   item events to the manifest's target types; the handler keeps its own

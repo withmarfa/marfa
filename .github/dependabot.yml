@@ -15,7 +15,7 @@ updates:
       - "/infra/cloudflare"
       - "/infra/cloudflare/server-container"
       - "/integrations/*"
-      - "/integrations/withmarfa-inbox/email-worker"
+      - "/integrations/inbox/email-worker"
     schedule:
       interval: "monthly"
     groups:

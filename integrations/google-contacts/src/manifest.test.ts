@@ -73,8 +73,8 @@ describe("Google Contacts manifest", () => {
     expect(FAMILY_DEFINITIONS.core.types.contact).toBe("core.entity.person");
   });
 
-  it("publisher namespace is shared with google.calendar / google.tasks", () => {
+  it("handle is shared with google/calendar and google/tasks", () => {
     expect(GOOGLE_CONTACTS_MANIFEST.publisher).toBe("google");
-    expect(GOOGLE_CONTACTS_MANIFEST.name.startsWith("google.")).toBe(true);
+    expect(GOOGLE_CONTACTS_MANIFEST.name.startsWith("google/")).toBe(true);
   });
 });

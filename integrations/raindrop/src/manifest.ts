@@ -16,7 +16,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RAINDROP_MANIFEST: IntegrationManifest = {
-  name: "raindrop.bookmarks",
+  name: "raindrop/bookmarks",
   version: "0.1.0",
   manifest_schema_version: "1.1.0",
   publisher: "raindrop",

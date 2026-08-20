@@ -554,7 +554,7 @@ Reserved namespaces are documented here so accidental general-purpose use ("just
 
 ## Per-connection upstream_base_url override
 
-`connection.properties.configuration.upstream_base_url_override` is a per-connection knob the connection-proxy consults before falling back to the credential's `upstream_base_url`. Lets multiple integrations sharing one OAuth credential target different upstream hosts — e.g. `google.contacts` on `people.googleapis.com` while `google.calendar` / `drive` / `tasks` use the same credential row pointing at `www.googleapis.com`. Per-connection rather than per-credential because the override is part of the install-time decision, not the credential's identity. Malformed values (not parseable as a URL) fail loud with `OAUTH_PROXY_UPSTREAM_INVALID` rather than silently routing to the credential's host. Trust model is unchanged from the broader proxy gate: only space-admin can install / configure a connection.
+`connection.properties.configuration.upstream_base_url_override` is a per-connection knob the connection-proxy consults before falling back to the credential's `upstream_base_url`. Lets multiple integrations sharing one OAuth credential target different upstream hosts — e.g. `google/contacts` on `people.googleapis.com` while `google/calendar` / `drive` / `tasks` use the same credential row pointing at `www.googleapis.com`. Per-connection rather than per-credential because the override is part of the install-time decision, not the credential's identity. Malformed values (not parseable as a URL) fail loud with `OAUTH_PROXY_UPSTREAM_INVALID` rather than silently routing to the credential's host. Trust model is unchanged from the broader proxy gate: only space-admin can install / configure a connection.
 
 ## OpenTelemetry
 

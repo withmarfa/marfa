@@ -6,7 +6,7 @@ Per-integration packages implementing the manifest contract from `@withmarfa/sha
 
 - **Every integration ships `src/manifest.ts`** exporting an `IntegrationManifest`. Sibling `src/manifest.test.ts` parses it through `IntegrationManifestSchema` so drift is caught at build time, not first install.
 - **Schema source of truth** lives in `packages/shared/src/integration-manifest.ts`; valid fields are documented there in narrative comments.
-- **`name` uses publisher-namespaced grammar** (`<publisher>.<type>`). Per-service publisher families (`google.calendar`, `google.tasks`) share their first segment so integrations under the same upstream reuse one OAuth credential.
+- **`name` is `<handle>/<name>`** — dots name data, the slash names an installable, so an integration can never be mistaken for a type. Integrations from one upstream share a handle (`google/calendar`, `google/tasks`) and so reuse one OAuth credential. The platform's own live under `marfa/`.
 
 ## Handler shape
 
@@ -81,7 +81,7 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 - **`podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
 - **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
 - **`github-webhooks`** — inbound webhook on a repo to `core.bookmark`.
-- **`google-calendar`** — bidirectional OAuth sync with the `google.calendar` family.
+- **`google-calendar`** — bidirectional OAuth sync with the `google/calendar` family.
 - **`google-contacts`** — bidirectional OAuth sync to `google.contacts.contact`.
 - **`google-tasks`** — bidirectional OAuth sync to `google.tasks.task`.
 - **`google-drive`** — inbound OAuth sync to `google.drive.file`.
@@ -90,7 +90,7 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 - **`readwise`** — inbound token sync of highlights and their parent books, over the v2 export API.
 - **`readwise-reader`** — bidirectional token sync of Reader documents, over the separate v3 documents API.
 - **`raindrop`** — inbound token sync of bookmarks and collections.
-- **`withmarfa-inbox`** — email capture via Cloudflare Email Routing.
+- **`inbox`** — email capture via Cloudflare Email Routing.
 - **`task-auto-archive`** — item-event automation on `core.task` items.
 - **`sync`** — the external file-sync client installed as a connection (local-only); its items are user-owned and editable, not mirrors.
 

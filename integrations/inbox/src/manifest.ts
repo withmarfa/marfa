@@ -19,7 +19,7 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const WITHMARFA_INBOX_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.inbox",
+  name: "marfa/inbox",
   version: "0.2.0",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",

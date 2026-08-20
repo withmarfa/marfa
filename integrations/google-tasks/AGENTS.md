@@ -2,11 +2,11 @@
 
 Bidirectional sync between Google Tasks and Marfa. Second instance of
 the `google.*` publisher family; shares the OAuth provider credential
-established for `google.calendar` via `credential_ref`.
+established for `google/calendar` via `credential_ref`.
 
 ## Identity
 
-- Manifest name: **`google.tasks`** (publisher `google`, identifier `tasks`).
+- Manifest name: **`google/tasks`** (publisher `google`, identifier `tasks`).
 - Target types: `core.task` AND `google.tasks.task`. The install
   pipeline grants the runtime credential write permission on both; the
   user picks at install which is actually written (default

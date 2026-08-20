@@ -55,7 +55,7 @@ export type WriteFamily = keyof typeof FAMILY_DEFINITIONS;
 export const DEFAULT_WRITE_FAMILY: WriteFamily = "podcast";
 
 export const PODCASTS_MANIFEST: IntegrationManifest = {
-  name: "withmarfa.podcasts",
+  name: "marfa/podcasts",
   version: "0.2.0",
   manifest_schema_version: "1.3.0",
   publisher: "withmarfa",

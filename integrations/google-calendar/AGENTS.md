@@ -6,7 +6,7 @@ will follow the same conventions.
 
 ## Identity
 
-- Manifest name: **`google.calendar`** (publisher `google`,
+- Manifest name: **`google/calendar`** (publisher `google`,
   identifier `calendar`).
 - Target types: `core.event` AND `google.calendar.event`. The
   install pipeline grants the runtime credential write permission

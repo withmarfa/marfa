@@ -9,7 +9,7 @@ semantics pending a separate follow-on.
 
 ## Identity
 
-- Manifest name: **`google.drive`** (publisher `google`).
+- Manifest name: **`google/drive`** (publisher `google`).
 - Target types: `core.file` AND `google.drive.file`.
 - **Direction:** `inbound` only in v1. Outbound writes to Drive
   (uploads, MIME conversions, folder picking, conflict handling) are
