@@ -1,9 +1,15 @@
 /**
- * Manifest for the Sync Agent re-presentation.
+ * Manifest for the sync client's re-presentation as a Connection.
+ *
+ * Sync is a client: the items it writes belong to the user and are
+ * editable like anything the user creates — they are not mirrors, and
+ * nothing re-syncs over an edit. Installing it as a Connection is
+ * plumbing, not identity: it gets credentials, configuration, and
+ * observability the same way integrations do.
  *
  * Local-runtime integration. The actual execution is the existing
  * daemon in the withmarfa/sync repo (npm: @withmarfa/sync) — the manifest
- * here exists so that the agent can be installed as a Connection
+ * here exists so that the client can be installed as a Connection
  * (manifest + Credential + per-Connection runtime extension namespace)
  * instead of running against a free-floating API key in
  * `~/.marfa/sync.json`.
@@ -21,11 +27,11 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
   name: "withmarfa.sync",
-  version: "0.1.0",
+  version: "0.1.1",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",
   description:
-    "Local file-to-Marfa bidirectional sync. Watches configured roots on disk and mirrors them as Marfa items.",
+    "Local file-sync client. Watches configured roots on disk; the items it writes belong to you and are editable like anything you create. Installs as a connection so it gets credentials, configuration, and observability the same way integrations do.",
   direction: "both",
   runtime_compatibility: ["local"],
   target_types: ["core.note", "core.file"],

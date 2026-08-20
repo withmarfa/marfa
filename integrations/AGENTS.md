@@ -163,6 +163,6 @@ Deploy the control plane before the Workers. It has to know the new root before 
 - **`raindrop`** — inbound token sync of bookmarks and collections.
 - **`withmarfa-inbox`** — email capture via Cloudflare Email Routing.
 - **`task-auto-archive`** — item-event automation on `core.task` items.
-- **`sync`** — re-presents the external sync daemon as a connection (local-only).
+- **`sync`** — the external file-sync client installed as a connection (local-only); its items are user-owned and editable, not mirrors.
 
 Per-integration `AGENTS.md` files (where present) carry upstream-specific gotchas: scope choices, dedup quirks, recurrence handling, channel renewal patterns.
