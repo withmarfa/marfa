@@ -1,0 +1,94 @@
+# Hosted Marfa, production: Caddy + the server against a managed Postgres
+# reached over the provider's private network. Same image a self-hoster
+# runs; the differences are TLS termination and where Postgres lives.
+#
+# Compose-level interpolation (${...}) reads .env beside this file; the
+# server's runtime environment reads server.env. Both stay on the box.
+
+name: marfa-production
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MARFA_API_HOSTNAME: ${MARFA_API_HOSTNAME:?set MARFA_API_HOSTNAME in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    # Healthy, not merely started, so a manual `up` never proxies to a
+    # server still booting. The automated deploy rolls services with
+    # --no-deps and relies on Caddy's own per-request retry instead.
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # One-shot: apply pending migrations, then exit. The server never
+  # migrates on boot; the deploy runs this before rolling the server, and
+  # it runs here because the managed database is reachable only from
+  # inside the private network this box sits on.
+  migrate:
+    image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
+    command: ["node", "dist/migrate.js"]
+    env_file: server.env
+    restart: "no"
+
+  server:
+    image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
+    restart: unless-stopped
+    env_file: server.env
+    # Loopback-only publish: the deploy gate and on-box debugging probe
+    # /health from the host over SSH, and `expose` alone never reaches the
+    # host's network namespace. Caddy stays the only public entry point.
+    ports:
+      - "127.0.0.1:8600:8600"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - server-data:/app/data
+
+  # The worker container: same image, scheduled work and integration
+  # dispatch only. Gated behind a profile because it is only safe once the
+  # image understands the runtime role flag — before that, a second
+  # container runs the full both-in-one process, and the one background
+  # job with no cross-process coordination (the outbound webhook poller)
+  # would deliver everything twice. Remove the profile when the role flag
+  # ships and the split becomes this file's default shape.
+  worker:
+    profiles: ["split"]
+    image: ${MARFA_SERVER_IMAGE:?set MARFA_SERVER_IMAGE in .env}
+    restart: unless-stopped
+    env_file: server.env
+    environment:
+      MARFA_PROCESS_ROLE: worker
+      # Integration handlers write back over HTTP; in the split they must
+      # land on the web container, whose process holds the live event bus.
+      MARFA_API_URL: http://server:8600
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      server:
+        condition: service_healthy
+    volumes:
+      - server-data:/app/data
+
+# The subnet is pinned so TRUSTED_PROXY_CIDRS in server.env can trust
+# exactly this network. Docker's auto-assigned pools drift onto
+# 192.168.0.0/16 once the 172.16/12 ranges are exhausted on a box, which
+# would silently defeat the x-forwarded-for trust.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  caddy-data:
+  caddy-config:
+  server-data:
