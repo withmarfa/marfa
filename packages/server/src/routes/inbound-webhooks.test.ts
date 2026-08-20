@@ -369,6 +369,12 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
       { key: otherSpaceKey, body: { events: ["thing.created"] } },
     );
     expect(res.status).toBe(404);
+    // The error code pins WHICH fence refused: connection_not_found is
+    // requireConnectionAccess's own lookup, not the manifest resolver's
+    // downstream not_found — the property is double-fenced and this
+    // asserts the primary layer.
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("connection_not_found");
   });
 });
 
