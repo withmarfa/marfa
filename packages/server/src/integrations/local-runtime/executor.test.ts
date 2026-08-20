@@ -98,4 +98,59 @@ describe("executor resilience", () => {
 
     expect(rejections).toEqual([]);
   });
+
+  // The pool size is an operator knob, so the machinery has to hold at
+  // the sizes an operator would actually set, not just the default. A
+  // pool of 1 has no sibling slot to absorb mistakes in the dispatch
+  // loop's slot selection; a pool of 4 spawns more never-awaited `ready`
+  // promises than the default, which is exactly the surface the
+  // unhandled-rejection guard above exists for. Same poison fixture:
+  // vitest cannot run a real handler thread to completion, but spawn,
+  // slot bookkeeping, and terminate all run for real at each size.
+  for (const poolSize of [1, 4]) {
+    it(`pool of ${String(poolSize)}: dispatch surfaces the error and teardown drains every slot`, async () => {
+      const rejections: unknown[] = [];
+      const captureRejection = (reason: unknown): void => {
+        rejections.push(reason);
+      };
+      process.on("unhandledRejection", captureRejection);
+
+      const executor = createExecutor({ poolSize });
+      const poisonPath = writePoisonHandler(
+        `poison: pool-size ${String(poolSize)}`,
+      );
+      const registration: LocalIntegrationRegistration = {
+        name: "poison",
+        handlerModulePath: poisonPath,
+        echo: { echo_ttl_seconds: 0 },
+        triggerKinds: new Set(["schedule"]),
+      };
+      const request: WorkerDispatchRequest = {
+        apiUrl: "http://test.local",
+        credential: {
+          api_key: "marfa_k1_test",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+          connection_id: "test-connection",
+        },
+        message: {
+          kind: "schedule",
+          integration_name: "poison",
+          connection_id: "test-connection",
+          scheduled_for_ms: Date.now(),
+        },
+        integrationName: "poison",
+        echo: { echo_ttl_seconds: 0 },
+        hopBudget: 5,
+        cursorSnapshot: {},
+      };
+
+      await expect(executor.dispatch(registration, request)).rejects.toThrow();
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+
+      process.off("unhandledRejection", captureRejection);
+      await executor.terminate();
+
+      expect(rejections).toEqual([]);
+    });
+  }
 });
