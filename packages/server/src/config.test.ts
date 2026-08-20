@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   envNumber,
   parseDbPoolMode,
+  parseIntegrationWorkerThreads,
   parseOtelSampleRatio,
   parseOtelHeaders,
   loadConfig,
@@ -164,6 +165,43 @@ describe("parseDbPoolMode", () => {
     // resolve a typo to the permissive mode, which is precisely the silent
     // downgrade this knob exists to prevent.
     expect(() => parseDbPoolMode("transacton")).toThrow(/MARFA_DB_POOL_MODE/);
+  });
+});
+
+describe("parseIntegrationWorkerThreads", () => {
+  it("returns undefined when unset or empty, keeping the executor default", () => {
+    expect(parseIntegrationWorkerThreads(undefined)).toBeUndefined();
+    expect(parseIntegrationWorkerThreads("")).toBeUndefined();
+  });
+
+  it("honors a positive integer", () => {
+    expect(parseIntegrationWorkerThreads("1")).toBe(1);
+    expect(parseIntegrationWorkerThreads("4")).toBe(4);
+  });
+
+  it("throws on zero, negatives, and non-numbers rather than starving the pool", () => {
+    // A NaN or zero pool size would pre-warm no worker threads and leave
+    // every dispatch waiting forever; the boot refusal names the variable.
+    for (const raw of ["0", "-2", "two", "2.5"]) {
+      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
+        /MARFA_INTEGRATION_WORKER_THREADS/,
+      );
+    }
+  });
+
+  it("refuses Number()'s wider grammar, not just non-numbers", () => {
+    // "1e2" is a valid Number (100) and a plausible typo; accepting it
+    // silently pre-warms a hundred threads per integration. Hex and
+    // signed forms are refused for the same reason: an env value that is
+    // not plain digits is a mistake, not an encoding choice.
+    for (const raw of ["1e2", "0x4", "+4"]) {
+      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
+        /MARFA_INTEGRATION_WORKER_THREADS/,
+      );
+    }
+    // Surrounding whitespace is the one tolerated deviation, matching how
+    // env files commonly render.
+    expect(parseIntegrationWorkerThreads(" 4 ")).toBe(4);
   });
 });
 

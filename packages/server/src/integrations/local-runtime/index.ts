@@ -101,7 +101,9 @@ export async function tryStartLocalIntegrationRuntime(
   }
 
   const apiUrl = options.apiUrl ?? `http://localhost:${String(config.port)}`;
-  const executor = createExecutor();
+  const executor = createExecutor({
+    poolSize: config.integrationWorkerThreads,
+  });
   const runtime = createSupervisor(storage, {
     apiUrl,
     apiKeySalt: config.apiKeySalt,
