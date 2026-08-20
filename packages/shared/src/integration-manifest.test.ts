@@ -8,6 +8,8 @@ import {
   declaredConfigurationDefault,
   IntegrationManifestSchema,
   parseManifestSchemaMajor,
+  resolveWriteFamily,
+  validateWriteFamilies,
 } from "./integration-manifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -384,5 +386,189 @@ describe("declaredConfigurationDefault", () => {
     expect(declaredConfigurationDefault(manifest, "label")).toBeUndefined();
     expect(declaredConfigurationDefault(manifest, "page_size")).toBeUndefined();
     expect(declaredConfigurationDefault(manifest, "absent")).toBeUndefined();
+  });
+});
+
+describe("validateWriteFamilies — every refusal branch", () => {
+  // The validator is the central replacement for the per-integration
+  // pair-membership tests, so its refusals are load-bearing platform
+  // behavior: a manifest error any of these misses ships as a silently
+  // wrong family resolution. Each branch gets a negative case; the happy
+  // path is the positive control.
+  const valid = {
+    target_types: [
+      "acme.show",
+      "acme.episode",
+      "core.media.series",
+      "core.media.episode",
+    ],
+    configuration_schema: {
+      write_family: {
+        type: "string" as const,
+        description: "d",
+        from_write_families: true,
+      },
+    },
+    write_families: {
+      families: {
+        acme: {
+          description: "d",
+          types: { show: "acme.show", episode: "acme.episode" },
+        },
+        core: {
+          description: "d",
+          types: { show: "core.media.series", episode: "core.media.episode" },
+        },
+      },
+      default: "acme",
+    },
+  };
+
+  it("accepts a coherent manifest (positive control)", () => {
+    expect(validateWriteFamilies(valid)).toEqual([]);
+  });
+
+  it("accepts a manifest with no families and no selector", () => {
+    expect(
+      validateWriteFamilies({
+        target_types: ["acme.show"],
+        configuration_schema: {
+          label: { type: "string" as const, description: "d" },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("refuses a from_write_families selector with no families declared", () => {
+    const issues = validateWriteFamilies({
+      target_types: valid.target_types,
+      configuration_schema: valid.configuration_schema,
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("from_write_families");
+    expect(issues[0]).toContain("declares no write_families");
+  });
+
+  it("refuses an empty families record", () => {
+    const issues = validateWriteFamilies({
+      ...valid,
+      write_families: { families: {}, default: "acme" },
+    });
+    expect(issues).toEqual([
+      "write_families.families must declare at least one family",
+    ]);
+  });
+
+  it("refuses a default naming an undeclared family", () => {
+    const issues = validateWriteFamilies({
+      ...valid,
+      write_families: { ...valid.write_families, default: "vinyl" },
+    });
+    expect(issues).toEqual([
+      'write_families.default "vinyl" is not a declared family',
+    ]);
+  });
+
+  it("refuses a family whose member is not a target type", () => {
+    const issues = validateWriteFamilies({
+      ...valid,
+      target_types: ["acme.show", "core.media.series", "core.media.episode"],
+    });
+    expect(issues).toEqual([
+      'write family "acme" names "acme.episode", which is not in target_types',
+    ]);
+  });
+
+  it("refuses a family that declares no types", () => {
+    const issues = validateWriteFamilies({
+      target_types: ["acme.show"],
+      write_families: {
+        families: {
+          acme: { description: "d", types: { show: "acme.show" } },
+          empty: { description: "d", types: {} },
+        },
+        default: "acme",
+      },
+    });
+    expect(issues).toEqual(['write family "empty" declares no types']);
+  });
+
+  it("refuses a target type no family covers", () => {
+    const issues = validateWriteFamilies({
+      ...valid,
+      target_types: [...valid.target_types, "acme.transcript"],
+    });
+    expect(issues).toEqual([
+      'target type "acme.transcript" belongs to no write family; every target travels in one',
+    ]);
+  });
+});
+
+describe("resolveWriteFamily — precedence and fallthroughs", () => {
+  const manifest = {
+    write_families: {
+      families: {
+        acme: {
+          description: "d",
+          types: { show: "acme.show", episode: "acme.episode" },
+        },
+        core: {
+          description: "d",
+          types: { show: "core.media.series", episode: "core.media.episode" },
+        },
+      },
+      default: "acme",
+    },
+  };
+
+  it("resolves a configured family by name", () => {
+    expect(resolveWriteFamily(manifest, { write_family: "core" })).toEqual({
+      name: "core",
+      types: { show: "core.media.series", episode: "core.media.episode" },
+    });
+  });
+
+  it("falls through to the default when the configured name is undeclared", () => {
+    expect(resolveWriteFamily(manifest, { write_family: "vinyl" })?.name).toBe(
+      "acme",
+    );
+  });
+
+  it("resolves a legacy target_type to the unique family containing it", () => {
+    expect(
+      resolveWriteFamily(manifest, { target_type: "core.media.series" })?.name,
+    ).toBe("core");
+  });
+
+  it("falls through to the default on an unknown legacy target_type", () => {
+    // The fallthrough, not an error: stored configuration cannot be
+    // corrected from here, and guessing would silently re-route writes.
+    expect(
+      resolveWriteFamily(manifest, { target_type: "acme.transcript" })?.name,
+    ).toBe("acme");
+  });
+
+  it("falls through to the default on an ambiguous legacy target_type", () => {
+    const overlapping = {
+      write_families: {
+        families: {
+          a: { description: "d", types: { show: "shared.show" } },
+          b: { description: "d", types: { show: "shared.show" } },
+        },
+        default: "b",
+      },
+    };
+    expect(
+      resolveWriteFamily(overlapping, { target_type: "shared.show" })?.name,
+    ).toBe("b");
+  });
+
+  it("resolves the default with no configuration at all", () => {
+    expect(resolveWriteFamily(manifest, undefined)?.name).toBe("acme");
+    expect(resolveWriteFamily(manifest, {})?.name).toBe("acme");
+  });
+
+  it("returns null for a manifest that declares no families", () => {
+    expect(resolveWriteFamily({}, { write_family: "acme" })).toBeNull();
   });
 });
