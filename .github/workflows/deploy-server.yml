@@ -96,13 +96,22 @@ jobs:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
           STAGING_DEPLOY_SSH: ${{ vars.STAGING_DEPLOY_SSH }}
           PROD_DEPLOY_SSH: ${{ vars.PROD_DEPLOY_SSH }}
+        # `services` is the explicit list the roll touches. The one-shot
+        # migrate is deliberately absent: the roll below runs with
+        # --no-deps precisely so compose never re-evaluates migrate's
+        # completion condition (which it judges against a container the
+        # --rm run already deleted, re-running migrations after the old
+        # server is torn down). The worker service joins these lists in
+        # lockstep with the runtime role flag shipping.
         run: |
           if [ "$ENVIRONMENT" = "prod" ]; then
             echo "ssh=$PROD_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
             echo "compose=compose.production.yml" >> "$GITHUB_OUTPUT"
+            echo "services=server caddy" >> "$GITHUB_OUTPUT"
           else
             echo "ssh=$STAGING_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
             echo "compose=compose.staging.yml" >> "$GITHUB_OUTPUT"
+            echo "services=postgres server caddy" >> "$GITHUB_OUTPUT"
           fi
 
       # The compose shape deploys from the repo on every roll so the box
@@ -131,15 +140,22 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.ssh }}
           COMPOSE: ${{ steps.target.outputs.compose }}
+          SERVICES: ${{ steps.target.outputs.services }}
         # Migrations gate the roll: a non-zero exit from the one-shot
-        # leaves the old build serving and fails the workflow here.
+        # leaves the old build serving and fails the workflow here. The
+        # roll itself is --no-deps over an explicit service list — a bare
+        # `up -d` re-evaluates migrate's completed-successfully condition
+        # against a container the --rm run deleted, re-running migrations
+        # as a managed container after the old server has already been
+        # torn down for its image change; a failure on that redundant
+        # second pass would be an outage instead of a clean abort.
         run: |
-          ssh -i ~/.ssh/marfa-droplets "$TARGET" bash -s <<EOF
+          ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" bash -s <<EOF
           set -euo pipefail
           cd /opt/marfa
           docker compose -f $COMPOSE pull --quiet
           docker compose -f $COMPOSE run --rm migrate
-          docker compose -f $COMPOSE up -d --remove-orphans
+          docker compose -f $COMPOSE up -d --no-deps $SERVICES
           EOF
 
       # A zero from compose says containers started; it says nothing about
@@ -153,7 +169,7 @@ jobs:
         run: |
           EXPECTED="${GITHUB_SHA::7}"
           for i in $(seq 1 60); do
-            GOT=$(ssh -i ~/.ssh/marfa-droplets "$TARGET" \
+            GOT=$(ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
               "curl -fsS --max-time 5 http://localhost:8600/health 2>/dev/null" \
               | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
             if [ "$GOT" = "$EXPECTED" ]; then
@@ -163,4 +179,9 @@ jobs:
             sleep 5
           done
           echo "health never reported $EXPECTED (last saw: ${GOT:-nothing})" >&2
+          # Disambiguate a broken deploy from broken connectivity: the poll
+          # swallows both alike, and five silent minutes deserve a cause.
+          ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
+            "echo 'ssh reachable; the build is not serving'" \
+            || echo "ssh itself unreachable" >&2
           exit 1
