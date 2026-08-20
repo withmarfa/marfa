@@ -247,6 +247,31 @@ describe("consumeBatch", () => {
     expect(retried.retried).toBe(false);
   });
 
+  it("flushes the mapping skip summary even when the handler throws late", async () => {
+    // The resolver's skip count lives and dies with the run, so a summary
+    // flushed only on the success path silently discards the skips of
+    // every run that ends in a throw — records were processed and skipped
+    // before the failure, and the operator surface would never say so.
+    // The context builder has no injection seam, so the handler swaps an
+    // observable resolver onto its own ctx; the consumer's flush call
+    // after the throw is what reaches it.
+    let flushes = 0;
+    registerScheduleHandler((ctx) => {
+      ctx.mapping = {
+        resolve: () => Promise.resolve({ kind: "skip" }),
+        flushSkipSummary: () => {
+          flushes += 1;
+          return Promise.resolve();
+        },
+      };
+      return Promise.reject(new Error("late failure"));
+    });
+    const msg = makeMsg(SCHED(), 2);
+    const outcome = await consumeBatch(makeEnv(), [msg]);
+    expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(flushes).toBe(1);
+  });
+
   it("logs to console.error when buildConnectionContext throws", async () => {
     // When the queue consumer's credential mint fails (e.g. broker
     // secrets missing on the Worker), the throw is caught by the
