@@ -62,7 +62,10 @@ const ACCEPTANCE_INTEGRATION = "acme.acceptance";
 
 async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
   // The runtime's own mint path — the supervisor's, since the HTTP mint
-  // route retired with the hosted substrate.
+  // route retired with the hosted substrate. `authMode: "keys"` because
+  // this suite's fixtures are space-less by design (the substrate
+  // contract under test is orthogonal to spaces); the space fence is
+  // pinned under `"hosted"` in runtime-credential-lifecycle.test.ts.
   return mintLocalRuntimeCredential(
     ctx.storage,
     TEST_API_KEY_SALT,

@@ -1,9 +1,7 @@
 /**
- * tsup config for the local-runtime entry. Produces `dist/local.js`
- * which the server's local-runtime supervisor loads on boot
- * (`@withmarfa/server`'s `loadInTreeRegistrations`). The Cloudflare-side
- * worker.ts is built by wrangler at deploy time and doesn't need this
- * config.
+ * tsup config for the runtime entry. Produces `dist/local.js`, which
+ * the server's supervisor loads on boot (`@withmarfa/server`'s
+ * `loadInTreeRegistrations`).
  */
 import { defineConfig } from "tsup";
 

@@ -299,7 +299,7 @@ describe("a mint cannot outlive the uninstall it raced", () => {
     const settledResult = result!;
     expect(settledResult.ok).toBe(false);
     if (settledResult.ok) throw new Error("unreachable");
-    expect(settledResult.message).toMatch(/is revoked; cannot mint/);
+    expect(settledResult.code).toBe("connection_not_active");
   });
 });
 

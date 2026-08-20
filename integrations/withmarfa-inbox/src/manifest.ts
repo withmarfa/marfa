@@ -26,7 +26,7 @@ export const WITHMARFA_INBOX_MANIFEST: IntegrationManifest = {
   description:
     "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address via Cloudflare Email Routing + Email Worker; lands each delivery as a `withmarfa.captured_email` item.",
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: ["withmarfa.captured_email"],
   triggers: [{ type: "webhook" }],
   bidirectional_handling: {

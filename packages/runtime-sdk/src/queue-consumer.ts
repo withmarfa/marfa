@@ -1,24 +1,21 @@
 /**
- * Queue consumer entry. Per-Integration Workers wire this as the
- * `queue` export in their entrypoint. The consumer:
+ * The dispatch engine over a batch of queue deliveries. For every
+ * message in the batch it:
  *
- *   1. For every message in the batch:
- *      a. Mints / refreshes the per-Connection runtime credential via
- *         the control-plane lease broker (cached on the per-Connection
- *         DO with TTL ≤ 5 min).
- *      b. Builds the ConnectionContext (cursor, activity, echo,
- *         marfa client).
- *      c. Dispatches the message via `dispatchMessage`.
- *   2. Translates the HandlerResult:
+ *   1. Mints / refreshes the per-Connection runtime credential via the
+ *      environment's `mintCredential` callback.
+ *   2. Builds the ConnectionContext (cursor, activity, echo, marfa
+ *      client).
+ *   3. Dispatches the message via `dispatchMessage`.
+ *   4. Translates the HandlerResult:
  *      - { ok: true } → ack the message
- *      - { ok: false, retry: true } → throw to trigger Cloudflare's
- *        exponential-backoff retry
+ *      - { ok: false, retry: true } → retry with backoff
  *      - { ok: false, retry: false } → ack + emit a system.activity
  *        with severity: action_required (operator surface)
  *
- * The actual queue + DO wiring (binding lookups, the broker call site,
- * DO instance acquisition) is left as a per-integration callback — the
- * SDK doesn't know what `env` shape an integration's Worker exposes.
+ * The server's supervisor mirrors these semantics for live dispatch;
+ * the runtime-test harness drives this function directly, so the two
+ * stay pinned to one contract.
  */
 import { dispatchMessage } from "./handlers.js";
 import { ConnectionClient } from "./connection-client.js";
@@ -40,10 +37,8 @@ import {
 } from "./types.js";
 
 /**
- * Minimal Cloudflare Queue producer shape — matches the binding the
- * Worker runtime hands the consumer when a `[[queues.producers]]`
- * entry names a queue. The wrapper only needs `send`; `sendBatch` is
- * unused, and the type is widened across queue families so a single
+ * Minimal dead-letter producer shape. The consumer only needs `send`;
+ * the type is widened across queue families so a single
  * `dlqProducerFor` can route by message kind.
  */
 export interface DlqProducer {
@@ -70,13 +65,11 @@ export interface QueueDeliveryMessage<Body = QueueMessage> {
 export interface ConsumerEnvironment {
   /** Base URL of the Marfa server. */
   apiUrl: string;
-  /** Per-Connection storage adapter — usually obtained by stubbing
-   *  the integration Worker's DO via
-   *  `env.PER_CONNECTION_STATE.idFromName(connection_id).storage`. */
+  /** Per-Connection storage adapter for cursor + echo state. */
   storageFor: (connectionId: string) => CursorStorageAdapter;
-  /** Mints (or refreshes) the per-Connection runtime credential via
-   *  the control-plane lease broker. Throws `ConnectionGoneError` when
-   *  the broker reports the Connection missing or inactive. */
+  /** Mints (or refreshes) the per-Connection runtime credential.
+   *  Throws `ConnectionGoneError` when the Connection is missing or
+   *  inactive. */
   mintCredential: (connectionId: string) => Promise<RuntimeCredential>;
   /**
    * Cancel the Connection's schedule alarm. Called when the consumer
@@ -165,35 +158,32 @@ export async function buildConnectionContext(
 
 /**
  * Maximum exponential-backoff delay (seconds) on a per-message retry.
- * Cloudflare clamps the value internally too; this matches the
- * recommended cap and keeps a runaway exponent from producing absurd
- * delays before the message reaches Cloudflare's max-attempts ceiling
- * and goes to the DLQ.
+ * Keeps a runaway exponent from producing absurd delays before the
+ * message reaches the max-attempts ceiling and goes to the DLQ.
  */
 const MAX_RETRY_DELAY_SECONDS = 60;
 
 /**
  * Compute the next per-message retry delay from `message.attempts`.
- * `attempts` is 1 on first delivery (Cloudflare's `Message.attempts`
- * surface), so a handler-returned `retry: true` on the first attempt
- * stamps `2^0 = 1` second; a second retry is `2^1 = 2`; etc., capped
- * at `MAX_RETRY_DELAY_SECONDS`.
+ * `attempts` is 1 on first delivery, so a handler-returned
+ * `retry: true` on the first attempt stamps `2^0 = 1` second; a second
+ * retry is `2^1 = 2`; etc., capped at `MAX_RETRY_DELAY_SECONDS`.
  */
 function backoffSecondsFor(attempts: number): number {
-  // Math.max guards against `attempts === 0` from a misbehaving runtime
-  // — Cloudflare's contract is "first delivery is attempts === 1".
+  // Math.max guards against `attempts === 0` from a misbehaving
+  // producer — the contract is "first delivery is attempts === 1".
   const exponent = Math.max(0, attempts - 1);
   return Math.min(2 ** exponent, MAX_RETRY_DELAY_SECONDS);
 }
 
 /**
- * Process a Cloudflare Queue batch with per-message ack/retry.
+ * Process a batch of queue deliveries with per-message ack/retry.
  *
- * A single batch-level verdict would make Cloudflare retry the WHOLE
- * batch on any retry, re-running messages that already succeeded — a
- * source of duplicate-write hazards. Per-message ack — `Message.ack()`
- * and `Message.retry({ delaySeconds })` — closes the hazard at its
- * source: a partial-batch failure only retries the failures.
+ * A single batch-level verdict would retry the WHOLE batch on any
+ * failure, re-running messages that already succeeded — a source of
+ * duplicate-write hazards. Per-message `ack()` and
+ * `retry({ delaySeconds })` close the hazard at its source: a
+ * partial-batch failure only retries the failures.
  *
  * Per-message decision tree:
  *
@@ -209,12 +199,12 @@ function backoffSecondsFor(attempts: number): number {
  *     to recover.
  *   - Handler **throws on a retried attempt** (`msg.attempts > 1`) →
  *     `msg.ack()` + emit `action_required`. Don't infinitely retry a
- *     persistent programming error — Cloudflare's max-attempts ceiling
+ *     persistent programming error — the queue's max-attempts ceiling
  *     would otherwise route the message to the DLQ after a long delay
  *     of repeating the same bad path.
  *   - Envelope-filter / space-mismatch / hop-budget overflow →
  *     `msg.ack()` (acked counter). These messages aren't ours to
- *     process; acking lets Cloudflare drop them from the queue.
+ *     process; acking drops them from the queue.
  *   - **`ConnectionGoneError`** → `msg.ack()`, plus `disarmSchedule()`
  *     when the message is a `schedule`. The Connection no longer exists
  *     (or is no longer active), so no amount of retrying helps. For a
@@ -223,8 +213,8 @@ function backoffSecondsFor(attempts: number): number {
  *     schedule ticks forever against nothing. Other message kinds ack
  *     without touching the alarm — they carry no evidence about it.
  *
- * `outcome` counters are for telemetry. The function never throws; per-message
- * `retry()` informs Cloudflare directly.
+ * `outcome` counters are for telemetry. The function never throws;
+ * per-message `retry()` carries the verdict.
  */
 export async function consumeBatch(
   env: ConsumerEnvironment,
@@ -361,8 +351,8 @@ export async function consumeBatch(
     // A throw on the first attempt is treated as transient — give the
     // handler one retry to recover. A throw on a retried attempt
     // (attempts > 1) is treated as a persistent programming error and
-    // acked-and-logged so it doesn't loop until Cloudflare's max-
-    // attempts ceiling hits the DLQ.
+    // acked-and-logged so it doesn't loop until the max-attempts
+    // ceiling hits the DLQ.
     const isFirstAttemptThrow = dispatchThrew && msg.attempts === 1;
     const wantsRetry = result.retry || isFirstAttemptThrow;
 

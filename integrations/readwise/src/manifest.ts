@@ -23,7 +23,7 @@ export const READWISE_MANIFEST: IntegrationManifest = {
   description:
     "Inbound sync of Readwise highlights + parent books via the Export API. Polls hourly with an `updatedAfter` watermark; lands highlights as readwise.highlight items with parent-of edges to readwise.book items.",
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: ["readwise.highlight", "readwise.book"],
   triggers: [
     { type: "schedule", config: { cron: "0 * * * *" } }, // hourly

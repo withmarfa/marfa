@@ -23,7 +23,7 @@ export const RAINDROP_MANIFEST: IntegrationManifest = {
   description:
     "Inbound sync of Raindrop bookmarks + collections via the REST API. Polls every 10 minutes; lands raindrops as raindrop.raindrop items with parent-of edges to raindrop.collection items.",
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: ["raindrop.raindrop", "raindrop.collection"],
   triggers: [{ type: "schedule", config: { cron: "*/10 * * * *" } }],
   bidirectional_handling: {

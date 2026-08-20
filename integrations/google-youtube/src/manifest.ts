@@ -96,7 +96,7 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   description:
     "Inbound YouTube (Data API v3) integration — liked videos, subscriptions, and user-created playlists. Consumer surface only; outbound deferred.",
   direction: "read",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: [
     WRITE_FAMILIES.google.video,
     WRITE_FAMILIES.google.playlist,

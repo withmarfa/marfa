@@ -1,14 +1,10 @@
 /**
  * Adapter test suite for `@withmarfa/webhooks`.
  *
- * Runs under Node's vitest (default environment) — Node 20+ exposes
- * Web Crypto natively as `globalThis.crypto.subtle`, so the same
- * implementation that runs in Cloudflare Workers also runs here.
- *
- * The cross-runtime parity claim is structural: both runtimes import
- * this code path (no separate `node:crypto` adapter). Workers-side
- * coverage is exercised by the server's webhook-receipt suite. Drift
- * between the two is impossible because there is no second
+ * Runs under Node's vitest (default environment) — the adapters are
+ * Web Crypto only, and Node 20+ exposes it natively as
+ * `globalThis.crypto.subtle`. The server's webhook-receipt suite
+ * exercises the same code path in situ; there is no second
  * implementation to drift from.
  */
 import { describe, it, expect } from "vitest";

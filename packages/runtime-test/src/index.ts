@@ -11,14 +11,12 @@ export {
   createInMemoryStorage,
   type InMemoryStorage,
 } from "./in-memory-storage.js";
-export { createInMemoryAlarm, type InMemoryAlarm } from "./in-memory-alarm.js";
 export {
   createInMemoryQueue,
   createMessage,
   type InMemoryQueue,
   type Message,
 } from "./in-memory-queue.js";
-export { createInMemoryKV, type InMemoryKV } from "./in-memory-kv.js";
 export {
   createTestHarness,
   type TestHarness,

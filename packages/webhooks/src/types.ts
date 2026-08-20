@@ -1,14 +1,10 @@
 /**
- * Inbound webhook signature verification — uniform adapter interface
- * shared across the server's webhook-receipt route
- * and the Node-side server (`packages/server`).
+ * Inbound webhook signature verification — the uniform adapter
+ * interface behind the server's webhook-receipt route.
  *
- * One Web-Crypto-only implementation serves both runtimes — Node 20+
- * exposes Web Crypto natively as `globalThis.crypto`, so the Worker
- * control plane and the Node-side server import the same code path
- * rather than maintaining parallel `node:crypto` vs Web Crypto
- * implementations. A cross-runtime parity test in this package guards
- * the contract.
+ * Web Crypto only — Node 20+ exposes it natively as
+ * `globalThis.crypto`, so the adapters run on any modern JS runtime
+ * with no `node:crypto` dependency.
  *
  * Adapters are pure: no logging, no DB, no clock injection beyond
  * what the headers themselves carry. Surface results upstream.
@@ -25,9 +21,9 @@ export interface VerifyResult {
   reason?: string;
   /**
    * Sender-supplied delivery identifier extracted from the appropriate
-   * header. Used by callers as the idempotency key (server-side: the
-   * unique `(inbound_webhook_id, external_delivery_id)` index;
-   * the receipt route's idempotency key). Adapters with no canonical
+   * header. Used by callers as the idempotency key (the unique
+   * `(inbound_webhook_id, external_delivery_id)` index and the receipt
+   * route's dedup window). Adapters with no canonical
    * delivery-id header return `undefined`; callers fall back to a
    * request-time identifier.
    */

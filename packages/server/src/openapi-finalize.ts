@@ -143,11 +143,6 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
   "adminRestoreArchive",
   // metrics.ts — server metrics
   "getServerMetrics",
-  // runtime-credentials.ts — lease-broker plumbing
-  "issueRuntimeCredential",
-  "getConnectionVerifyContext",
-  "getConnectionDlqContext",
-  "listConnectionInboundWebhookSubscriptions",
   // blobs.ts — operator maintenance
   "cleanupBlobs",
   "reconcileBlobs",

@@ -30,7 +30,7 @@ set -euo pipefail
 WORKER_DIR="${1:-}"
 if [[ -z "$WORKER_DIR" ]]; then
   echo "Usage: $0 <worker-dir> [wrangler-args...]" >&2
-  echo "Example: $0 integrations/google-contacts --env staging" >&2
+  echo "Example: $0 integrations/withmarfa-inbox/email-worker --env staging" >&2
   exit 1
 fi
 shift

@@ -35,7 +35,7 @@ export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
   description:
     "Archives core.task items older than N days (configurable per-install).",
   direction: "write",
-  runtime_compatibility: ["hosted", "local"],
+  runtime_compatibility: ["local"],
   target_types: ["core.task"],
   triggers: [
     { type: "item-event" },

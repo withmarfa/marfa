@@ -3,10 +3,10 @@
  * shape, queue-message body construction, and the per-subscriber dispatch
  * gate.
  *
- * Lives outside `reactive-run-bridge.ts` so the same logic backs both
- * fanout (which actually POSTs to Cloudflare Queues) and `POST
- * /connections/preview-event` (which renders the envelopes the bridge
- * would have emitted, without dispatch). One implementation, two callers.
+ * Lives outside the bridge so the same logic backs both fanout (which
+ * actually enqueues) and `POST /connections/preview-event` (which
+ * renders the envelopes the bridge would have emitted, without
+ * dispatch). One implementation, two callers.
  */
 import type { ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";

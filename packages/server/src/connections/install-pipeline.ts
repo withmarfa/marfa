@@ -21,10 +21,8 @@
  * reverses them in reverse order. The compensations are idempotent.
  *
  * Internal-call bypass — the runtime credential mint at step 2 calls
- * `storage.keys.createRuntimeCredential` directly rather than going
- * through the HTTP `POST /system/runtime-credentials` route. This
- * intentionally bypasses the broker-key (`is_platform: true`) check
- * that route enforces — at install time the caller is the better-auth
+ * `storage.keys.createRuntimeCredential` directly; there is no HTTP
+ * mint route. At install time the caller is the better-auth
  * session user (a human approving a connection), not the control-plane
  * lease broker. Documented here so future readers don't read the
  * bypass as an oversight.
@@ -288,8 +286,7 @@ export async function performInstall(
 
   // -------------------------------------------------------------------
   // Step 2: mint runtime credential bound to the new connection id.
-  // Internal call bypasses the broker-key check on POST
-  // /system/runtime-credentials — see file docstring for rationale.
+  // Direct storage call — see the file docstring for rationale.
   // -------------------------------------------------------------------
   const rawKey = generateRawKey();
   const keyHash = hashApiKey(rawKey, salt);

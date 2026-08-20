@@ -15,7 +15,7 @@ export const TEMPLATE_MANIFEST = {
     "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end.",
   manifest_schema_version: "1.2.0",
   direction: "read" as const,
-  runtime_compatibility: ["hosted", "local"] as const,
+  runtime_compatibility: ["local"] as const,
   target_types: ["core.note"] as const,
   triggers: [
     {

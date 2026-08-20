@@ -1,6 +1,6 @@
 # @withmarfa/runtime-test
 
-In-memory mocks of the Cloudflare runtime primitives (DO storage + alarms, Queues, KV) plus a `createTestHarness` helper. Used by per-Integration test suites to drive their handlers without booting a real Worker runtime.
+In-memory mocks of the runtime's dispatch primitives (per-connection storage, the queue) plus a `createTestHarness` helper. Used by per-Integration test suites to drive their handlers without booting the server.
 
 ## When tests live here vs in the consuming package
 

@@ -1,10 +1,9 @@
 /**
  * In-process reactive-run bridge for the local runtime.
  *
- * The Cloudflare bridge (`reactive-run-bridge.ts`) drains the in-process
- * pubsub and POSTs envelopes to Cloudflare Queues. The local-runtime
- * bridge drains the same pubsub but pushes envelopes onto the local
- * pg-boss queue instead — same logical flow, no remote hop.
+ * Drains the in-process pubsub and pushes envelopes onto the local
+ * pg-boss queue — the seam between "an item changed" and "the
+ * subscribing integrations hear about it".
  *
  * The bridge reuses the `evaluateDispatch` + `buildQueueMessageBody`
  * helpers from `envelope.ts` so the per-subscriber gate (system-type,
