@@ -1,11 +1,11 @@
 /**
  * Orphaned-connection handling in the queue consumer.
  *
- * When the lease broker reports that a Connection no longer exists (or
+ * When the mint path reports that a Connection no longer exists (or
  * is no longer active), the message is unprocessable and will stay
  * unprocessable forever. Retrying it burns attempts; the important part
- * is tearing down the thing that keeps producing it — the per-Connection
- * schedule alarm.
+ * is tearing down the thing that keeps producing it — the Connection's
+ * schedule.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";

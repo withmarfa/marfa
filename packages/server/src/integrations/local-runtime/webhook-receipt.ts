@@ -39,7 +39,8 @@ import type { LocalRuntime } from "./types.js";
 
 void ({} as ScheduleMessage); // ensure type import isn't tree-shaken
 
-/** Idempotency window per connection (ms). Matches the CF KV TTL. */
+/** Idempotency window per connection (ms). One hour comfortably
+ *  covers upstream senders' redelivery horizons. */
 const IDEMPOTENCY_WINDOW_MS = 3600 * 1000;
 
 interface ConnectionProperties {

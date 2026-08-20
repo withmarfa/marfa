@@ -1,6 +1,6 @@
 /**
- * Cron-expression helper used by the per-Connection DO to compute the
- * next `alarm()` fire time from a manifest's schedule trigger.
+ * Cron-expression helper used by the schedule walker to compute the
+ * next fire time from a manifest's schedule trigger.
  *
  * Wraps `cron-parser` v5 with a thin, UTC-only API. Manifests declare
  * cron in UTC; storage is millisecond timestamps; no local-time math

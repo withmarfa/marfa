@@ -69,8 +69,8 @@ const PRIMARY_CONNECTION_ID = "conn_primary";
 const SECONDARY_CONNECTION_ID = "conn_secondary";
 
 /** Encode a UTF-8 string as base64 — mirrors the wire-format the
- *  control plane emits (`body_base64`). The runtime-sdk dispatcher
- *  decodes it back to ArrayBuffer at the seam. */
+ *  server's webhook-receipt route emits (`body_base64`). The
+ *  runtime-sdk dispatcher decodes it back to ArrayBuffer at the seam. */
 function utf8ToBase64(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let binary = "";

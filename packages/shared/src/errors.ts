@@ -131,9 +131,9 @@ export enum ErrorCode {
    * `system.*` lifecycle's terminal `revoked` state. Distinct from the
    * generic `FORBIDDEN` it shares a status with: a caller has to be able
    * to tell "this one connection is finished" from "your credential is
-   * not allowed to do this at all". The runtime lease broker branches on
-   * exactly that difference, and reads the wrong branch as permission to
-   * tear a connection's schedule down for good.
+   * not allowed to do this at all". The runtime's dispatch path
+   * branches on exactly that difference, and reads the wrong branch as
+   * permission to tear a connection's schedule down for good.
    */
   CONNECTION_NOT_ACTIVE = "connection_not_active",
   /**

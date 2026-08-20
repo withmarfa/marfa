@@ -4,12 +4,13 @@
  *
  * Wraps the global `fetch` rather than @withmarfa/sdk's MarfaClient
  * because:
- *   1. The runtime-sdk runs on Cloudflare Workers (no Node Buffer);
- *      MarfaClient pulls in HTTP machinery designed for Node.
+ *   1. A bare-`fetch` client stays portable across JS runtimes and
+ *      keeps handler bundles small; MarfaClient pulls in HTTP
+ *      machinery designed for Node applications.
  *   2. We want refresh-on-401 to live here so the underlying API is
  *      stateless from the integration's point of view — the client
- *      transparently calls the lease broker again when the cached
- *      credential expires.
+ *      transparently asks the runtime for a fresh credential when the
+ *      cached one expires.
  *   3. The Connection's permissions are narrow (per the manifest)
  *      and the surface an integration needs is correspondingly narrow:
  *      create item, get item, update item, list items, write
@@ -40,8 +41,9 @@ export interface ConnectionClientOptions {
    *  `refreshCredential` on 401. */
   credential: RuntimeCredential;
   /** Called when the credential needs to be refreshed (cache miss
-   *  on 401). The runtime supplies a callback that hits the
-   *  control-plane lease broker. */
+   *  on 401). The runtime supplies the callback; the local substrate
+   *  has no mid-run refresh, so its callback returns the same
+   *  credential and the TTL is sized past the dispatch bound. */
   refreshCredential: () => Promise<RuntimeCredential>;
   /** Custom fetch for testing — defaults to globalThis.fetch. */
   fetch?: typeof fetch;

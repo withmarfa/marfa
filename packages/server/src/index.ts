@@ -935,19 +935,16 @@ async function main() {
     // boot. Fire-and-forget here loses that race to process.exit below,
     // and every deploy then stalls each mid-tick job until its
     // expireInSeconds elapses.
+    // The supervisor's stop() drains the shared pg-boss. `boss` without
+    // `localRuntime` cannot happen: both exist on every Postgres boot
+    // (a runtime start failure aborts boot before this handler is
+    // registered) and neither exists on SQLite.
     if (localRuntime) {
       await withTimeout(
         localRuntime.bridge.stop(),
         SHUTDOWN_STEP_TIMEOUT_MS,
       ).catch(() => undefined);
       await localRuntime.runtime.stop().catch(() => undefined);
-    } else if (boss) {
-      // The supervisor's stop() drains the shared pg-boss when the local
-      // runtime is up; with the hosted substrate only the scheduled jobs
-      // ride it, so it is stopped here instead.
-      await boss
-        .stop({ graceful: true, timeout: 5_000 })
-        .catch(() => undefined);
     }
 
     // Each step bounded and reported separately: a shared catch produced a

@@ -1,7 +1,7 @@
 /**
- * Shared lifecycle helpers for hosted and local runtime credentials.
+ * Shared lifecycle helpers for runtime credentials.
  *
- * The server owns manifest projection. A control plane can ask for a
+ * The server owns manifest projection. A mint path can ask for a
  * credential, but it cannot choose that credential's reach. Missing or
  * invalid manifests fail closed to the two substrate grants supplied by the
  * permission builders.
@@ -82,9 +82,9 @@ export function assertMintableSpaceScope(
  * Revoke every other runtime credential on this connection.
  *
  * A mint means a dispatch is starting, and dispatches on one connection are
- * serialised: the local supervisor takes `connection-dispatch:<id>` around
- * the whole dispatch and mints inside it, and the hosted path mints through
- * the connection lifecycle lock. So a mint arriving is evidence that no
+ * serialized: the supervisor takes `connection-dispatch:<id>` around the
+ * whole dispatch and mints inside it, and the install pipeline mints
+ * through the connection lifecycle lock. So a mint arriving is evidence that no
  * earlier dispatch on this connection is still holding its credential, and
  * every sibling can go.
  *

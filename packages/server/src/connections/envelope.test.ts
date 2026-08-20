@@ -1,10 +1,10 @@
 /**
  * The reactive bridge's per-subscriber dispatch gate.
  *
- * `evaluateDispatch` is shared by the hosted bridge, the local
- * substrate's bridge and `POST /connections/preview-event`, so what it
- * decides is what all three do. It had no direct coverage until a
- * routine import walked two integrations into the cycle hop ceiling.
+ * `evaluateDispatch` is shared by the bridge's fanout and
+ * `POST /connections/preview-event`, so what it decides is what both
+ * do. It had no direct coverage until a routine import walked two
+ * integrations into the cycle hop ceiling.
  */
 import { describe, it, expect } from "vitest";
 import { evaluateDispatch, type SubscriptionEntry } from "./envelope.js";

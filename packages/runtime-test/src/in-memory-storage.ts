@@ -1,28 +1,26 @@
 /**
- * In-memory implementation of the subset of `DurableObjectStorage` the
- * runtime SDK uses. Sufficient for `PerConnectionStateCore`, the cursor
- * store, the echo-suppression helper, and the queue consumer's
- * `storageFor()` callback.
+ * In-memory implementation of the storage-adapter subset the runtime
+ * SDK uses. Sufficient for the cursor store, the echo-suppression
+ * helper, and the queue consumer's `storageFor()` callback.
  *
- * This is the test-time replacement for the Workers SQLite-backed
- * storage. The keying + values match the production schema exactly so
- * a handler tested against this storage will behave identically when
- * promoted to a real DO.
+ * This is the test-time replacement for the server's per-Connection
+ * runtime storage (the `connection.runtime` extension namespace). The
+ * keying + values match that schema exactly so a handler tested
+ * against this storage behaves identically in production.
  *
- * **By-value semantics on put + get.** Real Cloudflare DO storage
- * serializes every value to bytes on `put` and deserializes on `get` —
- * there is no shared reference between the caller's input and the
- * stored value, and no shared reference between two successive `get`s
- * of the same key. The in-memory adapter mirrors that contract via
- * `structuredClone` on both ends. Without this, handlers that mutate a
- * cursor object in-place leak the mutation back into the stored map (and
- * into every subsequent reader), which works in tests but breaks the
- * moment the handler hits real DO storage.
+ * **By-value semantics on put + get.** The production store serializes
+ * every value on write and parses on read — there is no shared
+ * reference between the caller's input and the stored value, and no
+ * shared reference between two successive `get`s of the same key. The
+ * in-memory adapter mirrors that contract via `structuredClone` on
+ * both ends. Without this, handlers that mutate a cursor object
+ * in-place leak the mutation back into the stored map (and into every
+ * subsequent reader), which works in tests but breaks against the real
+ * store.
  *
- * `structuredClone` is the natural primitive because it matches what
- * DO storage uses internally and handles every shape the runtime-sdk
- * persists today (cursors, idempotency rings, echo-suppression records)
- * without ad-hoc JSON-roundtrip caveats.
+ * `structuredClone` handles every shape the runtime-sdk persists today
+ * (cursors, idempotency rings, echo-suppression records) without
+ * ad-hoc JSON-roundtrip caveats.
  */
 import type { CursorStorageAdapter } from "@withmarfa/runtime-sdk";
 

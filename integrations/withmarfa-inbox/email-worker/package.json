@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Email Worker companion to the withmarfa.inbox integration. Receives inbound emails via Cloudflare Email Routing, parses MIME via postal-mime, HMAC-signs the JSON envelope, and POSTs to the staging server's webhook receipt endpoint. Distinct deployable from the integration Worker — same logical pipeline, two physical Workers.",
+  "description": "Cloudflare Email Worker companion to the withmarfa.inbox integration. Receives inbound emails via Cloudflare Email Routing, parses MIME via postal-mime, HMAC-signs the JSON envelope, and POSTs to the server's webhook receipt endpoint. The one Cloudflare Worker the platform keeps; the integration's handlers run in the server's own runtime.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

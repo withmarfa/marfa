@@ -7,8 +7,8 @@
  * Surface:
  *   - `tryStartLocalIntegrationRuntime` — call from `index.ts`. Returns
  *     a `LocalRuntimeBundle` carrying the supervisor + bridge + a Hono
- *     sub-app exposing `POST /runtime/webhook/:connection_id`, or
- *     `null` when the substrate is disabled.
+ *     sub-app exposing `POST /runtime/webhook/:connection_id`; throws
+ *     rather than starting without Postgres.
  *   - `loadInTreeRegistrations` — bootstraps the in-tree integration
  *     registrations from per-integration `local.ts` entries. Called by
  *     `tryStartLocalIntegrationRuntime` when running inside the server
@@ -100,7 +100,7 @@ export interface StartLocalRuntimeOptions {
  */
 export async function tryStartLocalIntegrationRuntime(
   options: StartLocalRuntimeOptions,
-): Promise<LocalRuntimeBundle | null> {
+): Promise<LocalRuntimeBundle> {
   const { storage, config } = options;
   if (config.storageDialect !== "pg") {
     throw new Error(

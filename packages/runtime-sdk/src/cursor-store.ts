@@ -1,6 +1,7 @@
 /**
- * Opaque cursor read/write API. Backed by per-Connection DO storage
- * in production; backed by an in-memory Map in tests.
+ * Opaque cursor read/write API. Backed by the server's per-Connection
+ * `connection.runtime` extension storage in production; backed by an
+ * in-memory Map in tests.
  *
  * The cursor is a single JSON value per (connection, trigger). The
  * runtime doesn't introspect it — integrations own the shape (an ETag,
@@ -23,8 +24,8 @@ export interface CursorStore {
 }
 
 /** Storage interface the cursor store reads/writes against. Both the
- *  Cloudflare DO storage and the in-memory test storage satisfy this
- *  shape (subset of `DurableObjectStorage`). */
+ *  server's Postgres-backed adapter and the in-memory test storage
+ *  satisfy this shape. */
 export interface CursorStorageAdapter {
   get(key: string): Promise<unknown>;
   put(key: string, value: unknown): Promise<void>;

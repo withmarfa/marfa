@@ -104,7 +104,6 @@ export async function dispatchMessage(
         delivery_id: message.delivery_id,
         headers: message.headers,
         body: decodeBase64ToArrayBuffer(message.body_base64),
-        ...(message.body_url !== undefined && { body_url: message.body_url }),
         verified_at_ms: message.verified_at_ms,
       };
       return handler(ctx, input);

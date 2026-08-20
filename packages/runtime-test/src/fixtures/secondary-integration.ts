@@ -4,7 +4,7 @@
  * The e2e test composes two integrations in a chain: a primary that runs
  * a webhook handler and "publishes" a reactive item-event, and this
  * secondary integration which subscribes to the item-event and writes a
- * cursor marker proving the chain crossed every seam (control plane →
+ * cursor marker proving the chain crossed every seam (receipt →
  * queue → first handler → reactive event → second handler → storage).
  *
  * Living the fixture in a separate file keeps the e2e test readable —

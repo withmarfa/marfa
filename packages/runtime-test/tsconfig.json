@@ -3,6 +3,9 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",
+    // Types-only: supplies structuredClone/TextEncoder/btoa typings for
+    // a runtime-agnostic package that pulls in neither @types/node nor
+    // the DOM lib. Removing it breaks the dts build.
     "types": ["@cloudflare/workers-types"],
     "lib": ["ES2022", "WebWorker"]
   },
