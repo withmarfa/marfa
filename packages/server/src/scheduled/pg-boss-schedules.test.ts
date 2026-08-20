@@ -199,3 +199,48 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
     }
   }, 30_000);
 });
+
+describe.skipIf(!isPg)("expiry ceiling against the real boss", () => {
+  it("registers daily-interval jobs and oversized explicit expiries without crashing createQueue", async () => {
+    // pg-boss asserts expiry strictly under 24 hours. A cap of exactly
+    // 86 400 passed every test that used short intervals and then
+    // crashed the first real boot: every daily job's 2x-interval default
+    // hit the cap. This drives the shapes index.ts actually registers —
+    // a 24-hour interval and an explicit expiry beyond the ceiling —
+    // through a genuine createQueue.
+    const clone = await cloneTemplate();
+    try {
+      const boss = await makeBoss(clone.url);
+      try {
+        const daily: ScheduledJobSpec = {
+          name: "test-daily-interval",
+          logName: "Test daily interval",
+          intervalMs: 86_400_000,
+          runOnce: () => Promise.resolve(),
+        };
+        const oversized: ScheduledJobSpec = {
+          name: "test-oversized-expiry",
+          logName: "Test oversized expiry",
+          intervalMs: 3_600_000,
+          expireInSeconds: 200_000,
+          runOnce: () => Promise.resolve(),
+        };
+        await startPgBossSchedules(boss, [daily, oversized], FAST);
+        const queues = await boss.getQueues();
+        for (const job of [daily, oversized]) {
+          const queue = queues.find((q) => q.name === queueNameFor(job.name));
+          expect(queue).toBeDefined();
+          // The type check keeps this loud: if a pg-boss upgrade renames
+          // the returned field, the assertion fails rather than passing
+          // vacuously through the optional chain.
+          expect(queue?.expireInSeconds).toBeTypeOf("number");
+          expect(queue?.expireInSeconds ?? 0).toBeLessThan(86_400);
+        }
+      } finally {
+        await boss.stop({ graceful: false });
+      }
+    } finally {
+      await clone.drop();
+    }
+  }, 30_000);
+});
