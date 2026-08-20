@@ -1,8 +1,9 @@
 /**
  * Cross-handler types used by the runtime SDK.
  *
- * These match the queue message envelopes the control plane and the
- * reactive-run bridge produce. The shapes are stable wire formats —
+ * These match the queue message envelopes the server's runtime
+ * produces — the webhook-receipt route, the schedule walker's fan-out,
+ * and the reactive bridge. The shapes are stable wire formats —
  * changing them is a coordinated cross-PR change.
  */
 
@@ -18,8 +19,8 @@ export interface CycleMetadata {
  * Default per-space hop budget (mirrors `DEFAULT_HOP_BUDGET` on the
  * server). Used by the SDK as a defensive ceiling — the server already
  * drops events past its own budget before enqueuing, but a non-pubsub
- * queue producer (or future control-plane path) could enqueue without
- * applying the gate. The SDK's refusal is belt-and-braces.
+ * queue producer could enqueue without applying the gate. The SDK's
+ * refusal is belt-and-braces.
  */
 export const SDK_DEFAULT_HOP_BUDGET = 5;
 
@@ -49,16 +50,16 @@ export function nextHopMetadata(
 
 /**
  * Stamped on the message body by the queue-consumer wrapper when a
- * handler permanently fails. Routes through the per-Worker DLQ producer
- * binding so `cf-queues-pull` peek surfaces a real reason rather than
- * `null`. Optional because:
+ * handler permanently fails, so whatever drains the dead-letter side
+ * can surface a real reason rather than `null`. Optional because:
  *
  *   - Messages on the main queue never carry this — it's a DLQ marker.
- *   - The wrapper only stamps when a `dlqProducerFor` binding is wired,
- *     so integrations without DLQ-routing keep their existing behavior.
- *   - DLQ landings via Cloudflare's auto-routing (`attempts > max_retries`
- *     on a `retry: true` loop) can't be enriched in flight, so peek
- *     output for those still shows `null` — see the route's fallback.
+ *   - The wrapper only stamps when a `dlqProducerFor` sink is wired,
+ *     so consumers without DLQ-routing keep their existing behavior.
+ *
+ * The server's supervisor mirrors the semantics on pg-boss: exhausted
+ * retries land in pg-boss's `failed` rows, which the dead-letter admin
+ * surface reads directly.
  */
 export interface FailureReason {
   /** The handler-reported reason, or the thrown error's `message`. */
@@ -81,26 +82,24 @@ export interface QueueEnvelopeBase {
    *  and for activity emission attribution. */
   space_id?: string;
   /** Set only on messages routed to a DLQ by the runtime-sdk consumer
-   *  wrapper on permanent failure. Read by `cf-queues-pull` peek to
+   *  wrapper on permanent failure. Read by dead-letter tooling to
    *  populate `failure_reason`. */
   _failure_reason?: FailureReason;
 }
 
-/** Triggered by the control plane after verifying an inbound webhook
- *  delivery against the manifest's verification adapter. */
+/** Triggered by the server's webhook-receipt route after verifying an
+ *  inbound webhook delivery against the manifest's verification
+ *  adapter. */
 export interface WebhookMessage extends QueueEnvelopeBase {
   kind: "webhook";
   delivery_id: string;
   headers: Record<string, string>;
   /**
-   * Raw body, base64-encoded so it survives JSON serialization through
-   * the Cloudflare Queue. The SDK's `buildConnectionContext` decodes to
-   * `ArrayBuffer` and surfaces it as `body` on the handler input.
-   * Bodies > 256KB are handed off via R2 with a presigned URL
-   * substituted (`body_url` populated); the SDK resolves transparently.
+   * Raw body, base64-encoded so it survives JSON serialization on the
+   * queue. The SDK's `buildConnectionContext` decodes to `ArrayBuffer`
+   * and surfaces it as `body` on the handler input.
    */
   body_base64: string;
-  body_url?: string;
   verified_at_ms: number;
 }
 
@@ -113,12 +112,11 @@ export interface WebhookHandlerInput {
   delivery_id: string;
   headers: Record<string, string>;
   body: ArrayBuffer;
-  body_url?: string;
   verified_at_ms: number;
 }
 
-/** Decode a base64 string to an ArrayBuffer. Works in both Node and
- *  Cloudflare Workers (`atob` is available in both). */
+/** Decode a base64 string to an ArrayBuffer without touching Node's
+ *  `Buffer`, keeping the module portable across JS runtimes. */
 export function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -128,8 +126,8 @@ export function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-/** Produced by the per-Connection DO's alarm() when a scheduled poll
- *  is due. The handler's job is to advance the cursor and emit any
+/** Produced by the schedule walker's fan-out when a scheduled poll is
+ *  due. The handler's job is to advance the cursor and emit any
  *  resulting items. */
 export interface ScheduleMessage extends QueueEnvelopeBase {
   kind: "schedule";
@@ -155,8 +153,8 @@ export type HandlerResult =
   | { ok: true }
   | { ok: false; retry: boolean; reason: string };
 
-/** The control plane stamps this on every lease response so the SDK
- *  can cache it on the per-Connection DO. */
+/** Minted by the server for the dispatch and handed to the SDK with
+ *  it; the SDK caches it for the length of the run. */
 export interface RuntimeCredential {
   /** Bearer key the SDK includes in Marfa API calls. */
   api_key: string;

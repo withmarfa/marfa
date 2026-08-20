@@ -6,9 +6,8 @@ The SDK that Connection integrations import. Provides the handler-registration A
 
 Inside `src/`:
 
-- `index.ts` — re-exports: `registerScheduleHandler`, `registerWebhookHandler`, `registerItemEventHandler`, `dispatchMessage`, `PerConnectionStateCore`, type aliases for the handler signatures.
+- `index.ts` — re-exports: `registerScheduleHandler`, `registerWebhookHandler`, `registerItemEventHandler`, `dispatchMessage`, type aliases for the handler signatures.
 - `handlers.ts` — handler `REGISTRY` and `dispatchMessage`. Module-singleton state — every loader resolves to the same instance via shared's `noExternal` rule (see "Module singleton" below).
-- `per-connection-state.ts` — `PerConnectionStateCore`: the cursor / idempotency / recent-errors / next-run-at machinery, consumed via the executor's in-memory adapter.
 - `connection-client.ts` — `ConnectionClient`: thin wrapper over `@withmarfa/sdk` that stamps the cycle-metadata headers (`X-Marfa-Cycle-Origin`, `X-Marfa-Cycle-Hop`) and the connection's runtime credential.
 - `connection-context.ts` — `ConnectionContext`: the object passed into every handler invocation. Holds the client, cursor, activity emitter, dispatch metadata.
 - `cron.ts` — cron-expression resolution (`cron-parser`) for schedule handlers.

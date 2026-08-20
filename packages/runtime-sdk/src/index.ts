@@ -5,12 +5,6 @@
  * and by the local-runtime supervisor inside `@withmarfa/server`, which
  * drives dispatch through `consumeBatch`'s semantics.
  */
-export { PerConnectionStateCore } from "./per-connection-state.js";
-export type {
-  PerConnectionInternalState,
-  ScheduleDisarmRecord,
-} from "./per-connection-state.js";
-
 export { ConnectionGoneError } from "./errors.js";
 
 export {

@@ -298,8 +298,8 @@ export async function performInstall(
 
   let credential;
   try {
-    // Third mint path, held to the same two rules as the hosted lease
-    // broker and the local supervisor. The lock is what makes the state
+    // Second mint path, held to the same two rules as the supervisor's
+    // in-process mint. The lock is what makes the state
     // read below mean anything — the Connection row is visible to a
     // space admin the moment step 1 commits, so an uninstall can reach
     // it before this pipeline gets to step 2, and a credential minted

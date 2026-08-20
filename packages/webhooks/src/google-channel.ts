@@ -15,7 +15,7 @@
  *   - `X-Goog-Channel-Id` header present (sanity check + dedup key).
  *
  * The `external_delivery_id` is `<channel-id>:<message-number>` so
- * the control plane's idempotency KV de-duplicates Google retries
+ * the receipt route's idempotency window de-duplicates Google retries
  * (Google retries pushes when the receiver doesn't 200 within a few
  * seconds; same channel + same message number = same delivery).
  *

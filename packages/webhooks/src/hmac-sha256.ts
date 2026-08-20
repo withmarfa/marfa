@@ -11,10 +11,9 @@
  * is the conventional form (GitHub, Vercel, others); we also accept a
  * bare hex string for callers that don't follow it.
  *
- * The `X-Marfa-` prefix is the canonical convention shared with the
- * Cloudflare Worker control plane and the Node-side server. Both
- * surfaces honor the same header names so an integration emitting one
- * receipt shape works through either path.
+ * The `X-Marfa-` prefix is the canonical header convention for signed
+ * receipts. The server's webhook-receipt route and the email capture
+ * Worker both emit it, so one receipt shape covers every producer.
  */
 import type { Verifier } from "./types.js";
 import { constantTimeEqualsHex, hmacSha256Hex } from "./crypto.js";

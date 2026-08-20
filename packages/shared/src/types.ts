@@ -885,7 +885,7 @@ export interface PreviewEventEnvelope {
     | "subscription_inactive"
     | "subscription_paused";
   /**
-   * The wire envelope the bridge would POST to Cloudflare Queues, present
+   * The wire envelope the bridge would enqueue for dispatch, present
    * iff `would_dispatch === true`. Mirrors the bridge's internal
    * `QueueMessageBody`.
    */
