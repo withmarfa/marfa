@@ -23,17 +23,17 @@ inbox.marfa.so (MX → Cloudflare)
 Cloudflare Email Routing
       │  match: capture@inbox.marfa.so
       ▼
-withmarfa-inbox-email-worker (CF Email Worker)
+marfa-inbox-email-worker (CF Email Worker)
       │  postal-mime → JSON envelope
       │  HMAC-SHA256 over body with WEBHOOK_SECRET
       ▼
-env.RUNTIME_CONTROL.fetch(/webhooks/inbound/<CONNECTION_ID>)
+POST <MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>
       │  X-Marfa-Signature: sha256=<hex>
       │  X-Marfa-Delivery-Id: <Message-ID>
-      │  (Cloudflare Worker Service Binding — no DNS / TLS / edge)
+      │  (real HTTPS to the Marfa server)
       ▼
-runtime-control Worker (cloudflare-email verifier → enqueue
-      │  to marfa-webhook-receipt-withmarfa-inbox-<env>)
+server webhook receipt (cloudflare-email verifier →
+      │  idempotency check → local-substrate queue)
       ▼
 withmarfa.inbox integration handler
       │  decode → buildCapturedEmail → ctx.marfa.createItem
@@ -41,10 +41,9 @@ withmarfa.inbox integration handler
 withmarfa.captured_email item (source_id = Message-ID)
 ```
 
-Step 4 reaches the runtime-control Worker through a Service Binding
-rather than an HTTP fetch. The binding invokes the bound Worker's
-`fetch` handler directly — no DNS, TLS, or edge routing — so there's
-no custom-domain or `workers.dev` URL in the path at all.
+The Worker exists because Email Routing can only deliver inbound mail
+to a Worker or forward it to a mailbox — it cannot POST to a server.
+It is the one Cloudflare Worker the hosted deployment keeps.
 
 ## Two Workers, one integration
 
@@ -60,17 +59,12 @@ This directory is one logical integration with two deployable Workers:
 - **`./email-worker/`** — the Cloudflare Email Worker that converts
   inbound email → signed JSON webhook. Distinct Cloudflare product
   (Email Worker), distinct wrangler.toml, distinct deploy command,
-  distinct npm workspace package. Holds a **Service Binding** to the
-  runtime-control Worker (`RUNTIME_CONTROL` → `marfa-runtime-control-<env>`)
-  and dispatches via `env.RUNTIME_CONTROL.fetch(...)` at path
-  `/webhooks/inbound/<CONNECTION_ID>`. The two are deploy-coupled in
-  one direction: the Email Worker's deploy fails with
-  `binding target not found` if runtime-control hasn't been deployed
-  to the same env yet. Bring runtime-control up first.
-
-The two are independent deployables — bring them up in either order;
-the system tolerates one being absent (the Email Worker would have
-no recipient; the integration Worker would have no senders).
+  distinct npm workspace package. Dispatches over real HTTPS to the
+  Marfa server's webhook receipt route,
+  `<MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>`, and holds no
+  binding to anything: its three secrets (`MARFA_API_URL`,
+  `CONNECTION_ID`, `WEBHOOK_SECRET`) are the whole of its coupling,
+  so it deploys independently of every other Worker.
 
 ## Space routing (v1)
 
@@ -131,23 +125,24 @@ include:_spf.mx.cloudflare.net ~all`) is present on the
    subdomain.
 2. **Email Routing rule.** Inside the `marfa.so` zone, create a
    custom-address rule: `capture@inbox.marfa.so` → "Send to Worker:
-   `marfa-withmarfa-inbox-email-worker-staging`".
+   `marfa-inbox-email-worker-staging`".
 3. **Deploy the Email Worker.** Use the deploy wrapper:
    `scripts/deploy-worker.sh integrations/withmarfa-inbox/email-worker --env staging`
-   after setting `CONNECTION_ID` (the `system.connection` id this
-   Worker dispatches against) and `WEBHOOK_SECRET` (matches the
-   subscription's `secret_encrypted` on the Marfa server) via
-   `wrangler secret put --env staging`. The `RUNTIME_CONTROL` Service
-   Binding is declared in `wrangler.toml` and resolves at deploy
-   time — runtime-control must be deployed first.
+   after setting three secrets via `wrangler secret put --env staging`:
+   `MARFA_API_URL` (the deployment's public API origin),
+   `CONNECTION_ID` (the `system.connection` id this Worker dispatches
+   against) and `WEBHOOK_SECRET` (matches the subscription's
+   `secret_encrypted` on the Marfa server). Nothing else needs to be
+   deployed first.
 
 The Worker holds NO durable state — re-deploying overwrites the
 existing Worker, and Email Routing rules persist independently.
 
 ## Local validation
 
-Local validation does NOT require real DNS — the harness simulates
-the inbound by POSTing a signed payload directly to the staging
-server's `/runtime/webhook/:connection_id` endpoint, mimicking what
-the Email Worker would emit. The real end-to-end test (real DNS, real CF Email Routing, real email
-send from a real sender mailbox) is done as a final validation stage.
+Local validation does NOT require real DNS — the harness POSTs a
+signed payload directly to the staging server's
+`/runtime/webhook/:connection_id` endpoint, which is now literally
+what the Email Worker does in production. The real end-to-end test
+(real DNS, real CF Email Routing, real email send from a real sender
+mailbox) is done as a final validation stage.

@@ -9,21 +9,22 @@
  *      (from, to, subject, text/html bodies, headers, attachments).
  *   3. We HMAC-SHA256 the JSON body with `WEBHOOK_SECRET` (= the
  *      per-connection subscription secret on the Marfa server).
- *   4. Dispatch via a Cloudflare Worker Service Binding —
- *      `env.RUNTIME_CONTROL.fetch(request)` against the bound
- *      `marfa-runtime-control-<env>` Worker at path
- *      `/webhooks/inbound/<CONNECTION_ID>`. The synthetic
- *      `https://runtime-control` host in the URL is ignored by the
- *      binding; only path + headers + body reach the bound Worker's
- *      `fetch` handler. No DNS / TLS / edge involved.
- *   5. The bound Worker verifies the HMAC, idempotency-checks on the
- *      Message-ID, and enqueues a `WebhookMessage` for the
- *      `withmarfa.inbox` handler.
+ *   4. POST the signed body over HTTPS to the Marfa server's webhook
+ *      receipt route, `<MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>`.
+ *      The server's `cloudflare-email` adapter verifies the HMAC over
+ *      the exact body bytes, idempotency-checks on the Message-ID, and
+ *      enqueues a `WebhookMessage` for the `withmarfa.inbox` handler.
  *
- * On non-2xx response from the bound Worker, we LOG and ACK — throwing
+ * This Worker exists because Email Routing can only deliver inbound
+ * mail to a Worker or forward it to a mailbox; it cannot POST to a
+ * server. It is a stateless translator from "email envelope" to
+ * "signed JSON webhook", and the one Cloudflare Worker the hosted
+ * deployment keeps.
+ *
+ * On a non-2xx response or a fetch failure, we LOG and ACK — throwing
  * would bounce the email. Cloudflare Email Routing offers at-least-
- * once delivery on its own retry path; the receiver-side
- * Message-ID idempotency makes duplicate forwards safe.
+ * once delivery on its own retry path; the receiver-side Message-ID
+ * idempotency makes duplicate forwards safe.
  *
  * Attachments: v1 captures metadata only (`filename`, `mime_type`,
  * `size_bytes`). Attachment content is not included in the JSON
@@ -39,18 +40,17 @@ import PostalMime, {
 
 interface Env {
   /**
-   * Service Binding to the `marfa-runtime-control-<env>` Worker. The
-   * binding name is declared in `wrangler.toml` per-env. Calling
-   * `env.RUNTIME_CONTROL.fetch(request)` invokes the bound Worker's
-   * `fetch` handler directly — no DNS, TLS, or edge routing involved.
+   * The Marfa server's public API origin (e.g. `https://api.marfa.so`),
+   * set as a deploy-time secret alongside the two below. Same name and
+   * meaning as the `MARFA_API_URL` every integration Worker held on the
+   * retired hosted substrate.
    */
-  RUNTIME_CONTROL: Fetcher;
+  MARFA_API_URL: string;
   /**
    * The `system.connection` id this Email Worker dispatches against.
-   * Baked in at deploy time (one Email Worker per Connection — every
-   * install mints a fresh Worker deployment with this set). Used to
-   * build the Service-Binding request path:
-   * `/webhooks/inbound/<CONNECTION_ID>`.
+   * Baked in at deploy time (one Email Worker per Connection in the v1
+   * single-space shape). Forms the receipt path:
+   * `/runtime/webhook/<CONNECTION_ID>`.
    */
   CONNECTION_ID: string;
   /**
@@ -93,15 +93,34 @@ const HEADER_ALLOWLIST = new Set<string>([
   "x-mailer",
 ]);
 
-/** Synthetic host used to construct the Service-Binding `Request`.
- *  Service Bindings ignore the host portion — only path, headers,
- *  and body reach the bound Worker's fetch handler. A stable
- *  recognizable placeholder makes accidental "real" fetches in tests
- *  obvious. */
-const SERVICE_BINDING_HOST = "https://runtime-control";
+/** Bound on the receipt POST. The email() handler has no caller waiting
+ *  on it, but an unbounded fetch against an unresponsive server would
+ *  pin the invocation until the platform kills it; a bounded one fails
+ *  into the same log-and-ack path as any other dispatch error. */
+const DISPATCH_TIMEOUT_MS = 15_000;
+
+/** The server's webhook receipt route for this connection. The origin
+ *  is normalized so a trailing slash on the configured URL cannot
+ *  produce a `//runtime` path the server would 404. */
+export function buildReceiptUrl(apiUrl: string, connectionId: string): string {
+  return `${apiUrl.replace(/\/+$/, "")}/runtime/webhook/${connectionId}`;
+}
 
 export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
+    if (
+      typeof env.MARFA_API_URL !== "string" ||
+      env.MARFA_API_URL.length === 0
+    ) {
+      // Misconfiguration, not a transient fault. ACK so mail is not
+      // bounced while the deployment is being fixed; the log line is
+      // the operator's signal.
+      console.error(
+        `[email-worker] MARFA_API_URL is not set env=${env.ENVIRONMENT ?? "unknown"}; dropping delivery`,
+      );
+      return;
+    }
+
     let parsed: Email;
     try {
       const arrayBuffer = await new Response(message.raw).arrayBuffer();
@@ -118,31 +137,27 @@ export default {
     const body = JSON.stringify(envelope);
     const signatureHex = await hmacSha256Hex(env.WEBHOOK_SECRET, body);
     const deliveryId = envelope.message_id ?? crypto.randomUUID();
+    const url = buildReceiptUrl(env.MARFA_API_URL, env.CONNECTION_ID);
 
-    const request = new Request(
-      `${SERVICE_BINDING_HOST}/webhooks/inbound/${env.CONNECTION_ID}`,
-      {
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Marfa-Signature": `sha256=${signatureHex}`,
           "X-Marfa-Delivery-Id": deliveryId,
-          "User-Agent": "withmarfa-inbox-email-worker/0.2.0",
+          "User-Agent": "withmarfa-inbox-email-worker/0.3.0",
         },
         body,
-      },
-    );
-
-    let resp: Response;
-    try {
-      resp = await env.RUNTIME_CONTROL.fetch(request);
+        signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+      });
     } catch (err) {
-      // Service-Binding-level failure (bound Worker missing, throw
-      // inside its fetch handler, etc.). ACK rather than bouncing —
+      // Network-level failure or timeout. ACK rather than bouncing —
       // at-least-once retries via the server-side idempotency map
       // make duplicate forwards safe.
       console.error(
-        `[email-worker] runtime-control dispatch failed env=${env.ENVIRONMENT ?? "unknown"} delivery=${deliveryId} err=${describeError(err)}`,
+        `[email-worker] server dispatch failed env=${env.ENVIRONMENT ?? "unknown"} delivery=${deliveryId} err=${describeError(err)}`,
       );
       return;
     }
@@ -150,7 +165,7 @@ export default {
     if (!resp.ok) {
       const text = await safeReadText(resp);
       console.error(
-        `[email-worker] runtime-control non-2xx env=${env.ENVIRONMENT ?? "unknown"} status=${String(resp.status)} delivery=${deliveryId} body=${text.slice(0, 256)}`,
+        `[email-worker] server non-2xx env=${env.ENVIRONMENT ?? "unknown"} status=${String(resp.status)} delivery=${deliveryId} body=${text.slice(0, 256)}`,
       );
       return;
     }
@@ -311,5 +326,5 @@ export const __internals = {
   buildEnvelope,
   hmacSha256Hex,
   filterHeaders,
-  SERVICE_BINDING_HOST,
+  buildReceiptUrl,
 };

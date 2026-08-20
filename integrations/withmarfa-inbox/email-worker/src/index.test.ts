@@ -1,15 +1,15 @@
 /**
  * Worker-side unit tests for the envelope-builder, signing path, and
- * Service-Binding dispatch shape. End-to-end (real MIME → real CF
- * Email Routing → real bound Worker) lives in the validation harness
- * at `_local/validate-withmarfa-inbox.ts`; this file covers the pure
- * functions + the dispatch contract.
+ * the HTTPS dispatch to the server's webhook receipt route. End-to-end
+ * (real MIME → real CF Email Routing → real server) lives in the
+ * validation harness; this file covers the pure functions + the
+ * dispatch contract.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import workerHandler, { __internals } from "./index.js";
 import type { Email } from "postal-mime";
 
-const { buildEnvelope, hmacSha256Hex, filterHeaders, SERVICE_BINDING_HOST } =
+const { buildEnvelope, hmacSha256Hex, filterHeaders, buildReceiptUrl } =
   __internals;
 
 function makeEmail(overrides: Partial<Email>): Email {
@@ -163,11 +163,28 @@ describe("hmacSha256Hex", () => {
   });
 });
 
+describe("buildReceiptUrl", () => {
+  it("joins origin and path", () => {
+    expect(buildReceiptUrl("https://api.marfa.so", "abc")).toBe(
+      "https://api.marfa.so/runtime/webhook/abc",
+    );
+  });
+
+  it("normalizes a trailing slash on the origin", () => {
+    expect(buildReceiptUrl("https://api.marfa.so/", "abc")).toBe(
+      "https://api.marfa.so/runtime/webhook/abc",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
-// Service-Binding dispatch shape
+// HTTPS dispatch to the server's webhook receipt route
 // ---------------------------------------------------------------------------
 
-describe("email() — Service-Binding dispatch", () => {
+describe("email() — server dispatch", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   // Build a fake `ForwardableEmailMessage` shaped enough that
   // postal-mime parses the raw stream and the handler reaches the
   // dispatch step.
@@ -192,84 +209,91 @@ describe("email() — Service-Binding dispatch", () => {
   const RFC822 = [
     "From: sender@example.com",
     "To: capture@inbox.marfa.so",
-    "Subject: Service-Binding dispatch smoke",
-    "Message-ID: <sb-dispatch-smoke@example.com>",
+    "Subject: Server dispatch smoke",
+    "Message-ID: <server-dispatch-smoke@example.com>",
     "Date: Sun, 24 May 2026 20:00:00 +0000",
     "Content-Type: text/plain; charset=utf-8",
     "",
     "Body bytes for the dispatch smoke.",
   ].join("\r\n");
 
-  it("calls env.RUNTIME_CONTROL.fetch with the correct path, signature header, and JSON body", async () => {
+  const ENV = {
+    MARFA_API_URL: "https://api.test.example",
+    CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+    WEBHOOK_SECRET: "shared-secret-for-test",
+    ENVIRONMENT: "test",
+  };
+
+  it("POSTs to the server's receipt route with the signature header and JSON body", async () => {
     const fetchSpy = vi
-      .fn<(request: Request) => Promise<Response>>()
+      .fn<typeof fetch>()
       .mockResolvedValue(new Response("ok", { status: 200 }));
-    const env = {
-      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
-      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
-      WEBHOOK_SECRET: "shared-secret-for-test",
-      ENVIRONMENT: "test",
-    };
+    vi.stubGlobal("fetch", fetchSpy);
 
     await workerHandler.email(
       makeMessage(RFC822) as ForwardableEmailMessage,
-      env,
+      ENV,
     );
 
     expect(fetchSpy).toHaveBeenCalledOnce();
-    const sent = fetchSpy.mock.calls[0]?.[0];
-    if (!sent) throw new Error("expected RUNTIME_CONTROL.fetch to be called");
-    // URL: synthetic host + the connection_id baked into the path
-    expect(new URL(sent.url).pathname).toBe(
-      "/webhooks/inbound/019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+    const [url, init] = fetchSpy.mock.calls[0] ?? [];
+    if (typeof url !== "string" || init === undefined)
+      throw new Error("expected fetch(url, init) to be called");
+    expect(url).toBe(
+      "https://api.test.example/runtime/webhook/019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
     );
-    expect(sent.url.startsWith(SERVICE_BINDING_HOST)).toBe(true);
-    expect(sent.method).toBe("POST");
+    expect(init.method).toBe("POST");
     // Headers: signature shape + delivery id from Message-ID
-    expect(sent.headers.get("Content-Type")).toBe("application/json");
-    expect(sent.headers.get("X-Marfa-Delivery-Id")).toBe(
-      "<sb-dispatch-smoke@example.com>",
+    const headers = new Headers(init.headers);
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Marfa-Delivery-Id")).toBe(
+      "<server-dispatch-smoke@example.com>",
     );
-    expect(sent.headers.get("X-Marfa-Signature")).toMatch(
-      /^sha256=[0-9a-f]{64}$/,
-    );
-    // Body: a parseable envelope with the expected subject
-    const body = await sent.json<{ subject: string; message_id: string }>();
-    expect(body.subject).toBe("Service-Binding dispatch smoke");
-    expect(body.message_id).toBe("<sb-dispatch-smoke@example.com>");
+    expect(headers.get("X-Marfa-Signature")).toMatch(/^sha256=[0-9a-f]{64}$/);
+    // The dispatch is bounded; an unresponsive server must not pin the
+    // invocation open.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // Body: the implementation passes a pre-serialized string (the exact
+    // bytes the HMAC covers), so anything else here is itself a failure.
+    if (typeof init.body !== "string")
+      throw new Error("expected a string body");
+    const body = JSON.parse(init.body) as {
+      subject: string;
+      message_id: string;
+    };
+    expect(body.subject).toBe("Server dispatch smoke");
+    expect(body.message_id).toBe("<server-dispatch-smoke@example.com>");
   });
 
-  it("ACKs (returns without throwing) when the binding rejects with a non-2xx", async () => {
-    const fetchSpy = vi.fn(
-      (): Promise<Response> =>
-        Promise.resolve(new Response("nope", { status: 500 })),
-    );
-    const env = {
-      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
-      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
-      WEBHOOK_SECRET: "s",
-      ENVIRONMENT: "test",
-    };
+  it("ACKs (returns without throwing) when the server answers non-2xx", async () => {
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("nope", { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
     await expect(
-      workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, env),
+      workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, ENV),
     ).resolves.toBeUndefined();
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("ACKs when the binding throws (bound Worker missing / errored)", async () => {
-    const fetchSpy = vi.fn(
-      (): Promise<Response> =>
-        Promise.reject(new Error("binding target not found")),
-    );
-    const env = {
-      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
-      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
-      WEBHOOK_SECRET: "s",
-      ENVIRONMENT: "test",
-    };
+  it("ACKs when the fetch itself fails (network error / timeout)", async () => {
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("connect timeout"));
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(
+      workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, ENV),
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("ACKs and never dispatches when MARFA_API_URL is unset", async () => {
+    const fetchSpy = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchSpy);
+    const env = { ...ENV, MARFA_API_URL: "" };
     await expect(
       workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, env),
     ).resolves.toBeUndefined();
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

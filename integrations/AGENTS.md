@@ -76,7 +76,7 @@ When a Cloudflare Worker in this monorepo calls another in the same account, dec
 
 The synthetic host in the constructed `Request` URL is ignored by the binding; only path, headers, and body reach the bound Worker. Convention: use `https://<binding-name-lowercase>` as the placeholder host so tests and logs make the binding shape obvious.
 
-Canonical example: the withmarfa-inbox Email Worker. `integrations/withmarfa-inbox/email-worker/wrangler.toml` declares `RUNTIME_CONTROL → marfa-runtime-control-<env>`, and `src/index.ts` dispatches via `env.RUNTIME_CONTROL.fetch(...)` against `/webhooks/inbound/<CONNECTION_ID>`.
+The rule covers Worker-to-Worker hops inside the account. The withmarfa-inbox Email Worker is the deliberate exception that marks the scope: its target is the Marfa server, not a sibling Worker, so it dispatches over real HTTPS to the server's webhook receipt route.
 
 ## Each Worker has its own identity
 
