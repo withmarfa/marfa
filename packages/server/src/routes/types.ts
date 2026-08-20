@@ -240,7 +240,8 @@ const registerTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Missing metadata.types:write permission",
+      description:
+        "Missing metadata.types:write permission, a reserved namespace, or a publisher namespace whose handle the caller's user has not claimed",
     },
     409: {
       content: {
@@ -362,7 +363,7 @@ const deleteTypeRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function typeRoutes(storage: Storage) {
+export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listTypesRoute, (c) => {
@@ -423,6 +424,35 @@ export function typeRoutes(storage: Storage) {
           `Reserved namespace: ${tier}.* types are platform-shipped and cannot be registered at runtime`,
           { namespace: tier },
         );
+      }
+      // Publishing under a handle means owning it: the publisher tier is
+      // the only tier whose first segment is a claimable handle, so
+      // registration there requires the caller's user to hold that exact
+      // handle. The rule binds only in hosted mode — keys mode has no
+      // user accounts, so there is no handle system to check against and
+      // the only party a refusal could stop is the deployment's own
+      // operator. Platform credentials are exempt so seeding and operator
+      // tooling keep working across spaces.
+      if (
+        tier === "publisher" &&
+        authMode === "hosted" &&
+        c.get("apiKey")?.is_platform !== true
+      ) {
+        const publisher = body.id.split(".")[0] ?? "";
+        const user =
+          spaceId && storage.users
+            ? await storage.users.getBySpaceId(spaceId)
+            : null;
+        const handle = user?.handle ?? null;
+        if (handle !== publisher) {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            handle
+              ? `Publisher namespace: registering "${publisher}.*" requires the handle "${publisher}"; this credential's user holds "${handle}"`
+              : `Publisher namespace: registering "${publisher}.*" requires claiming the handle "${publisher}" first`,
+            { namespace: publisher, handle_held: handle },
+          );
+        }
       }
     }
     if (body.fields === undefined || body.fields === null) {
