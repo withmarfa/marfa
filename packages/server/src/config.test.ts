@@ -296,3 +296,92 @@ describe("loadConfig streaming-RLS endpoint guard", () => {
     expect(() => loadConfig()).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// MARFA_PROCESS_ROLE / MARFA_DB_POOL_SIZE / MARFA_API_URL — the split's knobs
+// ---------------------------------------------------------------------------
+
+describe("loadConfig process-role and pool knobs", () => {
+  const saved = {
+    DB_DIALECT: process.env.DB_DIALECT,
+    DATABASE_URL: process.env.DATABASE_URL,
+    MARFA_PROCESS_ROLE: process.env.MARFA_PROCESS_ROLE,
+    MARFA_API_URL: process.env.MARFA_API_URL,
+    MARFA_DB_POOL_SIZE: process.env.MARFA_DB_POOL_SIZE,
+  };
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  });
+
+  it("defaults the role to both and the knobs to unset", () => {
+    delete process.env.MARFA_PROCESS_ROLE;
+    delete process.env.MARFA_API_URL;
+    delete process.env.MARFA_DB_POOL_SIZE;
+    const config = loadConfig();
+    expect(config.processRole).toBe("both");
+    expect(config.apiUrl).toBeUndefined();
+    expect(config.dbPoolSize).toBeUndefined();
+  });
+
+  it("accepts each legal role on Postgres and threads the knobs through", () => {
+    process.env.DB_DIALECT = "pg";
+    process.env.DATABASE_URL = "postgres://user:pw@db.example/marfa";
+    process.env.MARFA_API_URL = "http://server:8600";
+    process.env.MARFA_DB_POOL_SIZE = "4";
+    for (const role of ["web", "worker", "both"] as const) {
+      process.env.MARFA_PROCESS_ROLE = role;
+      const config = loadConfig();
+      expect(config.processRole).toBe(role);
+      expect(config.apiUrl).toBe("http://server:8600");
+      expect(config.dbPoolSize).toBe(4);
+    }
+  });
+
+  it("refuses an unknown role rather than defaulting", () => {
+    process.env.MARFA_PROCESS_ROLE = "webworker";
+    expect(() => loadConfig()).toThrow(/MARFA_PROCESS_ROLE/);
+  });
+
+  it("refuses a split role on SQLite", () => {
+    process.env.DB_DIALECT = "sqlite";
+    for (const role of ["web", "worker"] as const) {
+      process.env.MARFA_PROCESS_ROLE = role;
+      expect(() => loadConfig()).toThrow(/requires DB_DIALECT=pg/);
+    }
+    process.env.MARFA_PROCESS_ROLE = "both";
+    expect(() => loadConfig()).not.toThrow();
+  });
+
+  it("refuses a pool size that is not a positive integer", () => {
+    for (const bad of ["abc", "0", "-3", "2.5"]) {
+      process.env.MARFA_DB_POOL_SIZE = bad;
+      expect(() => loadConfig()).toThrow(/MARFA_DB_POOL_SIZE/);
+    }
+  });
+});
+
+describe("loadConfig MARFA_API_URL validation", () => {
+  const saved = { MARFA_API_URL: process.env.MARFA_API_URL };
+
+  afterEach(() => {
+    if (saved.MARFA_API_URL === undefined)
+      Reflect.deleteProperty(process.env, "MARFA_API_URL");
+    else process.env.MARFA_API_URL = saved.MARFA_API_URL;
+  });
+
+  it("refuses a value that does not parse as an http(s) URL", () => {
+    for (const bad of ["http//server:8600", "server:8600", "ftp://x"]) {
+      process.env.MARFA_API_URL = bad;
+      expect(() => loadConfig()).toThrow(/MARFA_API_URL/);
+    }
+  });
+
+  it("accepts a well-formed URL and case-folds the role", () => {
+    process.env.MARFA_API_URL = "http://server:8600";
+    expect(loadConfig().apiUrl).toBe("http://server:8600");
+  });
+});

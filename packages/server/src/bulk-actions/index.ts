@@ -16,6 +16,7 @@ export { BulkActionWorker, type BulkActionWorkerOptions } from "./worker.js";
 export {
   setBulkJobEnqueueListener,
   notifyBulkJobEnqueued,
+  BULK_JOB_WAKE_CHANNEL,
 } from "./enqueue-signal.js";
 export { BulkActionJobGcSweeper } from "./gc.js";
 export { runChunk, type ChunkOutcome, type RunChunkContext } from "./runner.js";

@@ -82,6 +82,14 @@ export interface StartLocalRuntimeOptions {
   /** Boss-side hook. Production sets up a real pg-boss instance; tests
    *  pass `null` and drive dispatches via `dispatchForTest`. */
   boss: PgBoss | null;
+  /**
+   * Whether this process executes dispatches. `false` is the web role's
+   * enqueue-only shape: the webhook receipt route, the dead-letter admin
+   * surface, and the reactive bridge's enqueue side all stay, but no
+   * queue workers register and no schedule crons seed, so handler code
+   * runs only in the worker role. Defaults to `true`.
+   */
+  dispatch?: boolean;
 }
 
 /**
@@ -120,6 +128,7 @@ export async function tryStartLocalIntegrationRuntime(
     registrations: options.registrations,
     executor,
     boss: options.boss,
+    registerWorkers: options.dispatch !== false,
   });
   await runtime.start();
 

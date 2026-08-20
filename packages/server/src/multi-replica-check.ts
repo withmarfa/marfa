@@ -1,22 +1,19 @@
 /**
  * Multi-replica boot guard — warns loud when more than one server process is
- * running against the same database.
+ * running against the same SQLite database.
  *
- * `pubsub.ts` distributes events through a process-local `EventEmitter`. It is
- * the sole distribution channel for Server-Sent Events and for outbound
- * webhook dispatch, which means every subscriber must live in the same process
- * as the writer that published the event.
- *
- * Run two processes against one database and that assumption quietly breaks.
- * A write handled by process A publishes only inside process A, so an SSE
- * client connected to process B never sees it, and a webhook whose consumer
- * happens to be running in process B never fires. Nothing errors. Nothing
- * retries. The write succeeds, the API returns 200, and the event is simply
- * gone. That silence is the reason this guard exists: the failure is invisible
- * at every layer an operator would think to check.
- *
- * Hosted deployments are unaffected — they run deliberately single-instance.
- * The exposure is self-hosters reaching for the ordinary way to add capacity.
+ * **SQLite only.** On Postgres, multi-process deployments are supported:
+ * every published event is announced to sibling processes over pg_notify
+ * (`event-replication.ts`), outbound webhook delivery is exactly-once by
+ * origin (each process delivers the events it published and skips
+ * replicated ones), scheduled and dispatch work is pinned through pg-boss,
+ * and the consent lock has a cross-process advisory-lock backend. SQLite
+ * wires none of that: `pubsub.ts` distributes events through a
+ * process-local `EventEmitter`, so a second process against the same file
+ * silently drops the other's events — SSE clients miss writes, webhooks
+ * never fire, nothing errors, and the write itself still succeeds. That
+ * silence is the reason this guard exists. The caller (`index.ts`) gates
+ * the check on the SQLite dialect.
  *
  * A warning rather than a refusal to start. An operator may knowingly accept
  * the trade (a replica serving only reads, say), and a guard that stops a
@@ -138,14 +135,14 @@ export function checkMultiReplica(
 
   log(
     "warn",
-    `Multiple server processes appear to be running against one database ` +
-      `(${describe(signal)}). Realtime event delivery is process-local: ` +
-      "Server-Sent Events and outbound webhooks are distributed through an " +
-      "in-process emitter, so a write handled by one process is never seen by " +
-      "subscribers connected to another. Events are dropped silently — no " +
-      "error, no retry, and the write itself still succeeds. Run a single " +
-      "server process per database until cross-process event distribution is " +
-      "supported.",
+    `Multiple server processes appear to be running against one SQLite ` +
+      `database (${describe(signal)}). On SQLite, realtime event delivery ` +
+      "is process-local: Server-Sent Events and outbound webhooks are " +
+      "distributed through an in-process emitter, so a write handled by one " +
+      "process is never seen by subscribers connected to another. Events are " +
+      "dropped silently — no error, no retry, and the write itself still " +
+      "succeeds. Run a single server process per SQLite database, or move to " +
+      "Postgres (DB_DIALECT=pg), where events replicate between processes.",
   );
 
   return signal;
