@@ -33,6 +33,7 @@ import {
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
+import { deriveCustomTypeNamespaces } from "./default-bundles.js";
 import {
   CLIENT_CREDENTIALS_DEFAULT_SCOPES,
   dcrDefaultScopes,
@@ -79,18 +80,18 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * cannot be named concretely in a grant. The namespace wildcard is the only
  * thing that can name it, which is why these stay requestable while
  * deliberately staying out of the default consent bundle: the default grant
- * is the curated, per-type-narrowable content set, and these appear only
- * when an app opts into them.
+ * is the per-type-narrowable content set, and these appear only when an
+ * app opts into them.
+ *
+ * Derived from the registry (`user` + `app` + every shipped publisher
+ * root) rather than enumerated by hand — the hand list drifted the same
+ * way the bundle lists did. Namespaces of custom types registered at
+ * runtime reach the allowlist through the bundle fold-in below: boot
+ * resolves them into the active bundles, and every bundle-referenced
+ * scope is admitted.
  */
-export const CUSTOM_TYPE_NAMESPACES = [
-  "user",
-  "app",
-  "google",
-  "raindrop",
-  "readwise",
-  "todoist",
-  "withmarfa",
-] as const;
+export const CUSTOM_TYPE_NAMESPACES: readonly string[] =
+  deriveCustomTypeNamespaces();
 
 /**
  * Build the complete list of scope literals the plugin will accept.

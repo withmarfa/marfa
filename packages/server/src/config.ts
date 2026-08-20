@@ -1,4 +1,5 @@
 import type { PermissionBundle } from "@withmarfa/shared";
+import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
 import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
@@ -538,138 +539,19 @@ export function parseOtelHeaders(
 }
 
 /**
- * The default consent-screen permission bundles. Each scope renders as one
- * plain-language per-type toggle (all pre-ticked); the issued token carries
- * exactly the scopes the user keeps ticked, enforced through the usual
- * permission maps.
+ * The default consent-screen permission bundles, derived from the type
+ * registry at module load. Each scope renders as one plain-language
+ * per-type toggle (all pre-ticked); the issued token carries exactly the
+ * scopes the user keeps ticked, enforced through the usual permission maps.
  *
- * `read` / `write` enumerate CONCRETE per-type scopes rather than a `core.*`
- * wildcard. That's deliberate: the OAuth provider only lets a consent grant
- * narrow to scopes that were literally requested, so for "untick Calendar"
- * to genuinely narrow the token the request has to name each type up front.
- * The flip side is the honest one the design wants — a content type added in
- * a later release is NOT granted to an already-connected app automatically;
- * the user is asked to approve it on the next connect.
- *
- * They deliberately EXCLUDE all of `system.*` except `system.connection:read`
- * (the "Connected accounts" toggle) so an app reading "your content" can't
- * read your security internals (credentials, devices, webhooks).
- * `system.integration` (the marketplace catalog) is not in the default
- * grant — an app that needs it requests it.
- *
- * Integration types (`google.*`, `readwise.*`, …) are the person's own synced
- * content, so `connected` covers them for READ. Writes stay request-only:
- * an integration row is a vendor-faithful mirror owned by its integration, and
- * a third-party write would fork it from upstream with nothing propagating
- * the change back.
+ * The derivation, its family rules, and the rationale each rule carries
+ * live in `auth/default-bundles.ts`. Deployments whose spaces registered
+ * custom types under their own publisher handles get those namespaces
+ * folded in at boot via {@link setActivePermissionBundles}; this constant
+ * is the registry-only baseline.
  */
-export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] = [
-  {
-    id: "read",
-    label: "Read your content",
-    description: "Your notes, tasks, bookmarks, files, media, and more.",
-    scopes: [
-      "core.bookmark:read",
-      "core.entity:read",
-      "core.entity.person:read",
-      "core.entity.place:read",
-      "core.event:read",
-      "core.file:read",
-      "core.file.audio:read",
-      "core.file.image:read",
-      "core.file.video:read",
-      "core.highlight:read",
-      "core.media:read",
-      "core.media.album:read",
-      "core.media.article:read",
-      "core.media.book:read",
-      "core.media.episode:read",
-      "core.media.film:read",
-      "core.media.series:read",
-      "core.media.song:read",
-      "core.message:read",
-      "core.note:read",
-      "core.task:read",
-      "system.connection:read",
-    ],
-    default_on: true,
-  },
-  {
-    id: "write",
-    label: "Write your content",
-    description: "Add, edit, and organize what's in your space.",
-    scopes: [
-      "core.bookmark:write",
-      "core.entity:write",
-      "core.entity.person:write",
-      "core.entity.place:write",
-      "core.event:write",
-      "core.file:write",
-      "core.file.audio:write",
-      "core.file.image:write",
-      "core.file.video:write",
-      "core.highlight:write",
-      "core.media:write",
-      "core.media.album:write",
-      "core.media.article:write",
-      "core.media.book:write",
-      "core.media.episode:write",
-      "core.media.film:write",
-      "core.media.series:write",
-      "core.media.song:write",
-      "core.message:write",
-      "core.note:write",
-      "core.task:write",
-    ],
-    default_on: true,
-  },
-  {
-    id: "connected",
-    label: "Content from your connected services",
-    description:
-      "What your integrations have synced, like Google and Readwise.",
-    scopes: [
-      "google.calendar.event:read",
-      "google.contacts.contact:read",
-      "google.drive.file:read",
-      "google.tasks.task:read",
-      "google.youtube.channel:read",
-      "google.youtube.playlist:read",
-      "google.youtube.video:read",
-      "raindrop.collection:read",
-      "raindrop.raindrop:read",
-      "readwise.book:read",
-      "readwise.document:read",
-      "readwise.highlight:read",
-      "todoist.task:read",
-      "withmarfa.captured_email:read",
-      "withmarfa.podcast.episode:read",
-      "withmarfa.podcast.show:read",
-    ],
-    default_on: true,
-  },
-  {
-    // The one bundle whose scopes are wildcards, and deliberately so:
-    // types a person invents do not exist at request time, so no concrete
-    // list written here can name them. The wildcard is literally requested,
-    // which keeps unticking it a genuine narrowing — but the narrowing is
-    // all-or-nothing across every custom type, and a type defined after
-    // consent is covered by the standing grant without a re-ask. Both
-    // costs are stated in the consent copy.
-    id: "custom",
-    label: "Things with your own custom types",
-    description: "Types you define yourself, including ones you define later.",
-    scopes: ["user.*:read", "user.*:write"],
-    default_on: true,
-  },
-  {
-    id: "profile",
-    label: "Your profile",
-    description: "Your name and email.",
-    scopes: ["openid", "profile", "email"],
-    default_on: true,
-  },
-];
+export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] =
+  buildDefaultPermissionBundles();
 
 /**
  * Parse the operator override `MARFA_PERMISSION_BUNDLES` (a JSON array of
@@ -711,9 +593,33 @@ export function loadPermissionBundles(
   }
 }
 
-/** Resolve the active permission bundles from the environment. */
+/**
+ * Bundles installed at boot, when the runtime custom-type namespaces have
+ * been folded in. Null until then; every reader falls back to the
+ * environment/default resolution so nothing changes for callers that run
+ * before boot completes (config load, tests that never call the setter).
+ */
+let activePermissionBundles: PermissionBundle[] | null = null;
+
+/**
+ * Install the active bundle set. Called once at boot after storage is up
+ * (so the custom-type namespace read has a database to ask), and by tests
+ * that exercise the runtime-namespace path. The operator override
+ * `MARFA_PERMISSION_BUNDLES` outranks it: when that is set, boot skips the
+ * call and the override stays authoritative.
+ */
+export function setActivePermissionBundles(
+  bundles: PermissionBundle[] | null,
+): void {
+  activePermissionBundles = bundles;
+}
+
+/** Resolve the active permission bundles. */
 export function getPermissionBundles(): PermissionBundle[] {
-  return loadPermissionBundles(process.env.MARFA_PERMISSION_BUNDLES);
+  return (
+    activePermissionBundles ??
+    loadPermissionBundles(process.env.MARFA_PERMISSION_BUNDLES)
+  );
 }
 
 /**
