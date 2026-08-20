@@ -188,6 +188,21 @@ describe("parseIntegrationWorkerThreads", () => {
       );
     }
   });
+
+  it("refuses Number()'s wider grammar, not just non-numbers", () => {
+    // "1e2" is a valid Number (100) and a plausible typo; accepting it
+    // silently pre-warms a hundred threads per integration. Hex and
+    // signed forms are refused for the same reason: an env value that is
+    // not plain digits is a mistake, not an encoding choice.
+    for (const raw of ["1e2", "0x4", "+4"]) {
+      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
+        /MARFA_INTEGRATION_WORKER_THREADS/,
+      );
+    }
+    // Surrounding whitespace is the one tolerated deviation, matching how
+    // env files commonly render.
+    expect(parseIntegrationWorkerThreads(" 4 ")).toBe(4);
+  });
 });
 
 describe("loadConfig streaming-RLS endpoint guard", () => {

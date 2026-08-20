@@ -1020,8 +1020,17 @@ export function parseIntegrationWorkerThreads(
   raw: string | undefined,
 ): number | undefined {
   if (raw === undefined || raw === "") return undefined;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) {
+  // Plain digits only, not Number()'s grammar: "1e2" parses to 100 and
+  // would silently pre-warm a hundred threads per integration, each with
+  // its own memory budget — the surprise this parser exists to refuse.
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `MARFA_INTEGRATION_WORKER_THREADS must be a positive integer, got "${raw}".`,
+    );
+  }
+  const n = Number(trimmed);
+  if (n < 1) {
     throw new Error(
       `MARFA_INTEGRATION_WORKER_THREADS must be a positive integer, got "${raw}".`,
     );
