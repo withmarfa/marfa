@@ -940,10 +940,18 @@ async function main() {
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
+    // Bridge stops are AWAITED (bounded): the elected drainer holds a
+    // reserved connection on the job-holder client, and a fire-and-forget
+    // stop left that reservation live when storage close ran — a plain
+    // pool end waits on reserved connections, so every shutdown burned its
+    // storage-close budget and warned. The bound keeps a wedged drainer
+    // from stalling shutdown; the forced client end below is the backstop
+    // that closes the socket regardless.
     if (reactiveRunBridge) {
-      void reactiveRunBridge.stop().catch(() => {
-        // Swallowed — the coordination lock releases with the connection anyway.
-      });
+      await withTimeout(
+        reactiveRunBridge.stop(),
+        SHUTDOWN_STEP_TIMEOUT_MS,
+      ).catch(() => undefined);
     }
     // pg-boss's stop must be AWAITED: its graceful path runs failWip only
     // after in-flight handlers settle, and failWip is what frees each
@@ -952,7 +960,10 @@ async function main() {
     // and every deploy then stalls each mid-tick job until its
     // expireInSeconds elapses.
     if (localRuntime) {
-      void localRuntime.bridge.stop().catch(() => undefined);
+      await withTimeout(
+        localRuntime.bridge.stop(),
+        SHUTDOWN_STEP_TIMEOUT_MS,
+      ).catch(() => undefined);
       await localRuntime.runtime.stop().catch(() => undefined);
     } else if (boss) {
       // The supervisor's stop() drains the shared pg-boss when the local
@@ -963,12 +974,22 @@ async function main() {
         .catch(() => undefined);
     }
 
+    // Each step bounded and reported separately: a shared catch produced a
+    // warning that could not say which step overran, and it fired on every
+    // production shutdown for a week before anything made it loud.
     let exitCode = 0;
     try {
       await withTimeout(closeServer(server), SHUTDOWN_STEP_TIMEOUT_MS);
+    } catch (error) {
+      log("warn", "Graceful shutdown: HTTP server close did not complete", {
+        error: serializeError(error),
+      });
+      exitCode = 1;
+    }
+    try {
       await withTimeout(storage.close(), SHUTDOWN_STEP_TIMEOUT_MS);
     } catch (error) {
-      log("warn", "Graceful shutdown did not complete", {
+      log("warn", "Graceful shutdown: storage close did not complete", {
         error: serializeError(error),
       });
       exitCode = 1;

@@ -412,6 +412,13 @@ jobs:
       # the job onto the pool the project already owns.
       - run: pnpm test:pg
         if: needs.changes.outputs.code == 'true'
+      # Boots the built dist/index.js (migrate first, then one boot per
+      # process role) against its own throwaway Postgres. Catches the class
+      # of failure the unit suites structurally cannot: boot-time crashes in
+      # the real composition, which have shipped through a green matrix and
+      # crash-looped the first deployment to run them.
+      - run: pnpm --filter @withmarfa/server run smoke:boot
+        if: needs.changes.outputs.code == 'true'
 
   # Exercises the full drizzle migration chain end-to-end against a fresh,
   # empty database — no SCHEMA_SQL bootstrap. The existing ci-sqlite / ci-pg
