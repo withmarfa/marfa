@@ -38,7 +38,7 @@
  */
 import type { Item } from "@withmarfa/shared";
 import { Pool } from "undici";
-import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
+import { emitWake, subscribe, type ItemEventWithId } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -591,7 +591,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
         if (state.retryTimer) clearTimeout(state.retryTimer);
       }
       unmappedActivityStates.clear();
-      // Wake the for-await loops by emitting synthetic events. Each
+      // Wake the for-await loops by emitting a synthetic event. Each
       // loop wakes, sees `stopRequested === true`, breaks. The
       // generator unwinds, `events.on(...)` detaches its listener, the
       // withJobLock unwraps, and the coordination advisory lock is
@@ -600,8 +600,11 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       // EventEmitter — the lock would stay held until the process
       // exited (invisible in single-instance dev; surfaces in tests
       // that reuse the same storage and in multi-instance deploys).
+      // emitWake, not publish: a wake is process-local by definition,
+      // and publishing would persist a fabricated item event and
+      // broadcast it to every sibling process on every rolling deploy.
       try {
-        await publish({
+        emitWake({
           type: "updated",
           item: {
             id: "stop-sentinel",
@@ -616,6 +619,8 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
             schema_version: 1,
             source: "stop-sentinel",
           } as unknown as ItemEventWithId["item"],
+          originatingConnectionId: null,
+          hopCount: 0,
         });
       } catch {
         // Best-effort wakeup — never crash stop().

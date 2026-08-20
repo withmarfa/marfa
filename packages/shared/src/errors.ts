@@ -264,6 +264,12 @@ export enum ErrorCode {
    */
   STREAM_CAPACITY_EXHAUSTED = "stream_capacity_exhausted",
   /**
+   * Every consent-serialization slot is in use and none freed within the
+   * reservation window. Same retryable shape as the streaming sibling:
+   * consent flows are short, so a caller seeing this asks again.
+   */
+  CONSENT_CAPACITY_EXHAUSTED = "consent_capacity_exhausted",
+  /**
    * The transport returned a non-retryable failure (4xx from
    * Cloudflare Email, permanent SMTP rejection). Distinct from a
    * transient failure (5xx / 429 / network) which the route handler
@@ -365,6 +371,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
+  [ErrorCode.CONSENT_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

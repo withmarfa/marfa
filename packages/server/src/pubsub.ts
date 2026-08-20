@@ -3,6 +3,7 @@ import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { isSubtypeOf } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
 import { cycleRequestContext } from "./cycle-context.js";
+import { log } from "./middleware/logger.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";
 
 /**
@@ -112,20 +113,24 @@ export interface EdgeEventWithId extends EdgeEvent {
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 
 /**
- * Process-local event bus, and the sole distribution channel for Server-Sent
- * Events and outbound webhook dispatch.
+ * Process-local event bus: the distribution channel for Server-Sent
+ * Events, outbound webhook dispatch, and the reactive bridges.
  *
- * **This makes one server process per database a hard requirement.** A second
- * process publishing here reaches only its own subscribers, so an SSE client
- * or webhook consumer attached to a different process never sees the event. It
- * fails silently in every direction: the write commits, the API returns 200,
- * nothing logs, nothing retries, and the event is gone. `multi-replica-check.ts`
- * warns at boot where the topology can be detected, and the self-hosting
- * documentation states the constraint for the cases it cannot.
+ * On Postgres this emitter is no longer the whole story. `publish()`
+ * announces every appended event over pg_notify (the `notifyRemote` hook,
+ * wired by index.ts to event-replication.ts), and every sibling process
+ * hydrates the announcement from event_log and re-emits it here marked
+ * `remote: true` — so a subscriber on any process sees the deployment's
+ * events, not one process's. Subscribers with exactly-once side effects
+ * (webhook delivery) skip remote events; pure fan-out treats local and
+ * remote alike. On SQLite one process is the deployment and no hook is
+ * wired, which restores the old purely-local behavior by construction.
  *
- * Making this safe across processes means moving distribution to a shared
- * broker (Postgres LISTEN/NOTIFY, or an external bus). That is a substantial
- * change and deliberately not attempted here.
+ * What still assumes few processes lives elsewhere: the in-memory
+ * per-email throttle, the rate-limit and space-cap caches, and the
+ * `last_used_at` debounce all tolerate multiple copies (they degrade to
+ * per-process granularity) but are not shared state. The realtime loss
+ * that made one process a hard requirement is what this closes.
  */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
@@ -182,6 +187,10 @@ export function initEventLog(
 export function __resetCycleDetectionForTests(): void {
   getHopBudget = () => Promise.resolve(DEFAULT_HOP_BUDGET);
   onHopOverflow = null;
+  // Also detaches the remote-announcement hook: a test that wired a
+  // notifier over a since-dropped database must not leave it bound for
+  // whatever runs next in the same process.
+  notifyRemote = null;
 }
 
 /**
@@ -403,7 +412,15 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   }
 
   if (eventId !== undefined && notifyRemote) {
-    await notifyRemote(eventId);
+    // A failed announcement must not suppress local delivery: outside a
+    // request transaction the append has already committed, and inside
+    // one a failed statement aborts the transaction regardless — either
+    // way this process's own subscribers keep the event they always got.
+    try {
+      await notifyRemote(eventId);
+    } catch (err) {
+      logRemoteNotifyFailure(eventId, err);
+    }
   }
 
   emitter.emit("ITEM_CHANGED", {
@@ -446,7 +463,13 @@ export async function publishEdge(
   }
 
   if (eventId !== undefined && notifyRemote) {
-    await notifyRemote(eventId);
+    // Same reasoning as the item path: local delivery survives a failed
+    // announcement.
+    try {
+      await notifyRemote(eventId);
+    } catch (err) {
+      logRemoteNotifyFailure(eventId, err);
+    }
   }
 
   emitter.emit("EDGE_CHANGED", {
@@ -456,6 +479,28 @@ export async function publishEdge(
     eventId,
   });
   return eventId;
+}
+
+function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {
+  log("warn", "Remote event announcement failed; siblings missed one", {
+    event_id: String(eventId),
+    error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+/**
+ * Emit an event into this process's subscribers without persisting or
+ * announcing it. For in-process wake sentinels only — a shutdown wake
+ * has to unblock local for-await loops, and it neither belongs in
+ * event_log nor deserves broadcast to sibling processes as a fabricated
+ * event on every rolling deploy.
+ */
+export function emitWake(event: PubsubEventWithId): void {
+  if (event.type === "edge_created" || event.type === "edge_deleted") {
+    emitter.emit("EDGE_CHANGED", event);
+  } else {
+    emitter.emit("ITEM_CHANGED", event);
+  }
 }
 
 /**

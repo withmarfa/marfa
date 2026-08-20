@@ -12,24 +12,28 @@
  * event_log before emitting. The announcement is therefore just the
  * event_log id plus the publishing process's identity, sent as
  * `pg_notify` on the request-context connection — inside the surrounding
- * transaction, so it is delivered only on commit and never for a write
- * that rolled back. Each process holds one LISTEN connection on the
- * session-mode client (a NOTIFY subscription is session state, which a
- * transaction-mode pooler cannot carry); on a notification from another
- * process it hydrates the event from event_log and re-emits it locally,
- * marked `remote: true`.
+ * transaction, so the REMOTE half is delivered only on commit and never
+ * for a write that rolled back (the local emit fires inside the
+ * transaction, as it always has). Each process holds one LISTEN
+ * connection on the session-mode client (a NOTIFY subscription is
+ * session state, which a transaction-mode pooler cannot carry); on a
+ * notification from another process it hydrates the event from event_log
+ * and re-emits it locally, marked `remote: true`.
  *
  * Exactly-once side effects survive because the mark travels with the
  * event: the webhook consumer skips remote events (the origin process
  * already recorded the delivery), while pure fan-out — SSE, the reactive
  * bridge's cluster-elected drainer — treats local and remote alike.
  *
- * Delivery here is at-most-once: a notification raised while this
- * process's listener is reconnecting is gone (postgres.js re-issues
- * LISTEN on reconnect, but the gap is real). That bounds what this
- * channel may carry — live fan-out only. Anything needing the complete
- * sequence reads event_log itself, which is exactly what the SSE
- * `Last-Event-ID` replay path does.
+ * A notification raised while this process's listener is reconnecting is
+ * gone from the channel (NOTIFY is not durable), so reconnection runs a
+ * catch-up: postgres.js re-issues LISTEN and fires `onlisten` again, and
+ * the handler replays event_log forward from the last id this process
+ * saw, re-emitting every row marked remote. The catch-up cannot tell its
+ * own rows from foreign ones (event_log carries no process origin), so
+ * across a reconnect delivery is at-least-once — duplicates are marked
+ * remote, which the webhook consumer skips, SSE clients dedupe by event
+ * id, and integration dispatch already tolerates redelivery.
  */
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
@@ -130,21 +134,29 @@ export function eventFromRow(row: {
 
 /**
  * Handle one raw notification. Exported so tests can drive the exact
- * production path without racing a real LISTEN connection.
+ * production path without racing a real LISTEN connection. `onSeen`
+ * receives every announced id, own announcements included — the
+ * reconnect catch-up anchors on it.
  */
 export async function handleAnnouncement(
   raw: string,
   eventLog: EventLogStore,
   ownOrigin: string = PROCESS_ORIGIN,
+  onSeen?: (id: bigint) => void,
 ): Promise<void> {
   let announcement: Announcement;
   try {
-    announcement = JSON.parse(raw) as Announcement;
+    const parsed: unknown = JSON.parse(raw);
+    // JSON.parse("null") succeeds, so shape-check inside the guard or the
+    // property reads below throw past it into the generic handler.
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("not an object");
+    }
+    announcement = parsed as Announcement;
   } catch {
     log("warn", "Event replication: unparseable announcement", { raw });
     return;
   }
-  if (announcement.o === ownOrigin) return;
 
   let id: bigint;
   try {
@@ -153,6 +165,8 @@ export async function handleAnnouncement(
     log("warn", "Event replication: non-numeric event id", { raw });
     return;
   }
+  onSeen?.(id);
+  if (announcement.o === ownOrigin) return;
 
   // Single-row hydration through the existing range read: the smallest
   // id greater than id-1 is the row itself when it still exists.
@@ -180,26 +194,85 @@ export interface EventReplication {
   stop: () => Promise<void>;
 }
 
+const CATCH_UP_BATCH = 200;
+
 /**
  * Start listening for other processes' announcements. `client` must be
  * the session-mode client (`sessionClient` from createConnection):
- * postgres.js keeps a dedicated connection for LISTEN and re-issues the
- * subscription on reconnect, but only a session-mode endpoint can hold a
- * subscription at all.
+ * postgres.js keeps a dedicated connection for LISTEN (its own backend,
+ * beyond the pool's `max`) and re-issues the subscription on reconnect,
+ * but only a session-mode endpoint can hold a subscription at all.
  */
 export async function startEventReplication(
   client: PgClient,
   eventLog: EventLogStore,
 ): Promise<EventReplication> {
-  const request = client.listen(EVENT_CHANNEL, (raw) => {
-    handleAnnouncement(raw, eventLog).catch((err: unknown) => {
-      log("warn", "Event replication: handler failed", {
-        error: err instanceof Error ? err.message : String(err),
+  // Highest event id seen on the channel, own announcements included:
+  // the reconnect catch-up below replays forward from here, so the
+  // anchor has to move even for events this process published itself.
+  let lastSeenId: bigint | null = null;
+  const trackSeen = (id: bigint): void => {
+    if (lastSeenId === null || id > lastSeenId) lastSeenId = id;
+  };
+
+  // Notifications raised while the LISTEN connection was down are gone,
+  // so a reconnect replays event_log forward from the anchor. The log
+  // carries no process origin, so this re-emits this process's own rows
+  // too — at-least-once across a reconnect, which every subscriber
+  // already tolerates (see the module doc). With no anchor there is
+  // nothing to replay from; the gap before the first seen event is
+  // uncoverable either way.
+  const catchUp = async (): Promise<void> => {
+    if (lastSeenId === null) return;
+    let cursor = lastSeenId;
+    for (;;) {
+      const rows = await eventLog.getAfter(cursor, CATCH_UP_BATCH);
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        cursor = row.id;
+        trackSeen(row.id);
+        const event = eventFromRow(row);
+        if (event) emitReplicated(event);
+      }
+      if (rows.length < CATCH_UP_BATCH) return;
+    }
+  };
+
+  let listenCount = 0;
+  const request = client.listen(
+    EVENT_CHANNEL,
+    (raw) => {
+      handleAnnouncement(raw, eventLog, PROCESS_ORIGIN, trackSeen).catch(
+        (err: unknown) => {
+          log("warn", "Event replication: handler failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        },
+      );
+    },
+    () => {
+      // Fires on the initial subscription and again on every reconnect;
+      // the reconnects are the ones that need both the log line and the
+      // catch-up, since the drop itself is otherwise invisible.
+      listenCount += 1;
+      if (listenCount === 1) {
+        log("info", "Event replication listening", {
+          channel: EVENT_CHANNEL,
+        });
+        return;
+      }
+      log("warn", "Event replication listener reconnected; catching up", {
+        channel: EVENT_CHANNEL,
+        reconnects: listenCount - 1,
       });
-    });
-  });
+      void catchUp().catch((err: unknown) => {
+        log("warn", "Event replication: catch-up failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    },
+  );
   const meta = await request;
-  log("info", "Event replication listening", { channel: EVENT_CHANNEL });
   return {
     stop: async () => {
       await meta.unlisten();

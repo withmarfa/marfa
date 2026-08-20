@@ -55,10 +55,11 @@ function makeItem(id: string): Item {
 describe.skipIf(!isPg)("event replication over pg_notify", () => {
   it("announces a published event on the channel with its event_log id", async () => {
     const clone = await cloneTemplate();
-    const storage = await createPgStorage(clone.url, { authMode: "keys" });
+    let storage: Awaited<ReturnType<typeof createPgStorage>> | null = null;
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     const listenerClient = postgres(clone.url, { max: 2, onnotice: () => {} });
     try {
+      storage = await createPgStorage(clone.url, { authMode: "keys" });
       // `pgDb` is typed `unknown` on the Storage interface for dialect
       // portability; this suite is PG-gated, so the cast is the truth.
       initEventLog(storage.eventLog, {
@@ -76,7 +77,10 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       });
       expect(eventId).toBeDefined();
 
-      const deadline = Date.now() + 5_000;
+      // Generous relative to a healthy notify round trip because this
+      // machine also hosts the CI pool; the 30s test timeout stays the
+      // hard stop.
+      const deadline = Date.now() + 15_000;
       while (received.length === 0 && Date.now() < deadline) {
         await sleep(50);
       }
@@ -90,15 +94,16 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
     } finally {
       __resetCycleDetectionForTests();
       await listenerClient.end();
-      await storage.close();
+      await storage?.close();
       await clone.drop();
     }
   }, 30_000);
 
   it("hydrates a foreign announcement from event_log and re-emits it marked remote", async () => {
     const clone = await cloneTemplate();
-    const storage = await createPgStorage(clone.url, { authMode: "keys" });
+    let storage: Awaited<ReturnType<typeof createPgStorage>> | null = null;
     try {
+      storage = await createPgStorage(clone.url, { authMode: "keys" });
       const item = makeItem("01976f00-0000-7000-8000-00000000bbbb");
       const eventId = await storage.eventLog.append({
         event_type: "created",
@@ -131,15 +136,16 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       expect(event?.type).toBe("created");
       expect(event?.item.id).toBe(item.id);
     } finally {
-      await storage.close();
+      await storage?.close();
       await clone.drop();
     }
   }, 30_000);
 
   it("skips its own announcements: the local emit already served this process", async () => {
     const clone = await cloneTemplate();
-    const storage = await createPgStorage(clone.url, { authMode: "keys" });
+    let storage: Awaited<ReturnType<typeof createPgStorage>> | null = null;
     try {
+      storage = await createPgStorage(clone.url, { authMode: "keys" });
       const item = makeItem("01976f00-0000-7000-8000-00000000cccc");
       const eventId = await storage.eventLog.append({
         event_type: "created",
@@ -165,7 +171,7 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       await collector;
       expect(emitted).toBe(0);
     } finally {
-      await storage.close();
+      await storage?.close();
       await clone.drop();
     }
   }, 30_000);

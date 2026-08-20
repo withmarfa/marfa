@@ -23,17 +23,13 @@
  * a single consent operation, so waiting is bounded by the operation in
  * front.
  *
- * **In-process.** One server process is fully covered, which is the whole
- * of a SQLite deployment by construction. Across processes the remaining
- * fence is the checked write in `setConsentScopes`, which refuses to
- * restore unless the row still holds exactly what the plugin just put
- * there. That narrows the multi-process window without closing it: a
- * competing write landing before the plugin's own rewrite is erased by
- * that rewrite, and the restoration then finds what it expected. Closing
- * it outright needs a shared lock held for the length of the critical
- * section; `CoordinationStore` offers a try-lock for background jobs,
- * whose "someone else has it, skip this tick" semantics do not fit a
- * user-facing request that has to complete.
+ * **Two layers.** The in-process queue below fully covers one process,
+ * which is the whole of a SQLite deployment by construction. On Postgres
+ * a cross-process backend (`setConsentLockBackend`, wired by index.ts to
+ * a blocking session-scoped advisory lock) is composed INSIDE the queue,
+ * so the lock holds across every process while local callers still
+ * serialize without touching the database twice — and the checked write
+ * in `setConsentScopes` stays as the final belt underneath both.
  */
 
 /**
