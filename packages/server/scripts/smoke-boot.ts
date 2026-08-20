@@ -108,10 +108,12 @@ async function runMigrations(): Promise<void> {
       env: { ...process.env, DB_DIALECT: "pg" },
       stdio: ["ignore", "inherit", "inherit"],
     });
+    liveChild = child;
     child.on("exit", (c) => {
       resolveExit(c ?? 1);
     });
   });
+  liveChild = null;
   if (code !== 0) fail(`migrate exited ${String(code)}`);
 }
 
@@ -129,9 +131,11 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
   };
   child.stdout.on("data", capture);
   child.stderr.on("data", capture);
-  const exited = new Promise<number>((resolveExit) => {
-    child.on("exit", (c) => {
-      resolveExit(c ?? 1);
+  const exited = new Promise<number | string>((resolveExit) => {
+    child.on("exit", (c, signal) => {
+      // A signal death has no exit code; naming the signal keeps a
+      // KILLed child from reporting as an ordinary exit 1.
+      resolveExit(c ?? signal ?? 1);
     });
   });
 
@@ -154,6 +158,12 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
   // endpoint the container image's HEALTHCHECK polls.
   let healthy = false;
   while (!healthy && Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      fail(
+        `role=${role} exited ${String(child.exitCode)} after its listen line`,
+        output,
+      );
+    }
     try {
       const res = await fetch(`http://127.0.0.1:${String(port)}/health`, {
         signal: AbortSignal.timeout(3_000),
@@ -176,7 +186,7 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
   child.kill("SIGTERM");
   const code = await Promise.race([
     exited,
-    sleep(SHUTDOWN_BUDGET_MS).then(() => -1),
+    sleep(SHUTDOWN_BUDGET_MS).then(() => -1 as const),
   ]);
   if (code === -1) {
     child.kill("SIGKILL");

@@ -8,7 +8,7 @@
  * PG-only: skipped on the SQLite matrix. `scripts/test-pg.sh` provides
  * the container + DB_DIALECT=pg.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { cloneTemplate } from "../storage/pg/test-template.js";
 import {
   startPgBossSchedules,
@@ -243,4 +243,65 @@ describe.skipIf(!isPg)("expiry ceiling against the real boss", () => {
       await clone.drop();
     }
   }, 30_000);
+});
+
+describe("expiry clamp warning", () => {
+  it("warns for an explicit over-ask and stays silent for the derived daily default", async () => {
+    // The warn is operator signal: a clamped explicit budget means a tick
+    // can be marked abandoned while still running. The derived default
+    // landing on the ceiling is every daily job's ordinary shape, and
+    // warning for it teaches operators to skip the line — so the silence
+    // is as load-bearing as the warn. Structured logs go to stdout as
+    // JSON; the spy reads them there.
+    const calls: { method: string; queue?: unknown }[] = [];
+    const record =
+      (method: string) =>
+      (...args: unknown[]) => {
+        calls.push({ method, queue: args[0] });
+        return Promise.resolve();
+      };
+    const boss = {
+      createQueue: record("createQueue"),
+      work: record("work"),
+      schedule: record("schedule"),
+      send: record("send"),
+    } as unknown as import("pg-boss").PgBoss;
+
+    // The structured logger writes JSON lines via process.stdout.write.
+    const logged: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((line: unknown) => {
+        logged.push(String(line));
+        return true;
+      });
+    try {
+      await startPgBossSchedules(
+        boss,
+        [
+          {
+            name: "warn-daily-default",
+            logName: "Warn daily default",
+            intervalMs: 86_400_000,
+            runOnce: () => Promise.resolve(),
+          },
+          {
+            name: "warn-explicit-oversized",
+            logName: "Warn explicit oversized",
+            intervalMs: 3_600_000,
+            expireInSeconds: 200_000,
+            runOnce: () => Promise.resolve(),
+          },
+        ],
+        { seedDelaySeconds: 1 },
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    const clampLines = logged.filter((l) => l.includes("expiry clamped"));
+    expect(clampLines).toHaveLength(1);
+    expect(clampLines[0]).toContain("warn-explicit-oversized");
+    expect(clampLines[0]).not.toContain("warn-daily-default");
+  });
 });

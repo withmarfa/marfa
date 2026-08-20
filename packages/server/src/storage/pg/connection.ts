@@ -272,11 +272,15 @@ export async function createConnection(
       // behaved — a bridge election reservation or a stream that missed
       // its release would otherwise stall close past its budget. Tracked
       // in-flight writes have already drained by the time this runs (see
-      // the storage-level close wrapper), so after one second the socket
-      // is forced.
-      await client.end({ timeout: 1 });
-      await sessionClient.end({ timeout: 1 });
-      await jobHolderClient.end({ timeout: 1 });
+      // the storage-level close wrapper). In parallel, so the whole close
+      // is bounded by the one-second force rather than their sum — three
+      // serial worst cases exactly consumed the shutdown step's budget
+      // and reproduced the warn this bound exists to remove.
+      await Promise.all([
+        client.end({ timeout: 1 }),
+        sessionClient.end({ timeout: 1 }),
+        jobHolderClient.end({ timeout: 1 }),
+      ]);
     },
   };
 }

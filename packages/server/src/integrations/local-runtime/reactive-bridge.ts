@@ -11,7 +11,7 @@
  * cross-space) is identical to the hosted side. The substrate-specific
  * piece is the send step.
  */
-import { subscribe, type ItemEventWithId } from "../../pubsub.js";
+import { emitWake, subscribe, type ItemEventWithId } from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   buildEntryForConnection,
@@ -250,6 +250,36 @@ export function createLocalReactiveBridge(
       // not held for the length of a retry window.
       wakeElectionRetry?.();
       subscriptions.clear();
+      // Wake the iterators before returning them: `iterator.return()`
+      // alone cannot unwind a generator suspended on an event that never
+      // comes, so on a quiescent process stop() parked forever and the
+      // drainer's coordination reservation was only ever severed by the
+      // forced pool end at storage close — every shutdown burned the
+      // bridge-stop budget. Same sentinel shape as the hosted bridge:
+      // emitWake, not publish, because a wake is process-local and must
+      // neither persist nor replicate a fabricated event.
+      try {
+        emitWake({
+          type: "updated",
+          item: {
+            id: "stop-sentinel",
+            type: "system.connection",
+            state: "active",
+            tier: "library",
+            properties: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+            version: 1,
+            schema_version: 1,
+            source: "stop-sentinel",
+          } as unknown as ItemEventWithId["item"],
+          originatingConnectionId: null,
+          hopCount: 0,
+        });
+      } catch {
+        // Best-effort wakeup — never crash stop().
+      }
       const drainer = drainerIter;
       const invalidation = invalidationIter;
       drainerIter = null;
