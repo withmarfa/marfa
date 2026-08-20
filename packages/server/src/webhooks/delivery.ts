@@ -454,14 +454,21 @@ export class WebhookConsumer {
 // HTTP delivery with durable retry. Survives server restarts.
 // ---------------------------------------------------------------------------
 
+/** One cadence for both scheduling substrates: the timer below and the
+ *  queue chain in index.ts must agree or the poller's effective rate
+ *  depends on the dialect. */
+export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
+
 export class WebhookPoller {
   private interval: ReturnType<typeof setInterval> | null = null;
 
   constructor(private deliveryStore: WebhookDeliveryStore) {}
 
   start(): void {
-    // Poll every 30 seconds for pending deliveries
-    this.interval = setInterval(() => void this.poll(), 30_000);
+    this.interval = setInterval(
+      () => void this.poll(),
+      WEBHOOK_POLL_INTERVAL_MS,
+    );
     // Also poll immediately on start to pick up any pending from before restart
     void this.poll();
   }

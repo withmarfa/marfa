@@ -9,7 +9,11 @@ import { pgEndpointHost } from "./storage/pg/endpoint.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
-import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
+import {
+  WebhookConsumer,
+  WebhookPoller,
+  WEBHOOK_POLL_INTERVAL_MS,
+} from "./webhooks/delivery.js";
 import { withStartupWait } from "./storage/startup-wait.js";
 import { logJobTickFailure } from "./storage/job-tick.js";
 import { HeartbeatPinger } from "./heartbeat.js";
@@ -194,9 +198,21 @@ async function main() {
     boss = new PgBossCtor({ connectionString: bossUrl, max: 2 });
     // Maintenance errors surface on 'error'; an unhandled 'error' event
     // would crash the process over a transient the next tick absorbs.
+    // Worker failures arrive as plain object literals carrying message,
+    // stack, queue and worker fields, not Error instances, so the
+    // instanceof arm alone would log "[object Object]" for exactly the
+    // failures this channel exists to surface.
     boss.on("error", (err) => {
+      const shaped = err as {
+        message?: string;
+        queue?: string;
+        worker?: string;
+      };
       log("error", "pg-boss error", {
-        error: err instanceof Error ? err.message : String(err),
+        error:
+          err instanceof Error ? err.message : (shaped.message ?? String(err)),
+        ...(shaped.queue !== undefined && { queue: shaped.queue }),
+        ...(shaped.worker !== undefined && { worker: shaped.worker }),
       });
     });
     await boss.start();
@@ -255,7 +271,9 @@ async function main() {
   scheduleJob(
     {
       name: "event-log-cleanup",
+      logName: "Event-log cleanup",
       intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
+      firstRunDelaySeconds: 10,
       runOnce: runEventLogCleanup,
     },
     () => {
@@ -294,7 +312,9 @@ async function main() {
   scheduleJob(
     {
       name: "audit-cleanup",
+      logName: "Audit cleanup",
       intervalMs: config.auditCleanupIntervalMs,
+      firstRunDelaySeconds: 5,
       runOnce: runAuditCleanup,
     },
     () => {
@@ -319,7 +339,8 @@ async function main() {
   scheduleJob(
     {
       name: "webhook-poll",
-      intervalMs: 30_000,
+      logName: "Webhook poll",
+      intervalMs: WEBHOOK_POLL_INTERVAL_MS,
       runOnce: () => webhookPoller.runOnce(),
     },
     () => {
@@ -350,7 +371,9 @@ async function main() {
   scheduleJob(
     {
       name: "version-thinning",
+      logName: "Version thinning",
       intervalMs: config.versionThinningIntervalMs,
+      firstRunDelaySeconds: 15,
       runOnce: () => versionThinner.runOnce(),
     },
     () => {
@@ -369,8 +392,10 @@ async function main() {
   scheduleJob(
     {
       name: "trash-purge",
+      logName: "Trash purge",
       intervalMs: config.trashPurgeIntervalMs,
-      runOnce: () => trashPurger.runOnce(),
+      firstRunDelaySeconds: 20,
+      runOnce: () => trashPurger.runScheduled(),
     },
     () => {
       trashPurger.start();
@@ -390,8 +415,10 @@ async function main() {
     scheduleJob(
       {
         name: "auth-session-cleanup",
+        logName: "Auth session cleanup",
         intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
-        runOnce: () => authSessionCleaner.runOnce(),
+        firstRunDelaySeconds: 25,
+        runOnce: () => authSessionCleaner.runScheduled(),
       },
       () => {
         authSessionCleaner.start();
@@ -413,8 +440,10 @@ async function main() {
     scheduleJob(
       {
         name: "account-deletion-purge",
+        logName: "Pending-delete purge",
         intervalMs: config.accountDeletionPurgeIntervalMs ?? 3_600_000,
-        runOnce: () => pendingDeletePurger.runOnce(),
+        firstRunDelaySeconds: 30,
+        runOnce: () => pendingDeletePurger.runScheduled(),
       },
       () => {
         pendingDeletePurger.start();
@@ -433,8 +462,10 @@ async function main() {
   scheduleJob(
     {
       name: "rate-limit-cleanup",
+      logName: "Rate-limit window cleanup",
       intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
-      runOnce: () => rateLimitCleaner.runOnce(),
+      firstRunDelaySeconds: 25,
+      runOnce: () => rateLimitCleaner.runScheduled(),
     },
     () => {
       rateLimitCleaner.start();
@@ -460,8 +491,10 @@ async function main() {
     scheduleJob(
       {
         name: "dcr-client-cleanup",
+        logName: "DCR client cleanup",
         intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
-        runOnce: () => dcrClientCleaner.runOnce(),
+        firstRunDelaySeconds: 30,
+        runOnce: () => dcrClientCleaner.runScheduled(),
       },
       () => {
         dcrClientCleaner.start();
@@ -490,8 +523,10 @@ async function main() {
     scheduleJob(
       {
         name: "runtime-credential-reap",
+        logName: "Runtime credential reap",
         intervalMs: runtimeCredentialReaperIntervalMs,
-        runOnce: () => runtimeCredentialReaper.runOnce(),
+        firstRunDelaySeconds: 30,
+        runOnce: () => runtimeCredentialReaper.runScheduled(),
       },
       () => {
         runtimeCredentialReaper.start();
@@ -525,8 +560,19 @@ async function main() {
     scheduleJob(
       {
         name: "enrichment-sweep",
+        logName: "Text enrichment sweep",
         intervalMs: config.enrichmentIntervalMs ?? 30_000,
-        runOnce: () => enrichmentSweeper.runOnce(),
+        firstRunDelaySeconds: 15,
+        // A tick is a batch of per-item extractions, each with its own
+        // 60s OCR budget, so a legitimate tick can far outrun twice the
+        // 30s interval the default expiry would allow.
+        expireInSeconds:
+          Math.ceil(
+            ((config.enrichmentBatchSize ?? 8) *
+              (config.enrichmentItemTimeoutMs ?? 60_000)) /
+              1000,
+          ) + 120,
+        runOnce: () => enrichmentSweeper.runScheduled(),
       },
       () => {
         enrichmentSweeper.start();
@@ -554,16 +600,23 @@ async function main() {
     undefined,
     storage.coordination,
   );
-  scheduleJob(
-    {
-      name: "bulk-action-jobs-gc",
-      intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
-      runOnce: () => bulkActionGc.runOnce(),
-    },
-    () => {
-      bulkActionGc.start();
-    },
-  );
+  // Gated the same way the sweeper's own start() gates itself: a zero or
+  // negative retention disables the job, and a queue chain for a job that
+  // always answers zero would tick forever for nothing.
+  if ((config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000) > 0) {
+    scheduleJob(
+      {
+        name: "bulk-action-jobs-gc",
+        logName: "Bulk-action job GC",
+        intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
+        firstRunDelaySeconds: 30,
+        runOnce: () => bulkActionGc.runOnce(),
+      },
+      () => {
+        bulkActionGc.start();
+      },
+    );
+  }
 
   // Register the queue workers and seed the chains once every job above
   // has contributed its spec. Idempotent across processes and restarts.
@@ -740,14 +793,22 @@ async function main() {
         // Swallowed — the coordination lock releases with the connection anyway.
       });
     }
+    // pg-boss's stop must be AWAITED: its graceful path runs failWip only
+    // after in-flight handlers settle, and failWip is what frees each
+    // job's active slot so the queued successor is fetchable on the next
+    // boot. Fire-and-forget here loses that race to process.exit below,
+    // and every deploy then stalls each mid-tick job until its
+    // expireInSeconds elapses.
     if (localRuntime) {
       void localRuntime.bridge.stop().catch(() => undefined);
-      void localRuntime.runtime.stop().catch(() => undefined);
+      await localRuntime.runtime.stop().catch(() => undefined);
     } else if (boss) {
       // The supervisor's stop() drains the shared pg-boss when the local
       // runtime is up; with the hosted substrate only the scheduled jobs
       // ride it, so it is stopped here instead.
-      void boss.stop({ graceful: true, timeout: 5_000 }).catch(() => undefined);
+      await boss
+        .stop({ graceful: true, timeout: 5_000 })
+        .catch(() => undefined);
     }
 
     let exitCode = 0;
