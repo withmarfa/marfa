@@ -121,17 +121,10 @@ async function handleDispatch(
   let threw = false;
   let thrownMessage: string | undefined;
   let thrownClassName: string | undefined;
+  let ctx: ReturnType<typeof buildContext> | null = null;
   try {
-    const ctx = buildContext(request, adapter);
+    ctx = buildContext(request, adapter);
     result = await dispatchMessage(ctx, request.message);
-    // Deliberate mapping skips surface as one summary row per run, and
-    // this is the per-run boundary on this substrate. Best-effort: a
-    // summary that cannot land must not fail the dispatch it describes.
-    try {
-      await ctx.mapping.flushSkipSummary(ctx.activity);
-    } catch {
-      // The skip count resets either way; the run's own result stands.
-    }
   } catch (err) {
     threw = true;
     thrownMessage = err instanceof Error ? err.message : String(err);
@@ -142,6 +135,20 @@ async function handleDispatch(
       retry: false,
       reason: `dispatch_threw: ${thrownMessage}`,
     };
+  } finally {
+    // Deliberate mapping skips surface as one summary row per run, and
+    // this is the per-run boundary on this substrate. In the finally so
+    // skips counted before a late handler throw still surface — the
+    // resolver dies with the run, and a summary inside the try died with
+    // it. Best-effort both ways: a summary that cannot land must not
+    // fail the dispatch it describes.
+    if (ctx !== null) {
+      try {
+        await ctx.mapping.flushSkipSummary(ctx.activity);
+      } catch {
+        // The skip count resets either way; the run's own result stands.
+      }
+    }
   }
   return {
     result,
