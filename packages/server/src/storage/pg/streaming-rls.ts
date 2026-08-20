@@ -7,9 +7,10 @@ import { reserveWithTimeout } from "./reserve-timeout.js";
 /**
  * The stream pool had no free slot within the reservation window. Typed so
  * the routes can answer a clean 503 before any rows rather than queueing
- * the request behind an exhausted pool indefinitely — each active stream
- * holds one slot for its lifetime, so exhaustion is an ordinary state on a
- * busy instance, not a fault.
+ * the request behind an exhausted pool indefinitely — an export holds a
+ * slot for its bounded response and an SSE replay for the length of one
+ * catch-up, so brief exhaustion under a reconnect herd is an ordinary
+ * state, not a fault.
  */
 export class StreamPoolExhaustedError extends Error {
   constructor(waitedMs: number) {
@@ -71,13 +72,14 @@ const STREAM_RESERVE_TIMEOUT_MS = 5_000;
  * genuinely isolated and nothing leaks onto the app pool. There is NO pool
  * isolation when this runs on a transaction-mode pooled client.
  *
- * **Trade-off:** each active stream consumes one slot of the dedicated
+ * **Trade-off:** each reservation consumes one slot of the dedicated
  * session pool, which is capped at 5 (`pg/connection.ts`) and shared
  * with short-hold job-lock ticks — the process-lifetime drainer holds a
- * client of its own and takes none of these. A reservation that cannot
- * be served within the timeout fails as `StreamPoolExhaustedError`, and
- * the routes answer 503, so exhaustion degrades loudly instead of
- * queueing requests forever.
+ * client of its own and takes none of these. An export holds its slot
+ * for the whole bounded response; an SSE stream only for the length of
+ * its replay. A reservation that cannot be served within the timeout
+ * fails as `StreamPoolExhaustedError`, and the routes answer 503, so
+ * exhaustion degrades loudly instead of queueing requests forever.
  *
  * **Connection-cleanup invariant.** The cleanup function is exposed
  * separately from the setup so callers that drive their own stream

@@ -522,6 +522,17 @@ export function emitReplicated(event: PubsubEventWithId): void {
 export interface SubscribeOptions {
   typeFilter?: string;
   spaceId?: string;
+  /**
+   * Detaches the underlying emitter listener the moment it aborts.
+   * Without it a departed subscriber's listener survives until the next
+   * event MATCHING its filters arrives to resume the generator —
+   * `iterator.return()` alone cannot unwind a generator suspended on an
+   * event that never comes, so a quiet space accumulates one listener
+   * per departed viewer indefinitely. Long-lived per-request consumers
+   * (the SSE route) pass one; process-lifetime consumers (the webhook
+   * consumer, the bridges) do not need to.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -571,7 +582,11 @@ export function eventMatchesTypeFilter(
 export async function* subscribe(
   options?: SubscribeOptions,
 ): AsyncGenerator<ItemEventWithId> {
-  const iter = on(emitter, "ITEM_CHANGED");
+  const iter = on(
+    emitter,
+    "ITEM_CHANGED",
+    options?.signal ? { signal: options.signal } : undefined,
+  );
   try {
     for await (const [event] of iter) {
       const itemEvent = event as ItemEventWithId;
@@ -580,6 +595,10 @@ export async function* subscribe(
       if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
       yield itemEvent;
     }
+  } catch (err) {
+    // An aborted signal rejects the pending next() with AbortError —
+    // that is the subscription ending, not a failure.
+    if (!(err instanceof Error && err.name === "AbortError")) throw err;
   } finally {
     // `on()` returns a manual async iterator; calling .return() detaches
     // its EventEmitter listener. Best-effort — never throws.
@@ -594,14 +613,21 @@ export async function* subscribe(
  *  Same iterator cleanup contract as `subscribe()` above. */
 export async function* subscribeEdges(options?: {
   spaceId?: string;
+  signal?: AbortSignal;
 }): AsyncGenerator<EdgeEventWithId> {
-  const iter = on(emitter, "EDGE_CHANGED");
+  const iter = on(
+    emitter,
+    "EDGE_CHANGED",
+    options?.signal ? { signal: options.signal } : undefined,
+  );
   try {
     for await (const [event] of iter) {
       const edgeEvent = event as EdgeEventWithId;
       if (options?.spaceId && edgeEvent.spaceId !== options.spaceId) continue;
       yield edgeEvent;
     }
+  } catch (err) {
+    if (!(err instanceof Error && err.name === "AbortError")) throw err;
   } finally {
     if (typeof iter.return === "function") {
       await iter.return();

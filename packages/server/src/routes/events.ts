@@ -17,18 +17,28 @@ const REPLAY_BATCH_SIZE = 500;
 
 /**
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
- * session-level RLS on a dedicated pool connection for the lifetime
- * of the SSE stream. Without both set the route runs on the owner
- * connection — used for SQLite, for space-less callers (platform
- * admin / single-space self-host), and when RLS enforcement is
- * disabled instance-wide.
+ * session-level RLS on a pool connection reserved ONLY for the replay
+ * phase — live delivery flows from the in-process emitter, which the
+ * subscription's space filter and the caller's type projection already
+ * fence, so a viewer costs the database nothing once it is caught up.
+ * Without both set the replay runs on the owner connection — used for
+ * SQLite, for space-less callers (platform admin / single-space
+ * self-host), and when RLS enforcement is disabled instance-wide.
  */
 export interface EventRoutesOptions {
   rlsEnforce: boolean;
   pgClient: PgClient | null;
-  /** Override for the stream-slot reservation window; tests drive the
+  /** Override for the replay-slot reservation window; tests drive the
    *  exhaustion path with a short one. Default lives in streaming-rls. */
   streamReserveTimeoutMs?: number;
+  /**
+   * Ceiling on concurrent viewers per route instance — one per server
+   * process in production, where the app is built once. `0` = uncapped (the
+   * default). A deliberate memory bound, not a pool artifact: viewers
+   * no longer hold database connections, so the cap exists for
+   * deployments that want a stated limit rather than discovering one.
+   */
+  maxViewers?: number;
 }
 
 export function eventRoutes(
@@ -36,6 +46,7 @@ export function eventRoutes(
   options: EventRoutesOptions = { rlsEnforce: false, pgClient: null },
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
+  let liveViewers = 0;
 
   // GET /events — Server-Sent Events stream with replay support
   router.get("/", (c) => {
@@ -46,30 +57,95 @@ export function eventRoutes(
     const allowedTypes = computeTypeFilter(apiKey);
 
     return (async () => {
-      // Acquire the dedicated RLS connection BEFORE the response exists,
-      // so a pool with no free slot answers a real 503 the client can
-      // retry on — acquired inside `start`, the failure could only
-      // surface as a broken stream behind a 200 already sent. Space-less
-      // callers, SQLite, and the RLS-disabled instance fall back to the
-      // owner connection.
-      let acquiredCtx: StreamRlsContext | null = null;
-      if (options.rlsEnforce && options.pgClient !== null && spaceId) {
-        try {
-          acquiredCtx = await acquireStreamRls(options.pgClient, spaceId, {
-            ...(options.streamReserveTimeoutMs !== undefined && {
-              reserveTimeoutMs: options.streamReserveTimeoutMs,
-            }),
-          });
-        } catch (err) {
-          if (err instanceof StreamPoolExhaustedError) {
-            throw new MarfaError(
-              ErrorCode.STREAM_CAPACITY_EXHAUSTED,
-              "No streaming capacity is available right now; retry shortly",
-            );
-          }
-          throw err;
-        }
+      const maxViewers = options.maxViewers ?? 0;
+      if (maxViewers > 0 && liveViewers >= maxViewers) {
+        throw new MarfaError(
+          ErrorCode.STREAM_CAPACITY_EXHAUSTED,
+          "This instance is serving its maximum number of live-update viewers; retry shortly",
+          { reason: "viewer_cap" },
+        );
       }
+      // Counted atomically with the check above — an await between them
+      // would let a reconnect burst admit far more than the cap while
+      // every request still saw room. Everything below that can throw is
+      // bracketed so a failed setup never strands the count or a
+      // reservation.
+      liveViewers += 1;
+
+      // Object wrapper for the same reason as `state` below: the catch
+      // block's flow analysis does not credit an assignment made inside
+      // the try, and would read the reservation as never-held.
+      const reservation: { ctx: StreamRlsContext | null } = { ctx: null };
+      try {
+        // event_log.id is PG bigint / SQLite INTEGER — parse as BigInt so
+        // cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
+        // Parsed before the stream exists because whether a replay will
+        // run decides whether a database connection is needed at all.
+        let afterId: bigint | null = null;
+        if (lastEventId) {
+          try {
+            afterId = BigInt(lastEventId);
+          } catch {
+            afterId = null;
+          }
+        }
+
+        // A database connection is reserved ONLY when this viewer has a
+        // catch-up to run, and it is released the moment the replay ends
+        // — the stream's live phase never holds one. Acquired BEFORE the
+        // response exists, so a pool with no free slot answers a real
+        // 503 the client can retry on; acquired inside `start`, the
+        // failure could only surface as a broken stream behind a 200
+        // already sent.
+        if (
+          afterId !== null &&
+          options.rlsEnforce &&
+          options.pgClient !== null &&
+          spaceId
+        ) {
+          try {
+            reservation.ctx = await acquireStreamRls(
+              options.pgClient,
+              spaceId,
+              {
+                ...(options.streamReserveTimeoutMs !== undefined && {
+                  reserveTimeoutMs: options.streamReserveTimeoutMs,
+                }),
+              },
+            );
+          } catch (err) {
+            if (err instanceof StreamPoolExhaustedError) {
+              throw new MarfaError(
+                ErrorCode.STREAM_CAPACITY_EXHAUSTED,
+                "No replay capacity is available right now; retry shortly",
+                { reason: "replay_contention" },
+              );
+            }
+            throw err;
+          }
+        }
+
+        return buildStream(afterId, reservation.ctx);
+      } catch (err) {
+        // The stream never started, so its cleanup will never run: the
+        // slot and any reservation are this path's to give back.
+        liveViewers -= 1;
+        if (reservation.ctx) {
+          void reservation.ctx.release().catch(() => undefined);
+        }
+        throw err;
+      }
+    })();
+
+    function buildStream(
+      afterId: bigint | null,
+      acquiredCtx: StreamRlsContext | null,
+    ): Response {
+      // Set inside start(), fired from cancel(): a consumer that cancels
+      // the stream (rather than dropping the connection, which fires the
+      // abort signal) must still release the viewer slot and any replay
+      // reservation.
+      let onCancel: (() => void) | null = null;
 
       const stream = new ReadableStream({
         start(controller) {
@@ -89,6 +165,12 @@ export function eventRoutes(
           // Object wrapper prevents TS narrowing from assuming `closed` stays `false` across async closures.
           const state: { closed: boolean } = { closed: false };
 
+          // Aborting detaches the emitter listeners immediately.
+          // iterator.return() alone cannot: a generator suspended on an
+          // event that never arrives stays suspended, and a quiet space
+          // would retain one listener per departed viewer indefinitely.
+          const subscriptionAbort = new AbortController();
+
           const send = (data: string) => {
             if (state.closed) return;
             try {
@@ -99,28 +181,38 @@ export function eventRoutes(
             }
           };
 
+          // Keep-alive pings
+          const keepAlive = setInterval(() => {
+            send(":ping\n\n");
+          }, KEEPALIVE_INTERVAL_MS);
+
+          // Declared before the first send: send's catch calls cleanup,
+          // and an arrow binding would still be in its temporal dead
+          // zone on the very first write.
+          const cleanup = () => {
+            if (state.closed) return;
+            state.closed = true;
+            liveViewers -= 1;
+            clearInterval(keepAlive);
+            subscriptionAbort.abort();
+            releaseRls();
+          };
+
           // Flush response headers immediately so reverse proxies that buffer
           // SSE bodies (notably Cloudflare Tunnel) deliver the 200 + content-type
           // to the client without waiting for the first event or the 30s
           // keep-alive ping. SSE comments are ignored by EventSource parsers.
           send(": connected\n\n");
 
-          // Keep-alive pings
-          const keepAlive = setInterval(() => {
-            send(":ping\n\n");
-          }, KEEPALIVE_INTERVAL_MS);
-
-          const cleanup = () => {
-            state.closed = true;
-            clearInterval(keepAlive);
-            releaseRls();
-          };
-
           const liveBuffer: ItemEventWithId[] = [];
-          let replaying = !!lastEventId;
+          let replaying = afterId !== null;
 
           // Subscribe BEFORE replay starts to avoid gaps.
-          const events = subscribe({ typeFilter: typeParam, spaceId });
+          const events = subscribe({
+            typeFilter: typeParam,
+            spaceId,
+            signal: subscriptionAbort.signal,
+          });
           const reader = events[Symbol.asyncIterator]();
 
           const sendEvent = (
@@ -171,8 +263,19 @@ export function eventRoutes(
               .next()
               .then(({ value: event, done }) => {
                 if (done || state.closed) {
+                  // Capture before cleanup flips it, or the close below
+                  // could never run and a terminated pump would leave
+                  // the client's socket dangling with no data and no
+                  // pings until its own timeout.
+                  const wasOpen = !state.closed;
                   cleanup();
-                  if (!state.closed) controller.close();
+                  if (wasOpen) {
+                    try {
+                      controller.close();
+                    } catch {
+                      /* already closed */
+                    }
+                  }
                   return;
                 }
 
@@ -184,14 +287,24 @@ export function eventRoutes(
                 pump();
               })
               .catch(() => {
+                const wasOpen = !state.closed;
                 cleanup();
-                if (!state.closed) controller.close();
+                if (wasOpen) {
+                  try {
+                    controller.close();
+                  } catch {
+                    /* already closed */
+                  }
+                }
               });
           };
 
           pump();
 
-          const edgeIter = subscribeEdges({ spaceId })[Symbol.asyncIterator]();
+          const edgeIter = subscribeEdges({
+            spaceId,
+            signal: subscriptionAbort.signal,
+          })[Symbol.asyncIterator]();
           const pumpEdges = () => {
             edgeIter
               .next()
@@ -211,14 +324,6 @@ export function eventRoutes(
           pumpEdges();
 
           if (lastEventId) {
-            // event_log.id is PG bigint / SQLite INTEGER — parse as BigInt so
-            // cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
-            let afterId: bigint | null;
-            try {
-              afterId = BigInt(lastEventId);
-            } catch {
-              afterId = null;
-            }
             if (afterId !== null) {
               const afterIdResolved = afterId;
               const replay = async () => {
@@ -339,10 +444,18 @@ export function eventRoutes(
                 }
               };
               void (async () => {
-                if (rlsCtx) {
-                  await rlsCtx.withInstalledContext(replay);
-                } else {
-                  await replay();
+                try {
+                  if (rlsCtx) {
+                    await rlsCtx.withInstalledContext(replay);
+                  } else {
+                    await replay();
+                  }
+                } finally {
+                  // The reservation exists for the replay alone; the
+                  // live phase runs entirely off the emitter. Idempotent
+                  // with cleanup()'s call, which stays as the safety net
+                  // for a client that disconnects mid-replay.
+                  releaseRls();
                 }
               })();
             } else {
@@ -355,6 +468,15 @@ export function eventRoutes(
             void reader.return(undefined);
             void edgeIter.return(undefined);
           });
+
+          onCancel = () => {
+            cleanup();
+            void reader.return(undefined);
+            void edgeIter.return(undefined);
+          };
+        },
+        cancel() {
+          onCancel?.();
         },
       });
 
@@ -365,7 +487,7 @@ export function eventRoutes(
           Connection: "keep-alive",
         },
       });
-    })();
+    }
   });
 
   return router;
