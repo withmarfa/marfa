@@ -26,6 +26,7 @@ import {
   initEventLog,
   publish,
   subscribe,
+  emitWake,
   __resetCycleDetectionForTests,
   type ItemEventWithId,
 } from "./pubsub.js";
@@ -153,11 +154,15 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
         payload: JSON.stringify({ type: "item.created", item }),
       });
 
+      // The collector exits on a wake sentinel rather than by
+      // iterator.return(): a generator suspended on an event that never
+      // arrives does not unwind on return() until something emits, which
+      // is the same hazard the reactive bridges solve the same way.
       let emitted = 0;
       const iterator = subscribe();
       const collector = (async () => {
         for await (const event of iterator) {
-          void event;
+          if (event.item.id === "test-wake") break;
           emitted += 1;
         }
       })();
@@ -167,7 +172,12 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
         storage.eventLog,
       );
       await sleep(200);
-      await iterator.return(undefined);
+      emitWake({
+        type: "updated",
+        item: makeItem("test-wake"),
+        originatingConnectionId: null,
+        hopCount: 0,
+      });
       await collector;
       expect(emitted).toBe(0);
     } finally {
