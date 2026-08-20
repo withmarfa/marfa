@@ -349,6 +349,15 @@ export interface AppConfig {
    */
   integrationRuntime?: "hosted" | "local";
   /**
+   * Worker threads per integration on the local substrate
+   * (`MARFA_INTEGRATION_WORKER_THREADS`). Sets the executor's
+   * per-integration pool size. Every thread holds its own resource-limit
+   * budget in memory, so raising this is a deployment sizing decision,
+   * not a free throughput dial. Optional: unset keeps the executor's
+   * default of 2.
+   */
+  integrationWorkerThreads?: number;
+  /**
    * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
    * environment directly because it must run before `loadConfig` (and
@@ -948,6 +957,9 @@ export function loadConfig(): AppConfig {
     integrationRuntime: parseIntegrationRuntime(
       process.env.MARFA_INTEGRATION_RUNTIME,
     ),
+    integrationWorkerThreads: parseIntegrationWorkerThreads(
+      process.env.MARFA_INTEGRATION_WORKER_THREADS,
+    ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment:
@@ -994,6 +1006,27 @@ export function parseIntegrationRuntime(
     );
   }
   return "local";
+}
+
+/**
+ * Parse `MARFA_INTEGRATION_WORKER_THREADS`. Unset → undefined, which
+ * keeps the executor's own default. Anything that is not a positive
+ * integer throws at boot rather than warning: a NaN or zero pool size
+ * would pre-warm no worker threads and leave every dispatch waiting on
+ * a slot that never comes, a hang far harder to read than a refusal
+ * naming the variable.
+ */
+export function parseIntegrationWorkerThreads(
+  raw: string | undefined,
+): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `MARFA_INTEGRATION_WORKER_THREADS must be a positive integer, got "${raw}".`,
+    );
+  }
+  return n;
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   envNumber,
   parseDbPoolMode,
+  parseIntegrationWorkerThreads,
   parseOtelSampleRatio,
   parseOtelHeaders,
   loadConfig,
@@ -164,6 +165,28 @@ describe("parseDbPoolMode", () => {
     // resolve a typo to the permissive mode, which is precisely the silent
     // downgrade this knob exists to prevent.
     expect(() => parseDbPoolMode("transacton")).toThrow(/MARFA_DB_POOL_MODE/);
+  });
+});
+
+describe("parseIntegrationWorkerThreads", () => {
+  it("returns undefined when unset or empty, keeping the executor default", () => {
+    expect(parseIntegrationWorkerThreads(undefined)).toBeUndefined();
+    expect(parseIntegrationWorkerThreads("")).toBeUndefined();
+  });
+
+  it("honors a positive integer", () => {
+    expect(parseIntegrationWorkerThreads("1")).toBe(1);
+    expect(parseIntegrationWorkerThreads("4")).toBe(4);
+  });
+
+  it("throws on zero, negatives, and non-numbers rather than starving the pool", () => {
+    // A NaN or zero pool size would pre-warm no worker threads and leave
+    // every dispatch waiting forever; the boot refusal names the variable.
+    for (const raw of ["0", "-2", "two", "2.5"]) {
+      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
+        /MARFA_INTEGRATION_WORKER_THREADS/,
+      );
+    }
   });
 });
 
