@@ -66,3 +66,7 @@ deploy.env
 # Page snapshots from a local Playwright CLI run. Machine-local tooling
 # output, not part of the project.
 .playwright-cli/
+
+# Deployment env files live on the box, never in git.
+infra/digitalocean/.env
+infra/digitalocean/server.env
