@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type {
   CreatedConnectionLeasedToken,
@@ -447,5 +451,87 @@ describe("POST /lease-tokens/validate", () => {
     });
     const body = (await res.json()) as LeaseTokenIntrospection;
     expect(body.active).toBe(false);
+  });
+});
+
+describe("POST /connections/:id/lease-tokens — space scoping", () => {
+  // Mirror of the inbound-webhooks space-scoping cases: the manifest
+  // resolver must see the platform-scoped integration item from a
+  // space-scoped caller, and the lease row must land in the
+  // CONNECTION's space so the fenced list, revoke, and uninstall-sweep
+  // lookups can reach it whoever issued it.
+  async function spaceScopedConnection(): Promise<{
+    spaceId: string;
+    spaceKey: string;
+    connectionId: string;
+  }> {
+    if (!ctx.storage.spaces) {
+      throw new Error("space-scoping tests need a spaces store");
+    }
+    const space = await ctx.storage.spaces.create(
+      `lease-scope-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const rawKey = `marfa_k1_test_lease_sadmin_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `lease-scope-sadmin-${suffix}`,
+        source: `lease-scope-sadmin-${suffix}`,
+        role: "space_admin",
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(rawKey, TEST_API_KEY_SALT),
+      space.id,
+    );
+    const install = await request(ctx.app, "POST", "/connections/install", {
+      key: rawKey,
+      body: { integration_id: integrationId },
+    });
+    if (install.status !== 201) {
+      throw new Error(
+        `space-scoped install failed: ${String(install.status)} ${await install.text()}`,
+      );
+    }
+    const body = (await install.json()) as { connection_id: string };
+    return {
+      spaceId: space.id,
+      spaceKey: rawKey,
+      connectionId: body.connection_id,
+    };
+  }
+
+  it("space_admin issues a lease against a platform-scoped integration item", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-tokens`,
+      { key: spaceKey, body: { capability_id: "drive.upload" } },
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as CreatedConnectionLeasedToken;
+    expect(created.space_id).toBe(spaceId);
+  });
+
+  it("platform-admin issue stamps the connection's space, not its own", async () => {
+    const { spaceId, connectionId } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-tokens`,
+      { key: ctx.adminKey, body: { capability_id: "drive.upload" } },
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as CreatedConnectionLeasedToken;
+    expect(created.space_id).toBe(spaceId);
+    // The fenced enumeration the uninstall sweep and the space's own
+    // list route use must find the row.
+    const rows =
+      await ctx.storage.connectionLeasedTokens.listActiveByConnection(
+        connectionId,
+        spaceId,
+      );
+    expect(rows.map((r) => r.id)).toContain(created.id);
   });
 });

@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createHmac } from "node:crypto";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 import type { CreatedInboundWebhook, InboundWebhook } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -265,6 +270,111 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedInboundWebhook;
     expect(created.verification_method).toBe("hmac-sha256");
+  });
+});
+
+describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
+  // The two halves of one invariant: a space_admin must be able to
+  // subscribe against a platform-scoped (space_id IS NULL) integration
+  // item, and whoever creates the subscription, the row must land in the
+  // CONNECTION's space — the local substrate's receipt route looks
+  // subscriptions up fenced on the connection's space, so a row stamped
+  // with the caller's (absent) space is a subscription that never
+  // delivers.
+  async function spaceScopedConnection(): Promise<{
+    spaceId: string;
+    spaceKey: string;
+    connectionId: string;
+  }> {
+    if (!ctx.storage.spaces) {
+      throw new Error("space-scoping tests need a spaces store");
+    }
+    const space = await ctx.storage.spaces.create(
+      `inbound-scope-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const rawKey = `marfa_k1_test_sadmin_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `inbound-scope-sadmin-${suffix}`,
+        source: `inbound-scope-sadmin-${suffix}`,
+        role: "space_admin",
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(rawKey, TEST_API_KEY_SALT),
+      space.id,
+    );
+    // Install through the route so the connection lands in the caller's
+    // space with the platform-scoped integration as its integration_ref.
+    const install = await request(ctx.app, "POST", "/connections/install", {
+      key: rawKey,
+      body: { integration_id: integrationId },
+    });
+    if (install.status !== 201) {
+      throw new Error(
+        `space-scoped install failed: ${String(install.status)} ${await install.text()}`,
+      );
+    }
+    const body = (await install.json()) as { connection_id: string };
+    return {
+      spaceId: space.id,
+      spaceKey: rawKey,
+      connectionId: body.connection_id,
+    };
+  }
+
+  it("space_admin subscribes against a platform-scoped integration item", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: spaceKey, body: { events: ["thing.created"] } },
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as CreatedInboundWebhook;
+    expect(created.space_id).toBe(spaceId);
+  });
+
+  it("platform-admin create stamps the connection's space, not its own", async () => {
+    const { spaceId, connectionId } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: ctx.adminKey, body: { events: ["thing.created"] } },
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as CreatedInboundWebhook;
+    expect(created.space_id).toBe(spaceId);
+    // The receipt route's fenced lookup must find the row.
+    const rows = await ctx.storage.inboundWebhooks.listByConnection(
+      connectionId,
+      spaceId,
+    );
+    expect(rows.map((r) => r.id)).toContain(created.id);
+  });
+
+  it("space_admin from another space cannot reach the connection", async () => {
+    // The fence on the connection lookup is what makes stamping the
+    // connection's space safe: a caller only ever reaches connections
+    // whose space it shares, so the stamp cannot cross a boundary.
+    const { connectionId } = await spaceScopedConnection();
+    const { spaceKey: otherSpaceKey } = await spaceScopedConnection();
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: otherSpaceKey, body: { events: ["thing.created"] } },
+    );
+    expect(res.status).toBe(404);
+    // The error code pins WHICH fence refused: connection_not_found is
+    // requireConnectionAccess's own lookup, not the manifest resolver's
+    // downstream not_found — the property is double-fenced and this
+    // asserts the primary layer.
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("connection_not_found");
   });
 });
 

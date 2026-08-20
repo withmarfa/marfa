@@ -59,7 +59,13 @@ export async function resolveConnectionManifest(
     );
   }
 
-  const integration = await storage.items.get(integrationRef, spaceId);
+  // `system.integration` items are registered by platform credentials and
+  // live with no space, so a space-scoped caller's fenced lookup would never
+  // find one. Widen to platform-scoped rows; the type check below stays the
+  // authoritative gate on what the widened lookup may return.
+  const integration = await storage.items.get(integrationRef, spaceId, {
+    includePlatformScoped: true,
+  });
   if (integration?.type !== "system.integration") {
     throw new MarfaError(
       ErrorCode.MISSING_REQUIRED_FIELD,
