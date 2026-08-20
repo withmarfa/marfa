@@ -9711,7 +9711,7 @@
             }
           },
           "403": {
-            "description": "Missing metadata.types:write permission",
+            "description": "Missing metadata.types:write permission, a reserved namespace, or a publisher namespace whose handle the caller's user has not claimed",
             "content": {
               "application/json": {
                 "schema": {

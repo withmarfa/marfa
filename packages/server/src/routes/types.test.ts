@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { TypeSchema } from "@withmarfa/shared";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -736,6 +741,125 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
     const res = await request(ctx.app, "POST", "/types", {
       key: ctx.adminKey,
       body: { id: "user.runtime-authored-probe", ...baseType },
+    });
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("POST /types — publisher-tier handle ownership", () => {
+  // Publishing under a handle means owning it. The claim API exists and
+  // works; this gate is the one place the claim grants authority today.
+  // Hosted mode only: keys mode has no user accounts, so there is no
+  // handle system to check a publisher segment against, and the check
+  // is deliberately skipped there (covered by the last test below).
+  let hosted: TestContext;
+  let ownerKey: string;
+  let strangerKey: string;
+  let handlelessKey: string;
+
+  async function mintSpaceKey(
+    suffix: string,
+    handle: string | null,
+  ): Promise<string> {
+    const space = await hosted.storage.spaces!.create(`space-${suffix}`);
+    await hosted.storage.users!.create({
+      provider: "test",
+      provider_id: `ownership-${suffix}`,
+      space_id: space.id,
+      ...(handle ? { handle } : {}),
+    });
+    const rawKey = `marfa_k1_test_ownership_${suffix}`;
+    await hosted.storage.keys.create(
+      {
+        label: `ownership-${suffix}`,
+        source: "test",
+        role: "member",
+        type_permissions: { "*": "write" },
+        metadata_permissions: { types: "write" },
+      },
+      hashApiKey(rawKey, TEST_API_KEY_SALT),
+      space.id,
+    );
+    return rawKey;
+  }
+
+  beforeAll(async () => {
+    hosted = await createTestContext({ authMode: "hosted" });
+    ownerKey = await mintSpaceKey("owner", "acme");
+    strangerKey = await mintSpaceKey("stranger", "rivalco");
+    handlelessKey = await mintSpaceKey("handleless", null);
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  it("refuses registration under a handle the caller's user does not hold", async () => {
+    const res = await request(hosted.app, "POST", "/types", {
+      key: strangerKey,
+      body: { id: "acme.gadget", ...baseType },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('requires the handle "acme"');
+    expect(body.error.message).toContain('holds "rivalco"');
+  });
+
+  it("refuses registration when the caller's user holds no handle", async () => {
+    const res = await request(hosted.app, "POST", "/types", {
+      key: handlelessKey,
+      body: { id: "acme.gadget", ...baseType },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('claiming the handle "acme"');
+  });
+
+  it("admits registration under the caller's own claimed handle", async () => {
+    const res = await request(hosted.app, "POST", "/types", {
+      key: ownerKey,
+      body: { id: "acme.gadget", ...baseType },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("exempts platform credentials", async () => {
+    const res = await request(hosted.app, "POST", "/types", {
+      key: hosted.adminKey, // bootstrap admin: is_platform, no space
+      body: { id: "somevendor.platform-seeded", ...baseType },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("keeps the reserved-root refusal ahead of the ownership rule", async () => {
+    const res = await request(hosted.app, "POST", "/types", {
+      key: ownerKey,
+      body: { id: "marfa.probe", ...baseType },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("platform-shipped");
+  });
+
+  it("does not bind in keys mode, where no handle system exists", async () => {
+    // The module-level ctx runs in keys mode. Its member credential has
+    // no user row at all; refusing here would break every self-hosted
+    // deployment's custom publisher types, so the exemption is a
+    // deliberate, recorded choice rather than an accident.
+    const createKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "keys-mode-publisher",
+        source: "keys-mode-publisher-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        metadata_permissions: { types: "write" },
+      },
+    });
+    const created = (await createKeyRes.json()) as { key: string };
+    const res = await request(ctx.app, "POST", "/types", {
+      key: created.key,
+      body: { id: "acme.keys-mode-gadget", ...baseType },
     });
     expect(res.status).toBe(201);
   });

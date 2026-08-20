@@ -608,7 +608,7 @@ export function createApp(
   app.route("/edges", edgeRoutes(storage));
   app.route("/edges", edgesBulkRoutes(storage));
   app.route("/edge-types", edgeTypeRoutes(storage));
-  app.route("/types", typeRoutes(storage));
+  app.route("/types", typeRoutes(storage, config.authMode));
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));

@@ -233,9 +233,11 @@ export function deriveHandleFromEmail(email: string): string {
 
 /**
  * Returns true if the value is a syntactically valid type identifier under
- * the five-tier namespace grammar. Who can register `core.*` / `system.*` /
- * `marfa.*` types is enforced separately at registration time, gated by the
- * credential's `is_platform` flag.
+ * the five-tier namespace grammar. Authorization is enforced separately at
+ * registration time: `core.*` / `system.*` / `marfa.*` are refused for
+ * every credential, and publisher-tier registration requires the caller's
+ * user to hold the publisher handle (hosted mode; platform credentials
+ * exempt).
  */
 export function isValidTypeIdentifier(value: string): boolean {
   if (value.length > 128) return false;
