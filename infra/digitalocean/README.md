@@ -30,13 +30,19 @@ the hosted deployment's equivalent, deliberately running the same image.
 
 1. Copy `env.example` → `.env` and `server.env.example` → `server.env`;
    fill both. `chmod 600 server.env`.
-2. Log the box's Docker into the image registry.
-3. `docker compose -f compose.<env>.yml pull`
-4. `docker compose -f compose.<env>.yml run --rm migrate`
-5. `docker compose -f compose.<env>.yml up -d`
-6. `curl -fsS https://<hostname>/health` and check the reported SHA.
+2. Production only: fetch the managed database's CA onto the box —
+   `doctl databases get-ca <cluster-id> --no-header > /opt/marfa/do-pg-ca.crt`
+   — and set `NODE_EXTRA_CA_CERTS=/app/do-pg-ca.crt` in `server.env`.
+   The cluster's certificate chains to DigitalOcean's private per-project
+   CA, which no default trust store carries; without this the boot fails
+   with `SELF_SIGNED_CERT_IN_CHAIN`.
+3. Log the box's Docker into the image registry.
+4. `docker compose -f compose.<env>.yml pull`
+5. `docker compose -f compose.<env>.yml run --rm migrate`
+6. `docker compose -f compose.<env>.yml up -d`
+7. `curl -fsS https://<hostname>/health` and check the reported SHA.
 
-Migrations always run from the box (step 4): the production database
+Migrations always run from the box (step 5): the production database
 accepts connections only from inside its private network, which is the
 point of the private network.
 
