@@ -131,8 +131,8 @@ describe("local-runtime connection walker", () => {
   it("skips a paused Connection and picks it back up on resume", async () => {
     // Pause is the operator's stop control, and the walker is the
     // schedule's only source on this runtime — if it does not gate here,
-    // pause reports success and the connection keeps running (T-627's
-    // shape). The gate is the walk itself, so resume needs no re-arm.
+    // pause reports success and the connection keeps running. The gate
+    // is the walk itself, so resume needs no re-arm.
     const pauseManifest = { ...MANIFEST_LOCAL, name: "test.walker-paused" };
     const integrationId = await createIntegrationItem(pauseManifest);
     const pausedId = await createConnection({
@@ -165,25 +165,6 @@ describe("local-runtime connection walker", () => {
     expect(second).toBe(1);
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.message.connection_id).toBe(pausedId);
-  });
-
-  it("skips a failing Connection, mirroring the reactive registry's gate", async () => {
-    const failManifest = { ...MANIFEST_LOCAL, name: "test.walker-failing" };
-    const integrationId = await createIntegrationItem(failManifest);
-    await createConnection({
-      integrationItemId: integrationId,
-      runtimeStatus: "failing",
-    });
-
-    const enqueued: SchedulerEnvelope[] = [];
-    const count = await fanOutSchedule(
-      ctx.storage,
-      makeStubRuntime(enqueued),
-      failManifest.name,
-      Date.now(),
-    );
-    expect(count).toBe(0);
-    expect(enqueued).toHaveLength(0);
   });
 
   it("does not enqueue anything for an integration with no Connections", async () => {

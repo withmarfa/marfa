@@ -180,6 +180,9 @@ describe("the live bridge honors pause and resume", () => {
           await probe();
           await new Promise((r) => setTimeout(r, 25));
           expect(enqueued.length).toBeGreaterThan(afterResume);
+          expect(enqueued[enqueued.length - 1]?.message.connection_id).toBe(
+            connection.id,
+          );
         },
         { timeout: 10_000 },
       );

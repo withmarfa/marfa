@@ -18574,7 +18574,7 @@
           "Connections"
         ],
         "summary": "Pause an integration connection",
-        "description": "Stops a connection without tearing it down: sets `runtime_status` to `paused`, so the scheduler skips it from the next tick and reactive fan-out drops it. Work already sitting on the dispatch queue drains, and inbound webhook receipt is not gated by pause. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
+        "description": "Stops a connection without tearing it down: sets `runtime_status` to `paused` — the scheduler skips it, reactive fan-out drops it, and new inbound webhook deliveries are refused with a retryable 503 so the sender redelivers after resume. Queued schedule and item-event work is discarded without running; a queued webhook dispatch retries and dead-letters if the pause outlasts it. Credentials and the upstream OAuth grant are left intact, so `resume` restores everything without a fresh consent round trip. Pausing an already-paused connection returns 400.",
         "security": [
           {
             "bearerAuth": []
@@ -18594,7 +18594,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated. The scheduler and reactive fan-out both gate on it from the next tick; work already queued drains, and inbound webhook receipt is not gated.",
+            "description": "Runtime status updated. The scheduler, reactive fan-out, and inbound webhook receipt all gate on it; queued schedule and item-event work is discarded, and a queued webhook dispatch retries toward the dead-letter surface.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18624,7 +18624,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an integration, is revoked, or is already in the requested state.",
+            "description": "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18809,7 +18809,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated. The scheduler and reactive fan-out both gate on it from the next tick; work already queued drains, and inbound webhook receipt is not gated.",
+            "description": "Runtime status updated. The scheduler, reactive fan-out, and inbound webhook receipt all gate on it; queued schedule and item-event work is discarded, and a queued webhook dispatch retries toward the dead-letter surface.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18839,7 +18839,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an integration, is revoked, or is already in the requested state.",
+            "description": "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
             "content": {
               "application/json": {
                 "schema": {

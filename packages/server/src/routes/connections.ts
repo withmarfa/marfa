@@ -171,7 +171,7 @@ const pauseResponses = {
   200: {
     content: { "application/json": { schema: PauseResultSchema } },
     description:
-      "Runtime status updated. The scheduler and reactive fan-out both gate on it from the next tick; work already queued drains, and inbound webhook receipt is not gated.",
+      "Runtime status updated. The scheduler, reactive fan-out, and inbound webhook receipt all gate on it; queued schedule and item-event work is discarded, and a queued webhook dispatch retries toward the dead-letter surface.",
   },
   400: {
     content: {
@@ -180,7 +180,7 @@ const pauseResponses = {
       },
     },
     description:
-      "Connection is not an integration, is revoked, or is already in the requested state.",
+      "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
   },
   401: {
     content: {
@@ -213,7 +213,7 @@ const pauseRoute = createRoute({
   tags: ["Connections"],
   summary: "Pause an integration connection",
   description:
-    "Stops a connection without tearing it down: sets `runtime_status` to `paused`, so the scheduler skips it from the next tick and reactive fan-out drops it. Work already sitting on the dispatch queue drains, and inbound webhook receipt is not gated by pause. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
+    "Stops a connection without tearing it down: sets `runtime_status` to `paused` — the scheduler skips it, reactive fan-out drops it, and new inbound webhook deliveries are refused with a retryable 503 so the sender redelivers after resume. Queued schedule and item-event work is discarded without running; a queued webhook dispatch retries and dead-letters if the pause outlasts it. Credentials and the upstream OAuth grant are left intact, so `resume` restores everything without a fresh consent round trip. Pausing an already-paused connection returns 400.",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: pauseResponses,
@@ -646,26 +646,14 @@ export function connectionRoutes(storage: Storage, salt: string) {
     clientIp: string | null,
   ) => {
     const run = verb === "pause" ? performPause : performResume;
+    let result;
     try {
-      const result = await run(storage, {
+      result = await run(storage, {
         apiKeyId: apiKey.id,
         spaceId: apiKey.space_id ?? undefined,
         connectionId,
         clientIp,
       });
-      // Publish the status flip so the reactive bridge's invalidation
-      // subscriber re-evaluates its cached subscription entry. The write
-      // above is a plain storage update, which publishes nothing on its
-      // own — without this event the elected drainer's in-memory map
-      // keeps (or keeps missing) the connection until the next rebuild,
-      // and pause reports success while fanout carries on.
-      const spaceId = apiKey.space_id ?? undefined;
-      const connection = await storage.items.get(connectionId, spaceId);
-      if (connection) {
-        const metadata = await storage.metadata.get(connection.id);
-        await publish({ type: "updated", item: connection, metadata, spaceId });
-      }
-      return result;
     } catch (err) {
       if (err instanceof PauseError) {
         if (err.code === "connection_not_found") {
@@ -677,6 +665,21 @@ export function connectionRoutes(storage: Storage, salt: string) {
       }
       throw err;
     }
+    // Publish the status flip so the reactive bridge's invalidation
+    // subscriber re-evaluates its cached subscription entry. The write
+    // above is a plain storage update, which publishes nothing on its
+    // own — without this event the elected drainer's in-memory map
+    // keeps (or keeps missing) the connection until the next rebuild,
+    // and pause reports success while fanout carries on. Outside the
+    // try, deliberately: a publish failure here must not be mapped to a
+    // pause error the write did not have.
+    const spaceId = apiKey.space_id ?? undefined;
+    const connection = await storage.items.get(connectionId, spaceId);
+    if (connection) {
+      const metadata = await storage.metadata.get(connection.id);
+      await publish({ type: "updated", item: connection, metadata, spaceId });
+    }
+    return result;
   };
 
   r.openapi(pauseRoute, async (c) => {
@@ -704,6 +707,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
 
+    let uninstalled;
     try {
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
@@ -711,20 +715,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
         connectionId,
         clientIp,
       });
-      // Same invalidation contract as pause/resume above: the pipeline's
-      // transition is a storage write, so the bridge only drops the
-      // revoked connection's subscription entry if the route says so.
-      const revoked = await storage.items.get(connectionId, spaceId);
-      if (revoked) {
-        const metadata = await storage.metadata.get(revoked.id);
-        await publish({
-          type: "state_changed",
-          item: revoked,
-          metadata,
-          spaceId,
-        });
-      }
-      return c.json(result, 200);
+      uninstalled = result;
     } catch (err) {
       if (err instanceof UninstallError) {
         if (err.code === "connection_not_found") {
@@ -736,6 +727,20 @@ export function connectionRoutes(storage: Storage, salt: string) {
       }
       throw err;
     }
+    // Same invalidation contract as pause/resume above: the pipeline's
+    // transition is a storage write, so the bridge only drops the
+    // revoked connection's subscription entry if the route says so.
+    const revoked = await storage.items.get(connectionId, spaceId);
+    if (revoked) {
+      const metadata = await storage.metadata.get(revoked.id);
+      await publish({
+        type: "state_changed",
+        item: revoked,
+        metadata,
+        spaceId,
+      });
+    }
+    return c.json(uninstalled, 200);
   });
 
   return r;

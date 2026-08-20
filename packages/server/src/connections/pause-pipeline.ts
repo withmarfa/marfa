@@ -27,8 +27,11 @@
  * connections; the reactive bridge holds a cached subscription map, so
  * the route publishes the status flip and the bridge's invalidation
  * subscriber drops (or re-adds) the entry. Work already sitting on the
- * dispatch queue is skipped at dispatch time by the supervisor's own
- * gate. Inbound webhook receipt is deliberately not gated by pause.
+ * dispatch queue is discarded at dispatch time by the supervisor's own
+ * gate — except queued webhook deliveries, which retry toward the
+ * dead-letter surface, and NEW inbound deliveries are refused with a
+ * retryable 503 at the receipt route so the sender redelivers after
+ * resume.
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";

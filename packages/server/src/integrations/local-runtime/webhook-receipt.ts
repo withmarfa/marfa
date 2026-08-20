@@ -88,6 +88,18 @@ export function registerWebhookReceiptRoute(
     if (props.kind !== "integration") {
       return c.json({ error: "connection_not_integration_kind" }, 400);
     }
+    // A paused connection refuses deliveries with a retryable status,
+    // BEFORE any idempotency slot is recorded. Accepting-and-dropping
+    // would consume the sender's delivery id, so their redelivery inside
+    // the dedup window would be swallowed as a duplicate — the event
+    // gone, not deferred. A 503 keeps the sender's own retry schedule in
+    // charge: resume within their window and the delivery lands.
+    if ((props as { runtime_status?: string }).runtime_status === "paused") {
+      return c.json(
+        { error: "connection_paused", connection_id: connectionId },
+        503,
+      );
+    }
     if (!props.integration_ref) {
       return c.json({ error: "integration_ref_missing" }, 400);
     }

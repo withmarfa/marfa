@@ -69,7 +69,7 @@ interface ManifestTrigger {
  *   - The connection's `properties.runtime_status` is `failing`.
  *     Nothing in-tree writes that value any more (the sustained-failure
  *     escalation went with the retired hosted bridge); the gate stays
- *     so an operator-set or pre-existing value keeps its meaning.
+ *     so a pre-existing value keeps its meaning.
  *   - The connection's `properties.runtime_status` is `paused` (the
  *     operator asked it to stop). The pause/resume/uninstall routes
  *     publish the status change, and the bridge's invalidation
