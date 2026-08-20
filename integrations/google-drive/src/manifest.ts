@@ -44,16 +44,48 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+/**
+ * The two families a connection chooses between, declared once and carried
+ * on the manifest itself so the platform validates family coherence
+ * centrally and the configure surface derives the chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "google" | "core",
+  { description: string; types: { file: string } }
+> = {
+  google: {
+    description:
+      "The Google Drive type, which keeps the full Drive metadata set; bytes are not required.",
+    types: { file: "google.drive.file" },
+  },
+  core: {
+    description:
+      "The core file type, readable by any app that understands core files; requires ingested bytes, so it behaviorally pairs with download_mode: all-files.",
+    types: { file: "core.file" },
+  },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  google: FAMILY_DEFINITIONS.google.types,
+  core: FAMILY_DEFINITIONS.core.types,
+} as const;
+
+export type WriteFamily = keyof typeof WRITE_FAMILIES;
+
+export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
+
 export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   name: "google.drive",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
-    target_type: {
+    write_family: {
       type: "string",
-      description: "Item type synced files land as.",
-      from_target_types: true,
-      default: "google.drive.file",
+      description:
+        "Item family synced files land as. The google family keeps the full Drive metadata set; the core family is the cross-app shape other apps read, and needs file bytes, so it behaviorally pairs with download_mode: all-files.",
+      from_write_families: true,
+      default: DEFAULT_WRITE_FAMILY,
     },
     download_mode: {
       type: "string",
@@ -83,10 +115,15 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   // (manifest direction + handlers + tests). Documented in CLAUDE.md.
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
-  // `google.drive.file` is the upstream-fidelity type. `core.file`
-  // is the cross-app shared shape. Both granted so the install-time
-  // configuration can pick.
-  target_types: ["core.file", "google.drive.file"],
+  // Both families' types are granted so the install-time configuration
+  // can pick. `core.file` requires a real `blob_ref`, so the handler
+  // routes byte-less files to `google.drive.file` whatever the family
+  // says (cross-field constraints stay out of the manifest).
+  target_types: [WRITE_FAMILIES.core.file, WRITE_FAMILIES.google.file],
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
+  },
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },
@@ -113,9 +150,6 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
 
 export const INTEGRATION_NAME = GOOGLE_DRIVE_MANIFEST.name;
 export const DRIVE_API_BASE = "/drive/v3";
-
-/** Default target type — upstream-fidelity. */
-export const DEFAULT_TARGET_TYPE = "google.drive.file";
 
 /**
  * `files.list` field mask. Comprehensive enough to populate every

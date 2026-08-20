@@ -41,16 +41,48 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
+/**
+ * The two families a connection chooses between, declared once and carried
+ * on the manifest itself so the platform validates family coherence
+ * centrally and the configure surface derives the chooser.
+ */
+const FAMILY_DEFINITIONS: Record<
+  "google" | "core",
+  { description: string; types: { contact: string } }
+> = {
+  google: {
+    description:
+      "The Google Contacts type, which keeps the full People API field set for an exact round trip.",
+    types: { contact: "google.contacts.contact" },
+  },
+  core: {
+    description:
+      "The core person type, readable by any app that understands core entities; drops the per-channel email, phone, and address arrays that type cannot hold.",
+    types: { contact: "core.entity.person" },
+  },
+};
+
+/** Role maps the handlers index; same object the manifest declares. */
+export const WRITE_FAMILIES = {
+  google: FAMILY_DEFINITIONS.google.types,
+  core: FAMILY_DEFINITIONS.core.types,
+} as const;
+
+export type WriteFamily = keyof typeof WRITE_FAMILIES;
+
+export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
+
 export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   name: "google.contacts",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "1.3.0",
   configuration_schema: {
-    target_type: {
+    write_family: {
       type: "string",
-      description: "Item type synced contacts land as.",
-      from_target_types: true,
-      default: "google.contacts.contact",
+      description:
+        "Item family synced contacts land as. The google family keeps the full People API field set; the core family is the cross-app shape other apps read, and drops what that type cannot hold.",
+      from_write_families: true,
+      default: DEFAULT_WRITE_FAMILY,
     },
   },
   publisher: "google",
@@ -58,11 +90,14 @@ export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
     "Bidirectional sync between Google Contacts (People API) and Marfa. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Marfa-side mutations back via OAuth proxy with etag-based concurrency.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
-  // `google.contacts.contact` is the upstream-fidelity type (full
-  // People API field set, the recommended default). `core.entity.person`
-  // is the cross-app shared shape; the runtime credential is granted
-  // write permission on both so either is reachable at handler time.
-  target_types: ["core.entity.person", "google.contacts.contact"],
+  // The runtime credential is granted write permission on both families'
+  // types so either is reachable at handler time; the install-time
+  // configuration chooses which family a connection actually writes.
+  target_types: [WRITE_FAMILIES.core.contact, WRITE_FAMILIES.google.contact],
+  write_families: {
+    families: FAMILY_DEFINITIONS,
+    default: DEFAULT_WRITE_FAMILY,
+  },
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },
@@ -101,9 +136,6 @@ export const INTEGRATION_NAME = GOOGLE_CONTACTS_MANIFEST.name;
  * on a shared credential.
  */
 export const PEOPLE_API_BASE = "/v1";
-
-/** Default target type when configuration is absent — upstream-fidelity. */
-export const DEFAULT_TARGET_TYPE = "google.contacts.contact";
 
 /**
  * Comprehensive personFields mask requested on every `connections.list`

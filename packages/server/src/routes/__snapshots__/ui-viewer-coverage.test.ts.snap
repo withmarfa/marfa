@@ -3125,9 +3125,9 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
         </div>
 
         <div class="defrow">
-          <label class="label" for="target_type">Write events as</label>
-          <select name="target_type" id="target_type">
-            <option value="google.calendar.event" selected>google.calendar.event</option><option value="core.event" >core.event</option>
+          <label class="label" for="write_family">Write events as</label>
+          <select name="write_family" id="write_family">
+            <option value="google" selected>google</option><option value="core" >core</option>
           </select>
         </div>
         <p class="label__hint">Keep the Google format to preserve everything Google tracks, including repeats and time zones. Choose the standard format if other apps need to read these events too.</p>
@@ -3168,9 +3168,9 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
         </div>
 
         <div class="defrow">
-          <label class="label" for="target_type">Write events as</label>
-          <select name="target_type" id="target_type">
-            <option value="google.calendar.event" selected>google.calendar.event</option><option value="core.event" >core.event</option>
+          <label class="label" for="write_family">Write events as</label>
+          <select name="write_family" id="write_family">
+            <option value="google" selected>google</option><option value="core" >core</option>
           </select>
         </div>
         <p class="label__hint">Keep the Google format to preserve everything Google tracks, including repeats and time zones. Choose the standard format if other apps need to read these events too.</p>

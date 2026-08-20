@@ -9,8 +9,8 @@
  *     its own sync cursor; mappings carry per-event calendar_id.
  *   - Inbound: a 410 on one calendar resets only that calendar's cursor;
  *     others continue.
- *   - Inbound: target_type `google.calendar.event` writes the
- *     upstream-fidelity properties (etag, html_link, timezone, all_day,
+ *   - Inbound: the `google` write family writes the upstream-fidelity
+ *     properties (etag, html_link, timezone, all_day,
  *     source_calendar_id).
  *   - Outbound: new event routes to `default_write_calendar_id` (not
  *     primary).
@@ -35,6 +35,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 
@@ -151,6 +152,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created, updated, transitions, proxyCalls };
@@ -202,7 +204,7 @@ function multiCalendarConnection(): Partial<ItemResource> {
       configuration: {
         selected_calendar_ids: ["primary", "team@example.com"],
         default_write_calendar_id: "primary",
-        target_type: "google.calendar.event",
+        write_family: "google",
       },
     },
   };
@@ -645,7 +647,7 @@ describe("adopting a single-calendar cursor", () => {
         configuration: {
           selected_calendar_ids: ["primary", "team@example.com"],
           default_write_calendar_id: "team@example.com",
-          target_type: "google.calendar.event",
+          write_family: "google",
         },
       },
     };

@@ -35,6 +35,7 @@ import {
   type ItemState,
   type ScheduleMessage,
   type WebhookHandlerInput,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook } from "./handlers.js";
 
@@ -132,6 +133,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, proxyCalls, storage };
@@ -148,7 +150,7 @@ function multiCalConnectionWithWebhook(
       configuration: {
         selected_calendar_ids: selectedCalendarIds,
         default_write_calendar_id: selectedCalendarIds[0] ?? "primary",
-        target_type: "google.calendar.event",
+        write_family: "google",
         inbound_webhook_url:
           "https://staging.marfa.so/webhooks/inbound/conn_gcal_push",
       },
@@ -165,7 +167,7 @@ function multiCalConnectionWithoutWebhook(): Partial<ItemResource> {
       configuration: {
         selected_calendar_ids: ["primary"],
         default_write_calendar_id: "primary",
-        target_type: "google.calendar.event",
+        write_family: "google",
         // inbound_webhook_url deliberately absent
       },
     },

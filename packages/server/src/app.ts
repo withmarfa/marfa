@@ -65,6 +65,7 @@ import {
   leaseTokenValidationRoutes,
 } from "./routes/connection-leased-tokens.js";
 import { connectionRoutes } from "./routes/connections.js";
+import { connectionMappingRoutes } from "./routes/connection-mapping.js";
 import { connectionConfigureRoutes } from "./routes/connection-configure.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
@@ -758,6 +759,7 @@ export function createApp(
   // Connection management — POST /connections/:id/uninstall (admin-gated)
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
+  app.route("/connections", connectionMappingRoutes(storage));
   app.route(
     "/connections",
     connectionRoutes(storage, config.apiKeySalt, {

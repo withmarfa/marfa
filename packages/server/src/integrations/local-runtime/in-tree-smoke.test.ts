@@ -40,6 +40,7 @@ import {
   type CursorStorageAdapter,
   type QueueMessage,
   type HandlerResult,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { createSupervisor } from "./supervisor.js";
 import { readConnectionRuntimeState } from "./pg-cursor-store.js";
@@ -163,6 +164,7 @@ function makeDirectDispatch(
       cursor: createCursorStore(cursorAdapter),
       activity: createActivitySink(client, request.message.connection_id),
       echo: createEchoSuppression(cursorAdapter, request.echo),
+      mapping: familyOnlyMappingResolver(),
       cycle: cycleParent,
     };
     _resetHandlers();

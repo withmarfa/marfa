@@ -29,6 +29,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import {
   handleSchedule,
@@ -156,6 +157,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return {
@@ -252,11 +254,34 @@ describe("Google Calendar handlers — the type a connection writes", () => {
     expect(created).toHaveLength(2);
     expect(created.every((c) => c.type === "google.calendar.event")).toBe(true);
     expect(
-      GOOGLE_CALENDAR_MANIFEST.configuration_schema?.target_type?.default,
-    ).toBe("google.calendar.event");
+      GOOGLE_CALENDAR_MANIFEST.configuration_schema?.write_family?.default,
+    ).toBe("google");
   });
 
-  it("writes the configured type when the install names one", async () => {
+  it("writes the configured family's type when the install names one", async () => {
+    const { ctx, created } = buildContext({
+      proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
+      connectionRecord: {
+        id: "conn_gcal_test",
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: { write_family: "core" },
+        },
+      },
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(2);
+    expect(created.every((c) => c.type === "core.event")).toBe(true);
+  });
+
+  it("honors a legacy stored target_type by resolving its family", async () => {
+    // Pins the legacy stored-configuration read: connections configured
+    // before write families carry `target_type` rather than
+    // `write_family`, and that value must keep deciding what they write
+    // until the post-cutover configuration rewrite removes it.
     const { ctx, created } = buildContext({
       proxyResponses: [() => jsonResponse(SAMPLE_INBOUND)],
       connectionRecord: {
@@ -852,7 +877,7 @@ describe("Google Calendar handlers — recurrence", () => {
       connectionRecord: {
         id: "conn_gcal_test",
         type: "system.connection",
-        properties: { configuration: { target_type: "core.event" } },
+        properties: { configuration: { write_family: "core" } },
       },
     });
     await handleSchedule(ctx, SCHEDULE_MSG());
@@ -971,8 +996,11 @@ describe("Google Calendar handlers — whole days", () => {
   it("records all-day as a declared fact on the cross-app type too", async () => {
     // The fidelity type already carried `all_day`; `core.event` did not, so
     // one connection kept the fact and another lost it on a setting nobody
-    // was asked about. Both target types are driven here for that reason.
-    for (const targetType of ["core.event", "google.calendar.event"]) {
+    // was asked about. Both families are driven here for that reason.
+    for (const [family, expectedType] of [
+      ["core", "core.event"],
+      ["google", "google.calendar.event"],
+    ] as const) {
       const { ctx, created } = buildContext({
         proxyResponses: [() => jsonResponse(ALL_DAY_INBOUND)],
         connectionRecord: {
@@ -980,14 +1008,14 @@ describe("Google Calendar handlers — whole days", () => {
           type: "system.connection",
           properties: {
             kind: "integration",
-            configuration: { target_type: targetType },
+            configuration: { write_family: family },
           },
         },
       });
       await handleSchedule(ctx, SCHEDULE_MSG());
       expect(created).toHaveLength(1);
-      expect(created[0]!.type).toBe(targetType);
-      expect(created[0]!.properties, targetType).toMatchObject({
+      expect(created[0]!.type).toBe(expectedType);
+      expect(created[0]!.properties, expectedType).toMatchObject({
         all_day: true,
       });
     }

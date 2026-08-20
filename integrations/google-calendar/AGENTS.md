@@ -40,8 +40,11 @@ Driven by `connection.properties.configuration`:
 - `selected_calendar_ids: string[]` — every calendar to sync from.
 - `default_write_calendar_id: string` — new outbound items go here
   (must be in `selected_calendar_ids`).
-- `target_type: string` — `google.calendar.event` (default) or
-  `core.event`.
+- `write_family: string` — `google` (default, the upstream-fidelity
+  `google.calendar.event`) or `core` (`core.event`). Family names and
+  descriptions come from the manifest's `write_families`; a stored
+  legacy `target_type` value still resolves to its family until the
+  post-cutover configuration rewrite.
 - `inbound_webhook_url?: string` — set when an inbound subscription
   has been minted; enables push notifications via `channels.watch`.
 

@@ -39,11 +39,14 @@ import {
   type CreateItemInput,
   type ItemResource,
 } from "@withmarfa/runtime-sdk";
+import { resolveWriteFamily } from "@withmarfa/shared";
 import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_CONTACTS_MANIFEST,
   PEOPLE_API_BASE,
   PERSON_FIELDS,
   UPDATE_PERSON_FIELDS,
-  DEFAULT_TARGET_TYPE,
+  WRITE_FAMILIES,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -68,8 +71,12 @@ interface ContactsCursor {
 }
 
 interface ConnectionConfig {
+  /** Type inbound contacts land as: the contact role of the connection's
+   *  resolved write family. */
   target_type: string;
 }
+
+const DEFAULT_CONTACT_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].contact;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -80,13 +87,14 @@ async function resolveConnectionConfig(
       | { configuration?: Record<string, unknown> }
       | undefined;
     const cfg = props?.configuration ?? {};
-    const targetType =
-      typeof cfg.target_type === "string" && cfg.target_type.length > 0
-        ? cfg.target_type
-        : DEFAULT_TARGET_TYPE;
-    return { target_type: targetType };
+    // The manifest's declared families decide the type: a configured
+    // `write_family` names one, a legacy stored `target_type` resolves to
+    // the family containing it, and an unconfigured connection gets the
+    // declared default.
+    const family = resolveWriteFamily(GOOGLE_CONTACTS_MANIFEST, cfg);
+    return { target_type: family?.types.contact ?? DEFAULT_CONTACT_TYPE };
   } catch {
-    return { target_type: DEFAULT_TARGET_TYPE };
+    return { target_type: DEFAULT_CONTACT_TYPE };
   }
 }
 

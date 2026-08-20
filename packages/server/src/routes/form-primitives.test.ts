@@ -60,8 +60,8 @@ describe("a badge sits beside its label, not on top of it", () => {
           accessRole: "owner",
         },
       ],
-      targetTypeChoices: ["google.calendar.event", "core.event"],
-      defaultTargetType: "google.calendar.event",
+      writeFamilyChoices: ["google", "core"],
+      defaultWriteFamily: "google",
     });
 
   it("keeps the badge outside the bold element", () => {

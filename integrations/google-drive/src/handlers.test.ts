@@ -25,6 +25,7 @@ import {
   type ScheduleMessage,
   type UploadBlobInput,
   type UploadBlobResult,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook } from "./handlers.js";
 import { GOOGLE_DRIVE_MANIFEST } from "./manifest.js";
@@ -180,6 +181,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created, updated, transitions, proxyCalls, uploads };
@@ -428,7 +430,7 @@ function allFilesConnectionRecord(
     properties: {
       kind: "integration",
       configuration: {
-        target_type: "google.drive.file",
+        write_family: "google",
         download_mode: "all-files",
         max_file_size_bytes: ceiling,
       },
@@ -437,7 +439,7 @@ function allFilesConnectionRecord(
 }
 
 describe("google-drive handleSchedule — all-files mode", () => {
-  it("uploads bytes for downloadable files and stamps blob_ref (default target_type = google.drive.file)", async () => {
+  it("uploads bytes for downloadable files and stamps blob_ref (google family keeps google.drive.file)", async () => {
     const { ctx, created, uploads, emitted } = buildContext({
       connectionRecord: allFilesConnectionRecord(),
       proxyResponses: [
@@ -496,7 +498,7 @@ describe("google-drive handleSchedule — all-files mode", () => {
     expect(String(summary?.properties?.summary)).toContain("download_failed=0");
   });
 
-  it("emits core.file when operator configures target_type=core.file AND bytes ingested", async () => {
+  it("emits core.file when the operator configures the core family AND bytes ingested", async () => {
     const { ctx, created, uploads } = buildContext({
       connectionRecord: {
         id: CONNECTION_ID,
@@ -504,7 +506,7 @@ describe("google-drive handleSchedule — all-files mode", () => {
         properties: {
           kind: "integration",
           configuration: {
-            target_type: "core.file",
+            write_family: "core",
             download_mode: "all-files",
           },
         },
@@ -532,13 +534,56 @@ describe("google-drive handleSchedule — all-files mode", () => {
 
     expect(uploads).toHaveLength(1);
     expect(created).toHaveLength(1);
-    // Configured = core.file + bytes ingested → core.file with blob_ref +
+    // Configured = core family + bytes ingested → core.file with blob_ref +
     // the cross-app `url` property pointing at the Drive web view.
     expect(created[0]?.type).toBe("core.file");
     expect(created[0]?.properties?.blob_ref).toBe(uploads[0]!.hash);
     expect(created[0]?.properties?.url).toBe(
       "https://drive.google.com/file/d/drv-pdf2/view",
     );
+  });
+
+  it("honors a legacy stored target_type by resolving its family", async () => {
+    // Pins the legacy stored-configuration read: connections configured
+    // before write families carry `target_type` rather than
+    // `write_family`, and that value must keep deciding what they write
+    // until the post-cutover configuration rewrite removes it.
+    const { ctx, created, uploads } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: {
+            target_type: "core.file",
+            download_mode: "all-files",
+          },
+        },
+      },
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-pdf3",
+                name: "notes.pdf",
+                mimeType: "application/pdf",
+                size: "8",
+                webViewLink: "https://drive.google.com/file/d/drv-pdf3/view",
+              },
+            ],
+          }),
+        () => binaryResponse(PDF_BYTES, "application/pdf"),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(uploads).toHaveLength(1);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("core.file");
   });
 
   it("skips Google-native files (no per-file activity; rolled into summary)", async () => {

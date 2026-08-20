@@ -20,6 +20,7 @@ import {
   type ItemState,
   type ScheduleMessage,
   type ItemEventMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import {
   handleSchedule,
@@ -156,6 +157,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return {
@@ -435,6 +437,7 @@ describe("task-auto-archive handlers", () => {
       cursor: createCursorStore(storage),
       activity: createActivitySink(client, "conn_taa_test"),
       echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+      mapping: familyOnlyMappingResolver(),
       cycle: null,
     };
 

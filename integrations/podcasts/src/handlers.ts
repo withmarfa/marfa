@@ -31,6 +31,7 @@ import {
   type CreateItemInput,
   type HandlerResult,
 } from "@withmarfa/runtime-sdk";
+import { resolveWriteFamily } from "@withmarfa/shared";
 import {
   DEFAULT_WRITE_FAMILY,
   EPISODE_BATCH_SIZE,
@@ -39,6 +40,7 @@ import {
   MAX_FEEDS_PER_TICK,
   MAX_FEED_BYTES,
   RECENT_ID_RING_SIZE,
+  PODCASTS_MANIFEST,
   STUCK_FEED_DAYS,
   WRITE_FAMILIES,
   type WriteFamily,
@@ -177,9 +179,11 @@ async function resolveConfig(
       )
     : [];
 
-  const family = raw.write_family;
+  const resolved = resolveWriteFamily(PODCASTS_MANIFEST, raw);
   const writeFamily: WriteFamily =
-    family === "core" || family === "podcast" ? family : DEFAULT_WRITE_FAMILY;
+    resolved?.name === "core" || resolved?.name === "podcast"
+      ? resolved.name
+      : DEFAULT_WRITE_FAMILY;
 
   return {
     ok: true,

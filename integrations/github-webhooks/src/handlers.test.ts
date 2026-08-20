@@ -15,6 +15,7 @@ import {
   type ConnectionClient,
   type CreateItemInput,
   type WebhookHandlerInput,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleGithubWebhook } from "./handlers.js";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
@@ -90,6 +91,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, emitted, created };

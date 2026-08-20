@@ -23,6 +23,7 @@ import {
   createActivitySink,
   createCursorStore,
   createEchoSuppression,
+  createMappingResolver,
   dispatchMessage,
   type ConnectionContext,
   type CursorStorageAdapter,
@@ -105,6 +106,7 @@ function buildContext(
     cursor: createCursorStore(adapter),
     activity: createActivitySink(client, message.connection_id),
     echo: createEchoSuppression(adapter, echo),
+    mapping: createMappingResolver(client, message.connection_id),
     cycle: cycleParent,
   };
 }
@@ -122,6 +124,14 @@ async function handleDispatch(
   try {
     const ctx = buildContext(request, adapter);
     result = await dispatchMessage(ctx, request.message);
+    // Deliberate mapping skips surface as one summary row per run, and
+    // this is the per-run boundary on this substrate. Best-effort: a
+    // summary that cannot land must not fail the dispatch it describes.
+    try {
+      await ctx.mapping.flushSkipSummary(ctx.activity);
+    } catch {
+      // The skip count resets either way; the run's own result stands.
+    }
   } catch (err) {
     threw = true;
     thrownMessage = err instanceof Error ? err.message : String(err);

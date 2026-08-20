@@ -23,6 +23,7 @@ import {
   type ItemResource,
   type ItemState,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule } from "./handlers.js";
 import { GOOGLE_YOUTUBE_MANIFEST } from "./manifest.js";
@@ -153,6 +154,7 @@ function buildContext(opts: BuildOpts): BuiltState {
       echo_ttl_seconds: 1,
       lag_window_seconds: 1,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
   return { ctx, created, updated, edges, emitted, proxyCalls };

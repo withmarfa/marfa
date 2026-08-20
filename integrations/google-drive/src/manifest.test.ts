@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@withmarfa/shared";
-import { GOOGLE_DRIVE_MANIFEST } from "./manifest.js";
+import {
+  IntegrationManifestSchema,
+  validateWriteFamilies,
+} from "@withmarfa/shared";
+import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_DRIVE_MANIFEST,
+  WRITE_FAMILIES,
+} from "./manifest.js";
 
 describe("Google Drive manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
@@ -43,6 +50,32 @@ describe("Google Drive manifest", () => {
       "google.drive.file",
     ]);
     expect(GOOGLE_DRIVE_MANIFEST.direction).toBe("read");
+  });
+
+  it("declares coherent write families with a family chooser", () => {
+    expect(validateWriteFamilies(GOOGLE_DRIVE_MANIFEST)).toEqual([]);
+    expect(
+      GOOGLE_DRIVE_MANIFEST.configuration_schema?.write_family
+        ?.from_write_families,
+    ).toBe(true);
+    expect(
+      GOOGLE_DRIVE_MANIFEST.configuration_schema?.write_family?.default,
+    ).toBe(DEFAULT_WRITE_FAMILY);
+    expect(GOOGLE_DRIVE_MANIFEST.write_families?.default).toBe(
+      DEFAULT_WRITE_FAMILY,
+    );
+  });
+
+  it("defaults to the upstream-fidelity family and keeps download_mode independent", () => {
+    expect(DEFAULT_WRITE_FAMILY).toBe("google");
+    expect(WRITE_FAMILIES.google.file).toBe("google.drive.file");
+    expect(WRITE_FAMILIES.core.file).toBe("core.file");
+    // `download_mode` stays its own key: the core family behaviorally
+    // pairs with `all-files`, but the manifest declares no cross-field
+    // constraint.
+    expect(
+      GOOGLE_DRIVE_MANIFEST.configuration_schema?.download_mode?.values,
+    ).toEqual(["metadata", "all-files"]);
   });
 
   it("publisher namespace is shared with the other google.* integrations", () => {

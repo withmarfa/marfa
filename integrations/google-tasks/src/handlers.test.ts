@@ -31,6 +31,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
+  familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 import { GOOGLE_TASKS_MANIFEST } from "./manifest.js";
@@ -154,6 +155,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
       echo_ttl_seconds: 120,
       lag_window_seconds: 600,
     }),
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   };
 
@@ -211,6 +213,56 @@ const PRIMARY_TASKS = {
     },
   ],
 };
+
+describe("google-tasks handlers — the type a connection writes", () => {
+  it("writes the configured family's type when the install names one", async () => {
+    const { ctx, created } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: {
+            write_family: "core",
+            selected_task_list_ids: ["list-primary"],
+          },
+        },
+      },
+      proxyResponses: [() => jsonResponse(PRIMARY_TASKS)],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(2);
+    expect(created.every((c) => c.type === "core.task")).toBe(true);
+  });
+
+  it("honors a legacy stored target_type by resolving its family", async () => {
+    // Pins the legacy stored-configuration read: connections configured
+    // before write families carry `target_type` rather than
+    // `write_family`, and that value must keep deciding what they write
+    // until the post-cutover configuration rewrite removes it.
+    const { ctx, created } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: {
+            target_type: "core.task",
+            selected_task_list_ids: ["list-primary"],
+          },
+        },
+      },
+      proxyResponses: [() => jsonResponse(PRIMARY_TASKS)],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(created).toHaveLength(2);
+    expect(created.every((c) => c.type === "core.task")).toBe(true);
+  });
+});
 
 describe("google-tasks handleSchedule", () => {
   it("discovers task lists, sweeps each, upserts as google.tasks.task by default", async () => {

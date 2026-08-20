@@ -955,8 +955,8 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
                 accessRole: "reader",
               },
             ],
-            targetTypeChoices: ["google.calendar.event", "core.event"],
-            defaultTargetType: "google.calendar.event",
+            writeFamilyChoices: ["google", "core"],
+            defaultWriteFamily: "google",
           }),
       },
       {
@@ -968,8 +968,8 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
           renderGoogleCalendarPicker({
             connectionId: CONNECTION_ID,
             calendars: [],
-            targetTypeChoices: ["google.calendar.event", "core.event"],
-            defaultTargetType: "google.calendar.event",
+            writeFamilyChoices: ["google", "core"],
+            defaultWriteFamily: "google",
           }),
       },
       {

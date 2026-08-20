@@ -68,8 +68,9 @@ surface clearly.
 
 Driven by `connection.properties.configuration`:
 
-- `target_type: string` — `google.contacts.contact` (default) or
-  `core.entity.person`.
+- `write_family: string` — `google` (default,
+  `google.contacts.contact`) or `core` (`core.entity.person`), declared
+  through the manifest's `write_families`.
 
 No second-level scoping (Calendar's `selected_calendar_ids`, Tasks'
 `selected_task_list_ids`) — every contact lives in the single

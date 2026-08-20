@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@withmarfa/shared";
-import { GOOGLE_YOUTUBE_MANIFEST } from "./manifest.js";
+import {
+  IntegrationManifestSchema,
+  validateWriteFamilies,
+} from "@withmarfa/shared";
+import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_YOUTUBE_MANIFEST,
+  WRITE_FAMILIES,
+} from "./manifest.js";
 
 describe("Google YouTube manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
@@ -41,6 +48,23 @@ describe("Google YouTube manifest", () => {
       "google.youtube.channel",
     ]);
     expect(GOOGLE_YOUTUBE_MANIFEST.direction).toBe("read");
+  });
+
+  it("declares one coherent write family and no chooser", () => {
+    expect(validateWriteFamilies(GOOGLE_YOUTUBE_MANIFEST)).toEqual([]);
+    expect(GOOGLE_YOUTUBE_MANIFEST.write_families?.default).toBe(
+      DEFAULT_WRITE_FAMILY,
+    );
+    // One family needs no `write_family` key: there is nothing to choose.
+    expect(
+      GOOGLE_YOUTUBE_MANIFEST.configuration_schema?.write_family,
+    ).toBeUndefined();
+    expect(
+      Object.keys(GOOGLE_YOUTUBE_MANIFEST.write_families?.families ?? {}),
+    ).toEqual(["google"]);
+    expect(WRITE_FAMILIES.google.video).toBe("google.youtube.video");
+    expect(WRITE_FAMILIES.google.playlist).toBe("google.youtube.playlist");
+    expect(WRITE_FAMILIES.google.channel).toBe("google.youtube.channel");
   });
 
   it("publisher namespace is shared with google.calendar / google.tasks / google.contacts", () => {

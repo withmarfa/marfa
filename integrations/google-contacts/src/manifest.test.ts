@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@withmarfa/shared";
-import { GOOGLE_CONTACTS_MANIFEST } from "./manifest.js";
+import {
+  IntegrationManifestSchema,
+  validateWriteFamilies,
+} from "@withmarfa/shared";
+import {
+  DEFAULT_WRITE_FAMILY,
+  GOOGLE_CONTACTS_MANIFEST,
+  WRITE_FAMILIES,
+} from "./manifest.js";
 
 describe("Google Contacts manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
@@ -42,6 +49,26 @@ describe("Google Contacts manifest", () => {
       "google.contacts.contact",
     ]);
     expect(GOOGLE_CONTACTS_MANIFEST.direction).toBe("both");
+  });
+
+  it("declares coherent write families with a family chooser", () => {
+    expect(validateWriteFamilies(GOOGLE_CONTACTS_MANIFEST)).toEqual([]);
+    expect(
+      GOOGLE_CONTACTS_MANIFEST.configuration_schema?.write_family
+        ?.from_write_families,
+    ).toBe(true);
+    expect(
+      GOOGLE_CONTACTS_MANIFEST.configuration_schema?.write_family?.default,
+    ).toBe(DEFAULT_WRITE_FAMILY);
+    expect(GOOGLE_CONTACTS_MANIFEST.write_families?.default).toBe(
+      DEFAULT_WRITE_FAMILY,
+    );
+  });
+
+  it("defaults to the upstream-fidelity family", () => {
+    expect(DEFAULT_WRITE_FAMILY).toBe("google");
+    expect(WRITE_FAMILIES.google.contact).toBe("google.contacts.contact");
+    expect(WRITE_FAMILIES.core.contact).toBe("core.entity.person");
   });
 
   it("publisher namespace is shared with google.calendar / google.tasks", () => {

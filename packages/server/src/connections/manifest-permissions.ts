@@ -9,6 +9,7 @@
  * reach is always least-privilege: exactly what the manifest declares,
  * never a wildcard.
  */
+import { ConnectionMappingSchema } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 /** Translate manifest.target_types into a `type_permissions` map: `write`
@@ -43,6 +44,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  *  admits exactly the credential's own Connection instead. */
 export function buildTypePermissions(
   manifest: IntegrationManifest | undefined,
+  connectionProperties?: Record<string, unknown>,
 ): Record<string, "read" | "write"> {
   const out: Record<string, "read" | "write"> = {
     "system.activity": "write",
@@ -50,6 +52,19 @@ export function buildTypePermissions(
   if (!manifest) return out;
   for (const t of manifest.target_types) {
     out[t] = "write";
+  }
+  // A user mapping routes records into types the manifest never named, so
+  // the credential needs write on them too. Configure-time validation
+  // already refused reserved namespaces and unresolvable types, so the
+  // projection stays inside what the space itself declared mappable; a
+  // stored document that no longer parses grants nothing.
+  const mapping = ConnectionMappingSchema.safeParse(
+    connectionProperties?.mapping,
+  );
+  if (mapping.success) {
+    for (const rule of mapping.data.rules) {
+      out[rule.target_type] = "write";
+    }
   }
   return out;
 }

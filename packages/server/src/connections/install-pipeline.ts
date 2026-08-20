@@ -336,7 +336,10 @@ export async function performInstall(
             label: credentialLabel,
             source: credentialSource,
             role: "member",
-            type_permissions: buildTypePermissions(manifest),
+            type_permissions: buildTypePermissions(
+              manifest,
+              connection.properties,
+            ),
             extension_permissions: buildExtensionPermissions(manifest),
             edge_permissions: buildEdgePermissions(manifest),
             connection_id: connection.id,

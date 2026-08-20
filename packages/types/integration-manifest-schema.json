@@ -337,6 +337,9 @@
           "from_target_types": {
             "type": "boolean"
           },
+          "from_write_families": {
+            "type": "boolean"
+          },
           "default": {
             "anyOf": [
               {
@@ -363,6 +366,54 @@
         ],
         "additionalProperties": false
       }
+    },
+    "write_families": {
+      "type": "object",
+      "properties": {
+        "families": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "types": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "description",
+              "types"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "families",
+        "default"
+      ],
+      "additionalProperties": false
+    },
+    "supports_user_mappings": {
+      "type": "boolean"
     }
   },
   "required": [

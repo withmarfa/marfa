@@ -55,8 +55,9 @@ defaults when absent):
 - `default_write_task_list_id: string` — new outbound tasks land
   here. Default `@default` (the Tasks API's alias for the user's
   primary list).
-- `target_type: string` — `google.tasks.task` (default) or
-  `core.task`.
+- `write_family: string` — `google` (default, `google.tasks.task`) or
+  `core` (`core.task`), declared through the manifest's
+  `write_families`.
 
 ## Cursor shape
 

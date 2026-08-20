@@ -1,3 +1,4 @@
+import { familyOnlyMappingResolver } from "@withmarfa/runtime-sdk";
 /* eslint-disable @typescript-eslint/require-await --
    The harness stubs stand in for asynchronous SDK methods, so they are
    async to match the interface they replace rather than because their
@@ -147,6 +148,7 @@ function harness(opts: HarnessOptions = {}) {
       },
     },
     echo: {} as never,
+    mapping: familyOnlyMappingResolver(),
     cycle: null,
   } as unknown as ConnectionContext;
 

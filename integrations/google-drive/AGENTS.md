@@ -48,8 +48,9 @@ created by this app) or `drive` (full Drive access).
 
 Driven by `connection.properties.configuration`:
 
-- `target_type: string` — `google.drive.file` (default) or
-  `core.file`. Acts as the operator's _preferred_ target when bytes
+- `write_family: string` — `google` (default, `google.drive.file`) or
+  `core` (`core.file`), declared through the manifest's
+  `write_families`. Acts as the operator's _preferred_ target when bytes
   are available. When bytes aren't ingested (metadata mode, or
   any all-files skip / failure), the handler routes to
   `google.drive.file` regardless — that's the only honest shape
