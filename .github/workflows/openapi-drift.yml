@@ -115,7 +115,7 @@ jobs:
                 --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
               fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
-          | curl -sS --max-time 20 -X POST https://alerts.cyzr.me/alert \
+          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
               -H "Authorization: Bearer $ALERTS_SECRET" \
               -H "Content-Type: application/json" --data @- \
-          || echo "Could not reach aic-alerts; not failing the run over it."
+          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
