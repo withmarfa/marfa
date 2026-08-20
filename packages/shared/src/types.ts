@@ -290,14 +290,14 @@ export interface ApiKey {
   scope_enforced?: boolean;
   /**
    * Connections runtime credential gate. When `true`, the credential was
-   * minted by the control-plane lease broker for a specific Connection's
-   * runtime. The extension write gate narrows such credentials to writing
-   * only the `connection.runtime` subtree of the item whose id matches
-   * `connection_id`.
+   * minted by the integration runtime for a specific Connection's
+   * dispatch. The extension write gate narrows such credentials to
+   * writing only the `connection.runtime` subtree of the item whose id
+   * matches `connection_id`.
    *
-   * Defaults to `false` for every other credential type. The mint route
-   * (`POST /system/runtime-credentials`) is the only path that flips
-   * this flag; ordinary key creation cannot.
+   * Defaults to `false` for every other credential type. The runtime's
+   * own mint path is the only one that flips this flag; ordinary key
+   * creation cannot.
    */
   is_runtime_credential?: boolean;
   /**
@@ -759,19 +759,6 @@ export interface ConnectionInstallResult {
 export interface ConnectionRuntimeStateResult {
   connection_id: string;
   runtime_status: "paused" | "healthy";
-  /**
-   * True only when a Durable Object attested the alarm changed state.
-   * False when there was nothing to change — the local substrate, or an
-   * integration deploying no Worker — and false when the call ran and
-   * failed. `schedule_error` tells those apart.
-   */
-  schedule_changed: boolean;
-  /**
-   * Present only when the schedule call ran and failed. The status write
-   * still happened, so the connection reads as paused with its alarm
-   * possibly still armed. Retry rather than assume.
-   */
-  schedule_error?: string;
   /** id of the system.activity row emitted by the pipeline. */
   activity_id: string;
 }
@@ -799,8 +786,8 @@ export interface ConnectionUninstallResult {
 }
 
 /**
- * Item-event types the reactive-run bridge fans out to integration
- * integrations. Mirrors the `ItemEvent['type']` union in `packages/server/
+ * Item-event types the reactive bridge fans out to integrations.
+ * Mirrors the `ItemEvent['type']` union in `packages/server/
  * src/pubsub.ts`. Used by `POST /connections/preview-event` for the
  * operator-supplied `event_type` in the preview-event request.
  */

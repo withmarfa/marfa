@@ -18593,7 +18593,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated and the schedule changed to match.",
+            "description": "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18609,14 +18609,6 @@
                         "healthy"
                       ]
                     },
-                    "schedule_changed": {
-                      "type": "boolean",
-                      "description": "Whether a schedule alarm actually changed state. False when there was nothing to change — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed call; check `schedule_error` to tell those apart."
-                    },
-                    "schedule_error": {
-                      "type": "string",
-                      "description": "Present only when the schedule call ran and failed. The status write still happened, so the connection reads as paused with its alarm possibly still armed. Retry."
-                    },
                     "activity_id": {
                       "type": "string"
                     }
@@ -18624,7 +18616,6 @@
                   "required": [
                     "connection_id",
                     "runtime_status",
-                    "schedule_changed",
                     "activity_id"
                   ]
                 }
@@ -18817,7 +18808,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated and the schedule changed to match.",
+            "description": "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18833,14 +18824,6 @@
                         "healthy"
                       ]
                     },
-                    "schedule_changed": {
-                      "type": "boolean",
-                      "description": "Whether a schedule alarm actually changed state. False when there was nothing to change — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed call; check `schedule_error` to tell those apart."
-                    },
-                    "schedule_error": {
-                      "type": "string",
-                      "description": "Present only when the schedule call ran and failed. The status write still happened, so the connection reads as paused with its alarm possibly still armed. Retry."
-                    },
                     "activity_id": {
                       "type": "string"
                     }
@@ -18848,7 +18831,6 @@
                   "required": [
                     "connection_id",
                     "runtime_status",
-                    "schedule_changed",
                     "activity_id"
                   ]
                 }
@@ -19067,14 +19049,6 @@
                       "type": "integer",
                       "minimum": 0
                     },
-                    "schedules_disarmed": {
-                      "type": "boolean",
-                      "description": "Whether a schedule alarm was actually cancelled for this connection. False when there was nothing to cancel — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed disarm; check `schedule_disarm_error` to tell those apart."
-                    },
-                    "schedule_disarm_error": {
-                      "type": "string",
-                      "description": "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm."
-                    },
                     "activity_id": {
                       "type": "string"
                     }
@@ -19085,7 +19059,6 @@
                     "oauth_tokens_deleted",
                     "leased_tokens_revoked",
                     "inbound_webhooks_disabled",
-                    "schedules_disarmed",
                     "activity_id"
                   ]
                 }

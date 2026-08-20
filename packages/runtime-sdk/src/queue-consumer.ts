@@ -53,6 +53,20 @@ export interface DlqProducer {
   ): Promise<void>;
 }
 
+/**
+ * The per-delivery envelope `consumeBatch` consumes: the payload plus
+ * per-message ack/retry and the delivery counter. Structural on
+ * purpose — the runtime-test harness constructs these directly around
+ * in-memory payloads.
+ */
+export interface QueueDeliveryMessage<Body = QueueMessage> {
+  readonly body: Body;
+  /** 1 on first delivery, incremented per redelivery. */
+  readonly attempts: number;
+  ack(): void;
+  retry(options?: { delaySeconds?: number }): void;
+}
+
 export interface ConsumerEnvironment {
   /** Base URL of the Marfa server. */
   apiUrl: string;
@@ -214,7 +228,7 @@ function backoffSecondsFor(attempts: number): number {
  */
 export async function consumeBatch(
   env: ConsumerEnvironment,
-  messages: Message<QueueMessage>[],
+  messages: QueueDeliveryMessage[],
 ): Promise<ConsumeOutcome> {
   const outcome: ConsumeOutcome = { acked: 0, retried: 0, failed: 0 };
   const hopBudget = env.hopBudget ?? SDK_DEFAULT_HOP_BUDGET;

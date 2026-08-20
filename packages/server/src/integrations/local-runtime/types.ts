@@ -1,7 +1,7 @@
 /**
  * Shared types for the local integrations runtime substrate.
  *
- * The substrate boots when `MARFA_INTEGRATION_RUNTIME=local` and replaces
+ * The in-process integration runtime replaces
  * the Cloudflare side of the dispatch loop (Workers + Queues + Durable
  * Objects + KV) with a Node-bundled equivalent backed by Postgres
  * (pg-boss) and `worker_thread` per-Integration handler pools. The

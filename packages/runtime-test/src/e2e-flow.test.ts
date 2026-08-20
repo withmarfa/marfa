@@ -6,16 +6,15 @@
  * inwards:
  *
  *   1. A webhook envelope arrives on the queue (mirroring what the
- *      runtime-control plane stamps in production after verifying an
- *      inbound delivery — see runtime-control/src/webhook-flow.test.ts
- *      for the verify+enqueue side). The envelope is constructed here
+ *      server's webhook-receipt route stamps in production after
+ *      verifying an inbound delivery). The envelope is constructed here
  *      with `integration_name` populated to the **primary**
  *      integration's name.
  *   2. consumeBatch picks the message up, invokes the primary's
  *      registered webhook handler, decoding `body_base64` to ArrayBuffer
  *      at the seam. The handler "publishes a reactive event" — in
  *      production this would post into Marfa via the runtime credential,
- *      the server's reactive-run bridge would fan out to subscribers,
+ *      the server's reactive bridge would fan out to subscribers,
  *      and a downstream item-event message would land on the queue. The
  *      e2e test simulates that bridge by enqueuing an item-event message
  *      with `cycle.hop_count` incremented and `originating_connection_id`
@@ -45,9 +44,9 @@
  *     `hop_count`, the secondary marker reads `null` / `0` instead of
  *     the expected provenance.
  *
- * The control-plane verify+enqueue side is pinned by
- * `packages/runtime-control/src/webhook-flow.test.ts`; this file picks
- * up where that one leaves off (queue → handler → reactive → handler).
+ * The verify+enqueue side is pinned by the server's webhook-receipt
+ * suite; this file picks up where that one leaves off (queue → handler
+ * → reactive → handler).
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {

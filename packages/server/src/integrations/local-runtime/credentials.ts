@@ -1,9 +1,7 @@
 /**
- * `mintCredential` short-circuit for the local runtime. The Cloudflare
- * substrate goes through the runtime-control lease broker → POST
- * `/system/runtime-credentials` → cached on the per-Connection Durable
- * Object. The local substrate skips the HTTP round-trip and calls
- * `storage.keys.createRuntimeCredential` directly.
+ * `mintCredential` for the integration runtime: no HTTP round-trip,
+ * the supervisor calls `storage.keys.createRuntimeCredential` directly
+ * for each dispatch it routes.
  *
  * Permissions are translated from the Integration manifest via the same
  * builders the hosted install pipeline uses (`manifest-permissions.ts`),

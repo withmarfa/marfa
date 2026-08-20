@@ -1,6 +1,6 @@
 /**
  * Inbound webhook signature verification — uniform adapter interface
- * shared across the Cloudflare Worker control plane (`runtime-control`)
+ * shared across the server's webhook-receipt route
  * and the Node-side server (`packages/server`).
  *
  * One Web-Crypto-only implementation serves both runtimes — Node 20+
@@ -27,7 +27,7 @@ export interface VerifyResult {
    * Sender-supplied delivery identifier extracted from the appropriate
    * header. Used by callers as the idempotency key (server-side: the
    * unique `(inbound_webhook_id, external_delivery_id)` index;
-   * runtime-control: the KV cache key). Adapters with no canonical
+   * the receipt route's idempotency key). Adapters with no canonical
    * delivery-id header return `undefined`; callers fall back to a
    * request-time identifier.
    */

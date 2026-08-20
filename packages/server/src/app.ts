@@ -33,7 +33,6 @@ import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { profileRoutes } from "./routes/profile.js";
 import { keyRoutes } from "./routes/keys.js";
-import { runtimeCredentialRoutes } from "./routes/runtime-credentials.js";
 import { credentialRoutes } from "./routes/credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
@@ -624,10 +623,6 @@ export function createApp(
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/credentials", credentialRoutes(storage));
   app.route(
-    "/system",
-    runtimeCredentialRoutes(storage, config.apiKeySalt, config.authMode),
-  );
-  app.route(
     "/integrations",
     integrationRoutes(storage, config.apiKeySalt, auth),
   );
@@ -760,12 +755,7 @@ export function createApp(
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
   app.route("/connections", connectionMappingRoutes(storage));
-  app.route(
-    "/connections",
-    connectionRoutes(storage, config.apiKeySalt, {
-      integrationRuntime: config.integrationRuntime ?? "local",
-    }),
-  );
+  app.route("/connections", connectionRoutes(storage, config.apiKeySalt));
   app.route(
     "/connections",
     connectionConfigureRoutes(storage, {

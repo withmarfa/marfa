@@ -61,8 +61,6 @@ services:
       DATABASE_URL: postgres://marfa:${POSTGRES_PASSWORD:-marfa}@postgres:5432/marfa
       API_KEY_SALT: ${API_KEY_SALT:?set API_KEY_SALT in .env — openssl rand -hex 32}
       MARFA_AUTH_SECRET: ${MARFA_AUTH_SECRET:?set MARFA_AUTH_SECRET in .env — openssl rand -hex 32}
-      # The local integration runtime needs Postgres (provided above).
-      MARFA_INTEGRATION_RUNTIME: local
       # No email by default; sign-up verification is skipped so the first admin
       # is never locked out. Wire MARFA_SMTP_* (see docs) for password resets.
       MARFA_EMAIL_BACKEND: none

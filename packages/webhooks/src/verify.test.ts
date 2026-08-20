@@ -7,7 +7,7 @@
  *
  * The cross-runtime parity claim is structural: both runtimes import
  * this code path (no separate `node:crypto` adapter). Workers-side
- * coverage is exercised by `runtime-control`'s test suite. Drift
+ * coverage is exercised by the server's webhook-receipt suite. Drift
  * between the two is impossible because there is no second
  * implementation to drift from.
  */

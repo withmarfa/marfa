@@ -1,6 +1,6 @@
 # @withmarfa/webhooks
 
-Cross-runtime inbound-webhook signature verification. Web Crypto only — no `node:crypto`, no Node APIs — so the same code runs in Cloudflare Workers (`runtime-control`) and Node (`@withmarfa/server`). Public package, published to npm.
+Inbound-webhook signature verification. Web Crypto only — no `node:crypto`, no Node APIs — so the code runs on any modern JS runtime; `@withmarfa/server`'s webhook-receipt route is the in-tree consumer. Public package, published to npm.
 
 ## Layout
 

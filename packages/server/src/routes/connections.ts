@@ -16,11 +16,7 @@ import {
   performUninstall,
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
-import {
-  armScheduleForInstall,
-  performInstall,
-} from "../connections/install-pipeline.js";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import { performInstall } from "../connections/install-pipeline.js";
 import {
   computeEffectiveHopCount,
   publish,
@@ -162,41 +158,20 @@ const UninstallResultSchema = z.object({
   oauth_tokens_deleted: z.boolean(),
   leased_tokens_revoked: z.number().int().nonnegative(),
   inbound_webhooks_disabled: z.number().int().nonnegative(),
-  schedules_disarmed: z
-    .boolean()
-    .describe(
-      "Whether a schedule alarm was actually cancelled for this connection. False when there was nothing to cancel — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed disarm; check `schedule_disarm_error` to tell those apart.",
-    ),
-  schedule_disarm_error: z
-    .string()
-    .optional()
-    .describe(
-      "Why the schedule disarm failed, when one was attempted. The uninstall still completed; re-run the disarm to clear the residual alarm.",
-    ),
   activity_id: z.string(),
 });
 
 const PauseResultSchema = z.object({
   connection_id: z.string(),
   runtime_status: z.enum(["paused", "healthy"]),
-  schedule_changed: z
-    .boolean()
-    .describe(
-      "Whether a schedule alarm actually changed state. False when there was nothing to change — a deployment with no runtime control plane, or an integration that deploys no Worker — and false on a failed call; check `schedule_error` to tell those apart.",
-    ),
-  schedule_error: z
-    .string()
-    .optional()
-    .describe(
-      "Present only when the schedule call ran and failed. The status write still happened, so the connection reads as paused with its alarm possibly still armed. Retry.",
-    ),
   activity_id: z.string(),
 });
 
 const pauseResponses = {
   200: {
     content: { "application/json": { schema: PauseResultSchema } },
-    description: "Runtime status updated and the schedule changed to match.",
+    description:
+      "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
   },
   400: {
     content: {
@@ -445,23 +420,7 @@ const previewEventRoute = createRoute({
   },
 });
 
-export interface ConnectionRoutesOptions {
-  /**
-   * Which integrations substrate this deployment runs, from
-   * `AppConfig.integrationRuntime`. The uninstall pipeline needs the
-   * declared value rather than an inference from whether the
-   * runtime-control coordinates happen to be present, so a hosted
-   * deployment that has lost a secret fails loudly instead of quietly
-   * behaving like a self-host.
-   */
-  integrationRuntime: "hosted" | "local";
-}
-
-export function connectionRoutes(
-  storage: Storage,
-  salt: string,
-  options: ConnectionRoutesOptions,
-) {
+export function connectionRoutes(storage: Storage, salt: string) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
@@ -514,20 +473,7 @@ export function connectionRoutes(
       ...(configuration !== undefined ? { configuration } : {}),
     });
 
-    // Best-effort schedule arm — failures emit action_required activity; install stays successful.
-    const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
-    const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
-    if (controlPlaneUrl && runtimeBrokerKey) {
-      await armScheduleForInstall(storage, {
-        manifest: props.manifest as IntegrationManifest,
-        connectionId: result.connection_id,
-        spaceId,
-        controlPlaneUrl,
-        runtimeBrokerKey,
-      });
-    }
-
-    // Publish a `created` event for the new connection so the reactive-run bridge's
+    // Publish a `created` event for the new connection so the reactive bridge's
     // cache-invalidation subscriber refreshes its in-memory subscription map.
     const connection = await storage.items.get(result.connection_id, spaceId);
     if (connection) {
@@ -687,8 +633,6 @@ export function connectionRoutes(
     apiKey: { id: string; space_id?: string },
     clientIp: string | null,
   ) => {
-    const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
-    const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
     const run = verb === "pause" ? performPause : performResume;
     try {
       return await run(storage, {
@@ -696,9 +640,6 @@ export function connectionRoutes(
         spaceId: apiKey.space_id ?? undefined,
         connectionId,
         clientIp,
-        integrationRuntime: options.integrationRuntime,
-        ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
-        ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
       });
     } catch (err) {
       if (err instanceof PauseError) {
@@ -739,19 +680,11 @@ export function connectionRoutes(
     const clientIp = c.var.clientIp;
 
     try {
-      // Hosted-substrate coordinates for the schedule-disarm step. The
-      // substrate itself comes from config, not from whether these are
-      // set — see ConnectionRoutesOptions.
-      const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
-      const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
       const result = await performUninstall(storage, {
         apiKeyId: apiKey.id,
         spaceId,
         connectionId,
         clientIp,
-        integrationRuntime: options.integrationRuntime,
-        ...(controlPlaneUrl !== undefined ? { controlPlaneUrl } : {}),
-        ...(runtimeBrokerKey !== undefined ? { runtimeBrokerKey } : {}),
       });
       return c.json(result, 200);
     } catch (err) {

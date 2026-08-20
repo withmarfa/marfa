@@ -42,7 +42,6 @@ import {
 import { setConsentLockBackend } from "./auth/consent-lock.js";
 import { createPgConsentLockBackend } from "./storage/pg/consent-lock-backend.js";
 import type { PgClient, PgDb } from "./storage/pg/connection.js";
-import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import {
   tryStartLocalIntegrationRuntime,
   loadInTreeRegistrations,
@@ -226,34 +225,6 @@ async function main() {
       });
       setConsentLockBackend(createPgConsentLockBackend(consentLockClient));
     }
-  }
-
-  // Opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS + CLOUDFLARE_QUEUES_API_TOKEN;
-  // returns null (self-hoster path) when either is unset.
-  const reactiveRunBridge = tryStartReactiveRunBridge(storage, {
-    sendTimeoutMs: config.reactiveRunSendTimeoutMs,
-  });
-  if (reactiveRunBridge) {
-    void reactiveRunBridge
-      .start()
-      .then(() => {
-        // Deliberately not "started": `start()` returns once the subscription
-        // cache is loaded and the election has been kicked off, which says
-        // nothing about whether this instance won it. The bridge logs the
-        // election outcome itself, and that is the line that means events are
-        // being forwarded.
-        log("info", "Reactive-run bridge wired; awaiting election");
-      })
-      .catch((err: unknown) => {
-        log("error", "Reactive-run bridge start failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  } else {
-    log(
-      "info",
-      "Reactive-run bridge disabled (CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS / CLOUDFLARE_QUEUES_API_TOKEN unset or malformed)",
-    );
   }
 
   // Declared ahead of the jobs rather than beside `shutdown()` because the
@@ -781,72 +752,61 @@ async function main() {
 
   const oidcSigner = await OidcSigner.init(storage);
 
-  // Integrations: the local substrate (Node + pg-boss) runs in-process; the
-  // hosted substrate delegates to Cloudflare. Default is "local". The local
-  // substrate needs Postgres, so on SQLite we skip it rather than crash the
-  // zero-config quickstart.
+  // Integrations run in-process (Node + pg-boss), which needs Postgres —
+  // on SQLite we skip them rather than crash the zero-config quickstart.
   let localRuntime: LocalRuntimeBundle | null = null;
-  if ((config.integrationRuntime ?? "local") === "local") {
-    if (config.storageDialect !== "pg") {
-      // Don't construct pg-boss against a SQLite (empty) connection string —
-      // that crashes boot. Skip with a log instead. Warn when the operator
-      // asked for local explicitly; info when it merely defaulted (the SQLite
-      // zero-config quickstart path) so a first run stays clean.
-      const explicit = process.env.MARFA_INTEGRATION_RUNTIME === "local";
-      log(
-        explicit ? "warn" : "info",
-        explicit
-          ? "MARFA_INTEGRATION_RUNTIME=local requires DB_DIALECT=pg; integrations are disabled. " +
-              "Switch to Postgres, or set MARFA_INTEGRATION_RUNTIME=hosted for the Cloudflare substrate."
-          : "Integrations are off: the local substrate needs Postgres and this instance is on SQLite. " +
-              "Set DB_DIALECT=pg to enable in-process integrations, or MARFA_INTEGRATION_RUNTIME=hosted for the Cloudflare substrate.",
-      );
-    } else {
-      try {
-        const integrationsRoot = resolveIntegrationsRoot();
-        const registrations = integrationsRoot
-          ? await loadInTreeRegistrations({ integrationsRoot })
-          : [];
-        if (registrations.length === 0) {
-          log(
-            "warn",
-            "Local integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js. " +
-              "Set MARFA_INTEGRATION_RUNTIME=hosted to use the Cloudflare substrate instead.",
-          );
-        }
-        // The shared pg-boss instance always exists on this branch: it is
-        // constructed for every Postgres deployment above (with the
-        // direct-endpoint and bounded-pool handling that used to live
-        // here), and this block is unreachable on SQLite.
-        if (!boss) {
-          throw new Error(
-            "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",
-          );
-        }
-        localRuntime = await tryStartLocalIntegrationRuntime({
-          storage,
-          config,
-          registrations,
-          boss,
-          // Handlers write back over HTTP. Localhost is right whenever the
-          // web tier shares the process; a split worker container points
-          // MARFA_API_URL at the web service instead.
-          apiUrl: config.apiUrl ?? `http://localhost:${String(config.port)}`,
-          // The web role keeps the enqueue side (webhook receipt, the
-          // dead-letter admin surface, the bridge election) but registers
-          // no queue workers, so dispatch runs only where the role says.
-          dispatch: runsWorker,
-        });
-        log("info", "Local integration runtime started", {
-          registrations: registrations.length,
-          dispatch: runsWorker,
-        });
-      } catch (err) {
-        log("error", "Local integration runtime failed to start", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
+  if (config.storageDialect !== "pg") {
+    // Don't construct pg-boss against a SQLite (empty) connection string —
+    // that crashes boot. Skip with a log instead.
+    log(
+      "info",
+      "Integrations are off: the integration runtime needs Postgres and this instance is on SQLite. " +
+        "Set DB_DIALECT=pg to enable in-process integrations.",
+    );
+  } else {
+    try {
+      const integrationsRoot = resolveIntegrationsRoot();
+      const registrations = integrationsRoot
+        ? await loadInTreeRegistrations({ integrationsRoot })
+        : [];
+      if (registrations.length === 0) {
+        log(
+          "warn",
+          "Integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js.",
+        );
       }
+      // The shared pg-boss instance always exists on this branch: it is
+      // constructed for every Postgres deployment above (with the
+      // direct-endpoint and bounded-pool handling that used to live
+      // here), and this block is unreachable on SQLite.
+      if (!boss) {
+        throw new Error(
+          "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",
+        );
+      }
+      localRuntime = await tryStartLocalIntegrationRuntime({
+        storage,
+        config,
+        registrations,
+        boss,
+        // Handlers write back over HTTP. Localhost is right whenever the
+        // web tier shares the process; a split worker container points
+        // MARFA_API_URL at the web service instead.
+        apiUrl: config.apiUrl ?? `http://localhost:${String(config.port)}`,
+        // The web role keeps the enqueue side (webhook receipt, the
+        // dead-letter admin surface, the bridge election) but registers
+        // no queue workers, so dispatch runs only where the role says.
+        dispatch: runsWorker,
+      });
+      log("info", "Local integration runtime started", {
+        registrations: registrations.length,
+        dispatch: runsWorker,
+      });
+    } catch (err) {
+      log("error", "Local integration runtime failed to start", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
     }
   }
 
@@ -957,19 +917,6 @@ async function main() {
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
-    // Bridge stops are AWAITED (bounded): the elected drainer holds a
-    // reserved connection on the job-holder client, and a fire-and-forget
-    // stop left that reservation live when storage close ran — a plain
-    // pool end waits on reserved connections, so every shutdown burned its
-    // storage-close budget and warned. The bound keeps a wedged drainer
-    // from stalling shutdown; the forced client end below is the backstop
-    // that closes the socket regardless.
-    if (reactiveRunBridge) {
-      await withTimeout(
-        reactiveRunBridge.stop(),
-        SHUTDOWN_STEP_TIMEOUT_MS,
-      ).catch(() => undefined);
-    }
     // pg-boss's stop must be AWAITED: its graceful path runs failWip only
     // after in-flight handlers settle, and failWip is what frees each
     // job's active slot so the queued successor is fetchable on the next

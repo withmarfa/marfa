@@ -1,6 +1,6 @@
 /**
  * Webhook receipt route (POST /runtime/webhook/:connection_id) — the
- * local-runtime equivalent of the Cloudflare runtime-control Worker's
+ * the integration runtime's inbound webhook receipt route, the
  * inbound webhook endpoint. Covers:
  *
  *   - verify happy path enqueues a WebhookMessage
