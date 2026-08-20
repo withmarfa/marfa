@@ -33,11 +33,16 @@ export function createPgConsentLockBackend(
     const reserved = await sessionClient.reserve();
     let destroyed = false;
     try {
+      // session-scoped-by-design: the reservation above owns one real
+      // backend for the whole hold (session-mode client only, per the
+      // module doc), and the critical section spans network I/O that a
+      // transaction-scoped lock would force into a held-open transaction.
       await reserved`SELECT pg_advisory_lock(hashtextextended(${hashedKey}, 0))`;
       try {
         return await fn();
       } finally {
         try {
+          // session-scoped-by-design: pairs with the acquire above.
           await reserved`SELECT pg_advisory_unlock(hashtextextended(${hashedKey}, 0))`;
         } catch {
           // A connection whose unlock failed is in an unknown state and
