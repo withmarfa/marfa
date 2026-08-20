@@ -66,15 +66,16 @@ interface ManifestTrigger {
  *   - The manifest is invalid (validateManifest rejects it)
  *   - The manifest declares no `item-event` trigger
  *   - The connection's `properties.status` is set and not `active`
- *   - The connection's `properties.runtime_status` is `failing` (the
- *     subscriber tripped the bridge's sustained-failure escalation;
- *     dispatch stays gated until an operator clears the field or
- *     transitions it back to a non-failing value)
+ *   - The connection's `properties.runtime_status` is `failing`.
+ *     Nothing in-tree writes that value any more (the sustained-failure
+ *     escalation went with the retired hosted bridge); the gate stays
+ *     so an operator-set or pre-existing value keeps its meaning.
  *   - The connection's `properties.runtime_status` is `paused` (the
- *     operator asked it to stop; the pause pipeline's own update event
- *     re-evaluates the entry and drops it, and resume re-adds it the
- *     same way). Inbound webhook receipt is deliberately not gated
- *     here — it has its own route and its own decision to make.
+ *     operator asked it to stop). The pause/resume/uninstall routes
+ *     publish the status change, and the bridge's invalidation
+ *     subscriber re-evaluates the entry — that event is load-bearing;
+ *     a bare storage write would leave the cached entry in place.
+ *     Inbound webhook receipt is deliberately not gated by pause.
  *
  * The entry snapshots the persisted manifest (name, target_types), so
  * cached entries assume manifests are immutable per version — which the

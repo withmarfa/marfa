@@ -469,6 +469,51 @@ describe("local-runtime supervisor", () => {
     expect(String(threw)).toMatch(/revoked|cannot mint/i);
   });
 
+  it("acks a queued message for a paused Connection without dispatching", async () => {
+    // Whatever enqueued the message — a pre-pause tick, an in-flight
+    // webhook, a dead-letter replay — a paused connection dispatches
+    // nothing, and the skip is a clean ack rather than an error so
+    // resume does not inherit a backlog of burned retries.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    const row = await ctx.storage.items.get(connectionId, undefined);
+    await ctx.storage.items.update(
+      connectionId,
+      { properties: { ...row!.properties, runtime_status: "paused" } },
+      undefined,
+    );
+
+    let handlerRan = false;
+    const registration = buildRegistration(() => {
+      handlerRan = true;
+      return Promise.resolve({ ok: true });
+    });
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    });
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+  });
+
   it("ignores integrations with no registration (envelope filter)", async () => {
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",

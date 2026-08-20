@@ -125,6 +125,20 @@ export function createSupervisor(
     const result = await storage.coordination.withJobLock(
       lockName,
       async () => {
+        // The gate that survives any stale cache upstream: whatever
+        // enqueued this message (a pre-pause tick, an in-flight webhook,
+        // a dead-letter replay), a paused connection dispatches nothing.
+        // Clean ack rather than an error — the message is not wrong,
+        // just no longer wanted, and resume must not inherit a backlog
+        // of burned retries.
+        const target = await storage.items.get(message.connection_id);
+        if (
+          target?.type === "system.connection" &&
+          (target.properties as { runtime_status?: string }).runtime_status ===
+            "paused"
+        ) {
+          return { ok: true as const };
+        }
         const credential = await mintLocalRuntimeCredential(
           storage,
           config.apiKeySalt,

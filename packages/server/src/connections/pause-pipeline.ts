@@ -22,10 +22,13 @@
  * with the permission fixed. `runtime_status` already carries `paused`,
  * which is what it is for.
  *
- * **Pausing stops the runtime through state alone.** The scheduler's
- * walker and the reactive dispatch path both gate on `runtime_status`,
- * so a paused connection simply stops being scheduled and stops
- * receiving item events; there is no alarm to cancel.
+ * **Pausing stops the runtime through state plus one event.** The
+ * scheduler's walker re-reads storage every tick and skips paused
+ * connections; the reactive bridge holds a cached subscription map, so
+ * the route publishes the status flip and the bridge's invalidation
+ * subscriber drops (or re-adds) the entry. Work already sitting on the
+ * dispatch queue is skipped at dispatch time by the supervisor's own
+ * gate. Inbound webhook receipt is deliberately not gated by pause.
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
@@ -51,7 +54,8 @@ export class PauseError extends Error {
       | "connection_not_found"
       | "wrong_connection_kind"
       | "revoked"
-      | "already_in_state",
+      | "already_in_state"
+      | "not_paused",
     message: string,
   ) {
     super(message);
@@ -109,6 +113,16 @@ async function applyRuntimeState(
     throw new PauseError(
       "already_in_state",
       `Connection ${input.connectionId} is already ${target === "paused" ? "paused" : "running"}`,
+    );
+  }
+  // Resume undoes a pause and nothing else. Without this, resume was a
+  // general clear-my-status button: a reauth_required connection came
+  // back reading healthy on credentials the proxy had already given up
+  // on, and a failing one silently re-entered fan-out.
+  if (target === "healthy" && current !== "paused") {
+    throw new PauseError(
+      "not_paused",
+      `Connection ${input.connectionId} is not paused (runtime_status: ${current ?? "unset"}); resume only reverses a pause`,
     );
   }
 

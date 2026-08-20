@@ -18313,7 +18313,8 @@
                               "system_type",
                               "type_not_targeted",
                               "hop_budget_exceeded",
-                              "subscription_inactive"
+                              "subscription_inactive",
+                              "subscription_paused"
                             ]
                           },
                           "envelope": {
@@ -18573,7 +18574,7 @@
           "Connections"
         ],
         "summary": "Pause an integration connection",
-        "description": "Stops a connection without tearing it down: sets `runtime_status` to `paused` and disarms its schedule, so scheduled runs and item-event dispatches both stop. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
+        "description": "Stops a connection without tearing it down: sets `runtime_status` to `paused`, so the scheduler skips it from the next tick and reactive fan-out drops it. Work already sitting on the dispatch queue drains, and inbound webhook receipt is not gated by pause. Credentials and the upstream OAuth grant are left intact, so `resume` restores it without a fresh consent round trip. Pausing an already-paused connection returns 400.",
         "security": [
           {
             "bearerAuth": []
@@ -18593,7 +18594,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
+            "description": "Runtime status updated. The scheduler and reactive fan-out both gate on it from the next tick; work already queued drains, and inbound webhook receipt is not gated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18788,7 +18789,7 @@
           "Connections"
         ],
         "summary": "Resume a paused integration connection",
-        "description": "Reverses `pause`: sets `runtime_status` back to `healthy` and re-arms the schedule. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
+        "description": "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler and reactive fan-out pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
         "security": [
           {
             "bearerAuth": []
@@ -18808,7 +18809,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Runtime status updated. The scheduler and reactive dispatch both gate on it, so a paused connection stops running immediately.",
+            "description": "Runtime status updated. The scheduler and reactive fan-out both gate on it from the next tick; work already queued drains, and inbound webhook receipt is not gated.",
             "content": {
               "application/json": {
                 "schema": {

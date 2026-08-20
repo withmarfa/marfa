@@ -12,7 +12,8 @@
  *   - `properties.status` unset OR `"active"`
  *   - `properties.runtime_status` not `"paused"` (pause stops the
  *     schedule; the next tick simply skips the connection, and resume
- *     picks it back up with nothing to re-arm)
+ *     picks it back up with nothing to re-arm) and not `"failing"`
+ *     (mirroring the reactive registry's gate on the same value)
  *   - `properties.integration_ref` resolves to a `system.integration` whose
  *     manifest:
  *       - validates against `IntegrationManifestSchema`
@@ -92,6 +93,7 @@ function isLocalIntegrationConnection(connection: {
   if (props.kind !== "integration") return false;
   if (props.status !== undefined && props.status !== "active") return false;
   if (props.runtime_status === "paused") return false;
+  if (props.runtime_status === "failing") return false;
   if (!props.integration_ref) return false;
   return true;
 }

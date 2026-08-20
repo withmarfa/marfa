@@ -197,6 +197,27 @@ describe("pause and resume are reachable by the connection's owner", () => {
     ).toBe(400);
   });
 
+  it("refuses to resume a connection that is not paused", async () => {
+    // Resume undoes a pause and nothing else. Before the guard it was a
+    // general clear-my-status button: a reauth_required connection came
+    // back reading healthy on credentials the proxy had given up on.
+    const id = await connectionIn(spaceId);
+    const row = await ctx.storage.items.get(id, spaceId);
+    await ctx.storage.items.update(
+      id,
+      { properties: { ...row!.properties, runtime_status: "reauth_required" } },
+      spaceId,
+    );
+
+    const res = await request(ctx.app, "POST", `/connections/${id}/resume`, {
+      key,
+    });
+    expect(res.status).toBe(400);
+
+    const after = await ctx.storage.items.get(id, spaceId);
+    expect(after?.properties.runtime_status).toBe("reauth_required");
+  });
+
   it("refuses to pause a revoked connection", async () => {
     const id = await connectionIn(spaceId);
     await ctx.storage.items.transition(id, "revoked", spaceId);
@@ -223,7 +244,9 @@ describe("pause actually stops dispatch", () => {
   // The defect this pins: pause flipped `runtime_status` and stopped
   // nothing — the reactive registry only gated `failing`, and the
   // schedule walker never read the field at all, so the operator's stop
-  // control reported success and the connection kept running.
+  // control reported success and the connection kept running. This
+  // suite covers the pure gate and the route's write; the live bridge's
+  // CACHED map is covered by reactive-bridge.invalidation.test.ts.
   let spaceId: string;
   let key: string;
 
@@ -270,7 +293,7 @@ describe("pause actually stops dispatch", () => {
     return connection.id;
   }
 
-  it("a paused connection leaves the reactive registry, and resume restores it", async () => {
+  it("the registry gate refuses a paused connection, and admits it after resume", async () => {
     const id = await reactiveConnection();
 
     const before = await ctx.storage.items.get(id, spaceId);

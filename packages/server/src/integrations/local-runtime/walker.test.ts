@@ -167,6 +167,25 @@ describe("local-runtime connection walker", () => {
     expect(enqueued[0]?.message.connection_id).toBe(pausedId);
   });
 
+  it("skips a failing Connection, mirroring the reactive registry's gate", async () => {
+    const failManifest = { ...MANIFEST_LOCAL, name: "test.walker-failing" };
+    const integrationId = await createIntegrationItem(failManifest);
+    await createConnection({
+      integrationItemId: integrationId,
+      runtimeStatus: "failing",
+    });
+
+    const enqueued: SchedulerEnvelope[] = [];
+    const count = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      failManifest.name,
+      Date.now(),
+    );
+    expect(count).toBe(0);
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("does not enqueue anything for an integration with no Connections", async () => {
     const enqueued: SchedulerEnvelope[] = [];
     const runtime = makeStubRuntime(enqueued);

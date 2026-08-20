@@ -549,7 +549,15 @@ async function markReauthRequired(
       {
         properties: {
           ...connection.properties,
-          runtime_status: "reauth_required",
+          // Never overwrite an operator's pause: a retrying dispatch that
+          // takes a terminal 401 during the pause window would otherwise
+          // rewrite the field and the connection would resume scheduling
+          // on the next tick. If the credentials are really dead, the
+          // first dispatch after resume re-stamps this immediately.
+          runtime_status:
+            connection.properties.runtime_status === "paused"
+              ? "paused"
+              : "reauth_required",
           last_error_at: new Date().toISOString(),
         },
       },
