@@ -963,9 +963,11 @@ export function requireMetadataPermission(
   // Same admin-tier shape as `requireEdgePermission`: space_admin is
   // admin-shaped within its space for metadata mutations too — except
   // OAuth (`scope_enforced`) keys, which must carry the granted scope
-  // (`metadata.types:write` / `metadata.edge_types:write`). The
-  // platform-credential gate on reserved-namespace type registration still
-  // applies via the route-level `is_platform` check, not here.
+  // (`metadata.types:write` / `metadata.edge_types:write`). Namespace
+  // rules are the route's, not this gate's: reserved roots (`core.*`,
+  // `system.*`, `marfa.*`) are refused at registration for every
+  // credential, platform included, and publisher namespaces bind to the
+  // caller's claimed handle in hosted mode.
   if (roleBypassesPermissionMaps(apiKey)) return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
