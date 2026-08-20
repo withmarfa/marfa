@@ -7,9 +7,9 @@ install seam with a non-default `auth_scheme`.
 
 - Manifest name: **`readwise.reader`** (publisher `readwise`,
   identifier `reader`).
-- Target type: `readwise.document`, and only that. The item-event
-  trigger delivers every item event in the space, so the type gate is
-  the handler's job.
+- Target type: `readwise.document`, and only that. The bridge filters
+  item events to the manifest's target types; the handler keeps its own
+  type check as the defensive layer.
 - Direction: **`both`**.
 
 ## Reader is not Readwise Highlights

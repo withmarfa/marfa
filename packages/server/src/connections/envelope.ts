@@ -34,6 +34,10 @@ export interface SubscriptionEntry {
    *  cheaply. Single-space self-hosts leave this null on every
    *  connection — the gate trivially passes. */
   space_id: string | null;
+  /** The manifest's declared type set, verbatim. Runtime credentials are
+   *  minted to exactly these types, so an event for any other type is a
+   *  dispatch the handler could only fail — the gate drops it instead. */
+  target_types: readonly string[];
 }
 
 interface ConnectionProperties {
@@ -66,6 +70,13 @@ interface ManifestTrigger {
  *     subscriber tripped the bridge's sustained-failure escalation;
  *     dispatch stays gated until an operator clears the field or
  *     transitions it back to a non-failing value)
+ *
+ * The entry snapshots the persisted manifest (name, target_types), so
+ * cached entries assume manifests are immutable per version — which the
+ * registration route enforces. An in-place edit of a system.integration
+ * item's manifest through the generic item routes bypasses the
+ * system.connection invalidation events and leaves entries stale until
+ * the next rebuild.
  */
 export async function buildEntryForConnection(
   storage: Storage,
@@ -104,6 +115,7 @@ export async function buildEntryForConnection(
     connection_id: connection.id,
     integration_name: validated.manifest.name,
     space_id: connection.space_id ?? null,
+    target_types: validated.manifest.target_types,
   };
 }
 
@@ -138,7 +150,11 @@ export type DispatchOutcome =
   | { would_dispatch: true }
   | {
       would_dispatch: false;
-      reason: "self_event" | "cross_space" | "system_type";
+      reason:
+        | "self_event"
+        | "cross_space"
+        | "system_type"
+        | "type_not_targeted";
     };
 
 /**
@@ -146,6 +162,8 @@ export type DispatchOutcome =
  *   1. system type (the event is the platform's own bookkeeping)
  *   2. self-event (the subscriber is the connection that originated the event)
  *   3. cross-space (the subscriber's space doesn't match the event's)
+ *   4. type-not-targeted (the item's type is outside the subscriber
+ *      manifest's target_types — its credential could not read the item)
  *
  * Returns `{ would_dispatch: true }` when every gate passes — the caller
  * may then build the envelope. Hop-budget enforcement is upstream of the
@@ -178,6 +196,17 @@ export function evaluateDispatch(
   const eventSpaceId = event.spaceId ?? null;
   if ((entry.space_id ?? null) !== eventSpaceId) {
     return { would_dispatch: false, reason: "cross_space" };
+  }
+  // A subscriber's runtime credential holds exactly its manifest's
+  // declared types, so an event for any other type can only ever fail in
+  // the handler — usually as a 403 the moment it reads the item back,
+  // recorded as an action_required permanent failure. Item type is fixed
+  // for the life of an item, so the payload's type is safe to judge for
+  // update and delete events alike. Last of the gates deliberately: the
+  // more specific refusals above keep their reasons for events that fail
+  // on several axes.
+  if (!entry.target_types.includes(event.item.type)) {
+    return { would_dispatch: false, reason: "type_not_targeted" };
   }
   return { would_dispatch: true };
 }

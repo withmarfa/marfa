@@ -354,6 +354,7 @@ const PreviewEventEnvelopeSchema = z.object({
     "self_event",
     "cross_space",
     "system_type",
+    "type_not_targeted",
     "hop_budget_exceeded",
     "subscription_inactive",
   ]),

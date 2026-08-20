@@ -300,6 +300,9 @@ describe("buildEntryForConnection", () => {
     expect(entry).not.toBeNull();
     expect(entry?.connection_id).toBe(connId);
     expect(entry?.integration_name).toBe("acme.bridge-test");
+    // The dispatch gate judges events against this set; an entry built
+    // without it would refuse every event.
+    expect(entry?.target_types).toEqual(["core.note"]);
   });
 
   it("returns null when the manifest has no item-event trigger", async () => {

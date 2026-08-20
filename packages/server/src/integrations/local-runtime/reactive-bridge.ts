@@ -7,9 +7,9 @@
  * pg-boss queue instead — same logical flow, no remote hop.
  *
  * The bridge reuses the `evaluateDispatch` + `buildQueueMessageBody`
- * helpers from `envelope.ts` so the per-subscriber gate (self-event,
- * cross-space) is identical to the hosted side. The substrate-specific
- * piece is the send step.
+ * helpers from `envelope.ts` so the per-subscriber gate (system-type,
+ * self-event, cross-space, type-not-targeted) is identical to the
+ * hosted side. The substrate-specific piece is the send step.
  */
 import { emitWake, subscribe, type ItemEventWithId } from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
