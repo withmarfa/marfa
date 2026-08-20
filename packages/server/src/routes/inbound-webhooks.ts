@@ -81,7 +81,14 @@ async function requireConnectionAccess(
   c: import("hono").Context<AppEnv>,
   storage: Storage,
   connectionId: string,
-): Promise<{ spaceId: string | undefined }> {
+): Promise<{
+  spaceId: string | undefined;
+  /** The connection's own space, distinct from the caller's: a platform
+   *  admin carries no space, but a subscription row must live in the
+   *  connection's space or the webhook receipt route's space-fenced
+   *  lookup will never find it. */
+  connectionSpaceId: string | undefined;
+}> {
   const key = requireAuth(c);
   const spaceId = key.space_id ?? undefined;
   const connection = await storage.items.get(connectionId, spaceId);
@@ -108,7 +115,7 @@ async function requireConnectionAccess(
       "Caller cannot manage inbound webhooks on this connection",
     );
   }
-  return { spaceId };
+  return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +407,11 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   // POST /connections/:id/inbound-webhooks
   r.openapi(createInboundWebhookRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
+    const { spaceId, connectionSpaceId } = await requireConnectionAccess(
+      c,
+      storage,
+      connectionId,
+    );
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
@@ -421,7 +432,11 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     const id = generateId();
     const row = await storage.inboundWebhooks.create({
       id,
-      space_id: spaceId,
+      // The connection's space, not the caller's: a platform admin has no
+      // space, and a space-less row is invisible to the receipt route's
+      // space-fenced subscription lookup, so the webhook it subscribes
+      // would never deliver.
+      space_id: connectionSpaceId,
       connection_id: connectionId,
       external_service_id: body.external_service_id,
       secret_encrypted,
