@@ -512,6 +512,13 @@
       "when": 1787263385660,
       "tag": "0072_captured_email_to_marfa",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "6",
+      "when": 1787264776478,
+      "tag": "0073_catalog_manifests_carry_the_type_rename",
+      "breakpoints": true
     }
   ]
 }
