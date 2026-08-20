@@ -2305,3 +2305,82 @@ describe("permission-gate ordering (priority cluster)", () => {
     }
   });
 });
+
+describe("POST /items — inline-edge hydration parity past the cap", () => {
+  it("returns the same 50 edges and cursor a fresh read would, and the cursor reaches the rest", async () => {
+    // The create response builds its edge hydration from the rows the
+    // transaction created rather than reading them back, so this pins
+    // the parity that makes the shortcut safe: same edges as a
+    // follow-up GET, same has_more, and a cursor that fetches the
+    // remainder with no duplicates and no unreachable edges.
+    const targetIds: string[] = [];
+    for (let i = 0; i < 51; i++) {
+      const t = await request(ctx.app, "POST", "/items", {
+        key: ctx.adminKey,
+        body: {
+          type: "core.note",
+          properties: { body: `target-${String(i)}` },
+        },
+      });
+      targetIds.push(((await t.json()) as { item: { id: string } }).item.id);
+    }
+
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "many-edges" },
+        edges: { references: targetIds },
+      },
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as {
+      item: {
+        id: string;
+        edges: Record<
+          string,
+          { edges: { id: string }[]; has_more: boolean; next_cursor?: string }
+        >;
+      };
+    };
+    const block = created.item.edges.references;
+    if (!block) throw new Error("references block missing from response");
+    expect(block.edges).toHaveLength(50);
+    expect(block.has_more).toBe(true);
+    expect(block.next_cursor).toBeDefined();
+
+    // Byte-parity with the read path: a fresh single-item GET must
+    // return the identical 50 edge ids in the identical order.
+    const readBack = await request(
+      ctx.app,
+      "GET",
+      `/items/${created.item.id}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
+    const readItem = (await readBack.json()) as {
+      item: {
+        edges: Record<string, { edges: { id: string }[] }>;
+      };
+    };
+    const readBlock = readItem.item.edges.references;
+    if (!readBlock) throw new Error("references block missing from read");
+    expect(block.edges.map((e) => e.id)).toEqual(
+      readBlock.edges.map((e) => e.id),
+    );
+
+    // The cursor reaches exactly the one remaining edge — no duplicates
+    // of the fifty already returned, nothing unreachable.
+    const rest = await request(
+      ctx.app,
+      "GET",
+      `/items/${created.item.id}/edges?edge_type=references&cursor=${encodeURIComponent(block.next_cursor ?? "")}`,
+      { key: ctx.adminKey },
+    );
+    const restBody = (await rest.json()) as { data: { id: string }[] };
+    const firstPageIds = new Set(block.edges.map((e) => e.id));
+    expect(restBody.data).toHaveLength(1);
+    expect(firstPageIds.has(restBody.data[0]?.id ?? "")).toBe(false);
+  });
+});

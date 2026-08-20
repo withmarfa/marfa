@@ -167,11 +167,18 @@ export function rateLimitMiddleware(
 
     // All applicable windows increment in ONE statement — same table,
     // same timestamp, previously three sequential round trips on every
-    // request. One deliberate semantic shift rides along: a request the
-    // credential cap rejects still counts against the aggregate and
-    // space windows, where before the later increments never ran. The
-    // request did arrive, so counting it is the honest reading, and the
-    // wider caps only see the difference under sustained abuse.
+    // request. One deliberate semantic shift rides along: a request any
+    // earlier cap rejects still counts against the later windows (and
+    // reaches the per-space ceiling lookup), where before a rejection
+    // stopped the chain. The request did arrive, so counting it is the
+    // honest reading, and a client hammering one tightly-capped path now
+    // exhausts its own aggregate budget too — deliberate backpressure.
+    // The trade to know about: rejected traffic on a 30/min auth path
+    // can now reach the aggregate cap, so on a deployment that has NOT
+    // set TRUSTED_PROXY_CIDRS behind a proxy (where every anonymous
+    // caller collapses onto one identifier) one abuser's rejections can
+    // 429 the shared identifier everywhere. Configured proxy trust keeps
+    // identifiers per-client and the blast radius the abuser's own.
     const spaceId = apiKey?.space_id;
     const spaceLimitValue = spaceId ? await spaceRateLimit(spaceId, now) : null;
     const aggregateWindowKey = `all:${identifier}`;
@@ -203,22 +210,27 @@ export function rateLimitMiddleware(
       );
     };
 
-    // Set rate limit headers (per-credential window — the most
-    // immediate cap most callers will hit).
+    // The credential window is unconditionally in the batch, so a miss
+    // is an impossible state — and rate limiting is a security control,
+    // so an impossible state fails loud rather than silently skipping
+    // the cap and the X-RateLimit-* trio.
     const credentialResult = windows.get(credentialWindowKey);
-    if (credentialResult) {
-      c.header("X-RateLimit-Limit", String(limit));
-      c.header(
-        "X-RateLimit-Remaining",
-        String(Math.max(0, limit - credentialResult.count)),
-      );
-      c.header(
-        "X-RateLimit-Reset",
-        String(
-          Math.ceil(new Date(credentialResult.expires_at).getTime() / 1000),
-        ),
+    if (!credentialResult) {
+      throw new Error(
+        "rateLimits.incrementWindows: batch missed the credential window",
       );
     }
+    // Set rate limit headers (per-credential window — the most
+    // immediate cap most callers will hit).
+    c.header("X-RateLimit-Limit", String(limit));
+    c.header(
+      "X-RateLimit-Remaining",
+      String(Math.max(0, limit - credentialResult.count)),
+    );
+    c.header(
+      "X-RateLimit-Reset",
+      String(Math.ceil(new Date(credentialResult.expires_at).getTime() / 1000)),
+    );
     rejectOver(credentialResult, limit, "Rate limit exceeded");
 
     // Aggregate per-identifier window — keyed on the identifier with NO

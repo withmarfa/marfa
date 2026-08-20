@@ -81,6 +81,10 @@ export class PgRateLimitStore implements RateLimitStore {
     const result = new Map<string, { count: number; expires_at: string }>();
     // Sorted and deduplicated so two concurrent batches take their row
     // locks in one order — unordered multi-row upserts can deadlock.
+    // The retention sweep's bulk DELETE locks in index-scan order and
+    // can still cross a batch mid-flight; hourly cadence and expired-row
+    // targets make that collision rare, and it surfaces as a loud error
+    // rather than a wrong count.
     const unique = [...new Set(keys)].sort();
     if (unique.length === 0) return result;
     const nextExpiresAt = new Date(

@@ -1406,9 +1406,17 @@ export function itemRoutes(storage: Storage) {
       },
     );
 
+    // Sorted to the store's exact read order (created_at DESC, id DESC)
+    // before grouping: groupAndCap's cap and cursor logic assume it, and
+    // body order fed in raw returned the OLDEST fifty of a large batch
+    // with a cursor that re-fetched them and never reached the newest.
+    const orderedEdges = [...createdEdges].sort(
+      (a, b) =>
+        b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
+    );
     const itemWithEdges = {
       ...item,
-      edges: groupAndCap(createdEdges, HYDRATE_PER_TYPE_CAP),
+      edges: groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP),
     };
 
     await publish({

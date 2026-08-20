@@ -16,11 +16,12 @@ import { createPgStorage } from "../src/storage/pg/index.js";
 import { FilesystemBlobBackend } from "../src/storage/blob-backend.js";
 import { createApp } from "../src/app.js";
 import { hashApiKey } from "../src/middleware/auth.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
-const PORT = 8899;
+const PORT = Number(process.env.BENCH_PORT ?? 8899);
 const WARMUP = 25;
 const RUNS = 200;
 
@@ -28,9 +29,8 @@ async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   const storage = await createPgStorage(databaseUrl, { authMode: "keys" });
-  const blob = new FilesystemBlobBackend(
-    join(mkdtempSync(join(tmpdir(), "bench-create-")), "blobs"),
-  );
+  const blobDir = mkdtempSync(join(tmpdir(), "bench-create-"));
+  const blob = new FilesystemBlobBackend(join(blobDir, "blobs"));
   const app = createApp(storage, blob, {
     port: PORT,
     storageDialect: "pg",
@@ -77,8 +77,10 @@ async function main(): Promise<void> {
   if (!storage.spaces) throw new Error("PG storage always carries spaces");
   const space = await storage.spaces.create("bench");
   const spaceId = space.id;
-  const raw = "marfa_k1_bench_create";
-  await storage.keys.create(
+  // Random suffix so a second run against the same database does not
+  // die on the key hash's unique constraint.
+  const raw = `marfa_k1_bench_${randomBytes(6).toString("hex")}`;
+  const benchKey = await storage.keys.create(
     {
       label: "bench",
       source: "bench",
@@ -91,53 +93,71 @@ async function main(): Promise<void> {
   );
 
   const server = serve({ fetch: app.fetch, port: PORT });
-  const base = `http://127.0.0.1:${String(PORT)}`;
-  const create = async (withEdge: string | null): Promise<string> => {
-    const res = await fetch(`${base}/items`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${raw}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        type: "core.note",
-        properties: { body: "bench" },
-        tags: ["bench"],
-        ...(withEdge && { edges: { about: [withEdge] } }),
-      }),
-    });
-    if (res.status !== 201) {
-      throw new Error(`create failed: ${String(res.status)}`);
+  try {
+    const base = `http://127.0.0.1:${String(PORT)}`;
+    const create = async (withEdge: string | null): Promise<string> => {
+      const res = await fetch(`${base}/items`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${raw}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "core.note",
+          properties: { body: "bench" },
+          tags: ["bench"],
+          ...(withEdge && { edges: { about: [withEdge] } }),
+        }),
+      });
+      if (res.status !== 201) {
+        throw new Error(`create failed: ${String(res.status)}`);
+      }
+      const parsed = (await res.json()) as { item: { id: string } };
+      return parsed.item.id;
+    };
+
+    const anchor = await create(null);
+    for (let i = 0; i < WARMUP; i++) await create(null);
+
+    const samples: number[] = [];
+    for (let i = 0; i < RUNS; i++) {
+      const target = i % 2 === 0 ? null : anchor;
+      const started = performance.now();
+      await create(target);
+      samples.push(performance.now() - started);
     }
-    const parsed = (await res.json()) as { item: { id: string } };
-    return parsed.item.id;
-  };
-
-  const anchor = await create(null);
-  for (let i = 0; i < WARMUP; i++) await create(null);
-
-  const samples: number[] = [];
-  for (let i = 0; i < RUNS; i++) {
-    const target = i % 2 === 0 ? null : anchor;
-    const started = performance.now();
-    await create(target);
-    samples.push(performance.now() - started);
+    samples.sort((a, b) => a - b);
+    const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+    const at = (q: number): number => samples[Math.floor(RUNS * q)] ?? 0;
+    console.log(
+      `bench-create: ${String(RUNS)} space-bounded POST /items over HTTP (pg, port ${String(PORT)}, half with an inline edge)`,
+    );
+    console.log(
+      JSON.stringify({
+        runs: RUNS,
+        mean_ms: Number(mean.toFixed(2)),
+        p50_ms: Number(at(0.5).toFixed(2)),
+        p95_ms: Number(at(0.95).toFixed(2)),
+        p99_ms: Number(at(0.99).toFixed(2)),
+      }),
+    );
+  } finally {
+    // The bench owns what it creates, on every exit path. The credential
+    // is the part that matters: a live space_admin key left behind is
+    // not harmless if DATABASE_URL pointed anywhere real. The space is
+    // suspended (there is no space delete), which blocks writes through
+    // it; the inert bench items stay, which is fine for the scratch
+    // database this expects.
+    try {
+      await storage.keys.revoke(benchKey.id);
+      await storage.spaces.suspend(spaceId);
+    } catch {
+      // The database may already be gone; nothing to clean then.
+    }
+    server.close();
+    await storage.close();
+    rmSync(blobDir, { recursive: true, force: true });
   }
-  samples.sort((a, b) => a - b);
-  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-  const at = (q: number): number => samples[Math.floor(RUNS * q)] ?? 0;
-  console.log(
-    JSON.stringify({
-      runs: RUNS,
-      mean_ms: Number(mean.toFixed(2)),
-      p50_ms: Number(at(0.5).toFixed(2)),
-      p95_ms: Number(at(0.95).toFixed(2)),
-      p99_ms: Number(at(0.99).toFixed(2)),
-    }),
-  );
-
-  server.close();
-  await storage.close();
 }
 
 void main().then(
