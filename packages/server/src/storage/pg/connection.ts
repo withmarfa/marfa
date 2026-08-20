@@ -171,6 +171,15 @@ export async function createConnection(
     max: options?.maxPoolSize ?? 10,
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
+    // Named prepared statements live on the backend that saw the PREPARE.
+    // Behind a transaction-mode pooler the next statement's backend need
+    // not be that one, so execution fails intermittently with "prepared
+    // statement ... does not exist" — a shape that reads as flakiness and
+    // has produced production errors. The driver defaults `prepare` to
+    // true, so the pool mode has to reach this constructor rather than
+    // dying at the guards above. The direct clients below own their
+    // backends for a connection's lifetime and keep preparation.
+    prepare: options?.poolMode !== "transaction",
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });

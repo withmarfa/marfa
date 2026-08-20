@@ -463,7 +463,18 @@ async function main() {
         }
         // pg-boss 12 is ESM with a named `PgBoss` export (no default).
         const { PgBoss } = await import("pg-boss");
-        const boss = new PgBoss(config.databaseUrl);
+        // pg-boss claims jobs with SELECT FOR UPDATE SKIP LOCKED and takes
+        // only transaction-scoped advisory locks, so its core path
+        // tolerates a transaction-mode pooler — but its schema migration
+        // and maintenance deserve a connection that owns its backend, and
+        // the direct endpoint is guaranteed present in transaction mode by
+        // the boot guard. Handing it the pooled URL would also spend
+        // pooler slots on polling that never benefits from pooling.
+        const bossUrl =
+          config.dbPoolMode === "transaction" && config.databaseUrlDirect
+            ? config.databaseUrlDirect
+            : config.databaseUrl;
+        const boss = new PgBoss(bossUrl);
         await boss.start();
         localRuntime = await tryStartLocalIntegrationRuntime({
           storage,
