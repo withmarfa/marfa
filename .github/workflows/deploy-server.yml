@@ -1,0 +1,166 @@
+# Build + deploy the Marfa server to its droplet.
+#
+# Two jobs:
+#   build-push  builds the linux/amd64 image NATIVELY on a GitHub-hosted
+#               amd64 runner (no QEMU) and pushes it to the container
+#               registry under the immutable per-build tag <env>-<short-sha>.
+#   deploy      runs on the SELF-HOSTED pool, which shares the private
+#               network the droplets' SSH binds to. It syncs the compose
+#               shape from infra/digitalocean/, points the box's .env at
+#               the new tag, runs the one-shot migrate, rolls the stack,
+#               and gates on /health reporting the deployed SHA.
+#
+# The runner split is deliberate. The image build needs an amd64 host and
+# no private access, so it stays hosted. The deploy step needs the private
+# network (the droplets expose 80/443 to the internet and nothing else),
+# which only the self-hosted pool is on. Health is probed over the same
+# SSH hop against localhost, so the gate works identically before and
+# after the public DNS points at the box.
+#
+# Migrate-then-deploy: migrations run on the droplet via the compose
+# one-shot BEFORE the stack rolls — the managed database accepts
+# connections only from inside its private network, so the box is the only
+# place they can run. A failed migration aborts the deploy with the old
+# build still serving. The server never migrates on boot.
+#
+# Manual trigger only. Merges to main change nothing until dispatched.
+#
+# Required GitHub config:
+#   secrets.DIGITALOCEAN_ACCESS_TOKEN  registry push credential
+#   vars.DO_REGISTRY                   registry prefix, e.g.
+#                                      registry.digitalocean.com/<name>
+#   vars.STAGING_DEPLOY_SSH            ssh target for the staging box,
+#                                      user@host on the private network
+#   vars.PROD_DEPLOY_SSH               same for production
+#
+# Required on the self-hosted pool: an SSH key at ~/.ssh/marfa-droplets
+# authorized on the boxes. Required on each box: /opt/marfa with .env and
+# server.env already populated (first-deploy steps in
+# infra/digitalocean/README.md), and Docker logged into the registry.
+
+name: Deploy server
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+concurrency:
+  group: deploy-server-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: meta
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          DO_REGISTRY: ${{ vars.DO_REGISTRY }}
+        run: echo "image=${DO_REGISTRY}/marfa-server:${ENVIRONMENT}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to the registry
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        # The registry accepts the API token as both username and password.
+        run: |
+          echo "$DIGITALOCEAN_ACCESS_TOKEN" | docker login registry.digitalocean.com \
+            --username "$DIGITALOCEAN_ACCESS_TOKEN" --password-stdin
+      - name: Build and push linux/amd64 image
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        # The Dockerfile's own build steps verify the image can run its
+        # integrations (see packages/server/Dockerfile); a broken image
+        # fails here, before anything is pushed.
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -f packages/server/Dockerfile \
+            --build-arg VERSION_SHA="${GITHUB_SHA::7}" \
+            -t "$IMAGE" \
+            --push .
+
+  deploy:
+    needs: build-push
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - id: target
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          STAGING_DEPLOY_SSH: ${{ vars.STAGING_DEPLOY_SSH }}
+          PROD_DEPLOY_SSH: ${{ vars.PROD_DEPLOY_SSH }}
+        run: |
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            echo "ssh=$PROD_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
+            echo "compose=compose.production.yml" >> "$GITHUB_OUTPUT"
+          else
+            echo "ssh=$STAGING_DEPLOY_SSH" >> "$GITHUB_OUTPUT"
+            echo "compose=compose.staging.yml" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The compose shape deploys from the repo on every roll so the box
+      # can never drift from what is reviewed here. The env files are the
+      # box's own and are never written by a deploy.
+      - name: Sync deployment shape
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+        run: |
+          scp -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new \
+            infra/digitalocean/compose.production.yml \
+            infra/digitalocean/compose.staging.yml \
+            infra/digitalocean/Caddyfile \
+            "$TARGET":/opt/marfa/
+
+      - name: Point the box at the new image
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+          IMAGE: ${{ needs.build-push.outputs.image }}
+        run: |
+          ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
+            "sed -i 's#^MARFA_SERVER_IMAGE=.*#MARFA_SERVER_IMAGE=${IMAGE}#' /opt/marfa/.env \
+             && grep -q '^MARFA_SERVER_IMAGE=${IMAGE}\$' /opt/marfa/.env"
+
+      - name: Pull, migrate, roll
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+          COMPOSE: ${{ steps.target.outputs.compose }}
+        # Migrations gate the roll: a non-zero exit from the one-shot
+        # leaves the old build serving and fails the workflow here.
+        run: |
+          ssh -i ~/.ssh/marfa-droplets "$TARGET" bash -s <<EOF
+          set -euo pipefail
+          cd /opt/marfa
+          docker compose -f $COMPOSE pull --quiet
+          docker compose -f $COMPOSE run --rm migrate
+          docker compose -f $COMPOSE up -d --remove-orphans
+          EOF
+
+      # A zero from compose says containers started; it says nothing about
+      # the build actually serving. Poll /health on the box until it
+      # reports the SHA this run built, so every deploy proves itself.
+      # Probed over SSH against localhost: independent of DNS, TLS, and
+      # whether the public hostname points here yet.
+      - name: Gate on the new build serving
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+        run: |
+          EXPECTED="${GITHUB_SHA::7}"
+          for i in $(seq 1 60); do
+            GOT=$(ssh -i ~/.ssh/marfa-droplets "$TARGET" \
+              "curl -fsS --max-time 5 http://localhost:8600/health 2>/dev/null" \
+              | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+            if [ "$GOT" = "$EXPECTED" ]; then
+              echo "healthy on $EXPECTED after ${i} polls"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "health never reported $EXPECTED (last saw: ${GOT:-nothing})" >&2
+          exit 1
