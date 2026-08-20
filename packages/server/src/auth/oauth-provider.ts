@@ -86,12 +86,32 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * Derived from the registry (`user` + `app` + every shipped publisher
  * root) rather than enumerated by hand — the hand list drifted the same
  * way the bundle lists did. Namespaces of custom types registered at
- * runtime reach the allowlist through the bundle fold-in below: boot
- * resolves them into the active bundles, and every bundle-referenced
- * scope is admitted.
+ * runtime reach the allowlist through {@link setRuntimeNamespaceRoots},
+ * which boot installs from the `custom_types` table across every space.
  */
 export const CUSTOM_TYPE_NAMESPACES: readonly string[] =
   deriveCustomTypeNamespaces();
+
+/**
+ * Runtime custom-namespace roots admitted into the scope allowlist,
+ * installed once at boot (same restart-re-enumeration model as the rest
+ * of the allowlist). Spans every space deliberately: admission is not
+ * disclosure. The allowlist only decides whether a requested literal can
+ * survive to consent — which space's data a granted wildcard reaches is
+ * decided per-token by the data plane, and every user-visible surface
+ * (the consent screen's bundles, the advertised discovery metadata) stays
+ * scoped to the consenting space or the instance baseline.
+ */
+let runtimeNamespaceRoots: readonly string[] = [];
+
+/**
+ * Install the runtime namespace roots {@link buildAllowedScopes} folds in.
+ * Called at boot after storage is up, before the auth instance is built,
+ * and by tests exercising the runtime-namespace path.
+ */
+export function setRuntimeNamespaceRoots(roots: readonly string[]): void {
+  runtimeNamespaceRoots = roots;
+}
 
 /**
  * Build the complete list of scope literals the plugin will accept.
@@ -108,10 +128,13 @@ export const CUSTOM_TYPE_NAMESPACES: readonly string[] =
  * scopes — a server restart re-enumerates from the (now-larger) registry.
  * The namespace wildcards are how an app reaches its own `user.*` types
  * without that restart: the wildcard is granted, and matches whatever
- * `user.*` types exist at check time.
+ * `user.*` types exist at check time. The same applies to a space's own
+ * publisher-handle namespaces, whose roots boot installs via
+ * {@link setRuntimeNamespaceRoots}.
  */
 export function buildAllowedScopes(
   permissionBundles: PermissionBundle[] = getPermissionBundles(),
+  runtimeRoots: readonly string[] = runtimeNamespaceRoots,
 ): string[] {
   const out = new Set<string>([
     // OIDC literals
@@ -140,6 +163,10 @@ export function buildAllowedScopes(
       `${ns}.*:read`,
       `${ns}.*:write`,
     ]),
+    // Runtime publisher-handle roots, installed at boot. Same rationale as
+    // the registry-derived set above; enumerated from the database rather
+    // than the registry because a space's registrations live only there.
+    ...runtimeRoots.flatMap((ns) => [`${ns}.*:read`, `${ns}.*:write`]),
   ]);
 
   // Item type scopes: `<typeId>:read|write` for every registered type.
@@ -166,7 +193,7 @@ export function buildAllowedScopes(
   // edge type on the instance — so an app asking narrowly was silently
   // narrowed to nothing and its relation writes were refused, while an app
   // asking for everything worked.
-  for (const namespace of CUSTOM_TYPE_NAMESPACES) {
+  for (const namespace of [...CUSTOM_TYPE_NAMESPACES, ...runtimeRoots]) {
     out.add(`edge.${namespace}.*:read`);
     out.add(`edge.${namespace}.*:write`);
   }
@@ -306,6 +333,15 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // registered at runtime require a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
+    // The acceptance set above spans every space's runtime namespace roots,
+    // but the discovery document is public and unauthenticated — advertising
+    // those roots there would disclose one space's namespace names to
+    // everyone. Pin the advertisement to the baseline enumeration (grammar +
+    // configured bundles, no runtime roots); the plugin otherwise advertises
+    // `scopes` verbatim as `scopes_supported`.
+    advertisedMetadata: {
+      scopes_supported: buildAllowedScopes(undefined, []),
+    },
     // Ceilings for the paths with no consent screen in front of them —
     // values owned by `auth/mint-ceiling.ts` so the plugin options and
     // the Marfa-owned DCR mirror cannot drift. Without these, both

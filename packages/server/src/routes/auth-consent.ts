@@ -78,16 +78,22 @@
 
 import { Hono } from "hono";
 import { makeSignature, constantTimeEqual } from "better-auth/crypto";
-import type { ParsedScope } from "@withmarfa/shared";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
   parseScope,
   isValidScope,
+  isReservedRoot,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
+import { getPermissionBundles } from "../config.js";
+import {
+  buildDefaultPermissionBundles,
+  resolveRuntimeCustomNamespaces,
+} from "../auth/default-bundles.js";
 import { renderConsentScreen } from "./consent.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
@@ -483,6 +489,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       session.user.id,
       parsed,
     );
+    const bundles = await resolveConsentBundles(deps.storage, session.user.id);
 
     // Optional error banner (e.g. when redirected back from a zero-scopes
     // accept). Renderer ignores undefined.
@@ -505,6 +512,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       wildcardExpansions,
       priorScopes,
       errorMessage,
+      bundles,
     });
 
     // Every consent-page render carries `Cache-Control: no-store`.
@@ -1461,31 +1469,76 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * For a requested `user.*` wildcard, the display names of the custom types
- * the consenting user's space holds today. Read from `storage.types` (the
- * persisted rows) rather than the in-memory registry, so the answer does
- * not depend on hydration state. Hosted-mode only — in keys mode there is
- * no per-user space, and the wildcard row renders without the enumeration,
- * the same degradation as the re-consent diff.
+ * The bundle set this consent screen groups under: the consenting space's
+ * own derivation, so a space's runtime-registered custom types reach the
+ * custom tile. Space-scoped deliberately — bundles built from another
+ * space's registrations would present namespaces the consenting space
+ * cannot even resolve, and name them as the user's own.
+ *
+ * Falls back to the instance-wide active bundles when there is no space to
+ * scope to (keys mode, or a user not yet provisioned) and when the
+ * operator override is set — a curated `MARFA_PERMISSION_BUNDLES` is
+ * authoritative over any derivation, per-space included.
+ */
+export async function resolveConsentBundles(
+  storage: Storage,
+  authUserId: string,
+): Promise<PermissionBundle[]> {
+  if (process.env.MARFA_PERMISSION_BUNDLES) return getPermissionBundles();
+  if (!storage.users) return getPermissionBundles();
+  const row = await storage.users.getByAuthUserId(authUserId);
+  const spaceId = row?.space_id;
+  if (!spaceId) return getPermissionBundles();
+  return buildDefaultPermissionBundles(
+    await resolveRuntimeCustomNamespaces(storage, spaceId),
+  );
+}
+
+/**
+ * For a requested custom-namespace wildcard (`user.*`, or a runtime
+ * publisher-handle root the space registered), the display names of the
+ * custom types the consenting user's space holds under that root today.
+ * Read from `storage.types` (the persisted rows) rather than the
+ * in-memory registry, so the answer does not depend on hydration state.
+ * Reserved roots stay un-enumerated — their members are the platform's,
+ * not the space's — and any other root enumerates only what the space
+ * itself registered under it, so a registry-shipped root like `google.*`
+ * keeps rendering without an enumeration. Hosted-mode only — in keys mode
+ * there is no per-user space, and the wildcard row renders without the
+ * enumeration, the same degradation as the re-consent diff.
  */
 export async function resolveWildcardExpansions(
   storage: Storage,
   authUserId: string,
   scopes: ParsedScope[],
 ): Promise<Record<string, string[]>> {
-  const wantsUserWildcard = scopes.some(
-    (s) => s.kind !== "oidc" && s.typePattern === "user.*",
-  );
-  if (!wantsUserWildcard || !storage.users) return {};
+  const wildcardRoots = new Set<string>();
+  for (const s of scopes) {
+    if (s.kind === "oidc" || !s.typePattern.endsWith(".*")) continue;
+    const root = s.typePattern.slice(0, -2);
+    if (root.length === 0 || root.includes(".")) continue;
+    // The runtime tiers (`user`, `app`) sit inside the reserved set —
+    // reserved means unclaimable as a handle, not unregistrable — and are
+    // exactly the roots a space registers under, so they enumerate. The
+    // rest of the reserved set (`core`, `system`, `marfa`) is the
+    // platform's and never does.
+    if (isReservedRoot(root) && root !== "user" && root !== "app") continue;
+    wildcardRoots.add(root);
+  }
+  if (wildcardRoots.size === 0 || !storage.users) return {};
   const row = await storage.users.getByAuthUserId(authUserId);
   const spaceId = row?.space_id;
   if (!spaceId) return {};
-  const types = await storage.types.list(spaceId);
-  const names = types
-    .filter((t) => t.id.startsWith("user."))
-    .map((t) => t.label ?? t.id)
-    .sort();
-  return names.length > 0 ? { "user.*": names } : {};
+  const types = await storage.types.listCustom(spaceId);
+  const out: Record<string, string[]> = {};
+  for (const root of wildcardRoots) {
+    const names = types
+      .filter((t) => t.id.startsWith(`${root}.`))
+      .map((t) => t.label ?? t.id)
+      .sort();
+    if (names.length > 0) out[`${root}.*`] = names;
+  }
+  return out;
 }
 
 /**

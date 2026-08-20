@@ -73,6 +73,30 @@ describe("buildAllowedScopes", () => {
     expect(scopes).toContain("edge.*:write");
     expect(scopes).toContain("openid");
   });
+
+  it("admits runtime namespace roots for items and edges alike", () => {
+    // The roots boot installs from the custom_types table, spanning every
+    // space. Admission is what lets a space's own publisher-handle scopes
+    // survive the authorize narrowing at all — without it the request is
+    // silently stripped before consent and the capability is inert.
+    const scopes = new Set(
+      buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES, ["acme"]),
+    );
+    expect(scopes.has("acme.*:read")).toBe(true);
+    expect(scopes.has("acme.*:write")).toBe(true);
+    expect(scopes.has("edge.acme.*:read")).toBe(true);
+    expect(scopes.has("edge.acme.*:write")).toBe(true);
+  });
+
+  it("keeps runtime roots out of the enumeration when told to", () => {
+    // The advertised discovery metadata is built with an explicit empty
+    // root set: the acceptance set spans every space, the public document
+    // must not — an unauthenticated reader learning one space's namespace
+    // names would be a cross-space disclosure.
+    const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES, []));
+    expect(scopes.has("acme.*:read")).toBe(false);
+    expect(scopes.has("edge.acme.*:read")).toBe(false);
+  });
 });
 
 describe("permission bundles bind to the type registry", () => {

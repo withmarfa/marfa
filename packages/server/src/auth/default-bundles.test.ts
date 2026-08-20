@@ -3,6 +3,7 @@ import { TYPE_REGISTRY, classifyNamespace } from "@withmarfa/shared";
 import {
   buildDefaultPermissionBundles,
   deriveCustomTypeNamespaces,
+  resolveAllRuntimeCustomNamespaces,
   resolveRuntimeCustomNamespaces,
 } from "./default-bundles.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -108,6 +109,47 @@ describe("runtime custom-namespace resolution", () => {
       }
       const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
       expect(roots).toEqual(["acme"]);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("resolves one space's own registrations and never a sibling's", async () => {
+    // Hosted mode is where the space axis exists at all: registrations
+    // land in their owning space's bucket, and the consent-time question
+    // is "this space's roots", never the union. The space-less bucket
+    // stays empty here — which is exactly why a bucket read alone made
+    // the capability inert for every hosted space.
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const baseType = {
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      } as const;
+      const spaceA = await ctx.storage.spaces!.create("space-a");
+      const spaceB = await ctx.storage.spaces!.create("space-b");
+      await ctx.storage.types.create(
+        { id: "acme.gadget", ...baseType },
+        spaceA.id,
+      );
+      await ctx.storage.types.create(
+        { id: "rivalco.thing", ...baseType },
+        spaceB.id,
+      );
+
+      expect(
+        await resolveRuntimeCustomNamespaces(ctx.storage, spaceA.id),
+      ).toEqual(["acme"]);
+      expect(
+        await resolveRuntimeCustomNamespaces(ctx.storage, spaceB.id),
+      ).toEqual(["rivalco"]);
+      // The space-less bucket sees neither space's registrations.
+      expect(await resolveRuntimeCustomNamespaces(ctx.storage)).toEqual([]);
+      // The allowlist enumeration spans both — admission, not disclosure.
+      expect(await resolveAllRuntimeCustomNamespaces(ctx.storage)).toEqual([
+        "acme",
+        "rivalco",
+      ]);
     } finally {
       await ctx.cleanup();
     }
