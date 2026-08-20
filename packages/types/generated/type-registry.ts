@@ -531,6 +531,29 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaSong,
 ];
 
+const marfaCapturedEmail: TypeSchema = {
+  id: "marfa.captured_email",
+  label: "Captured Email",
+  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  version: 1,
+  fields: {
+    from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
+    from_name: { type: "string", description: "Display name from the `From:` header, if present." },
+    to_address: { type: "string", description: "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.marfa.so`).", required: true },
+    subject: { type: "string", description: "RFC 5322 `Subject:` header. Empty string when absent." },
+    text_body: { type: "string", description: "Plain-text body. Either the `text/plain` MIME part directly, or downgraded from `text/html` when only HTML is present." },
+    body: { type: "string", description: "Mirror of `text_body`, present so a generic note reader finds a body where it expects one. Always written (empty string when the email had no text part), which is what will eventually let this type claim `core.note` compatibility." },
+    html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitized on storage." },
+    sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time." },
+    message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
+    in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
+    references: { type: "array", description: "RFC 5322 `References:` header, split on whitespace. Each entry a Message-ID of an ancestor in the conversation thread.", items_type: "string" },
+    headers: { type: "object", description: "Selected subset of normalized lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded." },
+    attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.", items_type: "object" },
+  },
+  display_hints: { title_field: "subject", body_field: "text_body" },
+};
+
 const raindropCollection: TypeSchema = {
   id: "raindrop.collection",
   label: "Raindrop Collection",
@@ -672,7 +695,7 @@ const todoistTask: TypeSchema = {
 const withmarfaCapturedEmail: TypeSchema = {
   id: "withmarfa.captured_email",
   label: "Captured Email",
-  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Not yet `compatible_with: core.note`, though it is shaped for it: a note requires `body`, and captures written before the handler always populated that field do not carry it. Claiming compatibility would require `body` here, and re-validating a merged property set is how `PATCH /items/:id` works — so the claim would make every one of those older captures permanently un-editable. It can be restored once those rows are backfilled. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only. Superseded by `marfa.captured_email`, which new captures land as; this identifier remains registered so existing rows and grants keep resolving.",
   version: 1,
   fields: {
     from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
@@ -867,8 +890,8 @@ const googleYoutubeVideo: TypeSchema = {
   compatible_with: ["core.media"],
 };
 
-const withmarfaPodcastEpisode: TypeSchema = {
-  id: "withmarfa.podcast.episode",
+const marfaPodcastEpisode: TypeSchema = {
+  id: "marfa.podcast.episode",
   label: "Podcast Episode",
   description: "One episode of a podcast, as its feed item describes it. Joins its show through the in-collection edge, with the episode as the source. Mirrors an RSS 2.0 item together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.episode` instead. Both a raw and a normalized duration are kept, because feeds express it in several formats and the original is the only evidence of which one was meant.",
   version: 1,
@@ -892,13 +915,13 @@ const withmarfaPodcastEpisode: TypeSchema = {
     author: { type: "string", description: "Who made this episode (maps to the item `itunes:author`, falling back to `dc:creator` and then to the show's author, since most items omit it and the host is the answer)." },
     image_url: { type: "url", description: "Episode artwork, from the `href` attribute of the item's `itunes:image`, falling back to the show's." },
     feed_url: { type: "url", description: "Address of the feed this episode was read from, kept so an episode can be traced to its source without reading the show." },
-    podcast_guid: { type: "string", description: "Identifier of the show this episode belongs to, matching `podcast_guid` on `withmarfa.podcast.show`. The in-collection edge is the authoritative join; this is the same fact denormalized, so a reader holding an episode knows its show without a second call." },
+    podcast_guid: { type: "string", description: "Identifier of the show this episode belongs to, matching `podcast_guid` on `marfa.podcast.show`. The in-collection edge is the authoritative join; this is the same fact denormalized, so a reader holding an episode knows its show without a second call." },
   },
   display_hints: { title_field: "title", body_field: "content_encoded" },
 };
 
-const withmarfaPodcastShow: TypeSchema = {
-  id: "withmarfa.podcast.show",
+const marfaPodcastShow: TypeSchema = {
+  id: "marfa.podcast.show",
   label: "Podcast Show",
   description: "A podcast, as its RSS feed describes it. One row per show, keyed on the show's stable identifier rather than its feed address, so a move between hosts does not create a second show. Episodes join it through the in-collection edge. Mirrors the channel element of an RSS 2.0 feed together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.series` instead.",
   version: 1,
@@ -925,6 +948,7 @@ const withmarfaPodcastShow: TypeSchema = {
 };
 
 export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
+  marfaCapturedEmail,
   raindropCollection,
   raindropRaindrop,
   readwiseBook,
@@ -939,8 +963,8 @@ export const ALL_INTEGRATION_TYPES: TypeSchema[] = [
   googleYoutubeChannel,
   googleYoutubePlaylist,
   googleYoutubeVideo,
-  withmarfaPodcastEpisode,
-  withmarfaPodcastShow,
+  marfaPodcastEpisode,
+  marfaPodcastShow,
 ];
 
 const systemAccountHolder: TypeSchema = {
@@ -1104,6 +1128,9 @@ export const ALL_TYPE_IDS = [
   "google.youtube.channel",
   "google.youtube.playlist",
   "google.youtube.video",
+  "marfa.captured_email",
+  "marfa.podcast.episode",
+  "marfa.podcast.show",
   "raindrop.collection",
   "raindrop.raindrop",
   "readwise.book",
@@ -1119,8 +1146,6 @@ export const ALL_TYPE_IDS = [
   "system.webhook",
   "todoist.task",
   "withmarfa.captured_email",
-  "withmarfa.podcast.episode",
-  "withmarfa.podcast.show",
 ] as const;
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];

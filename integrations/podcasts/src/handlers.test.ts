@@ -376,8 +376,8 @@ describe("episodes are joined to their show", () => {
     });
     await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
 
-    expect(h.created[0]?.type).toBe("withmarfa.podcast.show");
-    expect(h.bulkCalls[0]?.inputs[0]?.type).toBe("withmarfa.podcast.episode");
+    expect(h.created[0]?.type).toBe("marfa.podcast.show");
+    expect(h.bulkCalls[0]?.inputs[0]?.type).toBe("marfa.podcast.episode");
   });
 
   it("reports an edge refusal instead of swallowing it", async () => {
@@ -442,7 +442,7 @@ describe("a feed that has not changed", () => {
 
     expect(h.bulkCalls).toHaveLength(bulkAfterFirst);
     expect(
-      h.created.filter((c) => c.type === "withmarfa.podcast.show"),
+      h.created.filter((c) => c.type === "marfa.podcast.show"),
     ).toHaveLength(1);
   });
 });

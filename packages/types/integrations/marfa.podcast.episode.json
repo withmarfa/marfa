@@ -1,5 +1,5 @@
 {
-  "id": "withmarfa.podcast.episode",
+  "id": "marfa.podcast.episode",
   "label": "Podcast Episode",
   "description": "One episode of a podcast, as its feed item describes it. Joins its show through the in-collection edge, with the episode as the source. Mirrors an RSS 2.0 item together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.episode` instead. Both a raw and a normalized duration are kept, because feeds express it in several formats and the original is the only evidence of which one was meant.",
   "version": 1,
@@ -88,7 +88,7 @@
     },
     "podcast_guid": {
       "type": "string",
-      "description": "Identifier of the show this episode belongs to, matching `podcast_guid` on `withmarfa.podcast.show`. The in-collection edge is the authoritative join; this is the same fact denormalized, so a reader holding an episode knows its show without a second call."
+      "description": "Identifier of the show this episode belongs to, matching `podcast_guid` on `marfa.podcast.show`. The in-collection edge is the authoritative join; this is the same fact denormalized, so a reader holding an episode knows its show without a second call."
     }
   },
   "required": ["title"],

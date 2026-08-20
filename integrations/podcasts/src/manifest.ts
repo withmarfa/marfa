@@ -36,8 +36,8 @@ export const FAMILY_DEFINITIONS: Record<
   podcast: {
     description: "The podcast types, which keep everything a feed carries.",
     types: {
-      show: "withmarfa.podcast.show",
-      episode: "withmarfa.podcast.episode",
+      show: "marfa.podcast.show",
+      episode: "marfa.podcast.episode",
     },
   },
   core: {

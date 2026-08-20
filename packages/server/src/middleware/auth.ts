@@ -635,7 +635,22 @@ export function checkTypeAccess(
     if ((tier === "system" || tier === "marfa") && !key.is_platform) {
       const isRuntimeActivityWrite =
         key.is_runtime_credential === true && type === "system.activity";
-      if (!isRuntimeActivityWrite) {
+      // The platform's own integrations write items of marfa.* types on
+      // the user's behalf, and their runtime credentials project each
+      // manifest target type as an EXACT literal in type_permissions.
+      // That literal is the platform's own declaration for this
+      // credential, so it opens the fence for precisely that type.
+      // Wildcards and subtree patterns never qualify: any member key
+      // holding `"*": "write"` would otherwise cross the reserved
+      // boundary, and `resolveTypePermission` resolves those patterns —
+      // which is exactly why this check reads the map directly instead.
+      // `system.*` keeps the blanket refusal: nothing projects a
+      // system-type write beyond the activity carve-out above.
+      const isManifestGrantedMarfaWrite =
+        tier === "marfa" &&
+        key.is_runtime_credential === true &&
+        key.type_permissions[type] === "write";
+      if (!isRuntimeActivityWrite && !isManifestGrantedMarfaWrite) {
         throw new MarfaError(
           ErrorCode.TYPE_NOT_PERMITTED,
           `Reserved namespace: only platform credentials may write ${tier}.* items`,

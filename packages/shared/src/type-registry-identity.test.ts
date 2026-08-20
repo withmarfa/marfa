@@ -57,6 +57,9 @@ const INTEGRATION_TYPE_IDENTIFIERS = [
   "google.youtube.channel",
   "google.youtube.playlist",
   "google.youtube.video",
+  "marfa.captured_email",
+  "marfa.podcast.episode",
+  "marfa.podcast.show",
   "raindrop.collection",
   "raindrop.raindrop",
   "readwise.book",
@@ -64,8 +67,6 @@ const INTEGRATION_TYPE_IDENTIFIERS = [
   "readwise.highlight",
   "todoist.task",
   "withmarfa.captured_email",
-  "withmarfa.podcast.episode",
-  "withmarfa.podcast.show",
 ];
 
 const SYSTEM_TYPE_IDENTIFIERS = [

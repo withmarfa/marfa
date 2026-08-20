@@ -1,5 +1,5 @@
 {
-  "id": "withmarfa.podcast.show",
+  "id": "marfa.podcast.show",
   "label": "Podcast Show",
   "description": "A podcast, as its RSS feed describes it. One row per show, keyed on the show's stable identifier rather than its feed address, so a move between hosts does not create a second show. Episodes join it through the in-collection edge. Mirrors the channel element of an RSS 2.0 feed together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.series` instead.",
   "version": 1,

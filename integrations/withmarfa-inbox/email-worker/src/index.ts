@@ -64,7 +64,7 @@ interface Env {
   ENVIRONMENT?: string;
 }
 
-/** JSON envelope wire shape. Mirrors `withmarfa.captured_email`'s
+/** JSON envelope wire shape. Mirrors `marfa.captured_email`'s
  *  property bag — the integration handler decodes this and lands it
  *  as an item without further translation. */
 export interface EmailEnvelope {

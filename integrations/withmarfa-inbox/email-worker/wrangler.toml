@@ -8,7 +8,7 @@
 # `capture@inbox.marfa.so` → this Worker. The Worker:
 #   1. Parses MIME via postal-mime.
 #   2. Builds a JSON envelope matching the type schema of
-#      `withmarfa.captured_email`.
+#      `marfa.captured_email`.
 #   3. HMAC-SHA256 signs the body with `WEBHOOK_SECRET` (= the
 #      per-connection subscription secret on the Marfa server).
 #   4. POSTs the signed body over HTTPS to the Marfa server's webhook

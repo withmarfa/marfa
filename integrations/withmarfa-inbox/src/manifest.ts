@@ -20,14 +20,14 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const WITHMARFA_INBOX_MANIFEST: IntegrationManifest = {
   name: "withmarfa.inbox",
-  version: "0.1.0",
+  version: "0.2.0",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",
   description:
-    "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address via Cloudflare Email Routing + Email Worker; lands each delivery as a `withmarfa.captured_email` item.",
+    "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address via Cloudflare Email Routing + Email Worker; lands each delivery as a `marfa.captured_email` item.",
   direction: "read",
   runtime_compatibility: ["local"],
-  target_types: ["withmarfa.captured_email"],
+  target_types: ["marfa.captured_email"],
   triggers: [{ type: "webhook" }],
   bidirectional_handling: {
     echo_ttl_seconds: 60,

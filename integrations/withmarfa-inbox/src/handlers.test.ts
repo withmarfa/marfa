@@ -156,7 +156,7 @@ function makeWebhookMessage(
 }
 
 describe("withmarfa.inbox handler", () => {
-  it("creates a withmarfa.captured_email on a well-formed envelope", async () => {
+  it("creates a marfa.captured_email on a well-formed envelope", async () => {
     const { ctx, created, emitted } = buildContext();
     const result = await handleInboxWebhook(
       ctx,
@@ -164,7 +164,7 @@ describe("withmarfa.inbox handler", () => {
     );
     expect(result).toEqual({ ok: true });
     expect(created).toHaveLength(1);
-    expect(created[0]!.type).toBe("withmarfa.captured_email");
+    expect(created[0]!.type).toBe("marfa.captured_email");
     expect(created[0]!.properties).toMatchObject({
       from_address: "sender@example.com",
       from_name: "Test Sender",
