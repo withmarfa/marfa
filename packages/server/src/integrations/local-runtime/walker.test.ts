@@ -63,6 +63,7 @@ async function createConnection(opts: {
   integrationItemId: string;
   state?: "active" | "revoked";
   status?: string;
+  runtimeStatus?: string;
 }): Promise<string> {
   const item = await ctx.storage.items.create(
     {
@@ -70,6 +71,9 @@ async function createConnection(opts: {
       properties: {
         kind: "integration",
         status: opts.status ?? "active",
+        ...(opts.runtimeStatus !== undefined && {
+          runtime_status: opts.runtimeStatus,
+        }),
         integration_ref: opts.integrationItemId,
         granted_at: new Date().toISOString(),
       },
@@ -122,6 +126,45 @@ describe("local-runtime connection walker", () => {
       expect(e.integration_name).toBe(MANIFEST_LOCAL.name);
       expect(e.message.kind).toBe("schedule");
     }
+  });
+
+  it("skips a paused Connection and picks it back up on resume", async () => {
+    // Pause is the operator's stop control, and the walker is the
+    // schedule's only source on this runtime — if it does not gate here,
+    // pause reports success and the connection keeps running (T-627's
+    // shape). The gate is the walk itself, so resume needs no re-arm.
+    const pauseManifest = { ...MANIFEST_LOCAL, name: "test.walker-paused" };
+    const integrationId = await createIntegrationItem(pauseManifest);
+    const pausedId = await createConnection({
+      integrationItemId: integrationId,
+      runtimeStatus: "paused",
+    });
+
+    const enqueued: SchedulerEnvelope[] = [];
+    const first = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      pauseManifest.name,
+      Date.now(),
+    );
+    expect(first).toBe(0);
+    expect(enqueued).toHaveLength(0);
+
+    const row = await ctx.storage.items.get(pausedId, undefined);
+    await ctx.storage.items.update(
+      pausedId,
+      { properties: { ...row!.properties, runtime_status: "healthy" } },
+      undefined,
+    );
+    const second = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      pauseManifest.name,
+      Date.now(),
+    );
+    expect(second).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.message.connection_id).toBe(pausedId);
   });
 
   it("does not enqueue anything for an integration with no Connections", async () => {

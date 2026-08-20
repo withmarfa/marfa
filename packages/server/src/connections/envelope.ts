@@ -70,6 +70,11 @@ interface ManifestTrigger {
  *     subscriber tripped the bridge's sustained-failure escalation;
  *     dispatch stays gated until an operator clears the field or
  *     transitions it back to a non-failing value)
+ *   - The connection's `properties.runtime_status` is `paused` (the
+ *     operator asked it to stop; the pause pipeline's own update event
+ *     re-evaluates the entry and drops it, and resume re-adds it the
+ *     same way). Inbound webhook receipt is deliberately not gated
+ *     here — it has its own route and its own decision to make.
  *
  * The entry snapshots the persisted manifest (name, target_types), so
  * cached entries assume manifests are immutable per version — which the
@@ -100,6 +105,7 @@ export async function buildEntryForConnection(
   if (props.kind !== "integration") return null;
   if (props.status && props.status !== "active") return null;
   if (props.runtime_status === "failing") return null;
+  if (props.runtime_status === "paused") return null;
   const ref = props.integration_ref;
   if (!ref) return null;
   const integration = await storage.items.get(ref);

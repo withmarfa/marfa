@@ -21,6 +21,7 @@
  * rather than by mocking the gate — the gate is the thing under test.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { buildEntryForConnection } from "../connections/envelope.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
@@ -215,5 +216,83 @@ describe("pause and resume are reachable by the connection's owner", () => {
     expect(activity?.type).toBe("system.activity");
     expect(activity?.properties.connection_id).toBe(id);
     expect(String(activity?.properties.summary)).toMatch(/^Paused connection /);
+  });
+});
+
+describe("pause actually stops dispatch", () => {
+  // The defect this pins: pause flipped `runtime_status` and stopped
+  // nothing — the reactive registry only gated `failing`, and the
+  // schedule walker never read the field at all, so the operator's stop
+  // control reported success and the connection kept running.
+  let spaceId: string;
+  let key: string;
+
+  beforeAll(async () => {
+    const space = await ctx.storage.spaces!.create("pause-dispatch");
+    spaceId = space.id;
+    key = await ownerKey(spaceId);
+  });
+
+  /** A connection whose manifest declares an item-event trigger, so it
+   *  qualifies for the reactive subscription registry. */
+  async function reactiveConnection(): Promise<string> {
+    const name = `acme.pausefx-${Math.random().toString(36).slice(2, 10)}`;
+    const m = {
+      ...manifest(name),
+      triggers: [{ type: "item-event" as const }],
+    };
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: name,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          manifest: m,
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          runtime_status: "healthy",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+        },
+      },
+      spaceId,
+    );
+    return connection.id;
+  }
+
+  it("a paused connection leaves the reactive registry, and resume restores it", async () => {
+    const id = await reactiveConnection();
+
+    const before = await ctx.storage.items.get(id, spaceId);
+    expect(await buildEntryForConnection(ctx.storage, before!)).not.toBeNull();
+
+    const paused = await request(ctx.app, "POST", `/connections/${id}/pause`, {
+      key,
+    });
+    expect(paused.status).toBe(200);
+    const whilePaused = await ctx.storage.items.get(id, spaceId);
+    expect(await buildEntryForConnection(ctx.storage, whilePaused!)).toBeNull();
+
+    const resumed = await request(
+      ctx.app,
+      "POST",
+      `/connections/${id}/resume`,
+      { key },
+    );
+    expect(resumed.status).toBe(200);
+    const afterResume = await ctx.storage.items.get(id, spaceId);
+    expect(
+      await buildEntryForConnection(ctx.storage, afterResume!),
+    ).not.toBeNull();
   });
 });

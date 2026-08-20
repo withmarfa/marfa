@@ -10,6 +10,9 @@
  *   - item-level `state === "active"`
  *   - `properties.kind === "integration"`
  *   - `properties.status` unset OR `"active"`
+ *   - `properties.runtime_status` not `"paused"` (pause stops the
+ *     schedule; the next tick simply skips the connection, and resume
+ *     picks it back up with nothing to re-arm)
  *   - `properties.integration_ref` resolves to a `system.integration` whose
  *     manifest:
  *       - validates against `IntegrationManifestSchema`
@@ -31,6 +34,7 @@ interface ConnectionProperties {
   kind?: string;
   integration_ref?: string;
   status?: string;
+  runtime_status?: string;
 }
 
 interface IntegrationProperties {
@@ -87,6 +91,7 @@ function isLocalIntegrationConnection(connection: {
   const props = connection.properties as ConnectionProperties;
   if (props.kind !== "integration") return false;
   if (props.status !== undefined && props.status !== "active") return false;
+  if (props.runtime_status === "paused") return false;
   if (!props.integration_ref) return false;
   return true;
 }
