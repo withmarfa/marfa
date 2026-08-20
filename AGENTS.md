@@ -195,7 +195,7 @@ Per-credential `enforcement_override` merges over the space default: setting `st
 
 ## Platform credentials
 
-The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `marfa.*`). The seed value lives on the bootstrap admin credential created at install; only an existing platform credential may mint another. Ordinary space admin/member keys default to `is_platform: false` and are rejected when they claim reserved namespaces.
+The `is_platform: boolean` flag on `ApiKey` gates item writes into the reserved namespaces (`core.*`, `system.*`, `marfa.*`) and exempts the publisher-handle ownership rule at type registration. It does not admit reserved-namespace registration: `POST /types` refuses a reserved-root type for every credential, platform included. The seed value lives on the bootstrap admin credential created at install; only an existing platform credential may mint another.
 
 ## Database migrations
 
