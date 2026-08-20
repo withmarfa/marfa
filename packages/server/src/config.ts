@@ -407,6 +407,11 @@ export interface AppConfig {
    *  supervised server into a crash loop. Only connection-shaped
    *  failures wait; misconfiguration still fails immediately. */
   dbStartupWaitMs?: number;
+  /** Ceiling on concurrent SSE viewers per process
+   *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
+   *  memory bound: viewers hold no database connection, so any limit is
+   *  a stated choice rather than a pool artifact. */
+  sseMaxViewers?: number;
 }
 
 export interface OidcProviderConfig {
@@ -991,6 +996,7 @@ export function loadConfig(): AppConfig {
       60_000,
     ),
     dbStartupWaitMs: envNumber(process.env.MARFA_DB_STARTUP_WAIT_MS, 90_000),
+    sseMaxViewers: envNumber(process.env.MARFA_SSE_MAX_VIEWERS, 0),
   };
 }
 

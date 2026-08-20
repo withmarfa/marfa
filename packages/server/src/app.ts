@@ -623,10 +623,11 @@ export function createApp(
   app.route("/spaces", spaceRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
-  // session-level RLS on a dedicated pool connection for the stream's
-  // lifetime — closing the bypass that the per-request transaction
-  // middleware can't cover. SQLite + space-less callers continue to run
-  // on the owner connection (no DB-level fence).
+  // session-level RLS on a reserved pool connection — for /export's whole
+  // bounded response, and for /events only during the replay phase (live
+  // SSE delivery runs off the emitter and holds no connection). SQLite +
+  // space-less callers continue to run on the owner connection (no
+  // DB-level fence).
   const streamingRoutesOptions = {
     rlsEnforce: config.rlsEnforce ?? false,
     // Prefer the dedicated stream client (direct/session-mode endpoint) so
@@ -714,7 +715,13 @@ export function createApp(
     app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));
   }
 
-  app.route("/events", eventRoutes(storage, streamingRoutesOptions));
+  app.route(
+    "/events",
+    eventRoutes(storage, {
+      ...streamingRoutesOptions,
+      maxViewers: config.sseMaxViewers ?? 0,
+    }),
+  );
   // Inbound subscription management (admin/integration auth) lives under
   // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
   // public receipt path /webhooks/inbound/:id resolves correctly.
