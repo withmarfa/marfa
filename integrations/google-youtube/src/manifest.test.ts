@@ -6,7 +6,7 @@ import {
 import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_YOUTUBE_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("Google YouTube manifest", () => {
@@ -62,9 +62,13 @@ describe("Google YouTube manifest", () => {
     expect(
       Object.keys(GOOGLE_YOUTUBE_MANIFEST.write_families?.families ?? {}),
     ).toEqual(["google"]);
-    expect(WRITE_FAMILIES.google.video).toBe("google.youtube.video");
-    expect(WRITE_FAMILIES.google.playlist).toBe("google.youtube.playlist");
-    expect(WRITE_FAMILIES.google.channel).toBe("google.youtube.channel");
+    expect(FAMILY_DEFINITIONS.google.types.video).toBe("google.youtube.video");
+    expect(FAMILY_DEFINITIONS.google.types.playlist).toBe(
+      "google.youtube.playlist",
+    );
+    expect(FAMILY_DEFINITIONS.google.types.channel).toBe(
+      "google.youtube.channel",
+    );
   });
 
   it("publisher namespace is shared with google.calendar / google.tasks / google.contacts", () => {

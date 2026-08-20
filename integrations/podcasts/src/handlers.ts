@@ -42,7 +42,7 @@ import {
   RECENT_ID_RING_SIZE,
   PODCASTS_MANIFEST,
   STUCK_FEED_DAYS,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
   type WriteFamily,
 } from "./manifest.js";
 import {
@@ -660,7 +660,7 @@ async function sweepFeed(args: {
   // The show is written before its episodes, because the edge that joins
   // them needs its id and the id comes from the write.
   const showInput: CreateItemInput = {
-    type: WRITE_FAMILIES[family].show,
+    type: FAMILY_DEFINITIONS[family].types.show,
     source_id: showSourceId(scopeKey),
     properties: showProperties(
       feed.show,
@@ -727,7 +727,7 @@ async function sweepFeed(args: {
       episode: entry.episode,
       index: i,
       input: {
-        type: WRITE_FAMILIES[family].episode,
+        type: FAMILY_DEFINITIONS[family].types.episode,
         source_id: episodeSourceId(scopeKey, entry.localId),
         properties: episodeProperties(
           entry.episode,

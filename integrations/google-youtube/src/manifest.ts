@@ -54,7 +54,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  * projection, when one exists, arrives as a second family rather than as
  * a loose type in a chooser.
  */
-const FAMILY_DEFINITIONS: Record<
+export const FAMILY_DEFINITIONS: Record<
   "google",
   {
     description: string;
@@ -72,12 +72,7 @@ const FAMILY_DEFINITIONS: Record<
   },
 };
 
-/** Role maps the handlers index; same object the manifest declares. */
-export const WRITE_FAMILIES = {
-  google: FAMILY_DEFINITIONS.google.types,
-} as const;
-
-export type WriteFamily = keyof typeof WRITE_FAMILIES;
+export type WriteFamily = keyof typeof FAMILY_DEFINITIONS;
 
 export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
@@ -98,9 +93,9 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
   target_types: [
-    WRITE_FAMILIES.google.video,
-    WRITE_FAMILIES.google.playlist,
-    WRITE_FAMILIES.google.channel,
+    FAMILY_DEFINITIONS.google.types.video,
+    FAMILY_DEFINITIONS.google.types.playlist,
+    FAMILY_DEFINITIONS.google.types.channel,
   ],
   write_families: {
     families: FAMILY_DEFINITIONS,

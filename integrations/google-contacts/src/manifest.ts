@@ -46,7 +46,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  * on the manifest itself so the platform validates family coherence
  * centrally and the configure surface derives the chooser.
  */
-const FAMILY_DEFINITIONS: Record<
+export const FAMILY_DEFINITIONS: Record<
   "google" | "core",
   { description: string; types: { contact: string } }
 > = {
@@ -62,13 +62,7 @@ const FAMILY_DEFINITIONS: Record<
   },
 };
 
-/** Role maps the handlers index; same object the manifest declares. */
-export const WRITE_FAMILIES = {
-  google: FAMILY_DEFINITIONS.google.types,
-  core: FAMILY_DEFINITIONS.core.types,
-} as const;
-
-export type WriteFamily = keyof typeof WRITE_FAMILIES;
+export type WriteFamily = keyof typeof FAMILY_DEFINITIONS;
 
 export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
@@ -93,7 +87,10 @@ export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time
   // configuration chooses which family a connection actually writes.
-  target_types: [WRITE_FAMILIES.core.contact, WRITE_FAMILIES.google.contact],
+  target_types: [
+    FAMILY_DEFINITIONS.core.types.contact,
+    FAMILY_DEFINITIONS.google.types.contact,
+  ],
   write_families: {
     families: FAMILY_DEFINITIONS,
     default: DEFAULT_WRITE_FAMILY,

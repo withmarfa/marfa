@@ -62,7 +62,7 @@ import {
   DEFAULT_WRITE_FAMILY,
   GOOGLE_TASKS_MANIFEST,
   TASKS_API_BASE,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -117,7 +117,7 @@ interface ConnectionConfig {
   target_type: string;
 }
 
-const DEFAULT_TASK_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].task;
+const DEFAULT_TASK_TYPE = FAMILY_DEFINITIONS[DEFAULT_WRITE_FAMILY].types.task;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,

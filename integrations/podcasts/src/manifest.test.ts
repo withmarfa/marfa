@@ -9,7 +9,7 @@ import {
   MAX_EPISODES_PER_TICK,
   MAX_FEEDS_PER_TICK,
   PODCASTS_MANIFEST,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 describe("podcasts manifest", () => {
@@ -53,8 +53,10 @@ describe("podcasts manifest", () => {
 
   it("defaults to its own types rather than the core ones", () => {
     expect(DEFAULT_WRITE_FAMILY).toBe("podcast");
-    expect(WRITE_FAMILIES.podcast.show).toBe("withmarfa.podcast.show");
-    expect(WRITE_FAMILIES.core.episode).toBe("core.media.episode");
+    expect(FAMILY_DEFINITIONS.podcast.types.show).toBe(
+      "withmarfa.podcast.show",
+    );
+    expect(FAMILY_DEFINITIONS.core.types.episode).toBe("core.media.episode");
   });
 
   it("keeps a tick's batch well under its episode budget", () => {

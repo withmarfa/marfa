@@ -24,9 +24,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 /**
  * The two families a connection chooses between, declared once and carried
  * on the manifest itself so the platform validates family coherence
- * centrally and the configure surface derives the chooser.
+ * centrally and the configure surface derives the chooser. The single
+ * statement of what each family writes: handlers index it directly (or
+ * through `resolveWriteFamily`, which returns the same objects), so there
+ * is no derived role map to drift from it.
  */
-const FAMILY_DEFINITIONS: Record<
+export const FAMILY_DEFINITIONS: Record<
   "podcast" | "core",
   { description: string; types: { show: string; episode: string } }
 > = {
@@ -47,13 +50,7 @@ const FAMILY_DEFINITIONS: Record<
   },
 };
 
-/** Role maps the handlers index; same object the manifest declares. */
-export const WRITE_FAMILIES = {
-  podcast: FAMILY_DEFINITIONS.podcast.types,
-  core: FAMILY_DEFINITIONS.core.types,
-} as const;
-
-export type WriteFamily = keyof typeof WRITE_FAMILIES;
+export type WriteFamily = keyof typeof FAMILY_DEFINITIONS;
 
 export const DEFAULT_WRITE_FAMILY: WriteFamily = "podcast";
 
@@ -67,10 +64,10 @@ export const PODCASTS_MANIFEST: IntegrationManifest = {
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
   target_types: [
-    WRITE_FAMILIES.podcast.show,
-    WRITE_FAMILIES.podcast.episode,
-    WRITE_FAMILIES.core.show,
-    WRITE_FAMILIES.core.episode,
+    FAMILY_DEFINITIONS.podcast.types.show,
+    FAMILY_DEFINITIONS.podcast.types.episode,
+    FAMILY_DEFINITIONS.core.types.show,
+    FAMILY_DEFINITIONS.core.types.episode,
   ],
   triggers: [
     {

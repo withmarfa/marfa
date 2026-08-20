@@ -46,7 +46,7 @@ import {
   PEOPLE_API_BASE,
   PERSON_FIELDS,
   UPDATE_PERSON_FIELDS,
-  WRITE_FAMILIES,
+  FAMILY_DEFINITIONS,
 } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -76,7 +76,8 @@ interface ConnectionConfig {
   target_type: string;
 }
 
-const DEFAULT_CONTACT_TYPE = WRITE_FAMILIES[DEFAULT_WRITE_FAMILY].contact;
+const DEFAULT_CONTACT_TYPE =
+  FAMILY_DEFINITIONS[DEFAULT_WRITE_FAMILY].types.contact;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
