@@ -18,7 +18,7 @@
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createExecutor } from "./executor.js";
 import type {
   LocalIntegrationRegistration,
@@ -40,44 +40,64 @@ function writePoisonHandler(message: string): string {
   return path;
 }
 
-describe("executor resilience", () => {
-  it("worker that throws at module-load does not crash the process", async () => {
-    // Capture any unhandled rejections that fire during this test —
-    // the §6 regression manifests as a `triggerUncaughtException`
-    // from Node's internal/process/promises:332, which would normally
-    // terminate the test runner.
-    const rejections: unknown[] = [];
-    const captureRejection = (reason: unknown): void => {
-      rejections.push(reason);
-    };
-    process.on("unhandledRejection", captureRejection);
+/** Registration + request pair aimed at a fresh poison handler. The
+ *  values are inert: under vitest the worker dies on module resolution
+ *  before any of them are read, and the fixture exists so every case
+ *  exercises the same dispatch shape. */
+function buildPoisonFixture(): {
+  registration: LocalIntegrationRegistration;
+  request: WorkerDispatchRequest;
+} {
+  const registration: LocalIntegrationRegistration = {
+    name: "poison",
+    handlerModulePath: writePoisonHandler("poison: module-load failure"),
+    echo: { echo_ttl_seconds: 0 },
+    triggerKinds: new Set(["schedule"]),
+  };
+  const request: WorkerDispatchRequest = {
+    apiUrl: "http://test.local",
+    credential: {
+      api_key: "marfa_k1_test",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      connection_id: "test-connection",
+    },
+    message: {
+      kind: "schedule",
+      integration_name: "poison",
+      connection_id: "test-connection",
+      scheduled_for_ms: Date.now(),
+    },
+    integrationName: "poison",
+    echo: { echo_ttl_seconds: 0 },
+    hopBudget: 5,
+    cursorSnapshot: {},
+  };
+  return { registration, request };
+}
 
+describe("executor resilience", () => {
+  // Capture any unhandled rejections that fire during a test — the
+  // regression this suite exists for manifests as a
+  // `triggerUncaughtException` from Node's internal/process/promises,
+  // which would normally terminate the test runner. Installed and
+  // removed in hooks so a failing assertion cannot leak the listener,
+  // which would silently swallow unhandled rejections for every later
+  // test in this worker — the exact bug class the suite pins.
+  let rejections: unknown[] = [];
+  const captureRejection = (reason: unknown): void => {
+    rejections.push(reason);
+  };
+  beforeEach(() => {
+    rejections = [];
+    process.on("unhandledRejection", captureRejection);
+  });
+  afterEach(() => {
+    process.off("unhandledRejection", captureRejection);
+  });
+
+  it("worker that throws at module-load does not crash the process", async () => {
     const executor = createExecutor({ poolSize: 2 });
-    const poisonPath = writePoisonHandler("poison: module-load failure");
-    const registration: LocalIntegrationRegistration = {
-      name: "poison",
-      handlerModulePath: poisonPath,
-      echo: { echo_ttl_seconds: 0 },
-      triggerKinds: new Set(["schedule"]),
-    };
-    const request: WorkerDispatchRequest = {
-      apiUrl: "http://test.local",
-      credential: {
-        api_key: "marfa_k1_test",
-        expires_at: new Date(Date.now() + 60_000).toISOString(),
-        connection_id: "test-connection",
-      },
-      message: {
-        kind: "schedule",
-        integration_name: "poison",
-        connection_id: "test-connection",
-        scheduled_for_ms: Date.now(),
-      },
-      integrationName: "poison",
-      echo: { echo_ttl_seconds: 0 },
-      hopBudget: 5,
-      cursorSnapshot: {},
-    };
+    const { registration, request } = buildPoisonFixture();
 
     // The dispatch is expected to reject — the worker thread dies
     // (either from the handler module throwing on load, or because
@@ -89,67 +109,27 @@ describe("executor resilience", () => {
     // doesn't escalate to an unhandled rejection.
     await expect(executor.dispatch(registration, request)).rejects.toThrow();
 
-    // Give any further rejections (e.g. the second pool slot whose
-    // `ready` was never awaited) a chance to surface as unhandled.
-    await new Promise<void>((resolve) => setTimeout(resolve, 200));
-
-    process.off("unhandledRejection", captureRejection);
+    // terminate() awaits every slot's `exit` event — a deterministic
+    // barrier that each spawned worker finished its lifecycle, with the
+    // capture listener still installed while it runs.
     await executor.terminate();
-
     expect(rejections).toEqual([]);
   });
 
   // The pool size is an operator knob, so the machinery has to hold at
   // the sizes an operator would actually set, not just the default. A
-  // pool of 1 has no sibling slot to absorb mistakes in the dispatch
-  // loop's slot selection; a pool of 4 spawns more never-awaited `ready`
-  // promises than the default, which is exactly the surface the
-  // unhandled-rejection guard above exists for. Same poison fixture:
-  // vitest cannot run a real handler thread to completion, but spawn,
-  // slot bookkeeping, and terminate all run for real at each size.
+  // pool of 4 spawns more never-awaited `ready` promises than the
+  // default — the surface the rejection guard exists for; a pool of 1
+  // pins that dispatch still surfaces the error with no sibling slot in
+  // play. Spawn runs for real at each size (and immediately fails, the
+  // most the vitest environment allows); terminate drains every slot.
   for (const poolSize of [1, 4]) {
     it(`pool of ${String(poolSize)}: dispatch surfaces the error and teardown drains every slot`, async () => {
-      const rejections: unknown[] = [];
-      const captureRejection = (reason: unknown): void => {
-        rejections.push(reason);
-      };
-      process.on("unhandledRejection", captureRejection);
-
       const executor = createExecutor({ poolSize });
-      const poisonPath = writePoisonHandler(
-        `poison: pool-size ${String(poolSize)}`,
-      );
-      const registration: LocalIntegrationRegistration = {
-        name: "poison",
-        handlerModulePath: poisonPath,
-        echo: { echo_ttl_seconds: 0 },
-        triggerKinds: new Set(["schedule"]),
-      };
-      const request: WorkerDispatchRequest = {
-        apiUrl: "http://test.local",
-        credential: {
-          api_key: "marfa_k1_test",
-          expires_at: new Date(Date.now() + 60_000).toISOString(),
-          connection_id: "test-connection",
-        },
-        message: {
-          kind: "schedule",
-          integration_name: "poison",
-          connection_id: "test-connection",
-          scheduled_for_ms: Date.now(),
-        },
-        integrationName: "poison",
-        echo: { echo_ttl_seconds: 0 },
-        hopBudget: 5,
-        cursorSnapshot: {},
-      };
+      const { registration, request } = buildPoisonFixture();
 
       await expect(executor.dispatch(registration, request)).rejects.toThrow();
-      await new Promise<void>((resolve) => setTimeout(resolve, 200));
-
-      process.off("unhandledRejection", captureRejection);
       await executor.terminate();
-
       expect(rejections).toEqual([]);
     });
   }
