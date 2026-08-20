@@ -267,13 +267,16 @@ export async function createConnection(
     sessionClient,
     jobHolderClient,
     close: async () => {
-      await client.end();
-      if (sessionClient !== client) {
-        await sessionClient.end();
-      }
-      if (jobHolderClient !== client) {
-        await jobHolderClient.end();
-      }
+      // Bounded ends: a plain `end()` waits for reserved connections to be
+      // released, and shutdown must not depend on every holder having
+      // behaved — a bridge election reservation or a stream that missed
+      // its release would otherwise stall close past its budget. Tracked
+      // in-flight writes have already drained by the time this runs (see
+      // the storage-level close wrapper), so after one second the socket
+      // is forced.
+      await client.end({ timeout: 1 });
+      await sessionClient.end({ timeout: 1 });
+      await jobHolderClient.end({ timeout: 1 });
     },
   };
 }

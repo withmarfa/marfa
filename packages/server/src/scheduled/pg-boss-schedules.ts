@@ -205,12 +205,19 @@ export async function startPgBossSchedules(
     const queue = queueNameFor(job.name);
     const requestedExpire = job.expireInSeconds ?? defaultExpireSeconds(job);
     // The single clamp point: a spec asking for more than the boss allows
-    // degrades to the longest legal expiry instead of crashing boot. Loud,
-    // because a clamped tick can be marked abandoned while still running.
-    if (requestedExpire > MAX_EXPIRE_SECONDS) {
+    // degrades to the longest legal expiry instead of crashing boot. Loud
+    // only for EXPLICIT over-asks — a clamped explicit budget means a tick
+    // can be marked abandoned while still running, which its author sized
+    // against. The derived default reaching the ceiling is ordinary (every
+    // daily job's twice-the-interval lands there) and warning for it would
+    // teach operators to skip the line that matters.
+    if (
+      job.expireInSeconds !== undefined &&
+      job.expireInSeconds > MAX_EXPIRE_SECONDS
+    ) {
       log("warn", "Scheduled job expiry clamped to pg-boss's ceiling", {
         job: job.name,
-        requested_seconds: requestedExpire,
+        requested_seconds: job.expireInSeconds,
         clamped_seconds: MAX_EXPIRE_SECONDS,
       });
     }
