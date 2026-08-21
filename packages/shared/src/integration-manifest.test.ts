@@ -534,3 +534,44 @@ describe("resolveWriteFamily — precedence and fallthroughs", () => {
     expect(resolveWriteFamily({}, { write_family: "acme" })).toBeNull();
   });
 });
+
+/**
+ * The tolerance that makes removing a manifest field survivable.
+ *
+ * `IntegrationManifestSchema` is strict AND runs against every stored
+ * manifest on every resolution, not only against one being registered. A
+ * credential mint that cannot resolve its manifest fails closed, so
+ * dropping a field from the schema while catalog rows still carry it does
+ * not warn: it strips those connections of every permission and their
+ * writes start answering 403. Verified against the real environments'
+ * stored shape before this was written, not reasoned about.
+ */
+describe("retired manifest keys", () => {
+  const stored = {
+    ...VALID_MANIFEST,
+    runtime_compatibility: ["hosted", "local"],
+  };
+
+  it("accepts a stored manifest still carrying the retired key", () => {
+    const result = IntegrationManifestSchema.safeParse(stored);
+    expect(result.success).toBe(true);
+  });
+
+  it("strips it, so nothing downstream sees a field the contract dropped", () => {
+    const result = IntegrationManifestSchema.safeParse(stored);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("runtime_compatibility" in result.data).toBe(false);
+    }
+  });
+
+  it("still refuses a key that is genuinely unknown", () => {
+    // The tolerance is a named list, not a loosening of strictness. A
+    // typo in a manifest has to keep failing.
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      runtime_compatibilty: ["local"],
+    });
+    expect(result.success).toBe(false);
+  });
+});
