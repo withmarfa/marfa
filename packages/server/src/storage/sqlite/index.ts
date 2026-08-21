@@ -30,7 +30,10 @@ import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
-import { sqliteDeleteAccountCascade } from "./account-cascade.js";
+import {
+  sqliteDeleteAccountCascade,
+  sqliteDeleteSpace,
+} from "./account-cascade.js";
 import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
@@ -176,6 +179,11 @@ export async function createSqliteStorage(
       return await baseDb.transaction(async (tx) => {
         return await withSqliteTx(tx, async () => fn());
       });
+    },
+    deleteSpace: (
+      spaceId: string,
+    ): Promise<"deleted" | "not_found" | "has_users"> => {
+      return sqliteDeleteSpace(db, storage, spaceId);
     },
     deleteAccountCascade: (
       authUserId: string,

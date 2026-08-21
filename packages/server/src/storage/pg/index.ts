@@ -38,7 +38,7 @@ import { PgSpaceQuotaStore } from "./space-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
 import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
-import { pgDeleteAccountCascade } from "./account-cascade.js";
+import { pgDeleteAccountCascade, pgDeleteSpace } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
 
 export async function createPgStorage(
@@ -207,6 +207,13 @@ export async function createPgStorage(
       return await db.transaction(async (tx) => {
         return await pgRequestContext.run({ tx }, async () => fn());
       });
+    },
+    deleteSpace: (
+      spaceId: string,
+    ): Promise<"deleted" | "not_found" | "has_users"> => {
+      // Same unwrapped base instance and the same reason as the cascade
+      // below: the sweep crosses the space boundary by design.
+      return pgDeleteSpace(baseDb, storage, spaceId);
     },
     deleteAccountCascade: (
       authUserId: string,

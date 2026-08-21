@@ -2454,6 +2454,26 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * concurrent `cancelPendingDeletion` blocks until the cascade either
    * commits or the re-check skips.
    */
+  /**
+   * Hard-delete a space and every row scoped to it.
+   *
+   * Top-level for the same reason `deleteAccountCascade` is: it spans
+   * every per-space table and needs the store layer for the item purge's
+   * search-index cleanup, so it does not sit inside `SpaceStore`.
+   *
+   * This is the counterpart the cascade cannot serve — a space
+   * provisioned by a platform credential has no `auth_user` behind it,
+   * and until this existed there was no way to remove one. Conformance
+   * creating a space per run is the standing case.
+   *
+   * Reports rather than throws, so the route maps the outcomes:
+   * - `"deleted"` — the space and its rows are gone.
+   * - `"not_found"` — no space with that id.
+   * - `"has_users"` — refused. The cascade owns the auth island, and
+   *   removing the space from under it would strand `users` and
+   *   `auth_user`. That case belongs to the account-delete route.
+   */
+  deleteSpace(spaceId: string): Promise<"deleted" | "not_found" | "has_users">;
   deleteAccountCascade(authUserId: string, cutoffIso: string): Promise<boolean>;
   close(): Promise<void>;
 }
