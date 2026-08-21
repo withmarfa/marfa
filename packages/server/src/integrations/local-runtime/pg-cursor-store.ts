@@ -10,8 +10,7 @@
  *   while it holds the per-Connection advisory lock.
  *
  *     { cursors: { [key]: unknown },
- *       recent_errors: [{ timestamp_ms, reason }],
- *       next_run_at_ms: number | null }
+ *       recent_errors: [{ timestamp_ms, reason }] }
  *
  *   `connection.runtime.idempotency` — receipt-owned. Written by the
  *   inbound webhook route on the HTTP thread, which takes no lock.
@@ -32,7 +31,6 @@ import type { Storage } from "../../storage/interface.js";
 export interface ConnectionRuntimeState {
   cursors: Record<string, unknown>;
   recent_errors: ConnectionRuntimeError[];
-  next_run_at_ms: number | null;
 }
 
 export interface ConnectionRuntimeError {
@@ -71,8 +69,6 @@ function parseRuntimeState(
     cursors: (raw.cursors as Record<string, unknown> | undefined) ?? {},
     recent_errors:
       (raw.recent_errors as ConnectionRuntimeError[] | undefined) ?? [],
-    next_run_at_ms:
-      typeof raw.next_run_at_ms === "number" ? raw.next_run_at_ms : null,
   };
 }
 
@@ -94,8 +90,6 @@ function serializeRuntimeState(
   if (Object.keys(state.cursors).length > 0) payload.cursors = state.cursors;
   if (state.recent_errors.length > 0)
     payload.recent_errors = state.recent_errors;
-  if (state.next_run_at_ms !== null)
-    payload.next_run_at_ms = state.next_run_at_ms;
   return payload;
 }
 

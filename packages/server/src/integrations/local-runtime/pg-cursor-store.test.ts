@@ -42,7 +42,6 @@ describe("local-runtime per-connection state (connection.runtime)", () => {
     expect(state).toEqual({
       cursors: {},
       recent_errors: [],
-      next_run_at_ms: null,
     });
   });
 

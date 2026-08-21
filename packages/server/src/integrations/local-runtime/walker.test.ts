@@ -165,6 +165,82 @@ describe("local-runtime connection walker", () => {
     expect(enqueued[0]?.message.connection_id).toBe(pausedId);
   });
 
+  it("records when each connection it fans out to is next due", async () => {
+    // The walk is the only place that knows both the cron and the
+    // connection set, which is why the stamp lives there. Without it
+    // `next_run_at` is declared on the type and written by nothing, and
+    // every consumer renders a placeholder for a connection that is
+    // demonstrably scheduled.
+    const nextRunManifest = { ...MANIFEST_LOCAL, name: "test/walker-next-run" };
+    const integrationId = await createIntegrationItem(nextRunManifest);
+    const connectionId = await createConnection({
+      integrationItemId: integrationId,
+    });
+
+    const enqueued: SchedulerEnvelope[] = [];
+    // Noon exactly, against an hourly cron: the next occurrence is 13:00,
+    // so the assertion is on a value the parser had to compute rather than
+    // on "something was written".
+    const noon = Date.UTC(2026, 7, 21, 12, 0, 0);
+    const count = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      nextRunManifest.name,
+      noon,
+      "0 * * * *",
+    );
+    expect(count).toBe(1);
+
+    const props = (await ctx.storage.items.get(connectionId))!.properties;
+    expect(props.next_run_at).toBe("2026-08-21T13:00:00.000Z");
+  });
+
+  it("fans out without a next-run stamp when no cron is supplied", async () => {
+    // Webhook and item-event integrations reach the walk with no cron.
+    // They still fan out; they simply have no next run to report.
+    const noCronManifest = { ...MANIFEST_LOCAL, name: "test/walker-no-cron" };
+    const integrationId = await createIntegrationItem(noCronManifest);
+    const connectionId = await createConnection({
+      integrationItemId: integrationId,
+    });
+
+    const enqueued: SchedulerEnvelope[] = [];
+    const count = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      noCronManifest.name,
+      Date.now(),
+    );
+    expect(count).toBe(1);
+
+    const props = (await ctx.storage.items.get(connectionId))!.properties;
+    expect(props.next_run_at).toBeUndefined();
+  });
+
+  it("fans out anyway when the cron cannot be parsed", async () => {
+    // A malformed cron is a registration-time problem. Reporting no next
+    // run is a better answer than reporting a wrong one, and neither is
+    // worth failing the fan-out over.
+    const badCronManifest = { ...MANIFEST_LOCAL, name: "test/walker-bad-cron" };
+    const integrationId = await createIntegrationItem(badCronManifest);
+    const connectionId = await createConnection({
+      integrationItemId: integrationId,
+    });
+
+    const enqueued: SchedulerEnvelope[] = [];
+    const count = await fanOutSchedule(
+      ctx.storage,
+      makeStubRuntime(enqueued),
+      badCronManifest.name,
+      Date.now(),
+      "not a cron expression",
+    );
+    expect(count).toBe(1);
+
+    const props = (await ctx.storage.items.get(connectionId))!.properties;
+    expect(props.next_run_at).toBeUndefined();
+  });
+
   it("does not enqueue anything for an integration with no Connections", async () => {
     const enqueued: SchedulerEnvelope[] = [];
     const runtime = makeStubRuntime(enqueued);
