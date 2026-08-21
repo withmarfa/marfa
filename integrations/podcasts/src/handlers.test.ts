@@ -36,6 +36,8 @@ interface HarnessOptions {
   failEpisode?: (sourceId: string) => boolean;
   /** Throw from bulkUpsertItems on the nth call (1-based). */
   throwOnBulkCall?: number;
+  /** Mutable so a test can fail a join on one tick and let it
+   *  succeed on the next, which is the whole retry property. */
   ensureEdgeThrows?: boolean;
   configReadThrows?: boolean;
   cursors?: Record<string, unknown>;
@@ -380,18 +382,67 @@ describe("episodes are joined to their show", () => {
     expect(h.bulkCalls[0]?.inputs[0]?.type).toBe("marfa.podcast.episode");
   });
 
-  it("reports an edge refusal instead of swallowing it", async () => {
+  it("retries a failed join on the next tick instead of orphaning it", async () => {
+    // The defect this replaces: the join was attempted only on the tick
+    // that created the episode. A failure emitted a row, but the episode
+    // was still counted as written and still entered the remembered-ids
+    // ring, so it was never offered again and the edge could never form.
+    // One transient refusal orphaned a member permanently.
+    const opts = {
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(1)),
+          feedResponse(feedXml(1)),
+        ],
+      },
+      ensureEdgeThrows: true,
+    };
+    const h = harness(opts);
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    // Parked rather than reported: a first failure is not yet a person's
+    // problem, because the next tick is going to try again.
+    const parked = [...h.store.values()].find(
+      (c): c is { pending_joins?: string[] } =>
+        typeof c === "object" && c !== null && "pending_joins" in c,
+    );
+    expect(parked?.pending_joins ?? []).toHaveLength(1);
+    expect(h.activity.some((a) => a.summary.includes("not joined"))).toBe(
+      false,
+    );
+
+    // Second tick, with the edge now accepted. The episode is already
+    // remembered, so the sweep will not offer it — the drain is the only
+    // thing that can repair it.
+    opts.ensureEdgeThrows = false;
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(h.edges.length).toBeGreaterThan(0);
+    const stillParked = [...h.store.values()].find(
+      (c): c is { pending_joins?: string[] } =>
+        typeof c === "object" && c !== null && "pending_joins" in c,
+    );
+    expect(stillParked?.pending_joins ?? []).toHaveLength(0);
+  });
+
+  it("reports only once the retry has also failed", async () => {
     const h = harness({
-      responses: { "https://feeds.example/show": [feedResponse(feedXml(1))] },
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(1)),
+          feedResponse(feedXml(1)),
+        ],
+      },
       ensureEdgeThrows: true,
     });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
     await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
 
     expect(
       h.activity.some(
         (a) =>
           a.severity === "action_required" &&
-          a.summary.includes("not joined to its show"),
+          a.summary.includes("still not joined to their show"),
       ),
     ).toBe(true);
   });

@@ -101,6 +101,17 @@ interface FeedCursor {
   pass_started_at: string | null;
   failed_since_watermark: number;
   retried_after_failure: boolean;
+  /**
+   * Episodes written but not yet joined to their show.
+   *
+   * The join used to be attempted once, on the tick that created the
+   * episode, and a failure only produced an activity row. The episode was
+   * still counted as written and still entered `recent_entry_ids`, so it
+   * was never offered again and the edge could never form: one transient
+   * refusal orphaned a member permanently. Ids park here instead and are
+   * drained on the next tick.
+   */
+  pending_joins: string[];
   /** Set when the address leaves the configuration. State is kept, not deleted. */
   retired_at: string | null;
   last_success_at: string | null;
@@ -120,6 +131,7 @@ function defaultFeedCursor(feedUrl: string): FeedCursor {
     pass_started_at: null,
     failed_since_watermark: 0,
     retried_after_failure: false,
+    pending_joins: [],
     retired_at: null,
     last_success_at: null,
   };
@@ -689,6 +701,44 @@ async function sweepFeed(args: {
   cursor.show_item_id = showItemId;
   await ctx.cursor.write(key, cursor);
 
+  // Drain joins parked by an earlier tick, before this pass adds any of its
+  // own. An episode whose join failed is already remembered, so the sweep
+  // will never offer it again — this list is the only thing that brings it
+  // back. Anything that fails again stays parked and is tried next tick.
+  if (cursor.pending_joins.length > 0) {
+    const stillPending: string[] = [];
+    let repaired = 0;
+    for (const episodeId of cursor.pending_joins) {
+      try {
+        await ctx.marfa.ensureEdge({
+          source_id: episodeId,
+          target_id: showItemId,
+          edge_type: "in-collection",
+        });
+        repaired += 1;
+      } catch {
+        stillPending.push(episodeId);
+      }
+    }
+    cursor.pending_joins = stillPending;
+    await ctx.cursor.write(key, cursor);
+    // Reported once per drain rather than once per episode, and only when
+    // something is still outstanding after the attempt — a join that
+    // repaired itself is not a person's problem.
+    if (stillPending.length > 0) {
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `Podcasts: ${String(stillPending.length)} episode(s) still not joined to their show`,
+        detail: {
+          feed_url: feedUrl,
+          show_id: showItemId,
+          repaired,
+          outstanding: stillPending.length,
+        },
+      });
+    }
+  }
+
   // Oldest first, so the ring of remembered ids evicts chronologically and
   // the watermark only ever moves forward.
   const ordered = [...feed.episodes].reverse();
@@ -786,32 +836,28 @@ async function sweepFeed(args: {
         continue;
       }
 
-      // The edge is written once, on creation. An episode's membership in
-      // its show never changes, and `ensureEdge` is idempotent, so there is
-      // nothing to redo on an update.
+      // Ensured on every applied episode rather than only on the tick that
+      // created it. `ensureEdge` is idempotent, so re-ensuring an existing
+      // edge costs one request and returns "exists" — and gating on
+      // creation meant an episode whose join failed could never get one,
+      // because it was already remembered and never offered again.
       //
       // Never as an inline edge on the batch write: inline edges replace
       // rather than append, per edge type, so a sweep would silently delete
       // any collection a person had added this episode to.
-      if (result.outcome === "created") {
-        try {
-          await ctx.marfa.ensureEdge({
-            source_id: result.id,
-            target_id: showItemId,
-            edge_type: "in-collection",
-          });
-        } catch (error) {
-          await ctx.activity.emit({
-            severity: "action_required",
-            summary:
-              "Podcasts: an episode was written but not joined to its show",
-            detail: {
-              feed_url: feedUrl,
-              episode_id: result.id,
-              show_id: showItemId,
-              reason: stringifyError(error),
-            },
-          });
+      try {
+        await ctx.marfa.ensureEdge({
+          source_id: result.id,
+          target_id: showItemId,
+          edge_type: "in-collection",
+        });
+      } catch {
+        // Parked, not reported. A failure here is retried on the next tick
+        // and only becomes a person's problem if it keeps failing, which
+        // the drain reports. Emitting per failure produced one activity row
+        // per orphan and no repair.
+        if (!cursor.pending_joins.includes(result.id)) {
+          cursor.pending_joins.push(result.id);
         }
       }
 
