@@ -1,10 +1,14 @@
-import { ALL_EDGE_TYPES } from "@withmarfa/types";
+import {
+  ALL_EDGE_TYPES,
+  isRoleConstraint,
+  roleFromConstraint,
+} from "@withmarfa/types";
 import type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
 } from "@withmarfa/types";
-import { getTypeSchema, isSubtypeOf } from "./type-registry.js";
+import { getTypeSchema, isSubtypeOf, typeHasRole } from "./type-registry.js";
 
 // Re-export types so consumers of @withmarfa/shared can reach them without
 // depending on @withmarfa/types directly.
@@ -116,9 +120,21 @@ export function listEdgeTypes(spaceId?: string | null): EdgeTypeSchema[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if `typeId` satisfies a type-constraint list. A wildcard `*`
- * entry matches anything; otherwise the item's type must equal or be a
- * subtype of (via the type inheritance chain) one of the listed types.
+ * Returns true if `typeId` satisfies a type-constraint list. Three entry
+ * forms, any one of which is enough:
+ *
+ * - `*` matches anything.
+ * - `role:<name>` matches every type declaring that role, its own or
+ *   inherited.
+ * - anything else is a type identifier, matched inheritance-aware, so a
+ *   subtype satisfies an ancestor's entry.
+ *
+ * The role form exists because a list of names can only ever admit the types
+ * whoever wrote the edge had already thought of. A core edge naming its
+ * permitted endpoints is unextendable by anyone who cannot edit the core edge,
+ * which is every integration publisher who is not us; a role is something the
+ * type being pointed at declares about itself, so the edge stays closed on
+ * meaning while staying open on membership.
  *
  * Unknown types (not in TYPE_REGISTRY) are rejected — the server requires
  * both endpoints to carry valid known types before validating constraints.
@@ -136,6 +152,15 @@ export function satisfiesEdgeConstraint(
   if (!getTypeSchema(typeId, spaceId)) return false;
   for (const allowed of constraints) {
     if (allowed === "*") return true;
+    if (isRoleConstraint(allowed)) {
+      // An unknown role matches nothing rather than throwing: the authoring
+      // validators refuse one, so reaching here means a stored edge type
+      // predates the role or was written past them, and refusing the write is
+      // the fail-closed answer.
+      const role = roleFromConstraint(allowed);
+      if (role !== undefined && typeHasRole(typeId, role, spaceId)) return true;
+      continue;
+    }
     if (isSubtypeOf(typeId, allowed, spaceId)) return true;
   }
   return false;

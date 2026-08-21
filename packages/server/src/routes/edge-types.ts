@@ -6,6 +6,10 @@ import {
   registerEdgeTypeSchema,
   unregisterEdgeTypeSchema,
   isValidTypeIdentifier,
+  isRoleConstraint,
+  roleFromConstraint,
+  TYPE_ROLES,
+  ROLE_CONSTRAINT_PREFIX,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -24,6 +28,29 @@ import {
 // Schemas
 // ---------------------------------------------------------------------------
 
+/**
+ * One entry in a type-constraint list: `*`, a type identifier, or
+ * `role:<name>` naming one of the closed set of structural roles.
+ *
+ * The role names are checked here rather than left to edge-creation time. An
+ * unknown role matches no type, so the edge would refuse every endpoint while
+ * reading as though it admitted a family of them, and the refusal would
+ * surface on somebody else's write rather than on the registration that
+ * caused it.
+ */
+const TypeConstraintSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (entry) =>
+      !isRoleConstraint(entry) || roleFromConstraint(entry) !== undefined,
+    {
+      message: `Unknown role constraint. Known roles: ${TYPE_ROLES.map(
+        (r) => `${ROLE_CONSTRAINT_PREFIX}${r}`,
+      ).join(", ")}`,
+    },
+  );
+
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
  *  the same rules that can drift from it. */
@@ -37,8 +64,8 @@ export const EdgeTypeRequestSchema = z.object({
     "many-to-one",
     "many-to-many",
   ]),
-  source_type_constraints: z.array(z.string()).optional(),
-  target_type_constraints: z.array(z.string()).optional(),
+  source_type_constraints: z.array(TypeConstraintSchema).optional(),
+  target_type_constraints: z.array(TypeConstraintSchema).optional(),
   cascade_on_delete: z.enum(["cascade", "orphan", "block"]).optional(),
   property_schema: z
     .record(

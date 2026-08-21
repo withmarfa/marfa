@@ -8973,13 +8973,15 @@
                   "source_type_constraints": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
                   "target_type_constraints": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
                   "cascade_on_delete": {
@@ -9481,6 +9483,15 @@
                           "type": "string"
                         }
                       },
+                      "roles": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        }
+                      },
                       "fields": {
                         "type": "object",
                         "additionalProperties": {
@@ -9643,6 +9654,15 @@
                           "type": "array",
                           "items": {
                             "type": "string"
+                          }
+                        },
+                        "roles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "container"
+                            ]
                           }
                         },
                         "fields": {
@@ -9890,6 +9910,15 @@
                         "type": "string"
                       }
                     },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "container"
+                        ]
+                      }
+                    },
                     "fields": {
                       "type": "object",
                       "additionalProperties": {
@@ -10102,6 +10131,15 @@
                           "type": "array",
                           "items": {
                             "type": "string"
+                          }
+                        },
+                        "roles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "container"
+                            ]
                           }
                         },
                         "fields": {

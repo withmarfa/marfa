@@ -146,3 +146,44 @@ describe("in-tree edge schemas round-trip through the validator", () => {
     }
   });
 });
+
+describe("role constraints", () => {
+  it("accepts a known role on either side", () => {
+    const result = validateEdgeTypeSchema({
+      id: "shelved-in",
+      cardinality: "many-to-many",
+      target_type_constraints: ["role:container"],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.target_type_constraints).toEqual(["role:container"]);
+  });
+
+  it("rejects a role nobody defines, on the side that declared it", () => {
+    // An unknown role matches no type at all, so the edge would refuse every
+    // endpoint while reading as though it admitted a family of them. Caught
+    // at authoring time rather than as a puzzling refusal on someone's write.
+    for (const side of [
+      "source_type_constraints",
+      "target_type_constraints",
+    ] as const) {
+      const result = validateEdgeTypeSchema({
+        id: "shelved-in",
+        cardinality: "many-to-many",
+        [side]: ["role:warehouse"],
+      });
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.errors[0]?.field).toBe(side);
+    }
+  });
+
+  it("still accepts a type identifier alongside a role", () => {
+    const result = validateEdgeTypeSchema({
+      id: "shelved-in",
+      cardinality: "many-to-many",
+      target_type_constraints: ["core.note", "role:container"],
+    });
+    expect(result.success).toBe(true);
+  });
+});

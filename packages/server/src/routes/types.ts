@@ -10,6 +10,7 @@ import {
   classifyNamespace,
   diffTypeSchemas,
   isValidVersionBump,
+  TYPE_ROLES,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -99,6 +100,10 @@ const TypeSchemaResponse = z.object({
   // so it must reach the generated spec — an omission here strips it from
   // every generated client even though the runtime body carries it.
   compatible_with: z.array(z.string()).optional(),
+  // Edges constrain on roles, so a client deciding whether an item may be
+  // pointed at a container reads this. Omitting it from the spec would strip
+  // it from every generated client while the runtime kept returning it.
+  roles: z.array(z.enum(TYPE_ROLES)).optional(),
   fields: z.record(z.string(), z.unknown()),
   version: z.number(),
   display_hints: z

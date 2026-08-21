@@ -8,6 +8,7 @@
 // nothing here may reach back into shared; registry access is injected through
 // `SchemaValidationContext` instead.
 
+import { TYPE_ROLES } from "./schema-types.js";
 import type {
   EdgeCardinality,
   EdgeCascade,
@@ -15,8 +16,30 @@ import type {
   FieldDefinition,
   FieldFormat,
   FieldType,
+  TypeRole,
   TypeSchema,
 } from "./schema-types.js";
+
+/**
+ * Prefix marking an edge-constraint entry as a role rather than a type
+ * identifier. A colon cannot appear in a type identifier, so the two forms
+ * can never be confused for one another.
+ */
+export const ROLE_CONSTRAINT_PREFIX = "role:";
+
+const TYPE_ROLE_SET: ReadonlySet<string> = new Set<string>(TYPE_ROLES);
+
+/** Whether a constraint entry names a role. */
+export function isRoleConstraint(entry: string): boolean {
+  return entry.startsWith(ROLE_CONSTRAINT_PREFIX);
+}
+
+/** The role an entry names, or `undefined` if it does not name one. */
+export function roleFromConstraint(entry: string): TypeRole | undefined {
+  if (!isRoleConstraint(entry)) return undefined;
+  const name = entry.slice(ROLE_CONSTRAINT_PREFIX.length);
+  return TYPE_ROLE_SET.has(name) ? (name as TypeRole) : undefined;
+}
 
 export const FIELD_TYPES: readonly FieldType[] = [
   "string",
@@ -719,6 +742,7 @@ export function validateTypeSchema(
     }
   }
 
+  validateRoles(obj, errors);
   validateDisplayHints(obj, visibleFields, errors);
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
@@ -760,6 +784,9 @@ export function validateTypeSchema(
   };
   if (typeof obj.description === "string") schema.description = obj.description;
   if (parentId) schema.parent = parentId;
+  if (Array.isArray(obj.roles) && obj.roles.length > 0) {
+    schema.roles = [...new Set(obj.roles as TypeRole[])];
+  }
   if (Array.isArray(obj.compatible_with)) {
     schema.compatible_with = obj.compatible_with as string[];
   } else if (typeof obj.compatible_with === "string") {
@@ -788,6 +815,46 @@ export function validateTypeSchema(
 // ---------------------------------------------------------------------------
 // Optional blocks
 // ---------------------------------------------------------------------------
+
+/**
+ * `roles` is a closed vocabulary rather than free text, because an edge
+ * constrains on it. A role nobody recognizes would leave a type looking as
+ * though it had declared something and every edge silently refusing it, which
+ * is the failure this whole mechanism exists to remove.
+ *
+ * No bare-string shorthand: `compatible_with` accepts one for historical
+ * reasons and every reader of that field pays for it. This one starts with a
+ * single shape.
+ */
+function validateRoles(
+  obj: Record<string, unknown>,
+  errors: SchemaValidationIssue[],
+): void {
+  if (obj.roles === undefined) return;
+  if (!Array.isArray(obj.roles)) {
+    errors.push(
+      issue({
+        field: "roles",
+        expected: `an array of roles (${TYPE_ROLES.join(", ")})`,
+        actual: describe(obj.roles),
+        hint: 'Write roles as ["container"], or omit it.',
+      }),
+    );
+    return;
+  }
+  for (const role of obj.roles) {
+    if (typeof role !== "string" || !TYPE_ROLE_SET.has(role)) {
+      errors.push(
+        issue({
+          field: "roles",
+          expected: `one of: ${TYPE_ROLES.join(", ")}`,
+          actual: describe(role),
+          hint: "Roles are a closed set; an edge constrains on them, so an unrecognized one would never match anything.",
+        }),
+      );
+    }
+  }
+}
 
 function validateDisplayHints(
   obj: Record<string, unknown>,
@@ -1303,11 +1370,29 @@ export function validateEdgeTypeSchema(
       errors.push(
         issue({
           field: side,
-          expected: 'a non-empty array of type identifiers (or ["*"])',
+          expected:
+            'a non-empty array of type identifiers, role constraints, or ["*"]',
           actual: describe(value),
-          hint: `Use ["*"] to allow every type, or list the permitted ones.`,
+          hint: `Use ["*"] to allow every type, "role:container" to allow every type declaring that role, or list the permitted type identifiers.`,
         }),
       );
+      continue;
+    }
+    // A `role:` entry naming a role nobody defines matches no type at all, so
+    // the edge would refuse every endpoint while reading as though it allowed
+    // a family of them. Caught here rather than at edge-creation time, where
+    // it surfaces as a puzzling refusal on somebody else's write.
+    for (const entry of value as string[]) {
+      if (isRoleConstraint(entry) && roleFromConstraint(entry) === undefined) {
+        errors.push(
+          issue({
+            field: side,
+            expected: `a known role: ${TYPE_ROLES.map((r) => `${ROLE_CONSTRAINT_PREFIX}${r}`).join(", ")}`,
+            actual: `"${entry}"`,
+            hint: "Roles are a closed set. An unknown one would match no type and silently refuse every endpoint.",
+          }),
+        );
+      }
     }
   }
 

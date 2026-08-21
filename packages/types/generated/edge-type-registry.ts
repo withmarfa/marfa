@@ -50,10 +50,10 @@ const derivedFrom: EdgeTypeSchema = {
 const inCollection: EdgeTypeSchema = {
   id: "in-collection",
   label: "In collection",
-  description: "Source item is a member of the target container: a collection, an ongoing series, or an album. An item may belong to any number of containers, and a container holds any number of members. Deleting the container leaves its members in place. Carries position for ordering within the container.",
+  description: "Source item is a member of the target container. The target may be any type declaring the `container` role — a collection, an ongoing series, an album, a publisher's own container type — rather than a fixed list of type names, so an integration writing its own vocabulary can express containment without the platform naming its types first. An item may belong to any number of containers, and a container holds any number of members. A container may not itself be a member: containment here is flat, and `parent-of` is what hierarchy is for. Deleting the container leaves its members in place. Carries position for ordering within the container.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
-  target_type_constraints: ["user.collection", "core.media.series", "core.media.album"],
+  target_type_constraints: ["role:container"],
   cascade_on_delete: "orphan",
   property_schema: {
     position: { type: "number", description: "Ordering within the collection (1-based)." },

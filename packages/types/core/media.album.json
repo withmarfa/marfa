@@ -3,7 +3,8 @@
   "parent": "core.media",
   "label": "Album",
   "description": "An album. Inherits all core.media fields.",
-  "version": 1,
+  "version": 2,
+  "roles": ["container"],
   "fields": {
     "release_type": {
       "type": "string",

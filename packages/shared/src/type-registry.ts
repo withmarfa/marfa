@@ -5,6 +5,10 @@ import {
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
   RESERVED_ITEM_FIELDS,
+  ROLE_CONSTRAINT_PREFIX,
+  TYPE_ROLES,
+  isRoleConstraint,
+  roleFromConstraint,
   validateTypeSchema as validateTypeSchemaShape,
 } from "@withmarfa/types";
 import type {
@@ -17,6 +21,7 @@ import type {
   MergeStrategy,
   PlatformTypeId,
   SchemaValidationIssue,
+  TypeRole,
   TypeSchema,
   TypeSchemaValidationResult,
   VersionPolicy,
@@ -36,6 +41,7 @@ export type {
   MergeStrategy,
   PlatformTypeId,
   SchemaValidationIssue,
+  TypeRole,
   TypeSchema,
   TypeSchemaValidationResult,
   VersionPolicy,
@@ -45,6 +51,15 @@ export type {
 // `satisfies Partial<Record<PlatformTypeId, …>>` and a deleted identifier
 // becomes a type error in that repository's own typecheck.
 export { ALL_TYPES, ALL_INTEGRATION_TYPES, ALL_SYSTEM_TYPES, ALL_TYPE_IDS };
+// The closed role vocabulary and the constraint-entry grammar, re-exported so
+// a consumer validating or rendering roles reads the same list and the same
+// parser the validator enforces.
+export {
+  ROLE_CONSTRAINT_PREFIX,
+  TYPE_ROLES,
+  isRoleConstraint,
+  roleFromConstraint,
+};
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -539,6 +554,42 @@ export function isSubtypeOf(
     }
     seen.add(current.id);
     if (current.parent === parentId) return true;
+    current = resolveSchema(current.parent, spaceId);
+  }
+  return false;
+}
+
+/**
+ * Whether a type declares a structural role, its own or inherited.
+ *
+ * Inheritance is walked here rather than baked into the stored schema, and
+ * that is the whole point: a type registered at runtime under a shipped
+ * parent never passes through the build-time codegen, so a role flattened at
+ * build time would be a role only in-tree types could have. Resolving through
+ * the chain means a space's subtype of a container is a container, exactly as
+ * a subtype already satisfies an ancestor's name constraint.
+ *
+ * Unknown types answer false — the same fail-closed rule the name-based
+ * constraint check applies.
+ */
+export function typeHasRole(
+  typeId: string,
+  role: TypeRole,
+  spaceId?: string | null,
+): boolean {
+  // Same cycle and depth guard as `isSubtypeOf`: this runs on the per-edge
+  // check hot path, so a cyclic `parent` chain must not loop forever.
+  const seen = new Set<string>();
+  let current = resolveSchema(typeId, spaceId);
+  while (current) {
+    if (current.roles?.includes(role)) return true;
+    if (!current.parent) return false;
+    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Inheritance cycle or excessive depth detected resolving roles for type "${typeId}" (at "${current.id}")`,
+      );
+    }
+    seen.add(current.id);
     current = resolveSchema(current.parent, spaceId);
   }
   return false;

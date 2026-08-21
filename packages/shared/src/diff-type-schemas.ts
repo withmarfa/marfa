@@ -100,6 +100,19 @@ function compatibleWithDiff(prev: TypeSchema, next: TypeSchema): FieldDiff {
 }
 
 /**
+ * Withdrawing a role is breaking in a way a withdrawn field is not: every edge
+ * constraining on that role stops accepting the type, so writes that used to
+ * land start refusing. Declaring one only ever admits more.
+ */
+function rolesDiff(prev: TypeSchema, next: TypeSchema): FieldDiff {
+  const before = new Set(prev.roles ?? []);
+  const after = new Set(next.roles ?? []);
+  for (const role of before) if (!after.has(role)) return "breaking";
+  for (const role of after) if (!before.has(role)) return "widened";
+  return "same";
+}
+
+/**
  * Compute the diff class between an existing schema and a proposed new
  * version. Used by `POST /types` to gate the version bump.
  */
@@ -139,6 +152,10 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
   const compatibility = compatibleWithDiff(prev, next);
   if (compatibility === "breaking") major = true;
   else if (compatibility === "widened") minor = true;
+
+  const roles = rolesDiff(prev, next);
+  if (roles === "breaking") major = true;
+  else if (roles === "widened") minor = true;
 
   if (prev.parent !== next.parent) major = true;
 
