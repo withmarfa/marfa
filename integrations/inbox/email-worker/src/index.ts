@@ -147,7 +147,7 @@ export default {
           "Content-Type": "application/json",
           "X-Marfa-Signature": `sha256=${signatureHex}`,
           "X-Marfa-Delivery-Id": deliveryId,
-          "User-Agent": "withmarfa-inbox-email-worker/0.3.0",
+          "User-Agent": "marfa-inbox-email-worker/0.3.0",
         },
         body,
         signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
