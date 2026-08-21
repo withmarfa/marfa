@@ -34,24 +34,25 @@ if ! docker info >/dev/null 2>&1; then
   exit 0
 fi
 
-# Pick a free random port in the high range; retry on collision.
-pick_port() {
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    local port=$(( 50000 + RANDOM % 10000 ))
-    if ! (echo > /dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
-      echo "$port"
-      return 0
-    fi
-  done
-  echo "could not find a free port in 50000-60000" >&2
-  return 1
-}
-
-PG_PORT="$(pick_port)"
+# The host port is chosen by the kernel at bind time, not by us beforehand.
+#
+# This used to probe for a free port and bind it in a later step, which left a
+# window: any process taking the port in between turned a green branch red with
+# `Bind for 0.0.0.0:<port> failed: port is already allocated`, exit 125. The
+# retry loop did not help, because it retried the probe and the probe had
+# succeeded. Worse, the range it probed (50000-60000) sits inside the kernel's
+# own ephemeral range, so the thief was not only a concurrent CI job but any of
+# the outbound connections a full test run opens by the thousand.
+#
+# Publishing on port 0 hands the choice to the only allocator that can make it
+# atomically, then `docker port` reads back what was assigned.
 PG_USER="marfa"
 PG_PASSWORD="marfa"
 PG_DB="marfa_schema_dump"
-CONTAINER_NAME="marfa-schema-dump-pg-${PG_PORT}"
+# The name can no longer carry the port, because the port does not exist until
+# the container does. The pid plus a nonce keeps concurrent runs distinguishable
+# in `docker ps`, which is what the port was providing.
+CONTAINER_NAME="marfa-schema-dump-pg-$$-${RANDOM}"
 
 cleanup() {
   # -v matters: the postgres image declares a VOLUME, so every run mints an
@@ -60,14 +61,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "→ Starting ${CONTAINER_NAME} (postgres:17) on port ${PG_PORT}" >&2
+echo "→ Starting ${CONTAINER_NAME} (postgres:17)" >&2
 docker run -d --rm \
   --name "${CONTAINER_NAME}" \
   -e "POSTGRES_USER=${PG_USER}" \
   -e "POSTGRES_PASSWORD=${PG_PASSWORD}" \
   -e "POSTGRES_DB=${PG_DB}" \
-  -p "${PG_PORT}:5432" \
+  -p "0:5432" \
   postgres:17 >/dev/null
+
+# Read back the assignment. `docker port` prints one line per address family
+# (0.0.0.0 and [::]), so take the IPv4 line and keep the part after the last
+# colon. Everything here connects over 127.0.0.1.
+PG_PORT="$(docker port "${CONTAINER_NAME}" 5432/tcp | grep '^0\.0\.0\.0:' | head -1 | sed 's/.*://')"
+if [ -z "${PG_PORT}" ]; then
+  echo "✗ Postgres started but no host port was published for 5432/tcp." >&2
+  echo "  This is a Docker port-publishing failure, not port contention." >&2
+  docker port "${CONTAINER_NAME}" >&2 || true
+  exit 1
+fi
+echo "  published on port ${PG_PORT}" >&2
 
 # Wait for ready. pg_isready alone races against the postgres entrypoint's
 # initdb post-start phase — it can briefly report ready while the cluster is
