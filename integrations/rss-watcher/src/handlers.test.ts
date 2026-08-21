@@ -255,7 +255,10 @@ describe("RSS Watcher schedule handler", () => {
     expect(cursor.last_seen_updated).toBe("2026-04-30T10:00:00Z");
     // One info activity at the end summarizing the run.
     const summaries = emitted.map((e) => e.properties?.summary);
-    expect(summaries).toContain("RSS Watcher created 2 bookmark(s)");
+    // Named by what was actually written, not by the family's noun. A
+    // connection carrying a user mapping writes the type its rules name,
+    // and the summary has to survive that.
+    expect(summaries).toContain("RSS Watcher created 2 core.bookmark");
   });
 
   it("second run on an unchanged feed creates no new bookmarks", async () => {
@@ -537,7 +540,7 @@ describe("RSS Watcher schedule handler", () => {
     );
     expect(required).toHaveLength(1);
     expect(required[0]!.properties?.summary).toMatch(
-      /failed to create bookmark/,
+      /failed to create an item/,
     );
   });
 
