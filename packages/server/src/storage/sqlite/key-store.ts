@@ -422,6 +422,22 @@ export class SqliteKeyStore implements KeyStore {
     return result.rowsAffected;
   }
 
+  async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
+    // See the PG copy: `eq(..., false)` because the column is NOT NULL
+    // with a false default.
+    const result = await this.db
+      .delete(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, false),
+          isNotNull(apiKeys.revoked_at),
+          lt(apiKeys.revoked_at, cutoffIso),
+        ),
+      )
+      .run();
+    return result.rowsAffected;
+  }
+
   async countRuntimeCredentials(
     nowIso: string,
   ): Promise<{ total: number; active: number }> {

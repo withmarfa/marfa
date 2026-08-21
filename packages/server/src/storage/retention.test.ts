@@ -3,6 +3,8 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
+  ActivityPurger,
+  RevokedKeyReaper,
   AuthSessionCleaner,
   DcrClientCleaner,
   RuntimeCredentialReaper,
@@ -1179,5 +1181,234 @@ describe("KeyStore.list / count — expired credentials are not live", () => {
     );
     const listed = await ctx.storage.keys.list();
     expect(listed.map((k) => k.id)).toContain(human.id);
+  });
+});
+
+/**
+ * Insert an item of a chosen type with a contrived `created_at`. The
+ * activity purger filters on creation rather than update, so these tests
+ * have to choose that column specifically.
+ */
+async function seedItemWithCreatedAt(opts: {
+  id: string;
+  type: string;
+  createdAtIso: string;
+  spaceId?: string;
+}): Promise<void> {
+  await ctx.storage.items.create(
+    {
+      id: opts.id,
+      type: opts.type,
+      properties:
+        opts.type === "system.activity"
+          ? {
+              summary: `seed ${opts.id}`,
+              severity: "info",
+              connection_id: `conn_${opts.id}`,
+            }
+          : { body: `seed ${opts.id}` },
+      tier: "library",
+    },
+    opts.spaceId,
+  );
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const st = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await st.__pgClient(`UPDATE items SET created_at = $1 WHERE id = $2`, [
+      opts.createdAtIso,
+      opts.id,
+    ]);
+  } else {
+    const st = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await st.__sqliteRun("UPDATE items SET created_at = ? WHERE id = ?", [
+      opts.createdAtIso,
+      opts.id,
+    ]);
+  }
+}
+
+describe("ActivityPurger.runOnce — behavioral", () => {
+  it("drops activity past the window and leaves everything else alone", async () => {
+    const ids = {
+      youngActivity: id("bbb1"),
+      oldActivity: id("bbb2"),
+      ancientNote: id("bbb3"),
+    };
+
+    // Inside the window: survives.
+    await seedItemWithCreatedAt({
+      id: ids.youngActivity,
+      type: "system.activity",
+      createdAtIso: new Date(
+        FIXED_NOW.getTime() - 13 * MS_PER_DAY,
+      ).toISOString(),
+    });
+    // Past it: purged.
+    await seedItemWithCreatedAt({
+      id: ids.oldActivity,
+      type: "system.activity",
+      createdAtIso: new Date(
+        FIXED_NOW.getTime() - 15 * MS_PER_DAY,
+      ).toISOString(),
+    });
+    // The gate that matters most: an ordinary item of the same age is
+    // untouched. A type filter that slipped would take a person's data.
+    await seedItemWithCreatedAt({
+      id: ids.ancientNote,
+      type: "core.note",
+      createdAtIso: new Date(
+        FIXED_NOW.getTime() - 400 * MS_PER_DAY,
+      ).toISOString(),
+    });
+
+    const purger = new ActivityPurger(
+      ctx.storage.items,
+      14,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    expect(await purger.runOnce()).toBe(1);
+    expect(await rowExists(ids.youngActivity)).toBe(true);
+    expect(await rowExists(ids.oldActivity)).toBe(false);
+    expect(await rowExists(ids.ancientNote)).toBe(true);
+  });
+
+  it("is disabled by a zero retention window", async () => {
+    const only = id("bbb4");
+    await seedItemWithCreatedAt({
+      id: only,
+      type: "system.activity",
+      createdAtIso: new Date(
+        FIXED_NOW.getTime() - 900 * MS_PER_DAY,
+      ).toISOString(),
+    });
+    const disabled = new ActivityPurger(
+      ctx.storage.items,
+      0,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    expect(await disabled.runOnce()).toBe(0);
+    expect(await rowExists(only)).toBe(true);
+  });
+});
+
+/** Row-level existence for `api_keys`. `keys.get` suppresses revoked
+ *  rows, so a revoked-but-present key is indistinguishable from a
+ *  deleted one through the store. */
+async function keyRowExists(keyId: string): Promise<boolean> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const st = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    const rows = await st.__pgClient("SELECT 1 FROM api_keys WHERE id = $1", [
+      keyId,
+    ]);
+    return rows.length > 0;
+  }
+  const st = ctx.storage as unknown as {
+    __sqliteAll: (q: string) => Promise<unknown[]>;
+  };
+  // `__sqliteAll` takes no parameters, and a test table holds a handful
+  // of rows, so read the ids and compare here rather than interpolating.
+  const rows = (await st.__sqliteAll(`SELECT id FROM api_keys`)) as {
+    id: string;
+  }[];
+  return rows.some((r) => r.id === keyId);
+}
+
+describe("RevokedKeyReaper.runOnce — behavioral", () => {
+  it("drops long-revoked ordinary keys and never touches runtime credentials", async () => {
+    // A runtime credential revoked well past this reaper's 30-day window.
+    // The other reaper owns it; if this one took it the two would be
+    // racing on the same rows with different windows.
+    await seedRuntimeCredential({
+      id: "ccc1",
+      createdAt: new Date(FIXED_NOW.getTime() - 200 * MS_PER_DAY),
+      revokedAt: new Date(FIXED_NOW.getTime() - 100 * MS_PER_DAY),
+    });
+
+    const oldRevoked = await ctx.storage.keys.create(
+      {
+        label: "old revoked",
+        source: "probe:old",
+        role: "member",
+        type_permissions: {},
+      },
+      hashApiKey(`marfa_k1_oldRevoked`, TEST_API_KEY_SALT),
+    );
+    const youngRevoked = await ctx.storage.keys.create(
+      {
+        label: "young revoked",
+        source: "probe:young",
+        role: "member",
+        type_permissions: {},
+      },
+      hashApiKey(`marfa_k1_youngRevoked`, TEST_API_KEY_SALT),
+    );
+    const live = await ctx.storage.keys.create(
+      {
+        label: "live",
+        source: "probe:live",
+        role: "member",
+        type_permissions: {},
+      },
+      hashApiKey(`marfa_k1_live`, TEST_API_KEY_SALT),
+    );
+
+    const setRevoked = async (keyId: string, iso: string): Promise<void> => {
+      const dialect = process.env.DB_DIALECT ?? "sqlite";
+      if (dialect === "pg") {
+        const st = ctx.storage as unknown as {
+          __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+        };
+        await st.__pgClient(
+          `UPDATE api_keys SET revoked_at = $1 WHERE id = $2`,
+          [iso, keyId],
+        );
+      } else {
+        const st = ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        };
+        await st.__sqliteRun(
+          "UPDATE api_keys SET revoked_at = ? WHERE id = ?",
+          [iso, keyId],
+        );
+      }
+    };
+    await setRevoked(
+      oldRevoked.id,
+      new Date(FIXED_NOW.getTime() - 31 * MS_PER_DAY).toISOString(),
+    );
+    await setRevoked(
+      youngRevoked.id,
+      new Date(FIXED_NOW.getTime() - 29 * MS_PER_DAY).toISOString(),
+    );
+
+    const reaper = new RevokedKeyReaper(
+      ctx.storage,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+    expect(await reaper.runOnce()).toBe(1);
+
+    // Read the table directly: `keys.get` hides revoked rows, so it
+    // cannot tell "revoked" from "deleted" — which is the whole
+    // distinction under test.
+    expect(await keyRowExists(oldRevoked.id)).toBe(false);
+    expect(await keyRowExists(youngRevoked.id)).toBe(true);
+    expect(await keyRowExists(live.id)).toBe(true);
+
+    // The runtime credential is still there: this reaper does not own it.
+    const counts = await ctx.storage.keys.countRuntimeCredentials(
+      FIXED_NOW.toISOString(),
+    );
+    expect(counts.total).toBe(1);
   });
 });

@@ -359,6 +359,31 @@ export interface ItemStore {
     beforeDate: string,
     spaceId?: string | null,
   ): Promise<number>;
+  /**
+   * Hard-delete every `system.activity` item whose `created_at` is
+   * strictly older than `beforeDate` (an ISO 8601 timestamp). Returns
+   * the number of rows deleted.
+   *
+   * A sibling of `purgeTrashedOlderThan` rather than a reuse of it,
+   * because activity rows are `active`: they are never trashed, so the
+   * trash lifecycle never reaches them and nothing else did either.
+   * Same obligations — clean the search index, drop edges in both
+   * directions inside the transaction, since edges have no FK to items.
+   *
+   * Filters on `created_at` rather than `updated_at`. An activity row is
+   * written once and never revised, so the two agree; `created_at` is
+   * the one that states the intent, which is "how long we keep the
+   * record of a run".
+   *
+   * `spaceId` semantics match `purgeTrashedOlderThan`:
+   * - `undefined` — every row older than the cutoff.
+   * - `string` — only rows where `space_id` matches.
+   * - `null` — only rows where `space_id IS NULL`.
+   */
+  purgeActivityOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number>;
 }
 
 export interface MetadataStore {
@@ -628,6 +653,19 @@ export interface KeyStore {
    * short window operators might inspect. Returns the number deleted.
    */
   deleteRevokedRuntimeCredentialsOlderThan(cutoffIso: string): Promise<number>;
+  /**
+   * Hard-delete revoked keys that are NOT runtime credentials and whose
+   * `revoked_at` is older than `cutoffIso`. Returns the number deleted.
+   *
+   * The sibling of the call above, deliberately separate rather than a
+   * widening of it. That one reasons its seven-day window as "per-dispatch
+   * machine artifacts, not human credentials", and the reasoning does not
+   * carry: an ordinary key is minted by a person or a suite, and how long
+   * its revocation stays visible is a different judgment. Nothing swept
+   * these at all before, which is how a staging instance reached 3,044
+   * revoked keys older than a week.
+   */
+  deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
   /**
    * Instance-wide runtime-credential counters for operator surfaces.
    * `total` counts every runtime-credential row still in the table

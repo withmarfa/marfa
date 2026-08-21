@@ -415,6 +415,22 @@ export class PgKeyStore implements KeyStore {
     return rows.length;
   }
 
+  async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
+    // `eq(..., false)` rather than `not(...)`: the column is NOT NULL with
+    // a false default, so there is no third state to fall through.
+    const rows = await this.db
+      .delete(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.is_runtime_credential, false),
+          isNotNull(apiKeys.revoked_at),
+          lt(apiKeys.revoked_at, cutoffIso),
+        ),
+      )
+      .returning({ id: apiKeys.id });
+    return rows.length;
+  }
+
   async countRuntimeCredentials(
     nowIso: string,
   ): Promise<{ total: number; active: number }> {

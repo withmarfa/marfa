@@ -1087,6 +1087,12 @@ export interface SpaceConfig {
   audit_retention_days?: number;
   event_log_retention_hours?: number;
   trash_retention_days?: number;
+  /**
+   * Days to keep `system.activity` rows. An integration reports its runs
+   * as activity, so on a busy space this is the fastest-growing item
+   * type by a wide margin and nothing aged it out before this existed.
+   */
+  activity_retention_days?: number;
 }
 
 /**

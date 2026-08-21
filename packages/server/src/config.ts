@@ -139,6 +139,22 @@ export interface AppConfig {
   rlsEnforce?: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
+  /** Days a `system.activity` item survives before the purger drops it.
+   *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; per-space
+   *  override `activity_retention_days`. `0` disables the job.
+   *
+   *  An integration reports every run as an activity row, including the
+   *  runs that found nothing to do, so this is the fastest-growing item
+   *  type on a space with connections and nothing aged it out before.
+   *
+   *  Optional on the type for the same reason `rlsEnforce` is: a dozen
+   *  test contexts build `AppConfig` literals, and a required field with
+   *  a sensible default would churn every one of them to say what the
+   *  default already says. */
+  activityRetentionDays?: number;
+  /** Cadence (ms) for the activity purger. Default 3_600_000 (1h);
+   *  env override `MARFA_ACTIVITY_PURGE_INTERVAL_MS`. */
+  activityPurgeIntervalMs?: number;
   /** Hours an event_log entry survives before the cleanup job purges it.
    *  Default 168 (7 days). Controls how far back a client's SSE replay
    *  cursor can reach; requests with `Last-Event-ID` older than the
@@ -791,6 +807,14 @@ export function loadConfig(): AppConfig {
     // undefined regardless of this flag.
     rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
+    activityRetentionDays: envNumber(
+      process.env.MARFA_ACTIVITY_RETENTION_DAYS,
+      14,
+    ),
+    activityPurgeIntervalMs: envNumber(
+      process.env.MARFA_ACTIVITY_PURGE_INTERVAL_MS,
+      3_600_000,
+    ),
     auditCleanupIntervalMs: envNumber(
       process.env.AUDIT_CLEANUP_INTERVAL_MS,
       86_400_000,
