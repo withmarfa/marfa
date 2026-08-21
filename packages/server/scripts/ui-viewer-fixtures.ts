@@ -765,7 +765,6 @@ const INSTALL_MANIFEST: Record<string, unknown> = {
   summary: "Two-way sync between Google Calendar and your events.",
   direction: "both",
   target_types: ["google.calendar.event"],
-  runtime_compatibility: ["hosted", "local"],
 };
 
 const CONNECTION_ID = "01999a3f-96ad-4ec1-b378-399d4875cfa5";

@@ -36,7 +36,6 @@ describe("Template manifest", () => {
 
   it("targets core.note and declares the local runtime tier", () => {
     expect(TEMPLATE_MANIFEST.target_types).toEqual(["core.note"]);
-    expect(TEMPLATE_MANIFEST.runtime_compatibility).toEqual(["local"]);
   });
 
   it("declares no OAuth requirements", () => {

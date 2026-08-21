@@ -106,18 +106,6 @@
         "type": "string"
       }
     },
-    "runtime_compatibility": {
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "hosted",
-          "self-hosted",
-          "local"
-        ]
-      }
-    },
     "bidirectional_handling": {
       "type": "object",
       "properties": {
@@ -434,7 +422,6 @@
     "direction",
     "triggers",
     "target_types",
-    "runtime_compatibility",
     "bidirectional_handling",
     "oauth_requirements",
     "webhook_verification",

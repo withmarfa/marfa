@@ -1,7 +1,7 @@
 /**
  * In-tree integration smokes against the local-runtime substrate.
  * One smoke per in-tree integration that declares
- * `runtime_compatibility: ["local"]`:
+ * a built local entry:
  *
  *   - _template
  *   - rss-watcher (schedule + stub fetch)

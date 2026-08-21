@@ -48,7 +48,6 @@ const VALID_MANIFEST = {
   direction: "both" as const,
   triggers: [{ type: "webhook" as const }],
   target_types: ["core.event"],
-  runtime_compatibility: ["hosted"],
   bidirectional_handling: {
     echo_ttl_seconds: 60,
     lag_window_seconds: 60,
@@ -57,7 +56,7 @@ const VALID_MANIFEST = {
   },
   oauth_requirements: {},
   webhook_verification: { method: "hmac-sha256" as const },
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
 };
 
 interface ItemResponse {

@@ -39,7 +39,6 @@ describe("RSS Watcher manifest", () => {
 
   it("targets core.bookmark and declares the local runtime tier", () => {
     expect(RSS_WATCHER_MANIFEST.target_types).toEqual(["core.bookmark"]);
-    expect(RSS_WATCHER_MANIFEST.runtime_compatibility).toEqual(["local"]);
   });
 
   it("declares no OAuth requirements", () => {

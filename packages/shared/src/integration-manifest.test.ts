@@ -34,7 +34,6 @@ const VALID_MANIFEST = {
     { type: "manual" as const },
   ],
   target_types: ["core.event"],
-  runtime_compatibility: ["hosted" as const, "self-hosted" as const],
   bidirectional_handling: {
     echo_ttl_seconds: 60,
     lag_window_seconds: 60,
@@ -46,7 +45,7 @@ const VALID_MANIFEST = {
     "drive.upload": "leased" as const,
   },
   webhook_verification: { method: "hmac-sha256" as const },
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
 };
 
 describe("IntegrationManifestSchema — happy path", () => {
@@ -81,7 +80,6 @@ describe("IntegrationManifestSchema — required-field rejects", () => {
     "direction",
     "triggers",
     "target_types",
-    "runtime_compatibility",
     "bidirectional_handling",
     "oauth_requirements",
     "webhook_verification",
@@ -207,22 +205,6 @@ describe("IntegrationManifestSchema — invalid values", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects an empty runtime_compatibility array", () => {
-    const result = IntegrationManifestSchema.safeParse({
-      ...VALID_MANIFEST,
-      runtime_compatibility: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects an unknown runtime_compatibility entry", () => {
-    const result = IntegrationManifestSchema.safeParse({
-      ...VALID_MANIFEST,
-      runtime_compatibility: ["serverless"],
-    });
-    expect(result.success).toBe(false);
-  });
-
   it("rejects an unknown oauth_requirements value", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
@@ -244,7 +226,7 @@ describe("IntegrationManifestSchema — token_requirements (1.1.0 additive)", ()
   it("accepts manifests that declare token_requirements", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
-      manifest_schema_version: "1.1.0",
+      manifest_schema_version: "2.0.0",
       token_requirements: { todoist: "required" },
     });
     expect(result.success).toBe(true);
@@ -264,7 +246,7 @@ describe("IntegrationManifestSchema — token_requirements (1.1.0 additive)", ()
   it("rejects an unknown token_requirements value", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
-      manifest_schema_version: "1.1.0",
+      manifest_schema_version: "2.0.0",
       token_requirements: { todoist: "optional" },
     });
     expect(result.success).toBe(false);
@@ -273,7 +255,7 @@ describe("IntegrationManifestSchema — token_requirements (1.1.0 additive)", ()
   it("rejects an empty token_requirements key", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
-      manifest_schema_version: "1.1.0",
+      manifest_schema_version: "2.0.0",
       token_requirements: { "": "required" },
     });
     expect(result.success).toBe(false);

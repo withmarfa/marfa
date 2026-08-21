@@ -214,9 +214,8 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
               version: "0.0.1",
               publisher: "test",
               description: "role split hand-off test",
-              manifest_schema_version: "1.0.0",
+              manifest_schema_version: "2.0.0",
               direction: "read",
-              runtime_compatibility: ["local"],
               target_types: ["core.note"],
               triggers: [{ type: "schedule", config: { cron: "*/5 * * * *" } }],
               bidirectional_handling: {

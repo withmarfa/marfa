@@ -48,7 +48,6 @@ function manifest(name: string): IntegrationManifest {
     direction: "both",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -57,7 +56,7 @@ function manifest(name: string): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
   };
 }
 
@@ -71,7 +70,6 @@ async function integrationItem(name: string): Promise<string> {
         manifest_version: m.version,
         publisher: m.publisher,
         direction: m.direction,
-        runtime_compatibility: m.runtime_compatibility,
         manifest: m,
         registered_at: new Date().toISOString(),
       },

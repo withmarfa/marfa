@@ -83,8 +83,6 @@ const ManifestNameSchema = z
       "manifest name must follow handle-slash-name grammar (e.g. acme/calendar-sync)",
   });
 
-const RuntimeCompatibilityValue = z.enum(["hosted", "self-hosted", "local"]);
-
 const TriggerScheduleSchema = z.object({
   type: z.literal("schedule"),
   config: z.object({
@@ -294,9 +292,6 @@ export const IntegrationManifestSchema = z
         }),
       )
       .min(1, "at least one target_type is required"),
-    runtime_compatibility: z
-      .array(RuntimeCompatibilityValue)
-      .min(1, "at least one runtime_compatibility entry is required"),
     bidirectional_handling: BidirectionalHandlingSchema,
     oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
     /**
@@ -579,8 +574,13 @@ export function validateConnectionConfiguration(
  * Highest manifest_schema_version major this library accepts. Used by the
  * server's validate-manifest helper. Bump when the contract crosses a
  * breaking-change boundary.
+ *
+ * Moved to 2 when `runtime_compatibility` was removed. It was a required
+ * field, so dropping it is not additive: a 1.x manifest carrying it no
+ * longer describes anything this runtime does, and one written without it
+ * would have failed a 1.x validator.
  */
-export const MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR = 1;
+export const MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR = 2;
 
 /** Parses `manifest_schema_version` and returns its major component. */
 export function parseManifestSchemaMajor(version: string): number | null {

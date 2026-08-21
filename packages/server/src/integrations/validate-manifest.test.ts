@@ -12,7 +12,6 @@ const VALID_MANIFEST = {
     { type: "webhook" },
   ],
   target_types: ["core.event"],
-  runtime_compatibility: ["hosted"],
   bidirectional_handling: {
     echo_ttl_seconds: 60,
     lag_window_seconds: 60,
@@ -23,7 +22,7 @@ const VALID_MANIFEST = {
     "calendar.read": "proxy",
   },
   webhook_verification: { method: "hmac-sha256" },
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
 };
 
 describe("validateManifest", () => {
@@ -109,7 +108,7 @@ describe("validateManifest", () => {
   it("rejects a manifest_schema_version with unsupported major", () => {
     const result = validateManifest({
       ...VALID_MANIFEST,
-      manifest_schema_version: "2.0.0",
+      manifest_schema_version: "3.0.0",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -117,7 +116,7 @@ describe("validateManifest", () => {
         {
           path: "manifest_schema_version",
           message:
-            "manifest schema version not supported (expected major 1.x.x, got 2.0.0)",
+            "manifest schema version not supported (expected major 2.x.x, got 3.0.0)",
         },
       ]);
     }
@@ -127,7 +126,7 @@ describe("validateManifest", () => {
     expect(
       validateManifest({
         ...VALID_MANIFEST,
-        manifest_schema_version: "1.99.99",
+        manifest_schema_version: "2.0.0",
       }).ok,
     ).toBe(true);
   });

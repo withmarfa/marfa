@@ -33,7 +33,6 @@ function manifest(): IntegrationManifest {
     direction: "both",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -42,7 +41,7 @@ function manifest(): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
   };
 }
 
@@ -64,7 +63,6 @@ async function installFresh(): Promise<{
         manifest_version: "1.0.0",
         publisher: "Acme",
         direction: "both",
-        runtime_compatibility: ["hosted"],
         manifest: manifest(),
         registered_at: new Date().toISOString(),
       },

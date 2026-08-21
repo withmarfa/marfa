@@ -33,7 +33,6 @@ const MANIFEST: IntegrationManifest = {
   direction: "read",
   triggers: [{ type: "manual" }],
   target_types: ["core.note"],
-  runtime_compatibility: ["hosted"],
   bidirectional_handling: {
     echo_ttl_seconds: 60,
     lag_window_seconds: 60,
@@ -42,7 +41,7 @@ const MANIFEST: IntegrationManifest = {
   },
   oauth_requirements: {},
   webhook_verification: { method: "hmac-sha256" },
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
 };
 
 async function install(): Promise<string> {
@@ -58,7 +57,6 @@ async function install(): Promise<string> {
         manifest_version: MANIFEST.version,
         publisher: MANIFEST.publisher,
         direction: MANIFEST.direction,
-        runtime_compatibility: MANIFEST.runtime_compatibility,
         manifest: MANIFEST,
         registered_at: new Date().toISOString(),
       },
@@ -117,7 +115,6 @@ describe("install refuses configuration outside the declared contract", () => {
           manifest_version: manifest.version,
           publisher: manifest.publisher,
           direction: manifest.direction,
-          runtime_compatibility: manifest.runtime_compatibility,
           manifest,
           registered_at: new Date().toISOString(),
         },
@@ -151,7 +148,7 @@ describe("install refuses configuration outside the declared contract", () => {
     const declaring: IntegrationManifest = {
       ...MANIFEST,
       name: "acme/cfg-declared",
-      manifest_schema_version: "1.2.0",
+      manifest_schema_version: "2.0.0",
       configuration_schema: {
         feed_url: {
           type: "string",

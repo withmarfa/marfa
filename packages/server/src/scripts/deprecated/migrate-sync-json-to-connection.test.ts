@@ -94,13 +94,11 @@ describe("migrateSyncJsonToConnection", () => {
         kind?: string;
         integration_ref?: string;
         credential_ref?: string;
-        runtime_compatibility?: string[];
         configuration?: Record<string, unknown>;
       };
       expect(connProps.kind).toBe("integration");
       expect(connProps.integration_ref).toBe(pointer.integration_id);
       expect(connProps.credential_ref).toBe(pointer.credential_id);
-      expect(connProps.runtime_compatibility).toEqual(["local"]);
       expect(connProps.configuration?.roots).toEqual(sampleSyncJson.roots);
       expect(connProps.configuration?.debounceMs).toBe(3000);
       expect(connProps.configuration?.types).toEqual([

@@ -17,13 +17,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RAINDROP_MANIFEST: IntegrationManifest = {
   name: "raindrop/bookmarks",
-  version: "0.1.0",
-  manifest_schema_version: "1.1.0",
+  version: "0.2.0",
+  manifest_schema_version: "2.0.0",
   publisher: "raindrop",
   description:
     "Inbound sync of Raindrop bookmarks + collections via the REST API. Polls every 10 minutes; lands raindrops as raindrop.raindrop items with parent-of edges to raindrop.collection items.",
   direction: "read",
-  runtime_compatibility: ["local"],
   target_types: ["raindrop.raindrop", "raindrop.collection"],
   triggers: [{ type: "schedule", config: { cron: "*/10 * * * *" } }],
   bidirectional_handling: {

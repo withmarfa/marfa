@@ -14,7 +14,6 @@ describe("Sync Agent manifest", () => {
   });
 
   it("declares local runtime and bidirectional direction", () => {
-    expect(SYNC_MANIFEST.runtime_compatibility).toEqual(["local"]);
     expect(SYNC_MANIFEST.direction).toBe("both");
   });
 

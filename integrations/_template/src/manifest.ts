@@ -13,13 +13,12 @@
  */
 export const TEMPLATE_MANIFEST = {
   name: "acme/template",
-  version: "0.0.1",
+  version: "0.1.0",
   publisher: "acme",
   description:
     "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end.",
-  manifest_schema_version: "1.2.0",
+  manifest_schema_version: "2.0.0",
   direction: "read" as const,
-  runtime_compatibility: ["local"] as const,
   target_types: ["core.note"] as const,
   triggers: [
     {

@@ -2,8 +2,7 @@
  * One-shot data migration — sync re-presentation.
  *
  * Re-presents an existing `~/.marfa/sync.json` configuration as a
- * `system.connection` (kind: integration,
- * runtime_compatibility: ["local"]) plus a `system.credential`
+ * `system.connection` (kind: integration) plus a `system.credential`
  * (kind: api_key, secret_encrypted under
  * SECRET_INFO.apiKeyCredential).
  *
@@ -155,7 +154,6 @@ export async function migrateSyncJsonToConnection(
         granted_at: new Date().toISOString(),
         integration_ref: integrationId,
         credential_ref: credential.id,
-        runtime_compatibility: ["local"],
         configuration,
       },
     },
@@ -202,7 +200,6 @@ async function ensureIntegrationItem(
         publisher: SYNC_MANIFEST.publisher,
         summary: SYNC_MANIFEST.description,
         direction: SYNC_MANIFEST.direction,
-        runtime_compatibility: SYNC_MANIFEST.runtime_compatibility,
         manifest: SYNC_MANIFEST,
         registered_at: new Date().toISOString(),
       },

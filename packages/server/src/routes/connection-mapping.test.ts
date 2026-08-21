@@ -18,11 +18,10 @@ async function seedConnection(
   const manifest = {
     name,
     version: "0.1.0",
-    manifest_schema_version: "1.3.0",
+    manifest_schema_version: "2.0.0",
     publisher: "demo",
     description: "Mapping-surface fixture integration.",
     direction: "read",
-    runtime_compatibility: ["local"],
     target_types: ["core.bookmark"],
     triggers: [{ type: "manual" }],
     bidirectional_handling: {
@@ -44,7 +43,6 @@ async function seedConnection(
       publisher: "demo",
       summary: manifest.description,
       direction: "read",
-      runtime_compatibility: ["local"],
       registered_at: new Date().toISOString(),
     },
   });
