@@ -4,9 +4,7 @@ import {
   ErrorCode,
   getTypeSchema,
   listTypes,
-  ALL_TYPES,
-  ALL_INTEGRATION_TYPES,
-  ALL_SYSTEM_TYPES,
+  TYPE_REGISTRY,
   validateTypeSchema,
   isValidTypeIdentifier,
   classifyNamespace,
@@ -32,20 +30,21 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Every platform-shipped type, across all three families. These come from
- * codegen rather than a space registration, so `PUT` and `DELETE` refuse
- * them: a space editing a shipped schema would change what the identifier
- * means for every other space, and items already written against it.
+ * Whether an identifier names a type this instance treats as locked.
  *
- * The set spans core, integration and system types deliberately — an integration
- * type is no more mutable than a core one, and reading only `ALL_TYPES` here
- * would leave the integration family editable.
+ * Reads the live registry rather than a set compiled from the shipped arrays,
+ * because the platform vocabulary is seeded data now: an instance can hold a
+ * type the running build never shipped, and locking has to follow what the
+ * instance actually has. `TYPE_REGISTRY` is the platform map — a space's own
+ * registrations live in the per-space overlay and never appear in it — so
+ * membership is exactly the "shipped, not yours to edit" question.
+ *
+ * The lock spans core, integration and system alike. An integration type is
+ * no more mutable than a core one.
  */
-const SHIPPED_TYPE_IDS = new Set(
-  [...ALL_TYPES, ...ALL_INTEGRATION_TYPES, ...ALL_SYSTEM_TYPES].map(
-    (t) => t.id,
-  ),
-);
+function isLockedPlatformType(id: string): boolean {
+  return TYPE_REGISTRY.has(id);
+}
 
 const MAX_INHERITANCE_DEPTH = 10;
 
@@ -541,7 +540,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       );
     }
 
-    if (SHIPPED_TYPE_IDS.has(id)) {
+    if (isLockedPlatformType(id)) {
       throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot modify platform-shipped types`,
@@ -611,7 +610,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     // custom types; another space's id resolves as not-found.
     const spaceId = c.get("apiKey")?.space_id;
 
-    if (SHIPPED_TYPE_IDS.has(id)) {
+    if (isLockedPlatformType(id)) {
       throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot delete platform-shipped types`,

@@ -414,6 +414,16 @@
     },
     "supports_user_mappings": {
       "type": "boolean"
+    },
+    "type_schemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
     }
   },
   "required": [
