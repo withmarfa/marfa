@@ -26,6 +26,8 @@ import { logJobTickFailure } from "./storage/job-tick.js";
 import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
+  ActivityPurger,
+  RevokedKeyReaper,
   TrashPurger,
   AuthSessionCleaner,
   PendingDeletePurger,
@@ -311,6 +313,9 @@ async function main() {
   const trashFanout: SpaceFanout | undefined = storage.spaces
     ? { spaces: storage.spaces, configField: "trash_retention_days" }
     : undefined;
+  const activityFanout: SpaceFanout | undefined = storage.spaces
+    ? { spaces: storage.spaces, configField: "activity_retention_days" }
+    : undefined;
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
@@ -467,6 +472,58 @@ async function main() {
     },
     () => {
       trashPurger.start();
+    },
+  );
+
+  // Activity rows are ordinary items and had no retention at all, which
+  // is how production reached 6,015 of them against 805 of everything
+  // else. Same fan-out shape as trash; `0` on the interval disables.
+  const activityPurgeIntervalMs = config.activityPurgeIntervalMs ?? 3_600_000;
+  const activityPurger =
+    activityPurgeIntervalMs > 0
+      ? new ActivityPurger(
+          storage.items,
+          config.activityRetentionDays ?? 14,
+          activityPurgeIntervalMs,
+          undefined,
+          storage.coordination,
+          activityFanout,
+        )
+      : undefined;
+  if (activityPurger) {
+    scheduleJob(
+      {
+        name: "activity-purge",
+        logName: "Activity purge",
+        intervalMs: activityPurgeIntervalMs,
+        firstRunDelaySeconds: 25,
+        runOnce: () => activityPurger.runScheduled(),
+      },
+      () => {
+        activityPurger.start();
+      },
+    );
+  }
+
+  // The runtime reaper below covers machine-minted credentials only.
+  // Ordinary revoked keys had nothing sweeping them, which is how staging
+  // reached 3,044 older than a week.
+  const revokedKeyReaper = new RevokedKeyReaper(
+    storage,
+    activityPurgeIntervalMs,
+    undefined,
+    storage.coordination,
+  );
+  scheduleJob(
+    {
+      name: "revoked-key-reap",
+      logName: "Revoked key reap",
+      intervalMs: activityPurgeIntervalMs,
+      firstRunDelaySeconds: 45,
+      runOnce: () => revokedKeyReaper.runScheduled(),
+    },
+    () => {
+      revokedKeyReaper.start();
     },
   );
 
@@ -976,6 +1033,8 @@ async function main() {
     if (auditCleanupInterval) clearInterval(auditCleanupInterval);
     versionThinner.stop();
     trashPurger.stop();
+    activityPurger?.stop();
+    revokedKeyReaper.stop();
     authSessionCleaner?.stop();
     pendingDeletePurger?.stop();
     rateLimitCleaner.stop();

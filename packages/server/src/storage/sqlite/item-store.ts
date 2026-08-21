@@ -960,6 +960,44 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
+  async purgeActivityOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number> {
+    // The PG copy carries the reasoning: activity rows are `active` and
+    // never trashed, so the trash sweep's predicate cannot serve.
+    const baseConditions = [
+      eq(items.type, "system.activity"),
+      lt(items.created_at, beforeDate),
+    ];
+    if (spaceId === null) {
+      baseConditions.push(isNull(items.space_id));
+    } else if (spaceId !== undefined) {
+      baseConditions.push(eq(items.space_id, spaceId));
+    }
+    const where = and(...baseConditions);
+
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(where)
+        .all();
+      if (idRows.length === 0) return 0;
+
+      const ids = idRows.map((row) => row.id);
+      // items_fts is a separate virtual table here, so unlike PG it needs
+      // cleaning by hand.
+      for (const id of ids) {
+        await this.searchStore.remove(id);
+      }
+      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
+      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
+      await tx.delete(items).where(inArray(items.id, ids)).run();
+      return ids.length;
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {

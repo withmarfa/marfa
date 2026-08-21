@@ -955,6 +955,44 @@ export class PgItemStore implements ItemStore {
     });
   }
 
+  async purgeActivityOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number> {
+    // Deliberately not routed through `purgeTrashedOlderThan`: activity
+    // rows are `active` and never trashed, so the predicate differs at
+    // both ends — type instead of state, `created_at` instead of
+    // `updated_at`. An activity row is written once and never revised,
+    // so the two timestamps agree; `created_at` is the one that says
+    // what the window means.
+    const baseConditions = [
+      eq(items.type, "system.activity"),
+      lt(items.created_at, beforeDate),
+    ];
+    if (spaceId === null) {
+      baseConditions.push(isNull(items.space_id));
+    } else if (spaceId !== undefined) {
+      baseConditions.push(eq(items.space_id, spaceId));
+    }
+    const where = and(...baseConditions);
+
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx.select({ id: items.id }).from(items).where(where);
+      if (idRows.length === 0) return 0;
+
+      const ids = idRows.map((row) => row.id);
+      // Same reason as the trash sweep: edges carry no FK to items, so a
+      // purged row otherwise leaves its edges behind. An activity row
+      // rarely has any, but "rarely" is not "never" and the cost of the
+      // two statements is nil when there are none.
+      await tx.delete(edges).where(inArray(edges.source_id, ids));
+      await tx.delete(edges).where(inArray(edges.target_id, ids));
+      // search_vector cascades — see bulkPurge.
+      await tx.delete(items).where(inArray(items.id, ids));
+      return ids.length;
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {

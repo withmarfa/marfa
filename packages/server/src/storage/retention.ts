@@ -39,6 +39,7 @@ export interface SpaceFanout {
     | "trash_retention_days"
     | "audit_retention_days"
     | "event_log_retention_hours"
+    | "activity_retention_days"
   >;
 }
 
@@ -148,6 +149,109 @@ export class TrashPurger {
       }
     } catch (err) {
       logJobTickFailure("Trash purge", err, this.stopped);
+    }
+  }
+}
+
+/**
+ * Ages out `system.activity` items.
+ *
+ * An integration reports every run as an activity row, including the runs
+ * that found nothing to do, so on a space with connections this is the
+ * fastest-growing item type by a wide margin. Retention existed for
+ * trash, audit rows, the event log, versions, sessions and runtime
+ * credentials; activity is an ordinary item and had no job at all, so the
+ * table only ever grew. Production reached 6,015 activity items against
+ * 805 of everything else before this landed.
+ *
+ * Same shape as `TrashPurger` above: a per-space fan-out honoring
+ * `activity_retention_days` overrides, falling back to a single unscoped
+ * sweep when `spaces` is not wired.
+ *
+ * **This job bounds the rows; it does not decide whether a no-op run
+ * deserves a row in the first place.** That is the other half of the same
+ * ticket and waits on connections carrying a last-run timestamp, because
+ * dropping the no-op rows before that exists removes the only evidence an
+ * integration ran at all.
+ */
+export class ActivityPurger {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+
+  constructor(
+    private items: ItemStore,
+    private retentionDays: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+    private fanout?: SpaceFanout,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.startupTimeout = setTimeout(() => void this.poll(), 15_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  async runOnce(): Promise<number> {
+    return this.fanout
+      ? runSpaceFanout({
+          jobName: "activity-purge",
+          coordination: this.coordination,
+          fanout: this.fanout,
+          nowFn: this.nowFn,
+          instanceDefault: this.retentionDays,
+          unitMs: MS_PER_DAY,
+          sweep: (cutoff, spaceId) =>
+            this.items.purgeActivityOlderThan(cutoff, spaceId),
+        })
+      : this.runOnceGlobal();
+  }
+
+  private async runOnceGlobal(): Promise<number> {
+    if (this.retentionDays <= 0) return 0;
+    const cutoff = new Date(
+      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
+    ).toISOString();
+    return this.items.purgeActivityOlderThan(cutoff);
+  }
+
+  /** Scheduler entry point: the same locked, logged tick the timer path
+   *  drives — `runOnce()` alone is the bare test seam and has neither. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const deleted = this.fanout
+        ? await this.runOnce()
+        : this.coordination
+          ? await this.coordination.withJobLock("activity-purge", () =>
+              this.runOnce(),
+            )
+          : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "Activity purge", {
+          deleted,
+          retentionDays: this.retentionDays,
+        });
+      }
+    } catch (err) {
+      logJobTickFailure("Activity purge", err, this.stopped);
     }
   }
 }
@@ -514,6 +618,90 @@ export class DcrClientCleaner {
  * `"runtime-credential-reap"`. Disabled by wiring (interval `0` skips
  * construction in `index.ts`), matching the other cleaners.
  */
+/**
+ * Hard-deletes revoked ordinary API keys once their revocation is old
+ * enough to stop being interesting.
+ *
+ * A sibling of `RuntimeCredentialReaper` rather than a fourth pass inside
+ * it, and the reason is in that class's own docblock: its seven-day
+ * window is reasoned as "per-dispatch machine artifacts, not human
+ * credentials". An ordinary key is minted by a person or a test suite,
+ * so how long its revocation stays visible is a different judgment, and
+ * folding the two together would leave that class's name describing half
+ * of what it does.
+ *
+ * Nothing swept these at all before. Staging reached 3,044 revoked
+ * ordinary keys older than a week, against six on production — the
+ * difference being that staging is where every suite and probe mints one.
+ *
+ * Instance-wide, not space-scoped: revocation age is a property of the
+ * row, not of space policy. Matches the runtime reaper on that point.
+ */
+export class RevokedKeyReaper {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+
+  /** Post-revocation retention before hard delete. Longer than the
+   *  runtime reaper's seven days because a revoked human credential is
+   *  worth more to an operator reading back than a machine artifact is,
+   *  and there are orders of magnitude fewer of them. */
+  static readonly REVOKED_RETENTION_MS = 30 * MS_PER_DAY;
+
+  constructor(
+    private storage: Storage,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.startupTimeout = setTimeout(() => void this.poll(), 45_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point — one sweep, reporting the count. */
+  async runOnce(): Promise<number> {
+    const cutoff = new Date(
+      this.nowFn().getTime() - RevokedKeyReaper.REVOKED_RETENTION_MS,
+    ).toISOString();
+    return this.storage.keys.deleteRevokedKeysOlderThan(cutoff);
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("revoked-key-reap", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "Revoked key reap", { deleted });
+      }
+    } catch (err) {
+      logJobTickFailure("Revoked key reap", err, this.stopped);
+    }
+  }
+}
+
 export class RuntimeCredentialReaper {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
