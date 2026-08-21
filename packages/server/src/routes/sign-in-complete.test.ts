@@ -178,3 +178,54 @@ describe("GET /auth/sign-in/complete", () => {
     }
   });
 });
+
+describe("resending a sign-in link", () => {
+  it("says sent every time but only sends once a minute", async () => {
+    const sent: string[] = [];
+    ctx = await createTestContext({ authAllowSignup: true }, {
+      send: (message: { text?: string; html?: string }) => {
+        sent.push(`${message.text ?? ""}${message.html ?? ""}`);
+        return Promise.resolve({ ok: true as const });
+      },
+    } as never);
+
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "resend@example.com",
+        password: "correct horse",
+        name: "Resend",
+      },
+      headers: { origin: ORIGIN },
+    });
+    await markEmailVerified(ctx.storage, "resend@example.com");
+
+    const first = await postSignIn(ctx, {
+      mode: "magic",
+      email: "resend@example.com",
+      return_to: SIGNED_RETURN_TO,
+    });
+    const second = await postSignIn(ctx, {
+      mode: "magic",
+      email: "resend@example.com",
+      return_to: SIGNED_RETURN_TO,
+    });
+
+    // Indistinguishable to the caller, deliberately. A different answer for
+    // the throttled attempt would be the one response on this surface that
+    // varies with something other than what the user typed.
+    for (const res of [first, second]) {
+      expect(res.status).toBe(302);
+      const location = res.headers.get("location") ?? "";
+      expect(location).toContain("sent=1");
+      // Carried back so the confirmation screen can resend without asking
+      // for the address again.
+      expect(location).toContain("email=resend%40example.com");
+    }
+
+    // Only the sign-in links count. Signing up sent a verification email
+    // through the same transport, and counting that would have made the
+    // throttle look like it worked when it had not.
+    const links = sent.filter((body) => body.includes("magic-link/verify"));
+    expect(links).toHaveLength(1);
+  });
+});

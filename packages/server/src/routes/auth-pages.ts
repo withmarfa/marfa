@@ -334,6 +334,19 @@ export function authRoutes(
     windowMs: 60 * 60 * 1000,
   });
 
+  // Per-email throttle on magic-link sends: one per email per minute. The
+  // resend control on the confirmation screen makes asking again a single
+  // tap, and an inbox filling with sign-in links is worse than a person
+  // waiting a moment. Deliberately silent: the screen says the link is on its
+  // way either way, matching the no-enumeration posture the send path already
+  // holds, and a countdown would state a rule the server is free to change.
+  const magicLinkThrottle = new PerEmailThrottle(storage, {
+    family: "magic-link",
+    keyPrefix: "magic-link:",
+    limit: 1,
+    windowMs: 60 * 1000,
+  });
+
   // Per-`user_code` failed-attempt throttle on the device-flow
   // verification form (`POST /auth/device` user-code submission). The
   // per-IP cap in `middleware/rate-limit.ts` bounds a single client
@@ -548,6 +561,7 @@ export function authRoutes(
     //     Detect that shape and synthesize `return_to=/auth/authorize?<full original query>`
     //     so the existing form-round-trip path takes over for password,
     //     magic-link, and passkey.
+    const email = url.searchParams.get("email");
     let returnTo = validateReturnTo(url.searchParams.get("return_to"));
     if (returnTo === "/" && url.searchParams.has("response_type")) {
       returnTo = synthesizeOauthReturnTo(url.searchParams);
@@ -558,6 +572,7 @@ export function authRoutes(
       returnTo,
       error,
       magicLinkSent,
+      email,
       allowSignup: auth?.allowSignup ?? false,
       oidcProviderIds: auth?.oidcProviderIds ?? [],
     });
@@ -660,13 +675,23 @@ export function authRoutes(
           }),
         },
       );
+      // Throttled before dispatch, and a refusal is indistinguishable from a
+      // send. Telling the user they asked too soon would be the one response
+      // on this surface that varies with something other than their input.
+      const sentRedirect = c.redirect(
+        buildSignInRedirect({
+          mode: "magic",
+          returnTo,
+          sent: true,
+          email: emailStr,
+        }),
+        302,
+      );
+      const throttle = await magicLinkThrottle.attempt(emailStr);
+      if (!throttle.allowed) return sentRedirect;
+
       const response = await auth.handler(upstream);
-      if (response.ok) {
-        return c.redirect(
-          buildSignInRedirect({ mode: "magic", returnTo, sent: true }),
-          302,
-        );
-      }
+      if (response.ok) return sentRedirect;
       return errorRedirect("magic_send_failed");
     }
 
@@ -2805,11 +2830,15 @@ function buildSignInRedirect(params: {
   returnTo: string;
   error?: string;
   sent?: boolean;
+  /** Carried so the confirmation screen can resend without asking for the
+   *  address a second time. */
+  email?: string;
 }): string {
   const search = new URLSearchParams();
   if (params.mode === "magic") search.set("mode", "magic");
   if (params.error) search.set("error", params.error);
   if (params.sent) search.set("sent", "1");
+  if (params.email) search.set("email", params.email);
   if (params.returnTo && params.returnTo !== "/") {
     search.set("return_to", params.returnTo);
   }
