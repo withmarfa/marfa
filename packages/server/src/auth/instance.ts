@@ -505,8 +505,14 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           // Auth account, regardless of how the account was created: the
           // programmatic `POST /auth/sign-up/email`, the server-rendered
           // `POST /auth/sign-up` form (which forwards to the same
-          // endpoint), and federated OIDC first sign-in all converge
-          // here. A space is the anchor for every credential and OAuth
+          // endpoint), federated OIDC first sign-in, and a magic link
+          // resolving to an unknown address all converge here. That
+          // last one is worth naming rather than leaving implied: it is
+          // the path that provisioned spaces on instances with sign-up
+          // closed, because it reaches `createUser` without passing the
+          // sign-up gate the others answer to.
+          //
+          // A space is the anchor for every credential and OAuth
           // grant — it must exist before the user can authenticate, so a
           // single hook on the create lifecycle is the one correct place
           // for it. Keys-mode self-hosts have no per-user space model
@@ -659,6 +665,19 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           ]
         : []),
       magicLink({
+        // Same switch the password path reads at `emailAndPassword`
+        // above. Better Auth's default is to create the user when the
+        // link resolves to an unknown address, which walked straight
+        // past a gate this deployment had deliberately closed: an
+        // instance answering 404 on `/auth/sign-up` still grew an
+        // account, and a space with it, for anyone who asked for a
+        // link. One switch, both paths.
+        //
+        // The refusal lands at verify rather than at send — an unknown
+        // address still receives a link and only the click fails. That
+        // is the plugin's non-enumeration behavior and is left alone:
+        // refusing the send would report which addresses hold accounts.
+        disableSignUp: !options.allowSignup,
         sendMagicLink: async ({ email, url, token }) => {
           // Rich transport gets the HTML template + idempotency key
           // for log correlation. Falls back to the basic callable

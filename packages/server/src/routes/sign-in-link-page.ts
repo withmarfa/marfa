@@ -12,6 +12,14 @@
  * The way forward is a fresh link, so the primary action asks for one. It
  * carries `return_to` through, which is what puts the user back where they
  * started rather than at the root.
+ *
+ * One bounce is not a dead link at all: when sign-up is closed, a link
+ * resolving to an address with no account is refused deliberately. The
+ * retry copy is actively wrong there — another link bounces the same way,
+ * so offering one loops the user forever. That case gets its own copy and
+ * no retry button, on the same reasoning the paragraph above uses for the
+ * expiry pair: telling somebody the wrong cause sends them looking for a
+ * problem that isn't theirs.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
@@ -22,12 +30,29 @@ interface SignInLinkFailedParams {
    *  onto the "send another" link so a fresh attempt resumes rather than
    *  restarts. */
   returnTo: string;
+  /** Why the verify bounced. Defaults to the `INVALID_TOKEN` pair (spent
+   *  or timed out). `signup_closed` is the magic-link plugin refusing to
+   *  create an account on an instance that has sign-up switched off. */
+  reason?: "expired" | "signup_closed";
 }
 
 /** Renders the dead-sign-in-link page as a full HTML document. */
 export function renderSignInLinkFailedPage(
   params: SignInLinkFailedParams,
 ): string {
+  if (params.reason === "signup_closed") {
+    const title = "This space isn't open for new accounts";
+    return renderAuthLayout({
+      title,
+      bodyHtml: `
+    ${confirmIcon("alert")}
+    <h1 class="title">${title}</h1>
+    <p class="sub" role="alert">Sign-in links only work for accounts that already exist here, and this space isn't accepting new ones. If you should have an account, ask whoever runs this space.</p>
+  `,
+      centered: true,
+    });
+  }
+
   const retryHref = `/auth/sign-in?${buildQuery({
     mode: "magic",
     return_to: params.returnTo,

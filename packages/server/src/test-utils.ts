@@ -384,6 +384,39 @@ export async function readLatestResetToken(
 }
 
 /**
+ * True when an `auth_user` row exists for `email`.
+ *
+ * Every account-creating path converges on the one `databaseHooks`
+ * entry that also provisions a space, so the absence of an `auth_user`
+ * is what proves nothing was provisioned. Asserting on spaces alone
+ * would still pass if an account were created without one.
+ *
+ * Reads every email and compares in JS rather than parameterizing:
+ * `__sqliteAll` takes no parameters, and a test database holds a
+ * handful of rows.
+ */
+export async function authUserExists(
+  storage: Storage,
+  email: string,
+): Promise<boolean> {
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
+  const lower = email.toLowerCase();
+  const query = `SELECT email FROM auth_user`;
+  if (dialect === "pg") {
+    const rows = (await requirePgClient(storage)(query)) as {
+      email: string;
+    }[];
+    return rows.some((r) => r.email.toLowerCase() === lower);
+  }
+  const sqlite = storage as unknown as {
+    __sqliteAll?: (q: string) => Promise<unknown[]>;
+  };
+  if (!sqlite.__sqliteAll) return false;
+  const rows = (await sqlite.__sqliteAll(query)) as { email: string }[];
+  return rows.some((r) => r.email.toLowerCase() === lower);
+}
+
+/**
  * Retry-poll helper for fire-and-forget audit assertions.
  *
  * Most route handlers emit audit rows via `void storage.audit.log(...)`

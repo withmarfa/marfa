@@ -147,6 +147,27 @@ describe("GET /auth/sign-in/complete", () => {
     expect(body).toContain("Send another link");
   });
 
+  /**
+   * The closed-signup bounce is the one error code where the dead-link
+   * copy would be a loop rather than a fix: another link resolves to the
+   * same absent account and bounces identically. The page has to stop
+   * offering one.
+   */
+  it("does not invite a retry when the bounce was a closed sign-up", async () => {
+    ctx = await createTestContext();
+    const res = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/sign-in/complete?error=new_user_signup_disabled&next=${encodeNext("/")}`,
+        { headers: { origin: ORIGIN } },
+      ),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("isn&#39;t open for new accounts");
+    expect(body).not.toContain("Send another link");
+    expect(body).not.toContain("already been used");
+  });
+
   it("refuses to forward somewhere off-origin", async () => {
     ctx = await createTestContext();
     for (const hostile of [
