@@ -43,6 +43,10 @@ import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import {
+  findLiveCredentialDependents,
+  purgeCredential,
+} from "../connections/upstream-credential.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -418,19 +422,13 @@ export function credentialRoutes(storage: Storage) {
     // Refuse rather than cascade. Taking a working integration down as a
     // side effect of tidying up a credential is the more surprising of
     // the two behaviours, and the caller can always uninstall first.
-    const connections = await storage.items.list({
+    //
+    // Shared with the uninstall pipeline, which asks the same question
+    // from the other side. Two copies of "is anything still using this"
+    // is how one of them ends up never being asked.
+    const dependents = await findLiveCredentialDependents(storage, id, {
       spaceId,
-      type: "system.connection",
-      limit: 200,
     });
-    const dependents = connections.data
-      .filter((conn) => conn.state !== "revoked")
-      .filter(
-        (conn) =>
-          (conn.properties as { credential_ref?: unknown } | undefined)
-            ?.credential_ref === id,
-      )
-      .map((conn) => conn.id);
     if (dependents.length > 0) {
       throw new MarfaError(
         ErrorCode.CREDENTIAL_IN_USE,
@@ -439,14 +437,7 @@ export function credentialRoutes(storage: Storage) {
       );
     }
 
-    // `system.*` types soft-delete to `revoked`, and purge gates on the
-    // soft-deleted state, so removal is the two steps in order.
-    if (credential.state !== "revoked") {
-      await storage.items.transition(id, "revoked", spaceId);
-    }
-    await storage.edges.deleteBySource(id, undefined, spaceId);
-    await storage.edges.deleteByTarget(id, undefined, spaceId);
-    await storage.items.purge(id, spaceId);
+    await purgeCredential(storage, credential, spaceId);
 
     void storage.audit.log({
       key_id: key.id,

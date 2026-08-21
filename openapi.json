@@ -19021,7 +19021,7 @@
           "Connections"
         ],
         "summary": "Uninstall an integration connection",
-        "description": "Tears down a connection in one pass: revokes its credentials and leased tokens, drops upstream OAuth tokens, disables inbound webhooks, and transitions it to `revoked`. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
+        "description": "Tears down a connection in one pass: revokes its runtime credentials and leased tokens, drops the proxy's cached upstream OAuth tokens, disables inbound webhooks, transitions it to `revoked`, and removes the upstream credential it was installed with unless another live connection still shares it. `upstream_credential` in the response says which of those happened. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
         "security": [
           {
             "bearerAuth": []
@@ -19059,6 +19059,92 @@
                     "oauth_tokens_deleted": {
                       "type": "boolean"
                     },
+                    "upstream_credential": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "none"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "already_gone"
+                              ]
+                            },
+                            "credential_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "status",
+                            "credential_id"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "purged"
+                              ]
+                            },
+                            "credential_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "status",
+                            "credential_id"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "retained"
+                              ]
+                            },
+                            "credential_id": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "in_use_by_other_connections"
+                              ]
+                            },
+                            "connection_ids": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "status",
+                            "credential_id",
+                            "reason",
+                            "connection_ids"
+                          ]
+                        }
+                      ]
+                    },
                     "leased_tokens_revoked": {
                       "type": "integer",
                       "minimum": 0
@@ -19075,6 +19161,7 @@
                     "connection_id",
                     "revoked_credential_ids",
                     "oauth_tokens_deleted",
+                    "upstream_credential",
                     "leased_tokens_revoked",
                     "inbound_webhooks_disabled",
                     "activity_id"
