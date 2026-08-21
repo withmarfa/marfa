@@ -22,6 +22,8 @@
  * Connection count for one integration and not the global Connection
  * cardinality.
  */
+import { CronExpressionParser } from "cron-parser";
+import { stampNextRun } from "./connection-timings.js";
 import type { Storage } from "../../storage/interface.js";
 import type { ScheduleMessage } from "@withmarfa/runtime-sdk";
 import { validateManifest } from "../validate-manifest.js";
@@ -44,15 +46,44 @@ interface IntegrationProperties {
  * Enqueue a schedule message for every active local Connection bound to
  * the named integration. Returns the count of envelopes enqueued — useful
  * for telemetry / tests.
+ *
+ * With `scheduleCron` supplied, each connection also records when it is next
+ * due. This is the only place that knows both the cron and the connection
+ * set, which is why the stamp lives here rather than on the dispatch path.
  */
+/**
+ * When the cron next fires after `fromMs`. Returns undefined for an
+ * expression the parser rejects: a connection reporting no next run is a
+ * better answer than one reporting a wrong time, and a malformed cron is
+ * already a registration-time problem rather than something to fail a
+ * fan-out over.
+ */
+function nextRunAfter(cron: string, fromMs: number): number | undefined {
+  try {
+    return CronExpressionParser.parse(cron, { currentDate: new Date(fromMs) })
+      .next()
+      .toDate()
+      .getTime();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function fanOutSchedule(
   storage: Storage,
   runtime: LocalRuntime,
   integrationName: string,
   scheduledForMs: number,
+  scheduleCron?: string,
 ): Promise<number> {
   let cursor: string | undefined;
   let dispatched = 0;
+  // Computed once per fan-out, not once per connection: every connection on
+  // this integration shares the cron, so they share the answer.
+  const nextRunAtMs =
+    scheduleCron === undefined
+      ? undefined
+      : nextRunAfter(scheduleCron, scheduledForMs);
   for (;;) {
     const page = await storage.items.list({
       type: "system.connection",
@@ -72,6 +103,14 @@ export async function fanOutSchedule(
         ),
       };
       await runtime.enqueue(envelope);
+      if (nextRunAtMs !== undefined) {
+        await stampNextRun(
+          storage,
+          connection.id,
+          connection.space_id ?? undefined,
+          nextRunAtMs,
+        );
+      }
       dispatched++;
     }
     if (!page.has_more || !page.cursor) break;

@@ -58,6 +58,7 @@
     "@withmarfa/shared": "workspace:*",
     "@withmarfa/webhooks": "workspace:*",
     "better-auth": "1.7.0-rc.5",
+    "cron-parser": "^5.5.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.34",
     "ical.js": "^2.2.1",
