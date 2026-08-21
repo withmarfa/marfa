@@ -9481,6 +9481,15 @@
                           "type": "string"
                         }
                       },
+                      "roles": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "container"
+                          ]
+                        }
+                      },
                       "fields": {
                         "type": "object",
                         "additionalProperties": {
@@ -9643,6 +9652,15 @@
                           "type": "array",
                           "items": {
                             "type": "string"
+                          }
+                        },
+                        "roles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "container"
+                            ]
                           }
                         },
                         "fields": {
@@ -9890,6 +9908,15 @@
                         "type": "string"
                       }
                     },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "container"
+                        ]
+                      }
+                    },
                     "fields": {
                       "type": "object",
                       "additionalProperties": {
@@ -10102,6 +10129,15 @@
                           "type": "array",
                           "items": {
                             "type": "string"
+                          }
+                        },
+                        "roles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "container"
+                            ]
                           }
                         },
                         "fields": {

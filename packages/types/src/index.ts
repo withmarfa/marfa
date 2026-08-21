@@ -9,9 +9,11 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
+  TypeRole,
   TypeSchema,
   VersionPolicy,
 } from "./schema-types.js";
+export { TYPE_ROLES } from "./schema-types.js";
 
 export type {
   EdgeTypeSchemaValidationResult,
@@ -26,7 +28,10 @@ export {
   FIELD_TYPES,
   MERGE_STRATEGIES,
   RESERVED_ITEM_FIELDS,
+  ROLE_CONSTRAINT_PREFIX,
+  isRoleConstraint,
   normalizeFieldDefinition,
+  roleFromConstraint,
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "./schema-validation.js";

@@ -332,7 +332,7 @@ const coreMediaAlbum: TypeSchema = {
   parent: "core.media",
   label: "Album",
   description: "An album. Inherits all core.media fields.",
-  version: 1,
+  version: 2,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -349,6 +349,7 @@ const coreMediaAlbum: TypeSchema = {
   },
   display_hints: { title_field: "title", body_field: "body" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
+  roles: ["container"],
 };
 
 const coreMediaArticle: TypeSchema = {
@@ -460,7 +461,7 @@ const coreMediaSeries: TypeSchema = {
   parent: "core.media",
   label: "Series",
   description: "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
-  version: 3,
+  version: 4,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -477,6 +478,7 @@ const coreMediaSeries: TypeSchema = {
   },
   display_hints: { title_field: "title", body_field: "body" },
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
+  roles: ["container"],
 };
 
 const coreMediaSong: TypeSchema = {
@@ -924,7 +926,7 @@ const marfaPodcastShow: TypeSchema = {
   id: "marfa.podcast.show",
   label: "Podcast Show",
   description: "A podcast, as its RSS feed describes it. One row per show, keyed on the show's stable identifier rather than its feed address, so a move between hosts does not create a second show. Episodes join it through the in-collection edge. Mirrors the channel element of an RSS 2.0 feed together with the iTunes and Podcasting 2.0 namespaces, for upstream fidelity; a connection that would rather trade fidelity for interoperability writes `core.media.series` instead.",
-  version: 1,
+  version: 2,
   fields: {
     title: { type: "string", description: "Show name (maps to the channel `title`). A feed that omits it falls back to its host, since a show with no name cannot be told apart in a list.", required: true },
     feed_url: { type: "url", description: "Address the feed was fetched from. Not the identity: a show that changes host keeps its guid and changes this.", required: true },
@@ -945,6 +947,7 @@ const marfaPodcastShow: TypeSchema = {
     episode_count: { type: "integer", description: "How many items the feed carried when it was last read. Not the show's episode count: some hosts publish only a recent window, and nothing in a feed says it has been truncated." },
   },
   display_hints: { title_field: "title", body_field: "description" },
+  roles: ["container"],
 };
 
 export const ALL_INTEGRATION_TYPES: TypeSchema[] = [

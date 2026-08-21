@@ -20,11 +20,14 @@ const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
  * target to the container family, but nothing declarative can say "and the
  * source must not be one of those", so the refusal lives here.
  *
- * The refused-source list is the edge's own target list, read from the same
- * resolved schema, never a second literal: a copy drifted once when the
- * membership edge gained two container types the copy did not, and two
- * series could then hold each other. The derivation is also what makes a
- * membership cycle impossible without a BFS — every cycle needs a container
+ * The refused-source rule is the edge's own target constraint, re-evaluated
+ * against the source and read from the same resolved schema, never a second
+ * literal: a copy drifted once when the membership edge gained two container
+ * types the copy did not, and two series could then hold each other. That
+ * derivation is what makes this survive the target constraint becoming a role
+ * rather than a list — a type declaring `container` is refused as a source the
+ * day it declares it, with nothing here to update. It is also what makes a
+ * membership cycle impossible without a BFS: every cycle needs a container
  * standing as a source somewhere, and no such edge can exist. Hierarchy is
  * what `parent-of` is for, and mixing the two gives an item two competing
  * notions of where it sits.

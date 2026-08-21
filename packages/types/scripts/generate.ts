@@ -267,6 +267,14 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
       lines.push(`  merge_policy: { ${parts.join(", ")} },`);
     }
   }
+  // Emitted as declared, never flattened down the parent chain. Roles resolve
+  // through the ancestry at lookup time because they have to: a type
+  // registered at runtime under a shipped parent never passes through this
+  // codegen, and a role that only worked for in-tree types would be a role
+  // only we can use.
+  if (schema.roles && schema.roles.length > 0) {
+    lines.push(`  roles: [${schema.roles.map(quote).join(", ")}],`);
+  }
   if (schema.compatible_with && schema.compatible_with.length > 0) {
     lines.push(
       `  compatible_with: [${schema.compatible_with.map(quote).join(", ")}],`,

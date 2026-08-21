@@ -88,6 +88,7 @@ beforeAll(async () => {
     label: "Collection",
     description: "A named set of items.",
     version: 1,
+    roles: ["container"],
     fields: {
       name: { type: "string", required: true, description: "Display name." },
     },

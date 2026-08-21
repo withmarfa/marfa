@@ -132,6 +132,20 @@ export interface MergePolicy {
   default?: MergeStrategy;
 }
 
+/**
+ * A structural role a type declares about itself, describing what items of
+ * that type are for rather than what they hold. Roles exist so a relationship
+ * can constrain on a property a type declares instead of on a list of type
+ * names, which only ever admits the containers the platform thought of first.
+ *
+ * - `container` — items of this type hold other items. `in-collection` admits
+ *   any container as its target.
+ */
+export type TypeRole = "container";
+
+/** Every role a type may declare. Closed set; the validator refuses others. */
+export const TYPE_ROLES = ["container"] as const satisfies readonly TypeRole[];
+
 export interface TypeSchema {
   id: string;
   parent?: string;
@@ -139,6 +153,12 @@ export interface TypeSchema {
   description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;
+  /**
+   * Structural roles this type plays. Inherited: a subtype plays every role
+   * its ancestors declare, so a role is stated once at the top of a family.
+   * Additive — a type that declares none behaves exactly as before.
+   */
+  roles?: TypeRole[];
   display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
@@ -183,8 +203,16 @@ export interface EdgeTypeSchema {
   description?: string;
   cardinality: EdgeCardinality;
   /**
-   * Type identifiers (or `*`) that are valid on the source side. Inheritance-
-   * aware: subtypes satisfy an ancestor constraint.
+   * What is valid on the source side. Three entry forms, and an endpoint
+   * satisfies the constraint when any one of them matches:
+   *
+   * - `*` — every type.
+   * - a type identifier — that type, inheritance-aware, so subtypes satisfy
+   *   an ancestor constraint.
+   * - `role:<name>` — every type declaring that `TypeRole`, its own or
+   *   inherited. Constraining on a role rather than on names is what lets a
+   *   relationship admit a type nobody had written when the edge shipped,
+   *   including one published by somebody who cannot edit this file.
    */
   source_type_constraints: string[];
   /** As above, for the target side. */

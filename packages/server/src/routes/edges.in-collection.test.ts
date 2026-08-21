@@ -4,9 +4,14 @@ import type { TestContext } from "../test-utils.js";
 
 /**
  * `in-collection` ships in core but its target type does not: a collection is
- * a user-space concept, so a deployment registers `user.collection` itself and
- * the edge is waiting for it. These tests register it the way a user would and
- * then exercise the membership relation end to end.
+ * a user-space concept, so a deployment registers `user.collection` itself,
+ * declaring the `container` role so the edge will admit it. These tests
+ * register it the way a user would and then exercise the membership relation
+ * end to end.
+ *
+ * The subtype declares no role of its own: a container's descendants are
+ * containers, the same way a subtype already satisfies an ancestor's name
+ * constraint.
  */
 
 let ctx: TestContext;
@@ -90,6 +95,7 @@ beforeAll(async () => {
     name: "Collection",
     description: "A named set of items.",
     version: 1,
+    roles: ["container"],
     fields: {
       name: { type: "string", required: true, description: "Display name." },
     },
@@ -209,9 +215,9 @@ describe("in-collection refusals", () => {
   });
 
   it("refuses every container type as a member, not just user.collection", async () => {
-    // The membership edge accepts three container families as targets. The
-    // nesting refusal must track that same list: a guard covering only one
-    // of them lets the other two nest, which is how two series once held
+    // The membership edge accepts every type declaring the container role.
+    // The nesting refusal must track that same rule: a guard covering one
+    // container lets the others nest, which is how two series once held
     // each other.
     const series = await createMedia("core.media.series", "Signal Hill");
     const album = await createMedia("core.media.album", "Low Tide");

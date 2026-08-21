@@ -1,6 +1,6 @@
 # Podcasts
 
-Scheduled poll of podcast RSS feeds. One connection holds many subscriptions; each tick takes a few in rotation and writes a show and its episodes, joined by `in-collection` edges.
+Scheduled poll of podcast RSS feeds. One connection holds many subscriptions; each tick takes a few in rotation and writes a show and its episodes, joined by `in-collection` edges — which the show is a valid target for because `marfa.podcast.show` declares the `container` role.
 
 Read-only. A feed is a document a publisher serves, so there is nothing to write back to: no item-event trigger.
 
@@ -51,7 +51,7 @@ Episode identity falls back in three steps: the item's `guid`; the enclosure add
 
 **The watermark is stricter than progress.** It advances only when a feed drains completely with every batch applied. Stepping over a refused episode would strand it permanently, since nothing re-offers an episode that has not changed; holding forever would re-walk the catalogue every tick for one bad row, so a pass that has already been retried once releases it.
 
-**The containment edge is written with `ensureEdge`, never inline on the batch.** Inline edges replace rather than append, per edge type: `applyInlineEdges` deletes every outbound edge of that type from the item before writing. Since `in-collection` also accepts `user.collection`, a sweep carrying inline edges would silently delete any playlist a person had added an episode to — no error, no activity row. The edge is written once at creation and is idempotent, so there is nothing to redo on an update. The inline path is free and available, which is exactly why there is a test asserting the batch never carries edges.
+**The containment edge is written with `ensureEdge`, never inline on the batch.** Inline edges replace rather than append, per edge type: `applyInlineEdges` deletes every outbound edge of that type from the item before writing. Since `in-collection` accepts every container a space holds, a sweep carrying inline edges would silently delete any playlist a person had added an episode to — no error, no activity row. The edge is written once at creation and is idempotent, so there is nothing to redo on an update. The inline path is free and available, which is exactly why there is a test asserting the batch never carries edges.
 
 `emit_events` is left false, which is the route's default but a decision rather than an inheritance. A first sweep of a thirty-feed subscription would emit on the order of twenty thousand item events, each fanning out through the reactive bridge and every webhook, and nothing consumes these types today.
 
