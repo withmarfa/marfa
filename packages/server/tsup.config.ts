@@ -20,7 +20,16 @@ export default defineConfig({
     "seed-oauth-clients": "src/scripts/seed-oauth-clients.ts",
   },
   format: ["esm"],
-  dts: true,
+  // Declarations for the one entry anything imports. `exports` exposes
+  // `dist/lib.d.ts` and nothing else; the other entries are programs, and
+  // their generated declarations came to between 13 and 507 bytes each while
+  // costing a full type-graph pass apiece in the dts worker.
+  //
+  // That cost was not free. Adding a sixth entry took the worker past the
+  // memory it gets inside the image build, and deploys to both environments
+  // failed with ERR_WORKER_OUT_OF_MEMORY having passed every local build and
+  // the whole CI matrix, because none of those build the image.
+  dts: { entry: { lib: "src/lib.ts" } },
   clean: true,
   target: "node20",
   // pg-boss opens its own pg pool and creates the pgboss schema; resolve it
