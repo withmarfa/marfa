@@ -142,34 +142,34 @@ describe("GET /health placement", () => {
       config,
     );
 
-  it("reports what the container runtime publishes", async () => {
+  it("reports what the deployment states about itself", async () => {
     await withEnv(
       {
-        CLOUDFLARE_REGION: "WEUR",
-        CLOUDFLARE_LOCATION: "mrs05",
-        CLOUDFLARE_COUNTRY_A2: "FR",
+        MARFA_PLACEMENT_REGION: "lon1",
+        MARFA_PLACEMENT_LOCATION: "London",
+        MARFA_PLACEMENT_COUNTRY: "GB",
       },
       async () => {
         const body = (await (await build().request("/")).json()) as HealthBody;
         expect(body.placement).toEqual({
-          region: "WEUR",
-          location: "mrs05",
-          country: "FR",
+          region: "lon1",
+          location: "London",
+          country: "GB",
         });
       },
     );
   });
 
-  // Only Cloudflare Containers sets these. A self-hosted server has to be
-  // able to say nothing rather than say an empty string, because a caller
-  // reading "" as a region would compare it against the expected one and
-  // fail a deploy that is fine.
-  it("omits the block entirely when the platform sets nothing", async () => {
+  // Nothing sets these unless an operator does. A deployment that has not
+  // been told where it is has to be able to say nothing rather than say an
+  // empty string, because a caller reading "" as a region would compare it
+  // against the expected one and fail a deploy that is fine.
+  it("omits the block entirely when nothing is configured", async () => {
     await withEnv(
       {
-        CLOUDFLARE_REGION: undefined,
-        CLOUDFLARE_LOCATION: undefined,
-        CLOUDFLARE_COUNTRY_A2: undefined,
+        MARFA_PLACEMENT_REGION: undefined,
+        MARFA_PLACEMENT_LOCATION: undefined,
+        MARFA_PLACEMENT_COUNTRY: undefined,
       },
       async () => {
         const body = (await (await build().request("/")).json()) as HealthBody;
@@ -181,13 +181,13 @@ describe("GET /health placement", () => {
   it("reports a partial placement rather than dropping it", async () => {
     await withEnv(
       {
-        CLOUDFLARE_REGION: "WEUR",
-        CLOUDFLARE_LOCATION: undefined,
-        CLOUDFLARE_COUNTRY_A2: undefined,
+        MARFA_PLACEMENT_REGION: "lon1",
+        MARFA_PLACEMENT_LOCATION: undefined,
+        MARFA_PLACEMENT_COUNTRY: undefined,
       },
       async () => {
         const body = (await (await build().request("/")).json()) as HealthBody;
-        expect(body.placement).toEqual({ region: "WEUR" });
+        expect(body.placement).toEqual({ region: "lon1" });
       },
     );
   });
