@@ -32,8 +32,8 @@
     "hash": "8e006e7fa41e515a500a986aedb1103e41d34d45bb7a8ac2d79ff48291dcd156"
   },
   "marfa/rss-watcher": {
-    "version": "0.2.0",
-    "hash": "f28c6090a6c655d19c21b9278bd90e801ec7def24d5e88241a568009a02eb00c"
+    "version": "0.3.0",
+    "hash": "e64fc6a74e5fa1eaff3e250274403cddd5c8b4452b341a8f0af2e8a6bbc0c67d"
   },
   "marfa/sync": {
     "version": "0.1.1",

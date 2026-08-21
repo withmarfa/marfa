@@ -145,7 +145,24 @@ export interface ItemEventMessage extends QueueEnvelopeBase {
   payload: unknown;
 }
 
-export type QueueMessage = WebhookMessage | ScheduleMessage | ItemEventMessage;
+/** Produced when somebody asks for a run through
+ *  `POST /connections/{id}/run`, rather than by a cron tick.
+ *
+ *  It carries the same intent as a schedule tick and is dispatched to the
+ *  same handler, so an integration needs no code to support it. The kind
+ *  is distinct only so the origin survives into logs and activity: "this
+ *  ran because a person asked" and "this ran because the hour turned" are
+ *  different facts about the same work. */
+export interface ManualMessage extends QueueEnvelopeBase {
+  kind: "manual";
+  requested_at_ms: number;
+}
+
+export type QueueMessage =
+  | WebhookMessage
+  | ScheduleMessage
+  | ItemEventMessage
+  | ManualMessage;
 
 /** A handler decides how its run reports back. The runtime turns
  *  these into queue ack/retry semantics + system.activity emission. */

@@ -78,6 +78,30 @@ export async function dispatchMessage(
   message: QueueMessage,
 ): Promise<HandlerResult> {
   switch (message.kind) {
+    case "manual": {
+      // A manual run is the integration's scheduled sweep, asked for now.
+      // Routing it to the schedule handler is what makes "Run now" work
+      // for every scheduled integration without a line of handler code;
+      // a separate handler slot would have meant every author opting in
+      // twice for one behaviour.
+      const handler = REGISTRY.schedule;
+      if (!handler) {
+        return {
+          ok: false,
+          retry: false,
+          reason: "no_schedule_handler_registered",
+        };
+      }
+      return handler(ctx, {
+        kind: "schedule",
+        integration_name: message.integration_name,
+        connection_id: message.connection_id,
+        ...(message.space_id !== undefined
+          ? { space_id: message.space_id }
+          : {}),
+        scheduled_for_ms: message.requested_at_ms,
+      });
+    }
     case "schedule": {
       const handler = REGISTRY.schedule;
       if (!handler) {

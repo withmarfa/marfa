@@ -917,6 +917,7 @@ async function main() {
       oidcSigner,
       localRuntime?.app,
       localRuntime?.deadLetterOps,
+      localRuntime?.runtime,
     );
     server = serve({ fetch: app.fetch, port: config.port }, (info) => {
       log("info", `Marfa server listening on port ${String(info.port)}`);
