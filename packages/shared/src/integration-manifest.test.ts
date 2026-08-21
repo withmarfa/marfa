@@ -536,38 +536,30 @@ describe("resolveWriteFamily — precedence and fallthroughs", () => {
 });
 
 /**
- * The tolerance that makes removing a manifest field survivable.
+ * The contract after the tolerance came out.
  *
  * `IntegrationManifestSchema` is strict AND runs against every stored
- * manifest on every resolution, not only against one being registered. A
- * credential mint that cannot resolve its manifest fails closed, so
- * dropping a field from the schema while catalog rows still carry it does
- * not warn: it strips those connections of every permission and their
- * writes start answering 403. Verified against the real environments'
- * stored shape before this was written, not reasoned about.
+ * manifest on every resolution, not only against one being registered, and
+ * a credential mint that cannot resolve its manifest fails closed. That is
+ * what made removing a field a live-data change rather than a schema edit,
+ * and it is why the field left in three steps with a tolerance in the
+ * middle.
+ *
+ * The tolerance is gone because the migration that rewrote every stored row
+ * has run on every deployment. These assertions are the closed state: the
+ * retired key is now an unknown key like any other, and nothing anywhere
+ * still produces it.
  */
-describe("retired manifest keys", () => {
-  const stored = {
-    ...VALID_MANIFEST,
-    runtime_compatibility: ["hosted", "local"],
-  };
-
-  it("accepts a stored manifest still carrying the retired key", () => {
-    const result = IntegrationManifestSchema.safeParse(stored);
-    expect(result.success).toBe(true);
+describe("the retired manifest key", () => {
+  it("is refused, the same as any other unknown key", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      runtime_compatibility: ["hosted", "local"],
+    });
+    expect(result.success).toBe(false);
   });
 
-  it("strips it, so nothing downstream sees a field the contract dropped", () => {
-    const result = IntegrationManifestSchema.safeParse(stored);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect("runtime_compatibility" in result.data).toBe(false);
-    }
-  });
-
-  it("still refuses a key that is genuinely unknown", () => {
-    // The tolerance is a named list, not a loosening of strictness. A
-    // typo in a manifest has to keep failing.
+  it("refuses a typo of it too, which is the point of strictness", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
       runtime_compatibilty: ["local"],

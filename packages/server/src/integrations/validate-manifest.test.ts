@@ -116,7 +116,7 @@ describe("validateManifest", () => {
         {
           path: "manifest_schema_version",
           message:
-            "manifest schema version not supported (expected major 1 or 2.x.x, got 3.0.0)",
+            "manifest schema version not supported (expected major 2.x.x, got 3.0.0)",
         },
       ]);
     }
@@ -141,27 +141,20 @@ describe("validateManifest", () => {
 });
 
 /**
- * A stored manifest written against the previous contract still resolves.
+ * The stored-manifest contract after the tolerance came out.
  *
- * This is not hypothetical tidiness. Moving the supported major to 2
- * without this refused every catalog row written under 1.x, and because
  * `validateManifest` runs on every resolution and a credential mint fails
- * closed, it took out every connection on staging inside one deploy. The
- * error named the schema version rather than anything a user did.
+ * closed, so what this function accepts is a statement about live data
+ * rather than about registration. It accepted major 1 while catalog rows
+ * written against the previous contract were migrated forward; that
+ * migration has run everywhere, so no such row exists to accept.
+ *
+ * Getting this wrong once took out every connection on staging inside a
+ * single deploy, with an error naming a schema version rather than
+ * anything a user did. The assertions below are the closed state.
  */
-describe("validateManifest — stored manifests from the previous contract", () => {
-  const storedUnderV1 = {
-    ...VALID_MANIFEST,
-    manifest_schema_version: "1.3.0",
-    runtime_compatibility: ["hosted", "local"],
-  };
-
-  it("accepts a 1.x row still carrying the field 2.0.0 removed", () => {
-    const result = validateManifest(storedUnderV1);
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts a current 2.x manifest", () => {
+describe("validateManifest — the stored-manifest contract", () => {
+  it("accepts a current manifest", () => {
     const result = validateManifest({
       ...VALID_MANIFEST,
       manifest_schema_version: "2.0.0",
@@ -169,7 +162,16 @@ describe("validateManifest — stored manifests from the previous contract", () 
     expect(result.ok).toBe(true);
   });
 
-  it("still refuses a major from a contract this build does not know", () => {
+  it("refuses a row from the previous contract", () => {
+    const result = validateManifest({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "1.3.0",
+      runtime_compatibility: ["hosted", "local"],
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses a major from a contract this build does not know", () => {
     const result = validateManifest({
       ...VALID_MANIFEST,
       manifest_schema_version: "3.0.0",
