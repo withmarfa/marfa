@@ -71,14 +71,30 @@ async function start(): Promise<void> {
     return;
   }
 
+  // The environment has to be stated, not inferred. This once fell back to
+  // `NODE_ENV`, which on a containerised deployment is `production` on every
+  // box because that is how the image is built — so staging exported months
+  // of logs wearing production's name, and anything filtering on the
+  // attribute silently narrowed to rows written before the cutover while
+  // looking healthy. There is no value to guess from; a deployment that
+  // exports telemetry must say which one it is.
+  //
+  // Checked after the endpoint guard on purpose: a configuration that
+  // exports nothing has nothing to label, and should not be made unbootable
+  // over a variable that would go unused.
+  const deploymentEnvironment = process.env.MARFA_OTEL_ENVIRONMENT;
+  if (!deploymentEnvironment) {
+    throw new Error(
+      "MARFA_OTEL_ENVIRONMENT must be set when MARFA_OTEL_ENABLED=true and an OTLP endpoint is configured. " +
+        "It names the environment exporting the telemetry (e.g. staging, production); NODE_ENV describes the build, not the deployment.",
+    );
+  }
+
   // Resource attribute key for the deployment environment. The literal
   // string is used deliberately rather than a `@opentelemetry/semantic-conventions`
   // constant — the deployment-environment attribute moved namespaces across
   // spec versions, so a constant import risks resolving to `undefined` on a
   // mismatched package version. The wire key is stable; pin it directly.
-  const deploymentEnvironment =
-    process.env.MARFA_OTEL_ENVIRONMENT ??
-    (process.env.NODE_ENV === "production" ? "production" : "development");
 
   const { resourceFromAttributes } = await import("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } =
