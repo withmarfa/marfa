@@ -94,7 +94,15 @@ export async function resolveAllRuntimeCustomNamespaces(
   storage: Storage,
 ): Promise<string[]> {
   const loaded = await storage.types.loadCustomTypes();
-  return namespaceRootsOf(loaded.map((row) => row.schema.id));
+  // Platform rows share this table since the shipped vocabulary became
+  // seeded data, and their publisher roots are already in the allowlist's
+  // static half. Folding them in again would report the build's own set as
+  // though a space had registered it.
+  return namespaceRootsOf(
+    loaded
+      .filter((row) => row.origin !== "platform")
+      .map((row) => row.schema.id),
+  );
 }
 
 /** Publisher-tier, non-reserved namespace roots of the given type ids. */

@@ -69,6 +69,78 @@ const _coreRegistry = new Map<string, TypeSchema>(
 );
 
 /**
+ * Which shipped family a platform type belongs to. The split is provenance
+ * rather than behaviour, but two consumers key on it — the lifecycle and
+ * search restrictions that apply to `system.*`, and the catalog's account of
+ * which types exist because a specific upstream service does — so it cannot
+ * be derived from the identifier and has to travel with the schema.
+ */
+export type PlatformTypeFamily = "core" | "integration" | "system";
+
+/** One seeded platform type: its schema and the family it belongs to. */
+export interface SeededPlatformType {
+  schema: TypeSchema;
+  family: PlatformTypeFamily;
+}
+
+/**
+ * Where a registered type came from. Immutability used to be a compiled set —
+ * a type was unmodifiable because the build said so. As a row property it can
+ * distinguish the three cases that actually differ: the platform vocabulary is
+ * locked, a type an integration published is updatable by that integration's
+ * own package and nothing else, and a type a person registered is theirs.
+ */
+export type TypeOrigin = "platform" | "integration" | "user";
+
+/**
+ * Refill the platform registry from seeded rows.
+ *
+ * The compiled arrays remain the map's contents until this is called, which is
+ * what keeps every consumer that never boots a server — the SDK, a browser
+ * bundle, the codegen — resolving the shipped vocabulary with no database in
+ * sight. A server calls this once at boot so an instance's vocabulary is the
+ * data it holds rather than the build it happens to be running.
+ *
+ * The Map and both Sets are mutated in place rather than replaced, because
+ * `TYPE_REGISTRY`, `SYSTEM_TYPE_IDS` and `INTEGRATION_TYPE_IDS` are exported
+ * bindings that consumers capture at import time. Handing back new objects
+ * would leave every existing reference pointing at the pre-seed contents.
+ */
+export function seedPlatformTypes(seeded: readonly SeededPlatformType[]): void {
+  _coreRegistry.clear();
+  _systemTypeIds.clear();
+  _integrationTypeIds.clear();
+  for (const { schema, family } of seeded) {
+    _coreRegistry.set(schema.id, schema);
+    if (family === "system") _systemTypeIds.add(schema.id);
+    if (family === "integration") _integrationTypeIds.add(schema.id);
+  }
+  // Every cached Zod schema was compiled against the pre-seed field set.
+  zodSchemaCache.clear();
+  zodSchemaStrictCache.clear();
+}
+
+/**
+ * The shipped set as the build carries it, for seeding an instance that has
+ * no rows yet. The repo's JSON files stay canonical: they are what a fresh
+ * instance is seeded from, and what the codegen and the Swift wrapper
+ * generation read when no server exists to ask.
+ */
+export function shippedPlatformTypes(): SeededPlatformType[] {
+  return [
+    ...ALL_TYPES.map((schema) => ({ schema, family: "core" as const })),
+    ...ALL_INTEGRATION_TYPES.map((schema) => ({
+      schema,
+      family: "integration" as const,
+    })),
+    ...ALL_SYSTEM_TYPES.map((schema) => ({
+      schema,
+      family: "system" as const,
+    })),
+  ];
+}
+
+/**
  * Custom types are space-scoped. The outer key is the owning space's id;
  * each space gets its own inner id→schema map. A custom type registered by
  * space A is therefore invisible to space B's lookups — the isolation that
@@ -106,10 +178,15 @@ function resolveSchema(
   return _customBySpace.get(spaceKey(spaceId))?.get(typeId);
 }
 
-/** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
-export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
-  ALL_SYSTEM_TYPES.map((schema) => schema.id),
+// Mutable behind the readonly exports below, so `seedPlatformTypes` can refill
+// them in place without invalidating references consumers captured at import.
+const _systemTypeIds = new Set<string>(ALL_SYSTEM_TYPES.map((s) => s.id));
+const _integrationTypeIds = new Set<string>(
+  ALL_INTEGRATION_TYPES.map((s) => s.id),
 );
+
+/** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
+export const SYSTEM_TYPE_IDS: ReadonlySet<string> = _systemTypeIds;
 
 /**
  * The set of type IDs shipped as integration types: one vendor's payload shape,
@@ -118,9 +195,7 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
  * distinction, so a catalog can tell a space which types are the shared
  * vocabulary and which exist because a specific upstream service does.
  */
-export const INTEGRATION_TYPE_IDS: ReadonlySet<string> = new Set(
-  ALL_INTEGRATION_TYPES.map((schema) => schema.id),
-);
+export const INTEGRATION_TYPE_IDS: ReadonlySet<string> = _integrationTypeIds;
 
 /**
  * First-class field names on the `Item` wire shape. Re-exported from

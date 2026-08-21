@@ -526,6 +526,13 @@
       "when": 1787267921387,
       "tag": "0074_integration_identifiers_take_the_slash",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1787273894201,
+      "tag": "0075_registered_types_carry_their_provenance",
+      "breakpoints": true
     }
   ]
 }

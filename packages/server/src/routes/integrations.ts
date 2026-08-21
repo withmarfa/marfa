@@ -27,6 +27,13 @@ import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { resolveSpaceAdminCaller } from "./_space-caller.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
+import type { TypeSchema } from "@withmarfa/shared";
+import {
+  getTypeSchema,
+  isReservedRoot,
+  registerTypeSchema,
+  validateTypeSchema,
+} from "@withmarfa/shared";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   INSTALL_CONFIG_FIELD_PREFIX,
@@ -274,6 +281,74 @@ export function integrationRoutes(
           manifest_version: manifest.version,
         },
       );
+    }
+
+    // Types the manifest brings with it. Registered under the publisher's
+    // own handle and refused anywhere else: the ownership rule at type
+    // registration exists so one publisher cannot register into another's
+    // namespace, and a package that could smuggle a type in through its
+    // manifest would walk straight around it.
+    const handle = manifest.name.split("/")[0] ?? "";
+    const declaredTypes: TypeSchema[] = [];
+    for (const raw of manifest.type_schemas ?? []) {
+      const validated = validateTypeSchema(raw, apiKey.space_id);
+      if (!validated.success) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCHEMA,
+          `Invalid type schema declared by ${manifest.name}`,
+          { errors: validated.errors },
+        );
+      }
+      const root = validated.data.id.split(".")[0] ?? "";
+      if (isReservedRoot(root)) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `Reserved namespace: "${root}.*" is platform-shipped, so a manifest cannot declare "${validated.data.id}". Reserved-root types are seeded, never registered.`,
+        );
+      }
+      if (root !== handle) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `Publisher namespace: ${manifest.name} may declare types under "${handle}.*" only; "${validated.data.id}" is outside it`,
+        );
+      }
+      declaredTypes.push(validated.data);
+    }
+
+    // A target type that resolves nowhere used to register cleanly, install
+    // cleanly, and fail on the integration's first write, with the error
+    // naming the type rather than the manifest that declared it. Refuse it
+    // here, where the manifest is in hand and the author can act.
+    //
+    // Deliberately at the route and NOT inside `validateManifest`: that
+    // function also runs against every connection's STORED manifest on every
+    // resolution, and a resolution failure fails the credential mint closed.
+    // A registry lookup there would strip permissions from any installed
+    // connection naming a type the registry no longer carries.
+    const declaredIds = new Set(declaredTypes.map((t) => t.id));
+    const unresolvable = manifest.target_types.filter(
+      (t) => !declaredIds.has(t) && !getTypeSchema(t, apiKey.space_id),
+    );
+    if (unresolvable.length > 0) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Manifest declares target types that resolve to no registered type: ${unresolvable.join(", ")}`,
+        { field: "target_types", unresolvable },
+      );
+    }
+
+    for (const schema of declaredTypes) {
+      // Idempotent: re-registering a manifest version that ships the same
+      // schema is a no-op rather than a conflict, so a catalog entry can be
+      // replayed without the type registration standing in the way.
+      const already = await storage.types.get(schema.id, apiKey.space_id);
+      if (!already) {
+        await storage.types.create(schema, apiKey.space_id, {
+          origin: "integration",
+          owner_integration: manifest.name,
+        });
+      }
+      registerTypeSchema(schema, apiKey.space_id);
     }
 
     const now = new Date().toISOString();

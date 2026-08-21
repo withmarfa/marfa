@@ -1,9 +1,11 @@
 import {
   registerTypeSchema,
-  isCoreType,
   registerEdgeTypeSchema,
   isCoreEdgeType,
+  seedPlatformTypes as seedPlatformRegistry,
+  shippedPlatformTypes,
 } from "@withmarfa/shared";
+import type { SeededPlatformType } from "@withmarfa/shared";
 import type { DbPoolMode } from "../../config.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
@@ -74,15 +76,27 @@ export async function createPgStorage(
   const metadataStore = new PgMetadataStore(db);
   const typeStore = new PgTypeStore(db);
 
-  const loadedCustomTypes = await typeStore.loadCustomTypes();
-  for (const { space_id, schema } of loadedCustomTypes) {
-    if (!isCoreType(schema.id)) {
-      // Register into the owning space's overlay so one space's custom types
-      // never resolve for another space's lookups. The empty-string sentinel
-      // maps to the null-space bucket.
-      registerTypeSchema(schema, space_id);
+  // The platform vocabulary is data this instance holds, not a fact about the
+  // build it happens to be running. Seed the shipped set into rows (an upsert,
+  // so a redeploy carrying a changed schema moves the row), then fill the
+  // in-memory registry from what the rows actually say. A type added by a seed
+  // alone therefore resolves without a redeploy, and an instance never
+  // resolves something its own rows do not carry.
+  await typeStore.seedPlatformTypes(shippedPlatformTypes());
+  const loadedTypes = await typeStore.loadCustomTypes();
+  const platformRows: SeededPlatformType[] = [];
+  for (const row of loadedTypes) {
+    if (row.origin === "platform") {
+      platformRows.push({ schema: row.schema, family: row.family ?? "core" });
+      continue;
     }
+    // Register into the owning space's overlay so one space's custom types
+    // never resolve for another space's lookups. The empty-string sentinel
+    // maps to the null-space bucket.
+    registerTypeSchema(row.schema, row.space_id);
   }
+  seedPlatformRegistry(platformRows);
+
   const keyStore = new PgKeyStore(db);
   const blobStore = new PgBlobStore(db);
   const oauthStore = new PgOAuthStore(db);

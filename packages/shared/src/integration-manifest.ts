@@ -71,9 +71,10 @@ const SemverSchema = z.string().regex(SEMVER_RE, {
  * loosening the type validator to admit a slash would have reached every
  * scope literal and permission-map key in the system.
  *
- * The legacy dot form is still accepted, because installed connections
- * resolve the manifest frozen on their catalog row and those rows move in
- * their own step. The tolerance is temporary and goes when they have.
+ * The slash is required. A dot-form name parsed alongside it for the length
+ * of the migration, because installed connections resolve the manifest frozen
+ * on their catalog row and those rows moved in their own step; they have, so
+ * it does not.
  */
 const ManifestNameSchema = z
   .string()
@@ -332,6 +333,25 @@ export const IntegrationManifestSchema = z
      * predates the mechanism.
      */
     supports_user_mappings: z.boolean().optional(),
+    /**
+     * Type schemas the integration brings with it, registered at catalog
+     * registration rather than having to exist on the instance first.
+     *
+     * The shape is the platform's own type-schema shape, validated by the
+     * same validator the in-tree codegen and `POST /types` both use, so a
+     * schema that travels in a manifest is a schema in every other sense.
+     *
+     * Registration is gated on the publisher's handle: an integration may
+     * declare types inside its own namespace and nowhere else. That is not
+     * an optional nicety — without it a third-party package could register
+     * into somebody else's namespace, which is exactly what the ownership
+     * rule at type registration exists to stop.
+     *
+     * A declared schema also counts as resolvable when `target_types` is
+     * checked, which is why an integration can name a type nobody has
+     * registered yet and still be accepted.
+     */
+    type_schemas: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .strict();
 

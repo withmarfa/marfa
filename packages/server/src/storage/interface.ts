@@ -22,7 +22,13 @@ import type {
   Edge,
   CreateEdgeInput,
 } from "@withmarfa/shared";
-import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
+import type {
+  EdgeTypeSchema,
+  PlatformTypeFamily,
+  SeededPlatformType,
+  TypeOrigin,
+  TypeSchema,
+} from "@withmarfa/shared";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { SourceFilterSettings } from "./filter-sql.js";
 
@@ -459,7 +465,11 @@ export interface TypeStore {
   /** Resolves a type by id within the space: core/system types resolve
    *  globally, custom types only for their owning space. */
   get(id: string, spaceId?: string): Promise<TypeSchema | undefined>;
-  create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
+  create(
+    schema: TypeSchema,
+    spaceId?: string,
+    provenance?: TypeProvenance,
+  ): Promise<TypeSchema>;
   update(id: string, schema: TypeSchema, spaceId?: string): Promise<TypeSchema>;
   delete(id: string, spaceId?: string): Promise<void>;
   /** One space's own custom types, without the global core and system set
@@ -471,7 +481,29 @@ export interface TypeStore {
    *  warmup. Each row carries its owning space so the warmup can register it
    *  into the right space overlay. */
   loadCustomTypes(): Promise<LoadedType[]>;
+  /**
+   * Write the shipped platform vocabulary into rows, idempotently.
+   *
+   * Called at every boot rather than by a migration. A migration would have
+   * to embed a copy of several dozen JSON schemas, which nothing regenerates
+   * and which would drift from the files the codegen reads the first time a
+   * field changed. Seeding from the build keeps the repo's JSON canonical and
+   * makes the row a projection of it.
+   *
+   * Existing rows are updated in place, so a redeploy carrying a changed
+   * schema moves the instance forward without a second mechanism.
+   */
+  seedPlatformTypes(seeded: readonly SeededPlatformType[]): Promise<void>;
   countCustom(): Promise<number>;
+}
+
+/** Where a registered type came from, written alongside its schema. */
+export interface TypeProvenance {
+  origin: TypeOrigin;
+  /** Shipped family, for `platform` rows only. */
+  family?: PlatformTypeFamily;
+  /** Manifest name of the publishing integration, for `integration` rows. */
+  owner_integration?: string;
 }
 
 /** A type schema paired with the space that owns it — the shape the startup
@@ -480,6 +512,11 @@ export interface TypeStore {
 export interface LoadedType {
   space_id: string;
   schema: TypeSchema;
+  /** Provenance as stored. Rows written before types carried provenance
+   *  default to `user`, which is what every row in this table was. */
+  origin: TypeOrigin;
+  family?: PlatformTypeFamily;
+  owner_integration?: string;
 }
 
 export interface EdgeTypeStore {

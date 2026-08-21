@@ -6,9 +6,9 @@ import {
   MarfaError,
   ErrorCode,
 } from "@withmarfa/shared";
-import type { TypeSchema } from "@withmarfa/shared";
+import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
-import type { LoadedType, TypeStore } from "../interface.js";
+import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -24,12 +24,16 @@ export class SqliteTypeStore implements TypeStore {
     return Promise.resolve(getTypeSchema(id, spaceId));
   }
 
-  async create(schema: TypeSchema, spaceId?: string): Promise<TypeSchema> {
+  async create(
+    schema: TypeSchema,
+    spaceId?: string,
+    provenance?: TypeProvenance,
+  ): Promise<TypeSchema> {
     const now = new Date().toISOString();
     try {
       await this.db.run(sql`
-        INSERT INTO custom_types (id, space_id, schema, created_at, updated_at)
-        VALUES (${schema.id}, ${spaceId ?? ""}, ${JSON.stringify(schema)}, ${now}, ${now})
+        INSERT INTO custom_types (id, space_id, schema, origin, family, owner_integration, created_at, updated_at)
+        VALUES (${schema.id}, ${spaceId ?? ""}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${provenance?.family ?? null}, ${provenance?.owner_integration ?? null}, ${now}, ${now})
       `);
     } catch (err: unknown) {
       if (
@@ -69,10 +73,15 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   async listCustom(spaceId?: string): Promise<TypeSchema[]> {
+    // `origin != 'platform'` is load-bearing, not a tidy-up. The shipped
+    // vocabulary lives in this table now, so "the space's own registrations"
+    // has to say so explicitly. Without it an archive would carry the platform
+    // set as if the space had registered it, and the restore that replayed it
+    // would be refused for trying to register a locked type.
     const rows = await this.db
       .select()
       .from(customTypes)
-      .where(sql`space_id = ${spaceId ?? ""}`)
+      .where(sql`space_id = ${spaceId ?? ""} AND origin != 'platform'`)
       .all();
     const results: TypeSchema[] = [];
     for (const row of rows) {
@@ -96,16 +105,47 @@ export class SqliteTypeStore implements TypeStore {
         `custom_types.schema[${row.id}]`,
       );
       if (parsed) {
-        results.push({ space_id: row.space_id, schema: parsed });
+        results.push({
+          space_id: row.space_id,
+          schema: parsed,
+          origin: (row.origin as LoadedType["origin"] | null) ?? "user",
+          ...(row.family !== null && {
+            family: row.family as LoadedType["family"],
+          }),
+          ...(row.owner_integration !== null && {
+            owner_integration: row.owner_integration,
+          }),
+        });
       }
     }
     return results;
+  }
+
+  async seedPlatformTypes(
+    seeded: readonly SeededPlatformType[],
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    for (const { schema, family } of seeded) {
+      // Upsert rather than insert-if-absent: a redeploy carrying a changed
+      // shipped schema has to move the row, or the instance keeps resolving
+      // whatever it was first seeded with.
+      await this.db.run(sql`
+        INSERT INTO custom_types (id, space_id, schema, origin, family, owner_integration, created_at, updated_at)
+        VALUES (${schema.id}, '', ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
+        ON CONFLICT (space_id, id) DO UPDATE SET
+          schema = excluded.schema,
+          origin = 'platform',
+          family = excluded.family,
+          updated_at = ${now}
+      `);
+    }
   }
 
   async countCustom(): Promise<number> {
     const row = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(customTypes)
+      .where(sql`origin != 'platform'`)
       .get();
     return row?.count ?? 0;
   }
