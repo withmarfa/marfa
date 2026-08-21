@@ -781,7 +781,7 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
     const res = await landOnConsentPage(ctx, params.toString(), { cookie });
     expect(res.status).toBe(400);
     const body = await res.text();
-    expect(body).toContain("This request has expired");
+    expect(body).toContain("We could not verify this request");
     for (const fromTheQuery of [
       "Skip Test Client",
       "core.note:read",

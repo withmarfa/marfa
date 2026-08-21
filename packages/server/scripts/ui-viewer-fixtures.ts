@@ -375,7 +375,15 @@ const AUTH_SCREENS: GalleryScreen[] = [
         // real user reaches, not just a malformed-request screen.
         id: "expired",
         label: "Request expired",
-        render: () => renderAuthorizeExpiredPage(),
+        render: () => renderAuthorizeExpiredPage("expired"),
+      },
+      {
+        // The other half of the same gate, and the one worth looking at:
+        // a signature that did not verify is not a timeout, and saying so
+        // is what stops the next corruption bug reading as an expiry.
+        id: "unverifiable",
+        label: "Request unverifiable",
+        render: () => renderAuthorizeExpiredPage("unverifiable"),
       },
     ],
   },

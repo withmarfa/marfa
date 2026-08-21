@@ -171,10 +171,17 @@ function buildForgedOauthQuery(clientId: string, scope: string): string {
 async function expectRefusedAuthorizePage(
   res: Response,
   fromTheQuery: readonly string[],
+  // A signature we did not make and a request that timed out are different
+  // events and now say so. Callers that forge a query assert the former.
+  expected: "expired" | "unverifiable" = "unverifiable",
 ): Promise<void> {
   expect(res.status).toBe(400);
   const body = await res.text();
-  expect(body).toContain("This request has expired");
+  expect(body).toContain(
+    expected === "expired"
+      ? "This request has expired"
+      : "We could not verify this request",
+  );
   for (const value of fromTheQuery) expect(body).not.toContain(value);
   expect(body).not.toContain("oauth_query");
   expect(body).not.toContain("code=");
@@ -324,11 +331,16 @@ describe("GET /auth/authorize (consent page)", () => {
       headers: { cookie },
     });
 
-    // A genuinely signed request past its exp gets the same page as a
-    // forged one. It can no longer produce a code, so there is nothing to
-    // render a consent screen for, and the user's only move either way is
-    // to start again at the app.
-    await expectRefusedAuthorizePage(res, ["Test Client", "test-state"]);
+    // A genuinely signed request past its exp is refused like a forged
+    // one, and says so in its own words: this one really did time out,
+    // which is the ordinary case and the one the copy is written for.
+    // Either way there is nothing to render a consent screen for and the
+    // user's only move is to start again at the app.
+    await expectRefusedAuthorizePage(
+      res,
+      ["Test Client", "test-state"],
+      "expired",
+    );
   });
 
   it("REGRESSION: refuses a forged query before bouncing an anonymous visitor to sign-in", async () => {
@@ -840,10 +852,14 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       );
       expect(invalid.status).toBe(400);
       // A form submit from a browser, so it gets the themed page rather
-      // than a developer's sentence. The likeliest way to reach it is a
-      // user who read the consent screen for longer than the signed
-      // window lasts.
-      expect(await invalid.text()).toContain("This request has expired");
+      // than a developer's sentence, and the page names which check
+      // failed: the tampered query never timed out, and saying it had
+      // would send an honest user looking for a clock problem.
+      expect(await invalid.text()).toContain(
+        failureMode === "expired"
+          ? "This request has expired"
+          : "We could not verify this request",
+      );
 
       const grantAfter = await ctx.storage.items.get(grantBefore.id);
       expect(grantAfter?.version).toBe(grantBefore.version);
