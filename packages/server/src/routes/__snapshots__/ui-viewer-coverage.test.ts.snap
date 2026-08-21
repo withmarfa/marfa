@@ -1503,10 +1503,46 @@ exports[`every gallery variant renders > renders 'auth/sign-in/sent' 1`] = `
     <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></div>
     <h1 class="title">Check your email</h1>
     <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
+    
+    <form method="POST" action="/auth/sign-in" class="actions" novalidate>
+      <input type="hidden" name="mode" value="magic">
+      <input type="hidden" name="return_to" value="/auth/authorize?client_id=marfa-cli&amp;response_type=code">
+      <input type="hidden" name="email" value="jonah@example.com">
+      <button type="submit" class="btn btn--primary" data-loading-label="Sending...">Resend the link</button>
+    </form>
+  
     <div class="actions">
       <a href="/auth/sign-in?mode=magic&return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode" class="btn btn--outline">Use a different email</a>
     </div>
     <p class="aux"><a href="/auth/sign-in?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Use a password instead</a></p>
+    <script src="/auth/static/submit-state.js"></script>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'auth/sign-in/sent-no-email' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check your email</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--confirm" aria-label="Check your email">
+    
+    <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></div>
+    <h1 class="title">Check your email</h1>
+    <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
+    
+    <div class="actions">
+      <a href="/auth/sign-in?mode=magic&return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode" class="btn btn--outline">Use a different email</a>
+    </div>
+    <p class="aux"><a href="/auth/sign-in?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Use a password instead</a></p>
+    <script src="/auth/static/submit-state.js"></script>
   
   </main>
 </body>

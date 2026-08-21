@@ -163,6 +163,22 @@ const AUTH_SCREENS: GalleryScreen[] = [
             mode: "magic",
             returnTo: RETURN_TO,
             magicLinkSent: true,
+            email: "jonah@example.com",
+            allowSignup: true,
+            oidcProviderIds: [],
+          }),
+      },
+      {
+        // The same screen reached without the address, which happens to an
+        // older link or a hand-typed URL. The resend button is omitted
+        // rather than rendered over an empty field.
+        id: "sent-no-email",
+        label: "Link sent, address unknown",
+        render: () =>
+          renderSignInPage({
+            mode: "magic",
+            returnTo: RETURN_TO,
+            magicLinkSent: true,
             allowSignup: true,
             oidcProviderIds: [],
           }),

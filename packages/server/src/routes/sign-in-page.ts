@@ -44,6 +44,13 @@ interface SignInPageParams {
   error?: string;
   /** Truthy when a magic-link email was just sent successfully. */
   magicLinkSent?: boolean;
+  /**
+   * The address a one-time link was just sent to, carried through the
+   * redirect so the confirmation screen can resend without asking for it
+   * again. `null` when unknown; the resend control is then omitted rather
+   * than rendering a button that would post an empty address.
+   */
+  email?: string | null;
   /** Whether to render the "Create an account" link. */
   allowSignup: boolean;
   /**
@@ -69,6 +76,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 /** Renders the sign-in page as a complete HTML document string. */
 export function renderSignInPage(params: SignInPageParams): string {
   const safeReturnTo = escapeHtml(params.returnTo);
+  const safeEmail = escapeHtml(params.email ?? "");
 
   const errorMessage = params.error
     ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
@@ -271,14 +279,32 @@ export function renderSignInPage(params: SignInPageParams): string {
 
   // Confirmation screen after a one-time link is sent — its own focused view,
   // not a banner stacked on the entry form.
+  // Asking again is one tap, and it posts to the same handler that sent the
+  // first one. The server holds a per-address window; the button does not
+  // announce it, because a countdown would state a rule the server is free to
+  // change and the honest answer to "did it send?" is the same either way.
+  const resendControl =
+    safeEmail.length > 0
+      ? `
+    <form method="POST" action="/auth/sign-in" class="actions" novalidate>
+      <input type="hidden" name="mode" value="magic">
+      <input type="hidden" name="return_to" value="${safeReturnTo}">
+      <input type="hidden" name="email" value="${safeEmail}">
+      <button type="submit" class="btn btn--primary" data-loading-label="Sending...">Resend the link</button>
+    </form>
+  `
+      : "";
+
   const sentBody = `
     ${confirmIcon("mail")}
     <h1 class="title">Check your email</h1>
     <p class="sub" role="status">A one-time sign-in link is on its way. Open it to finish signing in.</p>
+    ${resendControl}
     <div class="actions">
       <a href="/auth/sign-in?${buildQuery({ mode: "magic", return_to: params.returnTo })}" class="btn btn--outline">Use a different email</a>
     </div>
     <p class="aux"><a href="${toPasswordHref}">Use a password instead</a></p>
+    <script src="/auth/static/submit-state.js"></script>
   `;
 
   const body = params.magicLinkSent
