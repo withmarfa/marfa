@@ -36,6 +36,7 @@ import {
 } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
+import { renderSignInLinkFailedPage } from "./sign-in-link-page.js";
 import { renderKeysPage, type KeysPageKey } from "./keys-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
@@ -620,12 +621,24 @@ export function authRoutes(
     if (mode === "magic") {
       // Better-Auth's magic-link plugin validates `callbackURL` against
       // its trusted-origins allowlist and rejects bare relative paths
-      // with `{code: "INVALID_CALLBACK_URL"}`. Resolve `returnTo`
-      // against `auth.baseURL` so the upstream receives a same-origin
-      // absolute URL. validateReturnTo (POST side) already guarantees
-      // `returnTo` is a relative same-origin path; the absolute form
-      // is just `<baseURL><returnTo>`.
-      const absoluteCallbackURL = new URL(returnTo, auth.baseURL).toString();
+      // with `{code: "INVALID_CALLBACK_URL"}`, so the upstream gets a
+      // same-origin absolute URL either way.
+      //
+      // What it gets is a landing URL, never `returnTo` itself. The verify
+      // endpoint decodes `callbackURL` a second time, after better-call has
+      // already decoded it once, so any percent-escape in there is spent
+      // twice. `returnTo` on this path is the signed authorize query, and its
+      // signature is base64: roughly half of them contain a `+`, which
+      // survives the first decode as `%2B` and the second as a literal `+`,
+      // which the next parser reads as a space. The signature then fails to
+      // match and the user is told their request expired.
+      //
+      // `signInCompleteUrl` carries the destination base64url-encoded, an
+      // alphabet with no `+` and no `%`, so decoding it twice is the same as
+      // decoding it once. That holds whether or not the extra decode is ever
+      // removed upstream, which is the point: compensating for it by
+      // pre-encoding would break the day it is fixed.
+      const landingURL = signInCompleteUrl(returnTo, auth.baseURL);
       const upstream = new Request(
         new URL("/auth/sign-in/magic-link", c.req.url),
         {
@@ -637,7 +650,12 @@ export function authRoutes(
           ),
           body: JSON.stringify({
             email: emailStr,
-            callbackURL: absoluteCallbackURL,
+            callbackURL: landingURL,
+            // Set explicitly. Left unset it defaults to `callbackURL` and has
+            // `error=` appended to it, which on the old shape mutated the
+            // signed query it was pointing at. Naming the same landing route
+            // keeps the failure on a surface that expects it.
+            errorCallbackURL: landingURL,
           }),
         },
       );
@@ -717,6 +735,45 @@ export function authRoutes(
       },
     });
     return errorRedirect("invalid_credentials");
+  });
+
+  // Where a sign-in link lands. Better Auth has already verified the token,
+  // created the session and set its cookie by the time it redirects here, so
+  // there is nothing left to authenticate: this route decides where the user
+  // goes next and records that they arrived.
+  //
+  // It exists so that `callbackURL` can be a plain URL. See the dispatch in
+  // POST /sign-in for why handing the signed authorize query to the plugin
+  // directly does not survive the round trip.
+  router.get("/sign-in/complete", async (c) => {
+    const url = new URL(c.req.url);
+    const next = decodeSignInNext(url.searchParams.get("next"));
+    setNoStore(c);
+
+    // `error` is Better Auth's, appended to whatever it was given as the
+    // error callback. A token that was already spent and one that timed out
+    // both arrive as INVALID_TOKEN, so the page names both rather than
+    // guessing between them.
+    if (url.searchParams.get("error")) {
+      return c.html(renderSignInLinkFailedPage({ returnTo: next }), 400);
+    }
+
+    // The session cookie rode in on this request, so the actor is known here
+    // and nowhere earlier. The send step cannot audit a sign-in because at
+    // that point nobody has signed in; the password path audits inline
+    // because its response IS the sign-in.
+    const session = auth ? await auth.getSession(c.req.raw.headers) : null;
+    if (session) {
+      void storage.audit.log({
+        action: "auth.sign_in.success",
+        resource_type: "auth_user",
+        resource_id: session.user.id,
+        client_ip: c.var.clientIp ?? null,
+        details: { email: session.user.email, method: "magic" },
+      });
+    }
+
+    return c.redirect(next, 302);
   });
 
   router.post("/sign-in/provider/:id", async (c) => {
@@ -2658,6 +2715,39 @@ function buildSignUpRedirect(params: {
   }
   const query = search.toString();
   return `/auth/sign-up${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Absolute URL of the landing route a sign-in link returns to, carrying its
+ * destination in `next`.
+ *
+ * `next` is base64url rather than percent-encoded because the value handed to
+ * Better Auth's `callbackURL` is decoded twice on the way back, and base64url
+ * has no character that a decode changes. Percent-encoding here would be spent
+ * on the first decode and mangled by the second, which is the whole defect
+ * this route exists to route around.
+ */
+function signInCompleteUrl(returnTo: string, baseURL: string): string {
+  const next = Buffer.from(returnTo, "utf8").toString("base64url");
+  return new URL(`/auth/sign-in/complete?next=${next}`, baseURL).toString();
+}
+
+/**
+ * Recover the destination from a landing-route `next`, or `/` when there
+ * isn't a usable one.
+ *
+ * Re-validated rather than trusted. `next` reaches us off a URL, so it is an
+ * open-redirect vector like any other, and it has been out of our hands since
+ * the email was sent. `validateReturnTo` is the same gate the value passed on
+ * the way in.
+ */
+function decodeSignInNext(raw: string | null): string {
+  if (!raw) return "/";
+  try {
+    return validateReturnTo(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    return "/";
+  }
 }
 
 /** Build a redirect URL back to the sign-in page with the right query

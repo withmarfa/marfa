@@ -1492,6 +1492,30 @@ exports[`every gallery variant renders > renders 'auth/sign-in/sent' 1`] = `
 </html>"
 `;
 
+exports[`every gallery variant renders > renders 'auth/sign-in-link/failed' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>That sign-in link didn&#39;t work</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--confirm" aria-label="That sign-in link didn&#39;t work">
+    
+    <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+    <h1 class="title">That sign-in link didn't work</h1>
+    <p class="sub" role="alert">A sign-in link works once and lasts a few minutes. This one had already been used, or it had run out of time. Send yourself another and it will work.</p>
+    <div class="actions">
+      <a href="/auth/sign-in?mode=magic&amp;return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode" class="btn btn--primary">Send another link</a>
+    </div>
+  
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'auth/sign-up/default' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">
