@@ -21,6 +21,8 @@ interface ConnectionsBody {
   database_connections?: {
     total: number;
     ceiling: number;
+    max_connections: number;
+    reserved: number;
     clients: Record<string, Record<string, number>>;
   };
 }
@@ -50,6 +52,13 @@ describe.skipIf(!isPg)("GET /health database connections", () => {
     expect(conns.total).toBeGreaterThan(0);
     expect(conns.ceiling).toBeGreaterThan(0);
     expect(conns.total).toBeLessThanOrEqual(conns.ceiling);
+
+    // The ceiling is what an ordinary client can actually reach, not the
+    // advertised maximum. On the managed tier those differ by three, and
+    // alerting on the larger one fires after exhaustion rather than before.
+    expect(conns.max_connections).toBeGreaterThanOrEqual(conns.ceiling);
+    expect(conns.ceiling).toBe(conns.max_connections - conns.reserved);
+    expect(conns.reserved).toBeGreaterThanOrEqual(0);
 
     // Every bucket's states must sum back to the total, or the attribution
     // is dropping connections the total counted.
