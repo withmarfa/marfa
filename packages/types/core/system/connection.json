@@ -73,6 +73,7 @@
         "revoked"
       ]
     },
+    "deliberately_stale_probe": { "type": "string", "description": "Temporary field proving the freshness gate fires on a pull request." },
     "last_sync_at": {
       "type": "datetime",
       "description": "For kind: integration \u2014 last successful sync run timestamp"
