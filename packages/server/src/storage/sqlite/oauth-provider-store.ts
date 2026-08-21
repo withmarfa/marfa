@@ -54,12 +54,19 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         scopes: auth_oauth_access_token.scopes,
         expiresAt: auth_oauth_access_token.expiresAt,
         createdAt: auth_oauth_access_token.createdAt,
+        revoked: auth_oauth_access_token.revoked,
       })
       .from(auth_oauth_access_token)
       .where(eq(auth_oauth_access_token.token, tokenHash))
       .limit(1);
     const row = rows[0];
     if (!row) return null;
+    // A revoked token is dead whatever its expiry says. The plugin stamps
+    // this column when the session it was issued under ends, so signing out
+    // is what usually sets it — and until this check existed, an app kept
+    // working on its stored bearer after the person using it had signed
+    // out, because the only thing consulted here was the clock.
+    if (row.revoked !== null) return null;
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
     if (expMs !== null && expMs < Date.now()) return null;
