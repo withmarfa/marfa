@@ -277,114 +277,78 @@ const WriteFamiliesSchema = z
 
 export type WriteFamilies = z.infer<typeof WriteFamiliesSchema>;
 
-/**
- * Keys a stored manifest may still carry from a previous contract, dropped
- * before validation rather than refused.
- *
- * This is a migration tolerance with a removal condition, not a
- * compatibility shim. `IntegrationManifestSchema` is `.strict()`, and it
- * runs against every connection's STORED manifest on every resolution, not
- * only against a manifest being registered. A credential mint that cannot
- * resolve its manifest fails closed by design, so removing a field from
- * the schema while catalog rows still carry it does not produce a warning:
- * it silently strips those connections of every permission and their
- * writes start answering 403.
- *
- * So the field goes in three steps, the tolerant one first. This is that
- * step. It comes out once a migration has rewritten the stored rows, which
- * is the only condition under which it is safe to remove.
- */
-const RETIRED_MANIFEST_KEYS = ["runtime_compatibility"] as const;
-
-function dropRetiredKeys(input: unknown): unknown {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return input;
-  }
-  const record = input as Record<string, unknown>;
-  if (!RETIRED_MANIFEST_KEYS.some((key) => key in record)) return input;
-  const retired = new Set<string>(RETIRED_MANIFEST_KEYS);
-  return Object.fromEntries(
-    Object.entries(record).filter(([key]) => !retired.has(key)),
-  );
-}
-
-export const IntegrationManifestSchema = z.preprocess(
-  dropRetiredKeys,
-  z
-    .object({
-      name: ManifestNameSchema,
-      version: SemverSchema,
-      publisher: z.string().min(1, "publisher is required"),
-      description: z.string().min(1, "description is required"),
-      direction: z.enum(["read", "write", "both"]),
-      triggers: z
-        .array(TriggerSchema)
-        .min(1, "at least one trigger is required"),
-      target_types: z
-        .array(
-          z.string().refine((s) => isValidTypeIdentifier(s), {
-            message: "target_types entries must be valid type identifiers",
-          }),
-        )
-        .min(1, "at least one target_type is required"),
-      bidirectional_handling: BidirectionalHandlingSchema,
-      oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
-      /**
-       * Static-API-token requirements — manifest 1.1.0 additive field.
-       * Optional; present on integrations whose upstream uses a bearer
-       * token rather than OAuth. See `TokenRequirementValue` above.
-       */
-      token_requirements: z
-        .record(z.string().min(1), TokenRequirementValue)
-        .optional(),
-      webhook_verification: WebhookVerificationSchema,
-      manifest_schema_version: SemverSchema,
-      permissions: PermissionsSchema.optional(),
-      /**
-       * Connection configuration contract — manifest 1.2.0 additive field.
-       * Optional; an integration that accepts no configuration omits it,
-       * and supplying any configuration to such an integration is refused.
-       */
-      configuration_schema: z
-        .record(z.string().min(1), ConfigurationFieldSchema)
-        .optional(),
-      /**
-       * Named write families — manifest 1.3.0 additive field. Cross-field
-       * coherence (default exists, families cover target_types exactly) is
-       * enforced by `validateWriteFamilies`, kept outside the Zod schema so
-       * the generated JSON Schema artifact stays derivable.
-       */
-      write_families: WriteFamiliesSchema.optional(),
-      /**
-       * Whether this integration's handlers consult the per-connection user
-       * mapping (`ctx.mapping`) on their write path — manifest 1.3.0. The
-       * mapping-configuration surface refuses integrations that do not, so
-       * a stored mapping can never be silently ignored by a handler that
-       * predates the mechanism.
-       */
-      supports_user_mappings: z.boolean().optional(),
-      /**
-       * Type schemas the integration brings with it, registered at catalog
-       * registration rather than having to exist on the instance first.
-       *
-       * The shape is the platform's own type-schema shape, validated by the
-       * same validator the in-tree codegen and `POST /types` both use, so a
-       * schema that travels in a manifest is a schema in every other sense.
-       *
-       * Registration is gated on the publisher's handle: an integration may
-       * declare types inside its own namespace and nowhere else. That is not
-       * an optional nicety — without it a third-party package could register
-       * into somebody else's namespace, which is exactly what the ownership
-       * rule at type registration exists to stop.
-       *
-       * A declared schema also counts as resolvable when `target_types` is
-       * checked, which is why an integration can name a type nobody has
-       * registered yet and still be accepted.
-       */
-      type_schemas: z.array(z.record(z.string(), z.unknown())).optional(),
-    })
-    .strict(),
-);
+export const IntegrationManifestSchema = z
+  .object({
+    name: ManifestNameSchema,
+    version: SemverSchema,
+    publisher: z.string().min(1, "publisher is required"),
+    description: z.string().min(1, "description is required"),
+    direction: z.enum(["read", "write", "both"]),
+    triggers: z.array(TriggerSchema).min(1, "at least one trigger is required"),
+    target_types: z
+      .array(
+        z.string().refine((s) => isValidTypeIdentifier(s), {
+          message: "target_types entries must be valid type identifiers",
+        }),
+      )
+      .min(1, "at least one target_type is required"),
+    bidirectional_handling: BidirectionalHandlingSchema,
+    oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
+    /**
+     * Static-API-token requirements — manifest 1.1.0 additive field.
+     * Optional; present on integrations whose upstream uses a bearer
+     * token rather than OAuth. See `TokenRequirementValue` above.
+     */
+    token_requirements: z
+      .record(z.string().min(1), TokenRequirementValue)
+      .optional(),
+    webhook_verification: WebhookVerificationSchema,
+    manifest_schema_version: SemverSchema,
+    permissions: PermissionsSchema.optional(),
+    /**
+     * Connection configuration contract — manifest 1.2.0 additive field.
+     * Optional; an integration that accepts no configuration omits it,
+     * and supplying any configuration to such an integration is refused.
+     */
+    configuration_schema: z
+      .record(z.string().min(1), ConfigurationFieldSchema)
+      .optional(),
+    /**
+     * Named write families — manifest 1.3.0 additive field. Cross-field
+     * coherence (default exists, families cover target_types exactly) is
+     * enforced by `validateWriteFamilies`, kept outside the Zod schema so
+     * the generated JSON Schema artifact stays derivable.
+     */
+    write_families: WriteFamiliesSchema.optional(),
+    /**
+     * Whether this integration's handlers consult the per-connection user
+     * mapping (`ctx.mapping`) on their write path — manifest 1.3.0. The
+     * mapping-configuration surface refuses integrations that do not, so
+     * a stored mapping can never be silently ignored by a handler that
+     * predates the mechanism.
+     */
+    supports_user_mappings: z.boolean().optional(),
+    /**
+     * Type schemas the integration brings with it, registered at catalog
+     * registration rather than having to exist on the instance first.
+     *
+     * The shape is the platform's own type-schema shape, validated by the
+     * same validator the in-tree codegen and `POST /types` both use, so a
+     * schema that travels in a manifest is a schema in every other sense.
+     *
+     * Registration is gated on the publisher's handle: an integration may
+     * declare types inside its own namespace and nowhere else. That is not
+     * an optional nicety — without it a third-party package could register
+     * into somebody else's namespace, which is exactly what the ownership
+     * rule at type registration exists to stop.
+     *
+     * A declared schema also counts as resolvable when `target_types` is
+     * checked, which is why an integration can name a type nobody has
+     * registered yet and still be accepted.
+     */
+    type_schemas: z.array(z.record(z.string(), z.unknown())).optional(),
+  })
+  .strict();
 
 export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
 
@@ -607,38 +571,20 @@ export function validateConnectionConfiguration(
 }
 
 /**
- * Highest manifest_schema_version major this library accepts. Used by the
- * server's validate-manifest helper. Bump when the contract crosses a
- * breaking-change boundary.
+ * Majors a stored manifest may carry.
  *
- * Moved to 2 when `runtime_compatibility` was removed. It was a required
- * field, so dropping it is not additive: a 1.x manifest carrying it no
- * longer describes anything this runtime does, and one written without it
- * would have failed a 1.x validator.
+ * Held `[1, 2]` while catalog rows written against the previous contract
+ * were migrated forward. That migration has run on every deployment, so a
+ * 1.x row no longer exists to accept, and continuing to accept one would
+ * mean the contract has two answers to what a manifest is.
+ *
+ * The reason this is a list rather than a single number is worth keeping:
+ * `validateManifest` runs against every connection's STORED manifest on
+ * every resolution, and a credential mint fails closed when resolution
+ * fails. Narrowing it is therefore a change to live data handling, not a
+ * constant, and it is only ever safe once the rows have moved.
  */
-export const MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR = 2;
-
-/**
- * Majors a STORED manifest may still carry, accepted alongside the current
- * one while a migration catches up.
- *
- * The same trap as the retired-key tolerance, one level up, and it bit for
- * real: moving the supported major to 2 refused every catalog row written
- * under 1.x, and because `validateManifest` runs on every resolution and a
- * mint fails closed, that took out every connection on staging inside one
- * deploy rather than warning about anything.
- *
- * A manifest's major says which contract it was written against, and a
- * stored row written against 1.x is not wrong, it is old. What made 2.0.0
- * breaking was a field being removed, and the retired-key tolerance
- * already handles reading one that still has it. So a 1.x row parses.
- *
- * This contracts to `[2]` in the same change that migrates stored rows
- * forward, which is the only point at which it is safe.
- */
-export const MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS: readonly number[] = [
-  1, 2,
-];
+export const MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS: readonly number[] = [2];
 
 /** Parses `manifest_schema_version` and returns its major component. */
 export function parseManifestSchemaMajor(version: string): number | null {
