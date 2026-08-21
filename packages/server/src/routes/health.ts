@@ -64,8 +64,22 @@ function readPlacement(): Placement | null {
 interface DatabaseConnections {
   /** Connections to this database from every client, Marfa's or not. */
   total: number;
-  /** The cluster's `max_connections`. The number `total` is racing. */
+  /**
+   * The number `total` is actually racing: `max_connections` less the slots
+   * held back for superusers, which an ordinary client can never have.
+   *
+   * Reporting `max_connections` alone would overstate the headroom, and on
+   * the managed tier that is not a rounding error — it advertises 25 while
+   * reserving 3, so the figure that matters is 22. A watcher alerting at
+   * 90% of the wrong number fires after exhaustion rather than before it,
+   * which is the exact failure this endpoint exists to give warning of.
+   */
   ceiling: number;
+  /** `max_connections` verbatim, so the arithmetic above is visible rather
+   *  than something a reader has to trust. */
+  max_connections: number;
+  /** Slots held back by `superuser_reserved_connections`. */
+  reserved: number;
   /** Counts by backend state, keyed by client. Marfa's own pools are named
    *  (`marfa-web:app`, `marfa-worker:lock`); anything else is `other`. */
   clients: Record<string, Record<string, number>>;
@@ -163,7 +177,8 @@ async function readDatabaseConnections(
       coalesce(nullif(application_name, ''), 'other') as client,
       coalesce(state, 'unknown') as state,
       count(*)::int as connections,
-      current_setting('max_connections')::int as ceiling
+      current_setting('max_connections')::int as max_connections,
+      current_setting('superuser_reserved_connections')::int as reserved
     from pg_stat_activity
     where datname = current_database()
     group by 1, 2
@@ -171,12 +186,14 @@ async function readDatabaseConnections(
     client: string;
     state: string;
     connections: number;
-    ceiling: number;
+    max_connections: number;
+    reserved: number;
   }[];
 
   const clients: Record<string, Record<string, number>> = {};
   let total = 0;
-  let ceiling = 0;
+  let maxConnections = 0;
+  let reserved = 0;
   for (const row of rows) {
     // Only Marfa's own pools are reported under their own name, matched
     // against the shape this server sets rather than a loose prefix. Every
@@ -187,9 +204,16 @@ async function readDatabaseConnections(
     const byState = (clients[key] ??= {});
     byState[row.state] = (byState[row.state] ?? 0) + row.connections;
     total += row.connections;
-    ceiling = row.ceiling;
+    maxConnections = row.max_connections;
+    reserved = row.reserved;
   }
-  return { total, ceiling, clients };
+  return {
+    total,
+    ceiling: Math.max(0, maxConnections - reserved),
+    max_connections: maxConnections,
+    reserved,
+    clients,
+  };
 }
 
 export function healthRoutes(
