@@ -23,6 +23,8 @@ import {
   previewUpgrade,
   UpgradeError,
 } from "../connections/upgrade-pipeline.js";
+import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
+import type { LocalRuntime } from "../integrations/local-runtime/types.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import {
   computeEffectiveHopCount,
@@ -382,6 +384,71 @@ const upgradeRoute = createRoute({
   },
 });
 
+const runRoute = createRoute({
+  operationId: "runConnection",
+  method: "post",
+  path: "/{id}/run",
+  tags: ["Connections"],
+  summary: "Run an integration connection now",
+  description:
+    "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: an integration whose code runs somewhere else is refused rather than silently accepted. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
+  security: [{ bearerAuth: [] }],
+  request: { params: ConnectionIdParam },
+  responses: {
+    202: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            connection_id: z.string(),
+            integration_name: z.string(),
+            queued: z.literal(true),
+          }),
+        },
+      },
+      description: "The run is queued.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "Not an integration connection, revoked, paused, the manifest does not declare `manual`, or this deployment does not run the integration.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized.",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller is not an admin.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
+      description: "Connection not found.",
+    },
+    503: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["local_runtime_not_available"]),
+        },
+      },
+      description: "No integration runtime is available on this instance.",
+    },
+  },
+});
+
 const uninstallRoute = createRoute({
   operationId: "uninstallConnection",
   method: "post",
@@ -571,7 +638,11 @@ const previewEventRoute = createRoute({
   },
 });
 
-export function connectionRoutes(storage: Storage, salt: string) {
+export function connectionRoutes(
+  storage: Storage,
+  salt: string,
+  localRuntime: LocalRuntime | null = null,
+) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
@@ -891,6 +962,110 @@ export function connectionRoutes(storage: Storage, salt: string) {
       });
     }
     return c.json(uninstalled, 200);
+  });
+
+  r.openapi(runRoute, async (c) => {
+    const apiKey = requireSpaceAdmin(c);
+    const { id } = c.req.valid("param");
+    const spaceId = apiKey.space_id ?? undefined;
+
+    if (!localRuntime) {
+      throw new MarfaError(
+        ErrorCode.LOCAL_RUNTIME_NOT_AVAILABLE,
+        "This instance has no integration runtime, so there is nothing to run.",
+      );
+    }
+
+    const connection = await storage.items.get(id, spaceId);
+    if (connection?.type !== "system.connection") {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Connection ${id} not found`);
+    }
+    const props = connection.properties as {
+      kind?: string;
+      runtime_status?: string;
+    };
+    if (props.kind !== "integration") {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Connection ${id} has kind "${props.kind ?? "<missing>"}"; only integration connections run`,
+      );
+    }
+    if (connection.state === "revoked") {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Connection ${id} is revoked; there is nothing to run`,
+      );
+    }
+    // Pause means stopped. Queueing a run against a paused connection
+    // would be discarded at dispatch, so refusing here says so instead of
+    // accepting work that silently evaporates.
+    if (props.runtime_status === "paused") {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Connection ${id} is paused; resume it before running it`,
+      );
+    }
+
+    const resolved = await resolveConnectionManifest(storage, id, spaceId);
+    const declaresManual = resolved.manifest.triggers.some(
+      (trigger) => trigger.type === "manual",
+    );
+    if (!declaresManual) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${resolved.manifest.name} does not accept manual runs: its manifest declares no "manual" trigger.`,
+      );
+    }
+
+    // The second gate, and the one that stops a silent no-op. An
+    // integration Marfa's runtime does not carry cannot be dispatched
+    // here at all: the supervisor acks an envelope naming an unknown
+    // integration and skips it, so accepting the request would report a
+    // queued run that never happens. A client like sync is the standing
+    // case, and its code runs on the user's machine by design.
+    const registration = localRuntime.getRegistration(resolved.manifest.name);
+    if (!registration) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${resolved.manifest.name} does not run on this deployment, so it cannot be run from here. An integration whose code runs on your own machine is started by that program, not by Marfa.`,
+      );
+    }
+    if (!registration.triggerKinds.has("manual")) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `The build of ${resolved.manifest.name} running here does not accept manual runs. The connection's manifest and the running code disagree; upgrading the connection resolves it.`,
+      );
+    }
+
+    await localRuntime.enqueue({
+      integration_name: resolved.manifest.name,
+      message: {
+        kind: "manual",
+        integration_name: resolved.manifest.name,
+        connection_id: id,
+        ...(spaceId !== undefined ? { space_id: spaceId } : {}),
+        requested_at_ms: Date.now(),
+      },
+    });
+
+    await storage.audit.log({
+      client_ip: c.var.clientIp ?? null,
+      space_id: spaceId ?? null,
+      key_id: apiKey.id,
+      action: "integration.run",
+      resource_type: "item",
+      resource_id: id,
+      details: { integration_name: resolved.manifest.name },
+    });
+
+    return c.json(
+      {
+        connection_id: id,
+        integration_name: resolved.manifest.name,
+        queued: true as const,
+      },
+      202,
+    );
   });
 
   r.openapi(upgradePreviewRoute, async (c) => {

@@ -10,12 +10,13 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   name: "marfa/rss-watcher",
-  // 0.2.0 because `supports_user_mappings` was added to this manifest while
-  // the version stood still. Registration keys on (name, version), so a
-  // manifest that changes without moving its version cannot be registered:
-  // it collides with the stale row it is meant to replace, and the catalog
-  // keeps answering for a capability the build has.
-  version: "0.2.0",
+  // Moved to 0.3.0 for the `manual` trigger below. Registration keys on
+  // (name, version), so a manifest that changes without moving its version
+  // cannot be registered: it collides with the stale row it is meant to
+  // replace, and the catalog keeps answering for a capability the build
+  // has. That happened once here, with `supports_user_mappings` at 0.1.0,
+  // and a committed manifest lock now refuses it before merge.
+  version: "0.3.0",
   manifest_schema_version: "1.3.0",
   configuration_schema: {
     feed_url: {
@@ -36,6 +37,9 @@ export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
       type: "schedule",
       config: { cron: "0 * * * *" },
     },
+    // Its sweep is cheap and idempotent, so there is no reason to make
+    // somebody wait an hour to see a feed change land.
+    { type: "manual" },
   ],
   bidirectional_handling: {
     echo_ttl_seconds: 60,

@@ -14,11 +14,20 @@
  * instead of running against a free-floating API key in
  * `~/.marfa/sync.json`.
  *
- * Triggers: `manual` only. The Cloudflare runtime tier does not
- * dispatch to local integrations; the agent's own filesystem
- * watchers + debounced sync drive execution. Manual trigger
- * exists so the install consent screen can offer a "Run now"
- * affordance the daemon honors via a sentinel.
+ * Triggers: `manual` only, and it is vestigial. Sync is a client: its
+ * code runs on the user's machine, driven by the daemon's own filesystem
+ * watchers and debounced sweeps, so Marfa's runtime dispatches it never.
+ * `POST /connections/{id}/run` refuses it for exactly that reason, naming
+ * where it actually runs.
+ *
+ * This comment previously said the trigger existed so the consent screen
+ * could offer a "Run now" affordance the daemon honored via a sentinel.
+ * The daemon has no such sentinel (checked in the sync repository rather
+ * than assumed), so that described a mechanism nobody built. The trigger
+ * survives only because the manifest schema requires at least one and no
+ * trigger kind honestly describes "started by a program somewhere else".
+ * The real fix is the manifest leaving the integrations directory
+ * altogether, which the client/integration split already rules.
  *
  * webhook_verification is required by the schema but unused for
  * local integrations — declared as hmac-sha256 by convention.
@@ -27,6 +36,10 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
   name: "marfa/sync",
+  // Unmoved on purpose. Only the prose above changed, and the manifest
+  // lock hashes what a manifest declares rather than its comments, so a
+  // bump here would be a version with nothing behind it, which the lock
+  // refuses.
   version: "0.1.1",
   manifest_schema_version: "1.0.0",
   publisher: "withmarfa",

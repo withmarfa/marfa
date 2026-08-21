@@ -107,6 +107,18 @@ export function createApp(
   deadLetterOps?:
     | import("./integrations/local-runtime/dead-letters.js").DeadLetterOps
     | null,
+  /**
+   * The running local integration substrate, when there is one.
+   *
+   * `POST /connections/{id}/run` needs it for two things a route cannot
+   * answer on its own: whether this deployment can dispatch the named
+   * integration at all, and the queue to put the run on. It belongs here
+   * rather than on `localRuntimeApp` because that sub-app mounts before
+   * the auth middleware, and asking for a run is a space-admin action.
+   */
+  localRuntime?:
+    | import("./integrations/local-runtime/types.js").LocalRuntime
+    | null,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -755,7 +767,10 @@ export function createApp(
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
   app.route("/connections", connectionMappingRoutes(storage));
-  app.route("/connections", connectionRoutes(storage, config.apiKeySalt));
+  app.route(
+    "/connections",
+    connectionRoutes(storage, config.apiKeySalt, localRuntime ?? null),
+  );
   app.route(
     "/connections",
     connectionConfigureRoutes(storage, {

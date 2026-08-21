@@ -21,13 +21,20 @@ describe("RSS Watcher manifest", () => {
     expect(result.success).toBe(true);
   });
 
-  it("declares a single hourly schedule trigger", () => {
-    expect(RSS_WATCHER_MANIFEST.triggers).toHaveLength(1);
-    const trigger = RSS_WATCHER_MANIFEST.triggers[0]!;
-    expect(trigger.type).toBe("schedule");
-    if (trigger.type === "schedule") {
-      expect(trigger.config.cron).toBe("0 * * * *");
+  it("declares an hourly schedule and accepts manual runs", () => {
+    expect(RSS_WATCHER_MANIFEST.triggers).toHaveLength(2);
+    const schedule = RSS_WATCHER_MANIFEST.triggers.find(
+      (t) => t.type === "schedule",
+    );
+    expect(schedule).toBeDefined();
+    if (schedule?.type === "schedule") {
+      expect(schedule.config.cron).toBe("0 * * * *");
     }
+    // The manual declaration is the whole opt-in to on-demand dispatch:
+    // the route refuses a connection whose manifest does not carry it.
+    expect(RSS_WATCHER_MANIFEST.triggers.some((t) => t.type === "manual")).toBe(
+      true,
+    );
   });
 
   it("targets core.bookmark and declares the local runtime tier", () => {
