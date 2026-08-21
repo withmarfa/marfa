@@ -213,6 +213,12 @@ export interface AppConfig {
    *  days. `0` disables the job. Default 3_600_000 (1h); env override
    *  `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS`. */
   runtimeCredentialReaperIntervalMs?: number;
+  /** Cadence (ms) of the pass that moves connections onto the newest
+   *  registered manifest version where doing so widens no grant. `0`
+   *  disables it, which leaves drift to be cleared by hand and so leaves
+   *  the drift number permanently non-zero. Default 3_600_000 (1h); env
+   *  override `MARFA_CONNECTION_UPGRADE_INTERVAL_MS`. */
+  connectionUpgradeIntervalMs?: number;
   /** Deterministic text extraction from file blobs. On unless
    *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
    *  uploaded document findable, so an operator opts out rather than in. */
@@ -896,6 +902,10 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_ENRICHMENT_TESSDATA_DIR ?? "./data/tessdata",
     runtimeCredentialReaperIntervalMs: envNumber(
       process.env.MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS,
+      3_600_000,
+    ),
+    connectionUpgradeIntervalMs: envNumber(
+      process.env.MARFA_CONNECTION_UPGRADE_INTERVAL_MS,
       3_600_000,
     ),
     bulkActionJobRetentionMs: envNumber(

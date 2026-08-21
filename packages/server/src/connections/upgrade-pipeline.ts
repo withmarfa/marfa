@@ -47,7 +47,12 @@ import { diffManifestGrants, describeGrantDelta } from "./manifest-diff.js";
 import type { ManifestGrantDelta } from "./manifest-diff.js";
 
 export interface UpgradeInput {
-  apiKeyId: string;
+  /** The api_keys row id of the caller, for the audit trail. Absent when
+   *  the scheduled pass in `auto-upgrade.ts` is the caller: a non-widening
+   *  move applies on its own, so there is no principal to name and the
+   *  audit store already documents `key_id` as unset for a
+   *  system-initiated row. */
+  apiKeyId?: string;
   spaceId?: string;
   connectionId: string;
   clientIp?: string | null;
