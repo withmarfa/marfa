@@ -313,7 +313,10 @@ CREATE TABLE IF NOT EXISTS public.custom_types (
     space_id text DEFAULT ''::text NOT NULL,
     schema text NOT NULL,
     created_at text NOT NULL,
-    updated_at text NOT NULL
+    updated_at text NOT NULL,
+    origin text DEFAULT 'user'::text NOT NULL,
+    family text,
+    owner_integration text
 );
 
 CREATE TABLE IF NOT EXISTS public.edges (
@@ -1165,6 +1168,8 @@ CREATE INDEX IF NOT EXISTS idx_connection_leased_tokens_connection_id ON public.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_leased_tokens_hash ON public.connection_leased_tokens USING btree (lease_token_hash);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_oauth_tokens_connection_id ON public.connection_oauth_tokens USING btree (connection_id);
+
+CREATE INDEX IF NOT EXISTS idx_custom_types_origin ON public.custom_types USING btree (origin);
 
 CREATE INDEX IF NOT EXISTS idx_edges_source ON public.edges USING btree (space_id, source_id, edge_type);
 

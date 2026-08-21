@@ -89,8 +89,15 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * runtime reach the allowlist through {@link setRuntimeNamespaceRoots},
  * which boot installs from the `custom_types` table across every space.
  */
-export const CUSTOM_TYPE_NAMESPACES: readonly string[] =
-  deriveCustomTypeNamespaces();
+export function customTypeNamespaces(): readonly string[] {
+  // Derived on call rather than at module load. The platform vocabulary is
+  // seeded at boot, which happens after this module is evaluated, so a
+  // constant computed here would describe the build's shipped set instead of
+  // the set this instance actually holds — and a publisher root that arrived
+  // by seed alone would be missing from the allowlist, narrowing away every
+  // scope literal under it before consent could see one.
+  return deriveCustomTypeNamespaces();
+}
 
 /**
  * Runtime custom-namespace roots admitted into the scope allowlist,
@@ -159,7 +166,7 @@ export function buildAllowedScopes(
     // for them explicitly) but are deliberately NOT in the default consent
     // bundle — the default grant is the curated, per-type-narrowable content
     // set, so these only appear when an app opts into them.
-    ...CUSTOM_TYPE_NAMESPACES.flatMap((ns) => [
+    ...customTypeNamespaces().flatMap((ns) => [
       `${ns}.*:read`,
       `${ns}.*:write`,
     ]),
@@ -193,7 +200,7 @@ export function buildAllowedScopes(
   // edge type on the instance — so an app asking narrowly was silently
   // narrowed to nothing and its relation writes were refused, while an app
   // asking for everything worked.
-  for (const namespace of [...CUSTOM_TYPE_NAMESPACES, ...runtimeRoots]) {
+  for (const namespace of [...customTypeNamespaces(), ...runtimeRoots]) {
     out.add(`edge.${namespace}.*:read`);
     out.add(`edge.${namespace}.*:write`);
   }

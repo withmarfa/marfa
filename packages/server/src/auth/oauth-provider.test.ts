@@ -4,10 +4,7 @@ import {
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
-import {
-  buildAllowedScopes,
-  CUSTOM_TYPE_NAMESPACES,
-} from "./oauth-provider.js";
+import { buildAllowedScopes, customTypeNamespaces } from "./oauth-provider.js";
 import {
   DEFAULT_PERMISSION_BUNDLES,
   loadPermissionBundles,
@@ -118,7 +115,7 @@ describe("permission bundles bind to the type registry", () => {
     "metadata.edge_types:write",
   ]);
   const runtimeNamespaces = new Set<string>(
-    CUSTOM_TYPE_NAMESPACES.map((ns) => `${ns}.`),
+    customTypeNamespaces().map((ns) => `${ns}.`),
   );
 
   it("names only types and edge types that exist", () => {

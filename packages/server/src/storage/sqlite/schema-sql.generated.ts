@@ -404,7 +404,7 @@ CREATE TABLE IF NOT EXISTS "custom_types" (
   \`id\` text NOT NULL,
   \`schema\` text NOT NULL,
   \`created_at\` text NOT NULL,
-  \`updated_at\` text NOT NULL,
+  \`updated_at\` text NOT NULL, origin TEXT NOT NULL DEFAULT 'user', family TEXT, owner_integration TEXT,
   PRIMARY KEY ("space_id", \`id\`)
 );
 
@@ -527,6 +527,8 @@ CREATE INDEX IF NOT EXISTS \`idx_connection_leased_tokens_connection_id\` ON \`c
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_connection_leased_tokens_hash\` ON \`connection_leased_tokens\` (\`lease_token_hash\`);
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_connection_oauth_tokens_connection_id\` ON \`connection_oauth_tokens\` (\`connection_id\`);
+
+CREATE INDEX IF NOT EXISTS idx_custom_types_origin ON custom_types (origin);
 
 CREATE INDEX IF NOT EXISTS \`idx_edges_source\` ON \`edges\` ("space_id",\`source_id\`,\`edge_type\`);
 
