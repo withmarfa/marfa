@@ -14,10 +14,9 @@ on:
     # merge waiting for a check that will never arrive. Skipping the work
     # rather than the trigger is the `changes` job's job.
     branches: [main]
-  # Freshness jobs are also triggerable manually so agents can verify
-  # generated-artifact drift (types registry, openapi.json) before merging
-  # a PR that touches schema or shared-type sources. See marfa/CLAUDE.md for
-  # when to fire this.
+  # Manual dispatch remains available for an ad-hoc check against a branch,
+  # but nothing owes one: the freshness jobs run on the pull request itself,
+  # gated on the paths that can stale each artifact.
   #
   # Every job here runs on the pool the project already owns. The three
   # Postgres jobs used to be the exception, billed to the hosted allowance and
