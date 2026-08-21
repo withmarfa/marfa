@@ -533,6 +533,13 @@
       "when": 1787273894201,
       "tag": "0075_registered_types_carry_their_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "6",
+      "when": 1787273954201,
+      "tag": "0076_stored_catalog_rows_take_the_current_manifest_shape",
+      "breakpoints": true
     }
   ]
 }
