@@ -631,6 +631,13 @@
       "when": 1787273894201,
       "tag": "0089_registered_types_carry_their_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1787273954201,
+      "tag": "0090_stored_catalog_rows_take_the_current_manifest_shape",
+      "breakpoints": true
     }
   ]
 }
