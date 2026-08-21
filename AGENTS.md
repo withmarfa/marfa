@@ -230,39 +230,35 @@ When adding or modifying routes, use `createRoute()` with Zod schemas for reques
 
 `AUTH_MODE` decides which route groups `createApp` mounts, so the committed spec is built by reflecting the app once per auth mode and unioning the results (`packages/server/src/openapi-published.ts`). Operations that only some modes serve carry `x-marfa-auth-modes` plus a note in their description; the rest are unmarked. Generating from a single mode would silently drop that mode's exclusive routes from the published reference. The live `/openapi.json` on a running server stays a single-mode document by design: it describes that deployment.
 
-The `openapi-freshness` CI job regenerates and diffs `openapi.json` on every PR; spec drift fails the build with a regen instruction.
+The `openapi-freshness` CI job regenerates and diffs `openapi.json` on any pull request touching a route definition, the generator, or the wire schemas; spec drift fails the build with a regen instruction.
 
 ## Per-route tests
 
 Every new HTTP route under `packages/server/src/routes/` ships with at least one smoke test in a sibling `*.test.ts` (auth gate + happy path minimum). PR review enforces. Pre-existing untested routes are exempt until modified.
 
-## Freshness checks before merging
+## Freshness checks
 
-The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs don't run on pull-request events — only on merges to `main` and manual dispatch — to keep PR CI cheap. If your PR modifies any source file below, you **must** fire the freshness workflow manually against the PR branch and confirm it passes before merging.
+The `types-freshness`, `openapi-freshness` and `schema-sql-freshness` jobs regenerate a committed artifact and fail on drift. **They are ordinary pull-request checks: there is nothing to fire by hand.** Each runs only when the pull request touches a path that can actually stale the artifact it checks, so a pull request that cannot break one pays nothing for it.
 
-**Trigger files** — any change under these paths means you owe a freshness run before merge:
+**Trigger paths**, one set per job. `ci.yml`'s `changes` job holds the same list; keep the two in step.
 
-- `packages/types/core/**` — core type, system type and edge-type JSON
-- `packages/types/integrations/**` — integration type JSON
-- `packages/types/src/**` — schema shape contract and the shared schema validator
-- `packages/types/scripts/**` — type-registry generator
-- `packages/shared/src/**` — wire schemas, error codes, ID utilities
-- `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
-- `packages/server/src/openapi.ts`, `packages/server/src/openapi-finalize.ts` — OpenAPI generator
-- `packages/server/drizzle/{pg,sqlite}/**` — Drizzle migrations (drive `SCHEMA_SQL`)
-- `packages/server/scripts/generate-schema-sql.ts` — the `SCHEMA_SQL` generator
-- Any file touched by `pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi`, or `pnpm --filter @withmarfa/server schema-sql:generate`
+- **Types codegen** — `packages/types/{core,integrations,src,scripts,generated}/**`: the core, system, edge-type and integration JSON, the schema shape contract and shared validator, the type-registry generator, and its output.
+- **OpenAPI spec** — the above, plus `packages/server/src/routes/**`, `packages/server/src/openapi*.ts`, `packages/shared/src/**` (wire schemas, error codes, ID utilities), and `openapi.json`.
+- **SCHEMA_SQL** — `packages/server/drizzle/{pg,sqlite}/**`, `packages/server/scripts/generate-schema-sql.ts`, and `packages/server/src/storage/{pg,sqlite}/schema-sql.generated.ts`.
 
-**Command** — run from inside the `marfa` repo after pushing your PR branch:
+Each set covers the generated artifact as well as its sources. That is the one path where a hand-edit is itself the defect, and without it a pull request touching only the generated file would run no check at all.
+
+When one fails, regenerate locally, commit the delta and push:
 
 ```bash
-gh workflow run ci.yml --ref <your-branch-name>
-gh run watch $(gh run list --workflow=ci.yml --branch=<your-branch-name> --limit=1 --json databaseId --jq '.[0].databaseId')
+pnpm --filter @withmarfa/types generate
+pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json
+pnpm --filter @withmarfa/server schema-sql:generate
 ```
 
-If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails, regenerate locally (`pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json`, or `pnpm --filter @withmarfa/server schema-sql:generate`), commit the delta, and re-run. Only merge once the relevant jobs are green.
+**Why they became real checks.** They ran only on `main` and on manual dispatch, to keep pull-request CI cheap, and the compensating control was a written rule: fire the workflow by hand against your branch when you touch a trigger path, and read the result before merging. That control failed the first time it mattered. The dispatch was fired as the rule required. It failed. The pull request merged eleven minutes later on its own green checks, because the job that would have objected does not run there, and `main` stayed red until a follow-up regenerated the file. A gate that depends on someone remembering to ask a question, and then remembering to read the answer, is not a gate.
 
-**Why this exists.** Freshness jobs catch drift between generated artifacts and source files. They run on manual trigger rather than every PR push to keep the PR-time CI bill down (running on every push costs ~$5/month on the `marfa` repo alone); this rule is the tripwire that keeps the safety net effective.
+The cost that justified the exclusion also moved: it was billed minutes on hosted runners, and CI runs on a self-hosted pool now. What remains is machine time on a shared box, which the path filters keep off the majority of pull requests.
 
 ## Before pushing
 
@@ -294,7 +290,7 @@ Every job runs on the self-hosted pool, so a push costs no hosted minutes. It is
 - **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the load by the number of commits for no extra signal.
 - **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — re-running until green is how a real defect gets waved through.
 
-`workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the three freshness jobs.
+`workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the freshness jobs. It is no longer something you owe anyone — those run on the pull request itself.
 
 ### Test infrastructure owns what it creates
 

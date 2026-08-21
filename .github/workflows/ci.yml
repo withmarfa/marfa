@@ -52,6 +52,9 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       sqlite_migrations: ${{ steps.filter.outputs.sqlite_migrations }}
+      types_src: ${{ steps.filter.outputs.types_src }}
+      openapi_src: ${{ steps.filter.outputs.openapi_src }}
+      schema_sql_src: ${{ steps.filter.outputs.schema_sql_src }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,6 +72,9 @@ jobs:
             echo "Base commit unavailable — treating as a code change."
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
+            echo "types_src=true" >> "$GITHUB_OUTPUT"
+            echo "openapi_src=true" >> "$GITHUB_OUTPUT"
+            echo "schema_sql_src=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -95,16 +101,61 @@ jobs:
             echo "sqlite_migrations=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Freshness jobs — catch generated-artifact drift. Run on main pushes and
-  # on manual dispatch, but NOT on every PR push. Agents are expected to
-  # fire these via `gh workflow run ci.yml --ref <branch>` before merging
-  # a PR that modifies type or schema source files.
+          # Per-artifact trigger paths for the three freshness jobs below.
+          # These are narrower than `code` on purpose: the jobs are real
+          # pull-request checks now, so the majority of pull requests that
+          # cannot possibly stale a generated artifact must not pay for them.
+          # The path sets are the ones enumerated in the repository's agent
+          # instructions; keep the two in step.
+          emit() {
+            local name="$1" pattern="$2"
+            if echo "${changed}" | grep -qE "${pattern}"; then
+              echo "${name}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${name}=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          # Each set covers the sources that can stale the artifact AND the
+          # artifact itself. Including the artifact matters: it is the one
+          # path where a hand-edit is the defect, and without it a pull
+          # request that touches only the generated file runs no check at
+          # all — which is the shape this gating exists to close.
+
+          # Type registry: the JSON the generator reads, the schema contract
+          # and validator, the generator itself, and the output.
+          emit types_src '^packages/types/(core|integrations|src|scripts|generated)/'
+
+          # OpenAPI spec: route definitions, the generator entry points, the
+          # wire schemas the routes build their shapes from, and the spec.
+          emit openapi_src '^(packages/server/src/routes/|packages/server/src/openapi(-finalize|-published)?\.ts$|packages/shared/src/|packages/types/(core|integrations|src|scripts|generated)/|openapi\.json$)'
+
+          # SCHEMA_SQL bootstrap: the Drizzle migrations that drive it, the
+          # generator that reads them, and the two generated modules.
+          emit schema_sql_src '^(packages/server/drizzle/(pg|sqlite)/|packages/server/scripts/generate-schema-sql\.ts$|packages/server/src/storage/(pg|sqlite)/schema-sql\.generated\.ts$)'
+
+  # Freshness jobs — catch generated-artifact drift, on every event
+  # including pull requests, gated on the paths that can actually stale the
+  # artifact each one checks.
+  #
+  # They were excluded from pull-request events to keep PR CI cheap, with a
+  # written rule that whoever touched a trigger path fired the workflow by
+  # hand and read the result before merging. That control has a demonstrated
+  # failure: the dispatch was fired as the rule required, it failed, the pull
+  # request merged eleven minutes later on its own green checks, and main
+  # went red. A gate that depends on someone remembering to ask a question,
+  # and then remembering to read the answer, is not a gate.
+  #
+  # The cost that justified the exclusion also moved. It was billed minutes
+  # on hosted runners; CI runs on a self-hosted pool now. What remains is
+  # machine time on a shared box, which the narrow path filters keep off the
+  # majority of pull requests that cannot stale anything.
   types-freshness:
     name: Types codegen freshness
     needs: changes
-    # Follows the change filter like every other job. Manual dispatch still
-    # runs it: `changes` reports an unknowable base as code=true.
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    # Manual dispatch still runs it: `changes` reports an unknowable base as
+    # every trigger path touched, which is the conservative answer.
+    if: needs.changes.outputs.types_src == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,9 +193,7 @@ jobs:
   openapi-freshness:
     name: OpenAPI spec freshness
     needs: changes
-    # Follows the change filter like every other job. Manual dispatch still
-    # runs it: `changes` reports an unknowable base as code=true.
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.openapi_src == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -182,15 +231,13 @@ jobs:
           fi
 
   # Detects drift between the Drizzle migrations and the auto-generated
-  # SCHEMA_SQL bootstrap. Same trigger pattern as the other freshness jobs:
-  # main + manual dispatch.
+  # SCHEMA_SQL bootstrap. Boots a real Postgres, which is the main reason its
+  # path filter is the narrowest of the three: only a migration or the
+  # generator itself can stale this artifact.
   schema-sql-freshness:
     name: SCHEMA_SQL generator freshness
     needs: changes
-    # Boots a real Postgres, so it follows the change filter like every other
-    # Postgres-touching job. Manual dispatch still runs it: `changes` reports
-    # an unknowable base as code=true, which is the conservative answer.
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.schema_sql_src == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
