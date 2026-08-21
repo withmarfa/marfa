@@ -46,7 +46,7 @@ afterEach(async () => {
  */
 function makeManifest(direction: "read" | "write" | "both" = "read") {
   return {
-    name: "test.note-writer",
+    name: "test/note-writer",
     version: "0.0.1",
     publisher: "test",
     description: "Ingests notes and nothing else",

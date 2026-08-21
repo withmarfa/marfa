@@ -57,7 +57,7 @@ afterAll(async () => {
 });
 
 const TEMPLATE_MANIFEST = {
-  name: "test.local-runtime",
+  name: "test/local-runtime",
   version: "0.0.1",
   publisher: "test",
   description: "Test integration for the local runtime",
@@ -583,10 +583,10 @@ describe("local-runtime supervisor", () => {
     });
 
     const result = await runtime.dispatchForTest({
-      integration_name: "missing.integration",
+      integration_name: "missing/integration",
       message: {
         kind: "schedule",
-        integration_name: "missing.integration",
+        integration_name: "missing/integration",
         connection_id: "conn_does_not_matter",
         scheduled_for_ms: Date.now(),
       },

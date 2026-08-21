@@ -24,7 +24,7 @@ afterAll(async () => {
 
 function manifest(): IntegrationManifest {
   return {
-    name: "acme.install-pipeline-direct",
+    name: "acme/install-pipeline-direct",
     version: "1.0.0",
     publisher: "Acme",
     description: "direct install test",
@@ -104,7 +104,7 @@ describe("performInstall — happy path", () => {
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.install-pipeline-direct",
+          manifest_name: "acme/install-pipeline-direct",
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "both",
@@ -442,7 +442,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.install-pipeline-direct",
+          manifest_name: "acme/install-pipeline-direct",
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "both",

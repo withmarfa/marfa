@@ -44,7 +44,7 @@ function baseManifest(
   overrides?: Partial<IntegrationManifest>,
 ): IntegrationManifest {
   return {
-    name: "acme.calendar-sync",
+    name: "acme/calendar-sync",
     version: "1.0.0",
     publisher: "Acme",
     description: "Sync calendar events into Marfa",
@@ -100,14 +100,14 @@ describe("POST /integrations (registry)", () => {
   });
 
   it("registers a valid manifest as a system.integration item", async () => {
-    const manifest = baseManifest({ name: "acme.test-register" });
+    const manifest = baseManifest({ name: "acme/test-register" });
     const res = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest },
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as RegisterResponse;
-    expect(body.manifest_name).toBe("acme.test-register");
+    expect(body.manifest_name).toBe("acme/test-register");
     expect(body.manifest_version).toBe("1.0.0");
     expect(body.publisher).toBe("Acme");
     expect(body.direction).toBe("read");
@@ -117,7 +117,7 @@ describe("POST /integrations (registry)", () => {
     const item = await ctx.storage.items.get(body.id);
     expect(item?.type).toBe("system.integration");
     expect((item?.properties as { manifest_name?: string }).manifest_name).toBe(
-      "acme.test-register",
+      "acme/test-register",
     );
   });
 
@@ -132,7 +132,7 @@ describe("POST /integrations (registry)", () => {
   });
 
   it("409s when registering the same manifest_name + version twice", async () => {
-    const manifest = baseManifest({ name: "acme.dup-version" });
+    const manifest = baseManifest({ name: "acme/dup-version" });
     const first = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest },
@@ -151,14 +151,14 @@ describe("POST /integrations (registry)", () => {
     const v1 = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
-        manifest: baseManifest({ name: "acme.sibling", version: "1.0.0" }),
+        manifest: baseManifest({ name: "acme/sibling", version: "1.0.0" }),
       },
     });
     expect(v1.status).toBe(201);
     const v2 = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
-        manifest: baseManifest({ name: "acme.sibling", version: "1.1.0" }),
+        manifest: baseManifest({ name: "acme/sibling", version: "1.1.0" }),
       },
     });
     expect(v2.status).toBe(201);
@@ -172,23 +172,23 @@ describe("GET /integrations + /integrations/:id", () => {
   it("lists registered integrations and supports manifest_name filter", async () => {
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.list-a" }) },
+      body: { manifest: baseManifest({ name: "acme/list-a" }) },
     });
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.list-b" }) },
+      body: { manifest: baseManifest({ name: "acme/list-b" }) },
     });
 
     const filtered = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme.list-a",
+      "/integrations?manifest_name=acme/list-a",
       { key: ctx.adminKey },
     );
     expect(filtered.status).toBe(200);
     const body = (await filtered.json()) as ListResponse;
     expect(body.data.length).toBeGreaterThanOrEqual(1);
-    expect(body.data.every((d) => d.manifest_name === "acme.list-a")).toBe(
+    expect(body.data.every((d) => d.manifest_name === "acme/list-a")).toBe(
       true,
     );
   });
@@ -208,7 +208,7 @@ describe("GET /integrations + /integrations/:id", () => {
   it("returns the manifest blob on get-by-id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.get-by-id" }) },
+      body: { manifest: baseManifest({ name: "acme/get-by-id" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
     const get = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
@@ -216,7 +216,7 @@ describe("GET /integrations + /integrations/:id", () => {
     });
     expect(get.status).toBe(200);
     const getBody = (await get.json()) as RegisterResponse;
-    expect(getBody.manifest.name).toBe("acme.get-by-id");
+    expect(getBody.manifest.name).toBe("acme/get-by-id");
   });
 });
 
@@ -224,7 +224,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
   it("renders an HTML form referencing the manifest's surfaces", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.consent-html" }) },
+      body: { manifest: baseManifest({ name: "acme/consent-html" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
@@ -237,7 +237,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    expect(html).toContain("acme.consent-html");
+    expect(html).toContain("acme/consent-html");
     expect(html).toContain("1.0.0");
     expect(html).toContain("core.note");
     expect(html).toContain("schedule");
@@ -285,7 +285,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     it("omits the hidden field when no credential_ref is provided", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
         key: ctx.adminKey,
-        body: { manifest: baseManifest({ name: "acme.no-prearm" }) },
+        body: { manifest: baseManifest({ name: "acme/no-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
 
@@ -304,7 +304,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     it("renders the hidden field + hint when a valid credential_ref is provided", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
         key: ctx.adminKey,
-        body: { manifest: baseManifest({ name: "acme.with-prearm" }) },
+        body: { manifest: baseManifest({ name: "acme/with-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
       const cred = await createOAuthCredential("Google (e2e test)");
@@ -328,7 +328,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     it("rejects credential_ref that does not resolve in this space", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
         key: ctx.adminKey,
-        body: { manifest: baseManifest({ name: "acme.bad-prearm" }) },
+        body: { manifest: baseManifest({ name: "acme/bad-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
 
@@ -351,7 +351,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     it("rejects credential_ref that resolves to a non-oauth_token credential", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
         key: ctx.adminKey,
-        body: { manifest: baseManifest({ name: "acme.wrong-kind-prearm" }) },
+        body: { manifest: baseManifest({ name: "acme/wrong-kind-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
 
@@ -386,7 +386,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
   it("end-to-end: installs a connection + credential + activity on approve", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.install-happy" }) },
+      body: { manifest: baseManifest({ name: "acme/install-happy" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
@@ -471,14 +471,14 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
       detail: { credential_id: string };
     };
     expect(aprops.severity).toBe("info");
-    expect(aprops.summary).toContain("acme.install-happy");
+    expect(aprops.summary).toContain("acme/install-happy");
     expect(aprops.detail.credential_id).toBe(cred.id);
   });
 
   it("declines without writing rows when decision != approve", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.install-deny" }) },
+      body: { manifest: baseManifest({ name: "acme/install-deny" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
@@ -567,7 +567,7 @@ describe("GET /integrations — catalog visibility", () => {
     // lands with space_id: null because the admin carries no space.
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.member-visibility" }) },
+      body: { manifest: baseManifest({ name: "acme/member-visibility" }) },
     });
     expect(reg.status).toBe(201);
     const regBody = (await reg.json()) as RegisterResponse;
@@ -581,14 +581,14 @@ describe("GET /integrations — catalog visibility", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme.member-visibility",
+      "/integrations?manifest_name=acme/member-visibility",
       { key: memberKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
     const match = body.data.find((d) => d.id === regBody.id);
     expect(match).toBeDefined();
-    expect(match?.manifest_name).toBe("acme.member-visibility");
+    expect(match?.manifest_name).toBe("acme/member-visibility");
   });
 
   it("preserves existing behavior for member tokens without the read scope", async () => {
@@ -598,7 +598,7 @@ describe("GET /integrations — catalog visibility", () => {
     // resolves the endpoint at status 200 — no new rejection introduced.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.member-no-scope" }) },
+      body: { manifest: baseManifest({ name: "acme/member-no-scope" }) },
     });
 
     if (!ctx.storage.spaces) return;
@@ -608,7 +608,7 @@ describe("GET /integrations — catalog visibility", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme.member-no-scope",
+      "/integrations?manifest_name=acme/member-no-scope",
       { key: memberKey },
     );
     expect(res.status).toBe(200);
@@ -619,19 +619,19 @@ describe("GET /integrations — catalog visibility", () => {
     // widening flag doesn't accidentally constrain admin reads.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.platform-still-sees" }) },
+      body: { manifest: baseManifest({ name: "acme/platform-still-sees" }) },
     });
 
     const res = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme.platform-still-sees",
+      "/integrations?manifest_name=acme/platform-still-sees",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
     expect(
-      body.data.some((d) => d.manifest_name === "acme.platform-still-sees"),
+      body.data.some((d) => d.manifest_name === "acme/platform-still-sees"),
     ).toBe(true);
   });
 
@@ -652,14 +652,14 @@ describe("GET /integrations — catalog visibility", () => {
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.space-a-private",
+          manifest_name: "acme/space-a-private",
           manifest_version: "1.0.0",
           publisher: "Acme",
           summary: "Space-A-only manifest fixture",
           direction: "read" as const,
           runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
-          manifest: { name: "acme.space-a-private", version: "1.0.0" },
+          manifest: { name: "acme/space-a-private", version: "1.0.0" },
         },
       },
       spaceA.id,
@@ -670,7 +670,7 @@ describe("GET /integrations — catalog visibility", () => {
     const platformManifest = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
-        manifest: baseManifest({ name: "acme.platform-catalog-iso" }),
+        manifest: baseManifest({ name: "acme/platform-catalog-iso" }),
       },
     });
     const platformBody = (await platformManifest.json()) as RegisterResponse;
@@ -687,7 +687,7 @@ describe("GET /integrations — catalog visibility", () => {
     // space-A's private row must NOT leak to space B
     expect(body.data.some((d) => d.id === spaceAOnly.id)).toBe(false);
     expect(
-      body.data.some((d) => d.manifest_name === "acme.space-a-private"),
+      body.data.some((d) => d.manifest_name === "acme/space-a-private"),
     ).toBe(false);
 
     // ...but the platform-scoped catalog row IS visible
@@ -755,7 +755,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
   // catalog is member work: a platform-scoped manifest must resolve for
   // any space-bound credential. Installing is not — it mints a runtime
   // credential from the manifest, so it takes space-admin authority
-  // (`routes/integrations-install-authority.test.ts` holds that line).
+  // (`routes/integrations-install-authority.test/ts` holds that line).
   // The install tests below therefore mint an admin: their subject is
   // space stamping and error shape, never who may install.
   async function mintKeyAtRank(
@@ -789,7 +789,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // space-fenced get filtered the null-space row out.
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.t234-get-by-id" }) },
+      body: { manifest: baseManifest({ name: "acme/t234-get-by-id" }) },
     });
     expect(reg.status).toBe(201);
     const regBody = (await reg.json()) as RegisterResponse;
@@ -804,13 +804,13 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as RegisterResponse;
     expect(body.id).toBe(regBody.id);
-    expect(body.manifest_name).toBe("acme.t234-get-by-id");
+    expect(body.manifest_name).toBe("acme/t234-get-by-id");
   });
 
   it("GET /integrations/:id/install renders consent HTML for a space-bound Bearer token", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.t234-install-html" }) },
+      body: { manifest: baseManifest({ name: "acme/t234-install-html" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
@@ -834,7 +834,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
   it("POST /integrations/:id/install stamps the connection with the caller's space_id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme.t234-install-post" }) },
+      body: { manifest: baseManifest({ name: "acme/t234-install-post" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
 
@@ -915,13 +915,13 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.t234-space-a-only",
+          manifest_name: "acme/t234-space-a-only",
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "read" as const,
           runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
-          manifest: { name: "acme.t234-space-a-only", version: "1.0.0" },
+          manifest: { name: "acme/t234-space-a-only", version: "1.0.0" },
         },
       },
       spaceA.id,
@@ -1026,7 +1026,7 @@ describe("/integrations/:id/install — browser session auth", () => {
 
   it("GET returns the consent HTML to a signed-in browser (no Bearer)", async () => {
     const integrationId = await registerIntegration(
-      `acme.session-get-${String(counter)}`,
+      `acme/session-get-${String(counter)}`,
     );
     const cookie = await signInUser(
       `session-get-${String(counter)}@example.com`,
@@ -1045,7 +1045,7 @@ describe("/integrations/:id/install — browser session auth", () => {
 
   it("POST completes the install for a signed-in browser session", async () => {
     const integrationId = await registerIntegration(
-      `acme.session-post-${String(counter)}`,
+      `acme/session-post-${String(counter)}`,
     );
     const cookie = await signInUser(
       `session-post-${String(counter)}@example.com`,
@@ -1089,7 +1089,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     // operators / tests / CLIs that present an Authorization header
     // continue to resolve through `c.var.apiKey`.
     const integrationId = await registerIntegration(
-      `acme.bearer-regression-${String(counter)}`,
+      `acme/bearer-regression-${String(counter)}`,
     );
     const res = await sessionCtx.app.request(
       `/integrations/${integrationId}/install`,
@@ -1103,7 +1103,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     // Bearer was attempted but rejected by the bearer middleware → the
     // API-client failure shape. Negative test from the bug report.
     const integrationId = await registerIntegration(
-      `acme.bad-bearer-${String(counter)}`,
+      `acme/bad-bearer-${String(counter)}`,
     );
     const res = await sessionCtx.app.request(
       `/integrations/${integrationId}/install`,
@@ -1117,7 +1117,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     // response is a redirect to sign-in with the install URL preserved,
     // so the user lands back on the consent screen after authenticating.
     const integrationId = await registerIntegration(
-      `acme.anon-${String(counter)}`,
+      `acme/anon-${String(counter)}`,
     );
     const res = await sessionCtx.app.request(
       `/integrations/${integrationId}/install`,

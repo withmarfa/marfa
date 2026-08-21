@@ -556,14 +556,16 @@ describe("isValidIntegrationIdentifier", () => {
     expect(isValidIntegrationIdentifier("-lead/name")).toBe(false);
   });
 
-  it("still accepts the legacy dot form while stored names are migrating", () => {
-    expect(isValidIntegrationIdentifier("readwise.reader")).toBe(true);
-    expect(isValidIntegrationIdentifier("withmarfa.inbox")).toBe(true);
+  it("refuses the dot form the integrations shipped under before", () => {
+    // Every stored name carries the slash now, so a dotted value names a
+    // type. Accepting both was the migration window, and it is closed.
+    expect(isValidIntegrationIdentifier("readwise.reader")).toBe(false);
+    expect(isValidIntegrationIdentifier("withmarfa.inbox")).toBe(false);
+    expect(isValidIntegrationIdentifier("core.note")).toBe(false);
   });
 
-  it("refuses what the legacy form refuses", () => {
+  it("refuses a bare word carrying neither separator", () => {
     expect(isValidIntegrationIdentifier("nodot")).toBe(false);
-    expect(isValidIntegrationIdentifier("core.note")).toBe(false);
   });
 
   it("caps length and refuses non-strings", () => {

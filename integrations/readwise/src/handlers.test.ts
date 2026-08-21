@@ -143,7 +143,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "readwise.highlights",
+    integration_name: "readwise/highlights",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -159,7 +159,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "readwise.highlights",
+  integration_name: "readwise/highlights",
   connection_id: "conn_readwise_test",
   scheduled_for_ms: Date.now(),
 });

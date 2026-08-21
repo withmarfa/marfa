@@ -28,7 +28,7 @@ afterAll(async () => {
 });
 
 const MANIFEST = {
-  name: "test.webhook-receipt",
+  name: "test/webhook-receipt",
   version: "0.0.1",
   publisher: "test",
   description: "Webhook receipt test",

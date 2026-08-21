@@ -1,5 +1,5 @@
 /**
- * withmarfa.inbox webhook handler.
+ * marfa/inbox webhook handler.
  *
  * The substrate verifies the HMAC against the per-connection
  * subscription secret using the `cloudflare-email` adapter, then
@@ -73,7 +73,7 @@ export async function handleInboxWebhook(
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "withmarfa.inbox: failed to parse webhook body",
+      summary: "marfa/inbox: failed to parse webhook body",
       detail: { error: errorMessage(err) },
     });
     // Don't retry — a malformed body won't repair itself.
@@ -92,7 +92,7 @@ export async function handleInboxWebhook(
     if (ids.includes(idempotencyKey)) {
       await ctx.activity.emit({
         severity: "info",
-        summary: `withmarfa.inbox: duplicate delivery ${idempotencyKey} ignored`,
+        summary: `marfa/inbox: duplicate delivery ${idempotencyKey} ignored`,
       });
       return { ok: true };
     }
@@ -112,7 +112,7 @@ export async function handleInboxWebhook(
   ) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "withmarfa.inbox: envelope missing required `from`/`to`",
+      summary: "marfa/inbox: envelope missing required `from`/`to`",
       detail: {
         delivery_id: idempotencyKey,
         from_present: typeof fromAddress === "string",
@@ -133,7 +133,7 @@ export async function handleInboxWebhook(
     const subjectText = typeof subjectRaw === "string" ? subjectRaw : "";
     await ctx.activity.emit({
       severity: "info",
-      summary: `withmarfa.inbox: captured email ${created.id} (subject: ${subjectText})`,
+      summary: `marfa/inbox: captured email ${created.id} (subject: ${subjectText})`,
       detail: {
         item_id: created.id,
         delivery_id: idempotencyKey,
@@ -144,7 +144,7 @@ export async function handleInboxWebhook(
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "withmarfa.inbox: failed to create captured_email",
+      summary: "marfa/inbox: failed to create captured_email",
       detail: {
         error: errorMessage(err),
         delivery_id: idempotencyKey,

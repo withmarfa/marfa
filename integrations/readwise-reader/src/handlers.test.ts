@@ -174,7 +174,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: CONNECTION_ID,
-    integration_name: "readwise.reader",
+    integration_name: "readwise/reader",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, CONNECTION_ID),
@@ -190,7 +190,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "readwise.reader",
+  integration_name: "readwise/reader",
   connection_id: CONNECTION_ID,
   scheduled_for_ms: Date.now(),
 });
@@ -201,7 +201,7 @@ function itemEventMsg(
 ): ItemEventMessage {
   return {
     kind: "item-event",
-    integration_name: "readwise.reader",
+    integration_name: "readwise/reader",
     connection_id: CONNECTION_ID,
     event_type: "item.updated",
     item_id,

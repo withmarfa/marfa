@@ -42,7 +42,7 @@ interface ItemResponse {
 }
 
 const VALID_MANIFEST = {
-  name: "acme.integration",
+  name: "acme/integration",
   version: "1.0.0",
   publisher: "Acme",
   description: "Demo integration",
@@ -201,7 +201,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     // 1. Register the integration.
     const regRes = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: { ...VALID_MANIFEST, name: "acme.lease-via-ref" } },
+      body: { manifest: { ...VALID_MANIFEST, name: "acme/lease-via-ref" } },
     });
     expect(regRes.status).toBe(201);
     const reg = (await regRes.json()) as { id: string };
@@ -266,7 +266,7 @@ describe("integration runtime credential — integration: source", () => {
         edge_permissions: {},
         connection_id: connectionId,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
+        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       keyHash,
       undefined,
@@ -301,7 +301,7 @@ describe("integration runtime credential — integration: source", () => {
         edge_permissions: {},
         connection_id: connectionA,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
+        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       keyHash,
       undefined,

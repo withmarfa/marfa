@@ -26,7 +26,7 @@ function makeManifest(
   overrides?: Partial<IntegrationManifest>,
 ): IntegrationManifest {
   return {
-    name: "acme.resolve-test",
+    name: "acme/resolve-test",
     version: "1.0.0",
     publisher: "Acme",
     description: "manifest resolution test",
@@ -95,7 +95,7 @@ describe("resolveConnectionManifest", () => {
       undefined,
     );
     expect(result.integration_item_id).toBe(integrationId);
-    expect(result.manifest.name).toBe("acme.resolve-test");
+    expect(result.manifest.name).toBe("acme/resolve-test");
   });
 
   it("throws NOT_FOUND on unknown connection id", async () => {
@@ -145,7 +145,7 @@ describe("resolveConnectionManifest", () => {
       {
         type: "system.integration",
         properties: {
-          manifest_name: "acme.invalid-persisted",
+          manifest_name: "acme/invalid-persisted",
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "read",

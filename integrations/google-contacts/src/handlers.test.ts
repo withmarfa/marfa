@@ -220,11 +220,11 @@ describe("google-contacts handlers — the type a connection writes", () => {
     expect(created[0]?.type).toBe("core.entity.person");
   });
 
-  it("honors a legacy stored target_type by resolving its family", async () => {
-    // Pins the legacy stored-configuration read: connections configured
-    // before write families carry `target_type` rather than
-    // `write_family`, and that value must keep deciding what they write
-    // until the post-cutover configuration rewrite removes it.
+  it("ignores a target_type left in stored configuration", async () => {
+    // The pre-families configuration shape wrote `target_type`, and it
+    // steered the write for one release so installed connections kept
+    // resolving. No connection carries it now, so it must not steer
+    // anything: the manifest's default family decides.
     const { ctx, created } = buildContext({
       connectionRecord: {
         id: CONNECTION_ID,
@@ -240,7 +240,7 @@ describe("google-contacts handlers — the type a connection writes", () => {
     await handleSchedule(ctx, SCHEDULE_MSG());
 
     expect(created).toHaveLength(1);
-    expect(created[0]?.type).toBe("core.entity.person");
+    expect(created[0]?.type).toBe("google.contacts.contact");
   });
 });
 

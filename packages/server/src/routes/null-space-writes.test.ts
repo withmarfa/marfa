@@ -71,7 +71,7 @@ function manifest(name: string): IntegrationManifest {
 async function runtimeCredential(
   spaceId: string,
 ): Promise<{ key: string; connectionId: string }> {
-  const name = `acme.null-space-${Math.random().toString(36).slice(2, 10)}`;
+  const name = `acme/null-space-${Math.random().toString(36).slice(2, 10)}`;
   const m = manifest(name);
   const integration = await ctx.storage.items.create(
     {
@@ -206,7 +206,7 @@ describe("a runtime credential's writes belong to its space", () => {
     // space-less credential is not a narrow credential, it is the platform
     // tier, so the refusal is what makes the guard above hold rather than
     // merely happening to pass.
-    const name = `acme.unspaceed-${Math.random().toString(36).slice(2, 10)}`;
+    const name = `acme/unspaceed-${Math.random().toString(36).slice(2, 10)}`;
     const m = manifest(name);
     const integration = await ctx.storage.items.create(
       {

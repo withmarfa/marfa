@@ -5,7 +5,7 @@
  *
  * Usage:
  *
- *   const harness = createTestHarness({ integrationName: "marfa.template" });
+ *   const harness = createTestHarness({ integrationName: "acme/template" });
  *   harness.connection("conn_1").send({ kind: "schedule", ... });
  *   const outcome = await harness.consume();
  *   const cursor = await harness.connection("conn_1").storage.get("cursor:main");

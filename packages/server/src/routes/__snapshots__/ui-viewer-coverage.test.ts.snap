@@ -3379,16 +3379,16 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Install google.calendar</title>
+  <title>Install google/calendar</title>
   <link rel="stylesheet" href="/auth/static/auth.css">
 </head>
 <body>
-  <main class="card" aria-label="Install google.calendar">
+  <main class="card" aria-label="Install google/calendar">
     
     <div class="apphead">
       <span class="logo" aria-hidden="true">G</span>
       <div>
-        <div class="row__title">google.calendar</div>
+        <div class="row__title">google/calendar</div>
         <div class="row__meta">Marfa integration</div>
       </div>
     </div>
@@ -3421,7 +3421,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       
       <label class="field" style="margin-top:16px">
         <span class="field__label">Connection label</span>
-        <input type="text" name="label" value="google.calendar 1.4.0">
+        <input type="text" name="label" value="google/calendar 1.4.0">
       </label>
       
       <div class="actions">

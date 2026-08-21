@@ -1,5 +1,5 @@
 /**
- * Handler-level tests for the withmarfa.inbox integration.
+ * Handler-level tests for the marfa/inbox integration.
  *
  * Builds ConnectionContext inline; HMAC verification is exercised
  * server-side (the `cloudflare-email` adapter has its own test in
@@ -85,7 +85,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "withmarfa.inbox",
+    integration_name: "marfa/inbox",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -155,7 +155,7 @@ function makeWebhookMessage(
   };
 }
 
-describe("withmarfa.inbox handler", () => {
+describe("marfa/inbox handler", () => {
   it("creates a marfa.captured_email on a well-formed envelope", async () => {
     const { ctx, created, emitted } = buildContext();
     const result = await handleInboxWebhook(
@@ -198,7 +198,7 @@ describe("withmarfa.inbox handler", () => {
     );
     expect(created).toHaveLength(1);
     expect(emitted.at(-1)?.properties?.summary).toBe(
-      "withmarfa.inbox: duplicate delivery <CAabc123@mail.gmail.com> ignored",
+      "marfa/inbox: duplicate delivery <CAabc123@mail.gmail.com> ignored",
     );
   });
 

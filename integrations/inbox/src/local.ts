@@ -1,5 +1,5 @@
 /**
- * Local-runtime entry for the withmarfa.inbox integration. Same shape
+ * Local-runtime entry for the marfa/inbox integration. Same shape
  * as `_template/src/local.ts`; see that file for context.
  */
 import { registerHandlers } from "./handlers.js";

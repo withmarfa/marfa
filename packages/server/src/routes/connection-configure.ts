@@ -33,7 +33,6 @@ import { Hono } from "hono";
 import {
   MarfaError,
   ErrorCode,
-  canonicalIntegrationName,
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -560,10 +559,8 @@ export function connectionConfigureRoutes(
 
     // The calendar integration keeps its bespoke picker; every other
     // integration declaring a configuration contract gets the schema-driven
-    // form. Resolved through the registry rather than compared literally,
-    // because a connection's frozen manifest can still carry the old
-    // spelling while the running build carries the new one.
-    if (canonicalIntegrationName(manifest.name) !== "google/calendar") {
+    // form.
+    if (manifest.name !== "google/calendar") {
       if (
         manifest.configuration_schema &&
         Object.keys(manifest.configuration_schema).length > 0
@@ -689,10 +686,10 @@ export function connectionConfigureRoutes(
       );
     }
 
-    // Same dispatch as the GET path: google.calendar keeps its picker,
-    // any other integration with a declared contract takes the generic
-    // path, and everything else is refused.
-    if (canonicalIntegrationName(manifest.name) !== "google/calendar") {
+    // Same dispatch as the GET path: the calendar integration keeps its
+    // picker, any other integration with a declared contract takes the
+    // generic path, and everything else is refused.
+    if (manifest.name !== "google/calendar") {
       if (
         manifest.configuration_schema &&
         Object.keys(manifest.configuration_schema).length > 0

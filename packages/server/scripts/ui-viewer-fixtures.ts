@@ -832,7 +832,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
         render: () =>
           renderInstallConsentScreen({
             integrationId: "01999a3f-0000-4ec1-b378-000000000001",
-            manifestName: "google.calendar",
+            manifestName: "google/calendar",
             manifestVersion: "1.4.0",
             publisher: "Marfa",
             summary: "Two-way sync between Google Calendar and your events.",

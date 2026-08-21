@@ -26,7 +26,7 @@ afterAll(async () => {
 });
 
 const MANIFEST: IntegrationManifest = {
-  name: "acme.readopt",
+  name: "acme/readopt",
   version: "1.0.0",
   publisher: "Acme",
   description: "reinstall adoption test",
@@ -141,7 +141,7 @@ describe("install refuses configuration outside the declared contract", () => {
   it("refuses an undeclared key", async () => {
     await expect(
       tryInstall(
-        { ...MANIFEST, name: "acme.cfg-undeclared" },
+        { ...MANIFEST, name: "acme/cfg-undeclared" },
         { bogus_key: "x" },
       ),
     ).rejects.toMatchObject({ code: "validation_error" });
@@ -150,7 +150,7 @@ describe("install refuses configuration outside the declared contract", () => {
   it("refuses a missing required key and a wrong-typed one", async () => {
     const declaring: IntegrationManifest = {
       ...MANIFEST,
-      name: "acme.cfg-declared",
+      name: "acme/cfg-declared",
       manifest_schema_version: "1.2.0",
       configuration_schema: {
         feed_url: {

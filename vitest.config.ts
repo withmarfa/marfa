@@ -8,7 +8,7 @@ export default defineConfig({
     // so we glob those specifically — avoids vitest tripping on
     // per-folder docs like `integrations/CLAUDE.md`.
     //
-    // The withmarfa.inbox integration ships a sibling Cloudflare Email
+    // The marfa/inbox integration ships a sibling Cloudflare Email
     // Worker at `integrations/inbox/email-worker/` with its
     // own vitest.config.ts, the only nested-workspace package today.
     projects: [

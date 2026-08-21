@@ -60,7 +60,7 @@ function buildContext(connectionId = "conn_template_test"): {
   } as unknown as ConnectionClient;
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "marfa.template",
+    integration_name: "acme/template",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -76,7 +76,7 @@ describe("template integration handlers", () => {
     const { ctx, emitted } = buildContext();
     const result = await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "marfa.template",
+      integration_name: "acme/template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_000_000,
     });
@@ -96,13 +96,13 @@ describe("template integration handlers", () => {
     const { ctx } = buildContext();
     await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "marfa.template",
+      integration_name: "acme/template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_000_000,
     });
     await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "marfa.template",
+      integration_name: "acme/template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_300_000,
     });
@@ -127,7 +127,7 @@ describe("template integration handlers", () => {
     const { ctx, emitted } = buildContext();
     await handleItemEvent(ctx, {
       kind: "item-event",
-      integration_name: "marfa.template",
+      integration_name: "acme/template",
       connection_id: "conn_template_test",
       event_type: "updated",
       item_id: "item_1",

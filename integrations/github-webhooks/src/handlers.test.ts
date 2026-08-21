@@ -86,7 +86,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "withmarfa.github-webhooks",
+    integration_name: "marfa/github-webhooks",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),

@@ -144,7 +144,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "google.calendar",
+    integration_name: "google/calendar",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -160,7 +160,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "google.calendar",
+  integration_name: "google/calendar",
   connection_id: "conn_gcal_multi",
   scheduled_for_ms: Date.now(),
 });
@@ -171,7 +171,7 @@ const ITEM_EVENT = (
   origin = "conn_other",
 ): ItemEventMessage => ({
   kind: "item-event",
-  integration_name: "google.calendar",
+  integration_name: "google/calendar",
   connection_id: "conn_gcal_multi",
   event_type: eventType,
   item_id: itemId,

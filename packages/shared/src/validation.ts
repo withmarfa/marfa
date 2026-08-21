@@ -288,21 +288,15 @@ const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
  * in hand. A syntactic validator that refused reserved handles would refuse
  * the platform's own integrations, which live under `marfa/`.
  *
- * The legacy dot form (`readwise.reader`) is accepted for now — the two
- * spellings coexist only while installed connections are migrated onto the
- * new one, and this fallback is removed when that finishes. It refuses a
- * reserved root, which the type grammar admits and an integration never
- * could: `core.note` names a type, and nothing has ever published under it.
+ * The slash is required. An earlier dot form existed while installed
+ * connections were migrated onto this grammar; every stored name now carries
+ * the slash, so a dotted value names a type and never an integration.
  */
 export function isValidIntegrationIdentifier(value: string): boolean {
   if (typeof value !== "string") return false;
   if (value.length > 128) return false;
   const slash = value.indexOf("/");
-  if (slash === -1) {
-    const root = value.split(".")[0] ?? "";
-    if (RESERVED_ROOTS.has(root)) return false;
-    return isValidTypeIdentifier(value);
-  }
+  if (slash === -1) return false;
   // Exactly one slash: the handle is a single segment, never a path.
   if (value.slice(slash + 1).includes("/")) return false;
   const handle = value.slice(0, slash);

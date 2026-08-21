@@ -60,7 +60,7 @@ const IDEMPOTENCY_TTL_MS = 3600 * 1000;
 const DELIVERY_KEY = "sub_race:delivery_race";
 
 const TEMPLATE_MANIFEST = {
-  name: "test.local-runtime-race",
+  name: "test/local-runtime-race",
   version: "0.0.1",
   publisher: "test",
   description: "Test integration for the local runtime race guard",

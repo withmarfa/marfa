@@ -23,7 +23,7 @@ const COMMITTED_JSON_SCHEMA_PATH = resolve(
 );
 
 const VALID_MANIFEST = {
-  name: "acme.calendar-sync",
+  name: "acme/calendar-sync",
   version: "1.2.3",
   publisher: "Acme",
   description: "Two-way Google Calendar sync",
@@ -534,33 +534,13 @@ describe("resolveWriteFamily — precedence and fallthroughs", () => {
     );
   });
 
-  it("resolves a legacy target_type to the unique family containing it", () => {
+  it("ignores a target_type left in stored configuration", () => {
+    // The pre-families shape wrote `target_type`, and it was read for one
+    // release so installed connections kept resolving. No connection carries
+    // it any more, and a value nothing writes must not steer a write.
     expect(
       resolveWriteFamily(manifest, { target_type: "core.media.series" })?.name,
-    ).toBe("core");
-  });
-
-  it("falls through to the default on an unknown legacy target_type", () => {
-    // The fallthrough, not an error: stored configuration cannot be
-    // corrected from here, and guessing would silently re-route writes.
-    expect(
-      resolveWriteFamily(manifest, { target_type: "acme.transcript" })?.name,
     ).toBe("acme");
-  });
-
-  it("falls through to the default on an ambiguous legacy target_type", () => {
-    const overlapping = {
-      write_families: {
-        families: {
-          a: { description: "d", types: { show: "shared.show" } },
-          b: { description: "d", types: { show: "shared.show" } },
-        },
-        default: "b",
-      },
-    };
-    expect(
-      resolveWriteFamily(overlapping, { target_type: "shared.show" })?.name,
-    ).toBe("b");
   });
 
   it("resolves the default with no configuration at all", () => {

@@ -114,7 +114,7 @@ function buildContext(opts: BuildOptions = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "withmarfa.rss-watcher",
+    integration_name: "marfa/rss-watcher",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -209,7 +209,7 @@ function urlToString(url: RequestInfo | URL): string {
 
 const SCHEDULE_MSG = (ms: number): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "withmarfa.rss-watcher",
+  integration_name: "marfa/rss-watcher",
   connection_id: "conn_rss_test",
   scheduled_for_ms: ms,
 });

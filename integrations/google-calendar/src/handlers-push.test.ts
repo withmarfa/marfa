@@ -125,7 +125,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "google.calendar",
+    integration_name: "google/calendar",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -176,7 +176,7 @@ function multiCalConnectionWithoutWebhook(): Partial<ItemResource> {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "google.calendar",
+  integration_name: "google/calendar",
   connection_id: "conn_gcal_push",
   scheduled_for_ms: Date.now(),
 });

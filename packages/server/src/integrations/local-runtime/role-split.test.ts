@@ -42,11 +42,11 @@ import { createPgStorage } from "../../storage/pg/index.js";
 const isPg = process.env.DB_DIALECT === "pg";
 
 const envelopeFor = (connectionId: string): SchedulerEnvelope => ({
-  integration_name: "test.role-split",
+  integration_name: "test/role-split",
   message: {
     kind: "schedule",
     connection_id: connectionId,
-    integration_name: "test.role-split",
+    integration_name: "test/role-split",
     scheduled_for_ms: Date.now(),
   },
 });
@@ -75,7 +75,7 @@ function recordingBoss() {
 }
 
 const shapeRegistration: LocalIntegrationRegistration = {
-  name: "test.role-split",
+  name: "test/role-split",
   handlerModulePath: null,
   directDispatch: () =>
     Promise.resolve({
@@ -185,7 +185,7 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
       const seenByWorker: string[] = [];
       const reg = (
         seen: string[],
-        name = "test.role-split",
+        name = "test/role-split",
       ): LocalIntegrationRegistration => ({
         ...shapeRegistration,
         name,
@@ -206,11 +206,11 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
         {
           type: "system.integration",
           properties: {
-            manifest_name: "test.role-split",
+            manifest_name: "test/role-split",
             manifest_version: "0.0.1",
             publisher: "test",
             manifest: {
-              name: "test.role-split",
+              name: "test/role-split",
               version: "0.0.1",
               publisher: "test",
               description: "role split hand-off test",
@@ -286,7 +286,7 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
       // shutting down must not delete it.
       await supWeb.stop();
       const schedules = await bossWorker.getSchedules();
-      expect(schedules.some((s) => s.name.includes("test.role-split"))).toBe(
+      expect(schedules.some((s) => s.name.includes("test/role-split"))).toBe(
         true,
       );
     } finally {

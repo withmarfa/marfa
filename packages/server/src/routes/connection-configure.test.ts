@@ -466,7 +466,7 @@ describe("POST /connections/:id/configure — error paths", () => {
     // The surface works for any integration that declares a schema; the
     // bespoke picker is a google/calendar refinement, not the gate.
     const { connectionId } = await seedGoogleCalendarConnection({
-      manifestName: "acme.other",
+      manifestName: "acme/other",
     });
     const res = await request(
       ctx.app,
@@ -493,7 +493,7 @@ describe("POST /connections/:id/configure — error paths", () => {
 
   it("400s a declared-contract violation on the schema-driven path", async () => {
     const { connectionId } = await seedGoogleCalendarConnection({
-      manifestName: "acme.other-invalid",
+      manifestName: "acme/other-invalid",
     });
     const res = await request(
       ctx.app,
@@ -759,7 +759,7 @@ describe("the configuration surface answers a browser session", () => {
     const cookie = await signIn(`configure-get-${String(counter)}@example.com`);
     const connectionId = await installAsBrowser(
       cookie,
-      `acme.configurable-get-${String(counter)}`,
+      `acme/configurable-get-${String(counter)}`,
     );
 
     const res = await sessionCtx.app.request(
@@ -780,7 +780,7 @@ describe("the configuration surface answers a browser session", () => {
     );
     const connectionId = await installAsBrowser(
       cookie,
-      `acme.configurable-post-${String(counter)}`,
+      `acme/configurable-post-${String(counter)}`,
     );
 
     const res = await sessionCtx.app.request(
@@ -809,7 +809,7 @@ describe("the configuration surface answers a browser session", () => {
     const cookie = await signIn(
       `configure-required-${String(counter)}@example.com`,
     );
-    const manifest = configurableManifest("acme.required");
+    const manifest = configurableManifest("acme/required");
     (
       manifest.configuration_schema as Record<string, Record<string, unknown>>
     ).feed_url = {

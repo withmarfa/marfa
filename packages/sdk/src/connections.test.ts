@@ -244,12 +244,12 @@ describe("client.connections.previewEvent", () => {
       envelopes: [
         {
           connection_id: "itm_conn_1",
-          integration_name: "acme.slack",
+          integration_name: "acme/slack",
           would_dispatch: true,
           dispatch_reason: "ok",
           envelope: {
             kind: "item-event",
-            integration_name: "acme.slack",
+            integration_name: "acme/slack",
             connection_id: "itm_conn_1",
             event_type: "item.created",
             item_id: "itm_note_1",
