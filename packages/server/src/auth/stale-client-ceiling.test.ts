@@ -416,7 +416,7 @@ describe("call sites that persist a client scope ceiling", () => {
   it("the seed script writes no ceiling", () => {
     const root = fileURLToPath(new URL("../..", import.meta.url));
     const source = readFileSync(
-      new URL("scripts/seed-oauth-clients.ts", `file://${root}`),
+      new URL("src/scripts/seed-oauth-clients.ts", `file://${root}`),
       "utf8",
     );
     expect(source).toContain("scopes: null");

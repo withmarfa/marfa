@@ -12,11 +12,16 @@
  *
  * Usage (from packages/server, with the env's DIRECT Postgres URL — the same
  * one the migrator uses; the pooled URL can't run the bootstrap reads):
- *   DATABASE_URL=<direct pg url> pnpm exec tsx scripts/seed-oauth-clients.ts
+ *   DATABASE_URL=<direct pg url> pnpm exec tsx src/scripts/seed-oauth-clients.ts
+ *
+ * It also builds to `dist/seed-oauth-clients.js`, the same way the migrator
+ * does, because a managed database only accepts connections from inside its
+ * own network: the deployment host is the only place this can run, and there
+ * it has an image rather than a checkout.
  *
  * Idempotent: a client that already exists is reported and skipped.
  */
-import { createPgStorage } from "../src/storage/pg/index.js";
+import { createPgStorage } from "../storage/pg/index.js";
 
 interface SeedClient {
   clientId: string;
@@ -60,7 +65,16 @@ async function main(): Promise<void> {
   let created = 0;
   let existed = 0;
   for (const client of CLIENTS) {
-    const postLogoutRedirectUris = client.origins.map((origin) => `${origin}/`);
+    // Both spellings. The plugin compares `post_logout_redirect_uri` against
+    // this list with an exact string match, and the SDK sends the browser's
+    // own `location.origin`, which never carries a trailing slash. Registering
+    // only the slashed form meant every logout missed, fell off the end of the
+    // plugin's handler, and returned an empty 200 that renders as a blank page
+    // with the session already gone.
+    const postLogoutRedirectUris = client.origins.flatMap((origin) => [
+      origin,
+      `${origin}/`,
+    ]);
     if (await oauth.clientExists(client.clientId)) {
       await oauth.updateClientLogoutConfig(
         client.clientId,

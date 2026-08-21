@@ -37,6 +37,7 @@ import {
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
 import { renderSignInLinkFailedPage } from "./sign-in-link-page.js";
+import { renderSignedOutPage } from "./signed-out-page.js";
 import { renderKeysPage, type KeysPageKey } from "./keys-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
@@ -774,6 +775,53 @@ export function authRoutes(
     }
 
     return c.redirect(next, 302);
+  });
+
+  // Browser logout. The plugin owns the whole of it — validating the id token,
+  // matching the return URI, ending the session — and this wrapper adds one
+  // thing: a page for the case where the plugin ends the session and then has
+  // nowhere to send the person, which it answers with an empty 200. That
+  // renders as a blank tab, which reads as a failure even though the logout
+  // succeeded. Registered ahead of the catch-all so it sees the response
+  // first; every other outcome is passed through untouched.
+  router.get("/oauth2/end-session", async (c) => {
+    if (!auth) {
+      throw new MarfaError(
+        ErrorCode.UNAUTHORIZED,
+        "Sign-out requires the better-auth identity layer to be configured",
+      );
+    }
+    const upstream = new Request(c.req.url, {
+      method: "GET",
+      headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
+    });
+    const response = await auth.handler(upstream);
+
+    const body = response.status === 200 ? await response.clone().text() : null;
+    if (body !== null && body.trim().length === 0) {
+      const headers = new Headers({
+        "content-type": "text/html; charset=utf-8",
+      });
+      // Same shape as the other wrappers here: getSetCookie keeps multiple
+      // cookies separate, since a coalesced header is not a valid cookie.
+      const setCookies =
+        typeof (response.headers as Headers & { getSetCookie?: () => string[] })
+          .getSetCookie === "function"
+          ? (
+              response.headers as Headers & { getSetCookie: () => string[] }
+            ).getSetCookie()
+          : null;
+      if (setCookies && setCookies.length > 0) {
+        for (const cookie of setCookies) headers.append("set-cookie", cookie);
+      } else {
+        const single = response.headers.get("set-cookie");
+        if (single) headers.append("set-cookie", single);
+      }
+      headers.set("cache-control", "no-store, no-cache, private");
+      headers.set("pragma", "no-cache");
+      return new Response(renderSignedOutPage(), { status: 200, headers });
+    }
+    return response;
   });
 
   router.post("/sign-in/provider/:id", async (c) => {

@@ -13,6 +13,11 @@ export default defineConfig({
     // (`node dist/migrate.js`) without tsx — used by the docker-compose
     // self-host path.
     migrate: "src/storage/migrate.ts",
+    // Ships for the same reason the migrator does: a managed database accepts
+    // connections only from inside its own network, so the deployment host is
+    // the only place this can run, and there is no checkout there to run tsx
+    // against.
+    "seed-oauth-clients": "src/scripts/seed-oauth-clients.ts",
   },
   format: ["esm"],
   dts: true,
