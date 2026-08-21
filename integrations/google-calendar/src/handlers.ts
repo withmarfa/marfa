@@ -231,8 +231,7 @@ async function resolveConnectionConfig(
       ? cfg.default_write_calendar_id
       : null;
   // The manifest's declared families are the one statement of what a
-  // connection writes: a configured `write_family` names one, a legacy
-  // stored `target_type` resolves to the family containing it, and an
+  // connection writes: a configured `write_family` names one, and an
   // unconfigured connection gets the declared default.
   const family = resolveWriteFamily(GOOGLE_CALENDAR_MANIFEST, cfg);
   const targetType =

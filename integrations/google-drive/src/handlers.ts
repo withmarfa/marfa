@@ -145,8 +145,7 @@ async function resolveConnectionConfig(
       | undefined;
     const cfg = props?.configuration ?? {};
     // The manifest's declared families decide the type: a configured
-    // `write_family` names one, a legacy stored `target_type` resolves to
-    // the family containing it, and an unconfigured connection gets the
+    // `write_family` names one, and an unconfigured connection gets the
     // declared default.
     const family = resolveWriteFamily(GOOGLE_DRIVE_MANIFEST, cfg);
     const targetType = family?.types.file ?? DEFAULT_FILE_TYPE;
