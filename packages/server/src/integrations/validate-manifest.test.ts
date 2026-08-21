@@ -116,7 +116,7 @@ describe("validateManifest", () => {
         {
           path: "manifest_schema_version",
           message:
-            "manifest schema version not supported (expected major 2.x.x, got 3.0.0)",
+            "manifest schema version not supported (expected major 1 or 2.x.x, got 3.0.0)",
         },
       ]);
     }
@@ -137,5 +137,43 @@ describe("validateManifest", () => {
     if (!result.ok) {
       expect(result.errors[0]?.path).toBe("_root");
     }
+  });
+});
+
+/**
+ * A stored manifest written against the previous contract still resolves.
+ *
+ * This is not hypothetical tidiness. Moving the supported major to 2
+ * without this refused every catalog row written under 1.x, and because
+ * `validateManifest` runs on every resolution and a credential mint fails
+ * closed, it took out every connection on staging inside one deploy. The
+ * error named the schema version rather than anything a user did.
+ */
+describe("validateManifest — stored manifests from the previous contract", () => {
+  const storedUnderV1 = {
+    ...VALID_MANIFEST,
+    manifest_schema_version: "1.3.0",
+    runtime_compatibility: ["hosted", "local"],
+  };
+
+  it("accepts a 1.x row still carrying the field 2.0.0 removed", () => {
+    const result = validateManifest(storedUnderV1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts a current 2.x manifest", () => {
+    const result = validateManifest({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "2.0.0",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("still refuses a major from a contract this build does not know", () => {
+    const result = validateManifest({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "3.0.0",
+    });
+    expect(result.ok).toBe(false);
   });
 });

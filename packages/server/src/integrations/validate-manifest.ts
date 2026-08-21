@@ -1,6 +1,6 @@
 import {
   IntegrationManifestSchema,
-  MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR,
+  MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS,
   parseManifestSchemaMajor,
   validateWriteFamilies,
 } from "@withmarfa/shared";
@@ -56,13 +56,16 @@ export function validateManifest(input: unknown): ValidateManifestResult {
   }
 
   const major = parseManifestSchemaMajor(parsed.data.manifest_schema_version);
-  if (major === null || major !== MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR) {
+  if (
+    major === null ||
+    !MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS.includes(major)
+  ) {
     return {
       ok: false,
       errors: [
         {
           path: "manifest_schema_version",
-          message: `manifest schema version not supported (expected major ${String(MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR)}.x.x, got ${parsed.data.manifest_schema_version})`,
+          message: `manifest schema version not supported (expected major ${MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS.join(" or ")}.x.x, got ${parsed.data.manifest_schema_version})`,
         },
       ],
     };

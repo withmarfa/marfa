@@ -618,6 +618,28 @@ export function validateConnectionConfiguration(
  */
 export const MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR = 2;
 
+/**
+ * Majors a STORED manifest may still carry, accepted alongside the current
+ * one while a migration catches up.
+ *
+ * The same trap as the retired-key tolerance, one level up, and it bit for
+ * real: moving the supported major to 2 refused every catalog row written
+ * under 1.x, and because `validateManifest` runs on every resolution and a
+ * mint fails closed, that took out every connection on staging inside one
+ * deploy rather than warning about anything.
+ *
+ * A manifest's major says which contract it was written against, and a
+ * stored row written against 1.x is not wrong, it is old. What made 2.0.0
+ * breaking was a field being removed, and the retired-key tolerance
+ * already handles reading one that still has it. So a 1.x row parses.
+ *
+ * This contracts to `[2]` in the same change that migrates stored rows
+ * forward, which is the only point at which it is safe.
+ */
+export const MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS: readonly number[] = [
+  1, 2,
+];
+
 /** Parses `manifest_schema_version` and returns its major component. */
 export function parseManifestSchemaMajor(version: string): number | null {
   const match = SEMVER_RE.exec(version);
