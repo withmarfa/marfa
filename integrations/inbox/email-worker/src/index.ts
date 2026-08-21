@@ -1,5 +1,5 @@
 /**
- * Cloudflare Email Worker for the `withmarfa.inbox` integration.
+ * Cloudflare Email Worker for the `marfa/inbox` integration.
  *
  * Pipeline:
  *   1. Cloudflare Email Routing matches the capture address (e.g.
@@ -13,7 +13,7 @@
  *      receipt route, `<MARFA_API_URL>/runtime/webhook/<CONNECTION_ID>`.
  *      The server's `cloudflare-email` adapter verifies the HMAC over
  *      the exact body bytes, idempotency-checks on the Message-ID, and
- *      enqueues a `WebhookMessage` for the `withmarfa.inbox` handler.
+ *      enqueues a `WebhookMessage` for the `marfa/inbox` handler.
  *
  * This Worker exists because Email Routing can only deliver inbound
  * mail to a Worker or forward it to a mailbox; it cannot POST to a

@@ -26,7 +26,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const INTEGRATION = "acme.bridge-pause";
+const INTEGRATION = "acme/bridge-pause";
 
 function manifest(): IntegrationManifest {
   return {

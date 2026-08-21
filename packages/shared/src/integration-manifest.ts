@@ -469,13 +469,7 @@ export interface ResolvedWriteFamily {
  * Resolve which write family a connection uses. Precedence:
  *
  * 1. A configured `write_family` naming a declared family.
- * 2. Legacy read: a `target_type` value written by the pre-families
- *    configuration shape resolves to the unique family containing that
- *    type. Exists only because stored connection configuration cannot be
- *    rewritten while the hosting move holds data still; remove it with
- *    the post-cutover config rewrite. An ambiguous or unknown legacy
- *    value falls through to the default rather than guessing.
- * 3. The manifest's declared default family.
+ * 2. The manifest's declared default family.
  *
  * Returns null for a manifest that declares no families, which is what
  * lets handlers that have not migrated keep their own resolution.
@@ -493,13 +487,6 @@ export function resolveWriteFamily(
   const configured = configuration?.write_family;
   if (typeof configured === "string" && wf.families[configured]) {
     return pick(configured);
-  }
-  const legacy = configuration?.target_type;
-  if (typeof legacy === "string" && legacy.length > 0) {
-    const hits = Object.entries(wf.families).filter(([, family]) =>
-      Object.values(family.types).includes(legacy),
-    );
-    if (hits.length === 1 && hits[0]) return pick(hits[0][0]);
   }
   return pick(wf.default);
 }

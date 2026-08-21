@@ -41,7 +41,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 const VALID_MANIFEST = {
-  name: "acme.calendar-sync",
+  name: "acme/calendar-sync",
   version: "1.0.0",
   publisher: "Acme",
   description: "Calendar sync",
@@ -220,7 +220,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       body: {
         manifest: {
           ...VALID_MANIFEST,
-          name: "acme.custom-rejected",
+          name: "acme/custom-rejected",
           webhook_verification: {
             method: "custom",
             adapter_id: "acme-internal",
@@ -235,7 +235,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     // 1. Register an Integration via the registry.
     const regRes = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: { ...VALID_MANIFEST, name: "acme.via-ref" } },
+      body: { manifest: { ...VALID_MANIFEST, name: "acme/via-ref" } },
     });
     expect(regRes.status).toBe(201);
     const reg = (await regRes.json()) as { id: string };

@@ -159,7 +159,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "todoist.tasks",
+    integration_name: "todoist/tasks",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -175,7 +175,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "todoist.tasks",
+  integration_name: "todoist/tasks",
   connection_id: "conn_todoist_test",
   scheduled_for_ms: Date.now(),
 });
@@ -185,7 +185,7 @@ const ITEM_EVENT = (
   origin = "conn_other",
 ): ItemEventMessage => ({
   kind: "item-event",
-  integration_name: "todoist.tasks",
+  integration_name: "todoist/tasks",
   connection_id: "conn_todoist_test",
   event_type: "updated",
   item_id: itemId,

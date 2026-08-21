@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateManifest } from "./validate-manifest.js";
 
 const VALID_MANIFEST = {
-  name: "acme.calendar-sync",
+  name: "acme/calendar-sync",
   version: "1.2.3",
   publisher: "Acme",
   description: "Two-way Google Calendar sync",
@@ -31,7 +31,7 @@ describe("validateManifest", () => {
     const result = validateManifest(VALID_MANIFEST);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.manifest.name).toBe("acme.calendar-sync");
+      expect(result.manifest.name).toBe("acme/calendar-sync");
       expect(result.manifest.triggers).toHaveLength(2);
     }
   });

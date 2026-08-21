@@ -44,7 +44,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const INTEGRATION = "acme.lifecycle";
+const INTEGRATION = "acme/lifecycle";
 
 type MintOutcome =
   | { ok: true; api_key: string }
@@ -170,7 +170,7 @@ describe("a runtime credential is fenced by a space", () => {
     // Connection it creates and the credential minted for it comes out
     // at the platform tier. The refusal has to reach this door too, or
     // the rule is enforced on two of three.
-    const integrationId = await makeIntegration("acme.install-fence");
+    const integrationId = await makeIntegration("acme/install-fence");
     const res = await request(ctx.app, "POST", "/connections/install", {
       key: ctx.adminKey,
       body: { integration_id: integrationId },
@@ -317,8 +317,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
 
   it("refuses to create activity attributed to a sibling", async () => {
     const space = await ctx.storage.spaces!.create("activity-create");
-    const mine = await credentialFor(space.id, "acme.mine");
-    const sibling = await credentialFor(space.id, "acme.sibling");
+    const mine = await credentialFor(space.id, "acme/mine");
+    const sibling = await credentialFor(space.id, "acme/sibling");
 
     const res = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -339,8 +339,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // `system.activity` admits it here too. Without the attribution
     // check the door is simply wider.
     const space = await ctx.storage.spaces!.create("activity-bulk");
-    const mine = await credentialFor(space.id, "acme.bulk-mine");
-    const sibling = await credentialFor(space.id, "acme.bulk-sibling");
+    const mine = await credentialFor(space.id, "acme/bulk-mine");
+    const sibling = await credentialFor(space.id, "acme/bulk-sibling");
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
@@ -375,8 +375,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // the caller says rather than on what it is about to overwrite —
     // the same intent `PATCH` refuses, through a door that admitted it.
     const space = await ctx.storage.spaces!.create("activity-bulk-patch");
-    const mine = await credentialFor(space.id, "acme.bulk-patch-mine");
-    const sibling = await credentialFor(space.id, "acme.bulk-patch-sibling");
+    const mine = await credentialFor(space.id, "acme/bulk-patch-mine");
+    const sibling = await credentialFor(space.id, "acme/bulk-patch-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -424,8 +424,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // keyed on the real type is skipped: the attribution check never
     // runs because the claimed type is not `system.activity`.
     const space = await ctx.storage.spaces!.create("activity-bulk-type");
-    const mine = await credentialFor(space.id, "acme.bulk-type-mine");
-    const sibling = await credentialFor(space.id, "acme.bulk-type-sibling");
+    const mine = await credentialFor(space.id, "acme/bulk-type-mine");
+    const sibling = await credentialFor(space.id, "acme/bulk-type-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -468,8 +468,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // platform credential; naming `core.note` in the batch entry is what
     // used to get past that.
     const space = await ctx.storage.spaces!.create("connection-bulk-type");
-    const mine = await credentialFor(space.id, "acme.conn-type-mine");
-    const sibling = await credentialFor(space.id, "acme.conn-type-sibling");
+    const mine = await credentialFor(space.id, "acme/conn-type-mine");
+    const sibling = await credentialFor(space.id, "acme/conn-type-sibling");
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
@@ -497,8 +497,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // the `connection_id` it carries. Only judging the merged result
     // against the row's real type refuses it.
     const space = await ctx.storage.spaces!.create("activity-bulk-reattr");
-    const mine = await credentialFor(space.id, "acme.bulk-reattr-mine");
-    const sibling = await credentialFor(space.id, "acme.bulk-reattr-sibling");
+    const mine = await credentialFor(space.id, "acme/bulk-reattr-mine");
+    const sibling = await credentialFor(space.id, "acme/bulk-reattr-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -537,7 +537,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // upsert-by-id path a client takes when it already holds the row's
     // id has to keep working.
     const space = await ctx.storage.spaces!.create("activity-bulk-own");
-    const mine = await credentialFor(space.id, "acme.bulk-own");
+    const mine = await credentialFor(space.id, "acme/bulk-own");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -583,8 +583,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
 
   it("refuses to edit a sibling's activity row", async () => {
     const space = await ctx.storage.spaces!.create("activity-patch");
-    const mine = await credentialFor(space.id, "acme.patch-mine");
-    const sibling = await credentialFor(space.id, "acme.patch-sibling");
+    const mine = await credentialFor(space.id, "acme/patch-mine");
+    const sibling = await credentialFor(space.id, "acme/patch-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -616,8 +616,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // reads as a credential writing its own activity; judged on the row
     // as it stands, it is one integration taking another's.
     const space = await ctx.storage.spaces!.create("activity-claim");
-    const mine = await credentialFor(space.id, "acme.claim-mine");
-    const sibling = await credentialFor(space.id, "acme.claim-sibling");
+    const mine = await credentialFor(space.id, "acme/claim-mine");
+    const sibling = await credentialFor(space.id, "acme/claim-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: sibling.key,
@@ -647,8 +647,8 @@ describe("a runtime credential speaks only for its own Connection", () => {
 
   it("refuses to re-attribute its own activity row to a sibling", async () => {
     const space = await ctx.storage.spaces!.create("activity-reattribute");
-    const mine = await credentialFor(space.id, "acme.reattr-mine");
-    const sibling = await credentialFor(space.id, "acme.reattr-sibling");
+    const mine = await credentialFor(space.id, "acme/reattr-mine");
+    const sibling = await credentialFor(space.id, "acme/reattr-sibling");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,
@@ -687,13 +687,13 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // since been narrowed — same provenance, a type this credential no
     // longer reaches.
     const space = await ctx.storage.spaces!.create("upsert-target-type");
-    const mine = await credentialFor(space.id, "acme.upsert-target-type");
+    const mine = await credentialFor(space.id, "acme/upsert-target-type");
 
     const legacy = await ctx.storage.items.create(
       {
         type: "core.task",
         properties: { title: "left by an earlier generation" },
-        source: "integration:acme.upsert-target-type",
+        source: "integration:acme/upsert-target-type",
         source_id: "narrowed",
       },
       space.id,
@@ -719,7 +719,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
     // with this type, or the runtime SDK's activity sink stops working
     // on every run and the failure is invisible until nothing reports.
     const space = await ctx.storage.spaces!.create("activity-own");
-    const mine = await credentialFor(space.id, "acme.own");
+    const mine = await credentialFor(space.id, "acme/own");
 
     const created = await request(ctx.app, "POST", "/items", {
       key: mine.key,

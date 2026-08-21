@@ -123,7 +123,7 @@ function harness(opts: HarnessOptions = {}) {
 
   const ctx = {
     connection_id: "conn-1",
-    integration_name: "withmarfa.podcasts",
+    integration_name: "marfa/podcasts",
     marfa,
     cursor: {
       async read(key: string) {

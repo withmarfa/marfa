@@ -74,8 +74,8 @@ beforeAll(async () => {
     body: { id: "user.reading_log", ...baseType },
   });
   expect(registered.status).toBe(201);
-  mappedConnectionId = await seedConnection("demo.mapped", true);
-  familiesOnlyConnectionId = await seedConnection("demo.unmapped", false);
+  mappedConnectionId = await seedConnection("demo/mapped", true);
+  familiesOnlyConnectionId = await seedConnection("demo/unmapped", false);
 });
 
 afterAll(async () => {

@@ -31,7 +31,6 @@ import {
   type HandlerResult,
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
-import { integrationNameSpellings } from "@withmarfa/shared";
 import type { Storage } from "../../storage/interface.js";
 import {
   mintLocalRuntimeCredential,
@@ -92,18 +91,14 @@ export function createSupervisor(
   storage: Storage,
   config: SupervisorConfig,
 ): LocalRuntime {
-  // Keyed on every spelling an integration answers to, not just the one its
-  // shipped manifest carries. A dispatch's `integration_name` comes from the
-  // manifest FROZEN on the connection's catalog row, which moves in its own
-  // step, so during the identifier rename the stored name and the built one
-  // legitimately differ. A miss here is not an error — `dispatchOne` acks and
-  // skips an unknown integration, so the connection would simply stop, with
-  // nothing logged and no activity row to find it by.
+  // A dispatch's `integration_name` comes from the manifest FROZEN on the
+  // connection's catalog row, so this map is where a stored name meets the
+  // running build. A miss is not an error — `dispatchOne` acks and skips an
+  // unknown integration, so a connection whose stored name no longer matches
+  // simply stops, with nothing logged and no activity row to find it by.
   const byName = new Map<string, LocalIntegrationRegistration>();
   for (const r of config.registrations) {
-    for (const spelling of integrationNameSpellings(r.name)) {
-      byName.set(spelling, r);
-    }
+    byName.set(r.name, r);
   }
   let started = false;
   let stopped = false;

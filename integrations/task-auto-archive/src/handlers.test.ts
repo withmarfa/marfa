@@ -152,7 +152,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "withmarfa.task-auto-archive",
+    integration_name: "marfa/task-auto-archive",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -176,14 +176,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SCHEDULE_MSG = (ms: number): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "withmarfa.task-auto-archive",
+  integration_name: "marfa/task-auto-archive",
   connection_id: "conn_taa_test",
   scheduled_for_ms: ms,
 });
 
 const ITEM_EVENT_MSG = (eventType: string): ItemEventMessage => ({
   kind: "item-event",
-  integration_name: "withmarfa.task-auto-archive",
+  integration_name: "marfa/task-auto-archive",
   connection_id: "conn_taa_test",
   event_type: eventType,
   item_id: "task_other",
@@ -432,7 +432,7 @@ describe("task-auto-archive handlers", () => {
 
     const ctx: ConnectionContext = {
       connection_id: "conn_taa_test",
-      integration_name: "withmarfa.task-auto-archive",
+      integration_name: "marfa/task-auto-archive",
       marfa: client,
       cursor: createCursorStore(storage),
       activity: createActivitySink(client, "conn_taa_test"),

@@ -118,7 +118,7 @@ function buildContext(opts: BuildOpts): BuiltState {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "raindrop.bookmarks",
+    integration_name: "raindrop/bookmarks",
     marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -134,7 +134,7 @@ function buildContext(opts: BuildOpts): BuiltState {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "raindrop.bookmarks",
+  integration_name: "raindrop/bookmarks",
   connection_id: "conn_raindrop_test",
   scheduled_for_ms: Date.now(),
 });

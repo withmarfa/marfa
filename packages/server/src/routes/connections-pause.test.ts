@@ -82,7 +82,7 @@ async function ownerKey(spaceId: string): Promise<string> {
 
 /** An installed, active integration connection in the given space. */
 async function connectionIn(spaceId: string): Promise<string> {
-  const name = `acme.pause-${Math.random().toString(36).slice(2, 10)}`;
+  const name = `acme/pause-${Math.random().toString(36).slice(2, 10)}`;
   const integration = await ctx.storage.items.create(
     {
       type: "system.integration",
@@ -246,7 +246,7 @@ describe("pause actually stops dispatch", () => {
   // schedule walker never read the field at all, so the operator's stop
   // control reported success and the connection kept running. This
   // suite covers the pure gate and the route's write; the live bridge's
-  // CACHED map is covered by reactive-bridge.invalidation.test.ts.
+  // CACHED map is covered by reactive-bridge.invalidation.test/ts.
   let spaceId: string;
   let key: string;
 
@@ -259,7 +259,7 @@ describe("pause actually stops dispatch", () => {
   /** A connection whose manifest declares an item-event trigger, so it
    *  qualifies for the reactive subscription registry. */
   async function reactiveConnection(): Promise<string> {
-    const name = `acme.pausefx-${Math.random().toString(36).slice(2, 10)}`;
+    const name = `acme/pausefx-${Math.random().toString(36).slice(2, 10)}`;
     const m = {
       ...manifest(name),
       triggers: [{ type: "item-event" as const }],

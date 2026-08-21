@@ -6,8 +6,8 @@
  *   - `POST /connections/preview-event` (bridge-envelope preview)
  *
  * Pipeline-level mechanics live in
- * `connections/install-pipeline.test.ts` and
- * `connections/uninstall-pipeline.test.ts`; the local-runtime bridge
+ * `connections/install-pipeline.test/ts` and
+ * `connections/uninstall-pipeline.test/ts`; the local-runtime bridge
  * suite covers fanout. This file pins the route-layer
  * behavior: auth gating, request-shape validation, error mapping, and
  * the JSON response shapes the SDK consumes.
@@ -70,7 +70,7 @@ async function installFresh(): Promise<{
     .then((keys) => keys.find((k) => k.role === "admin"));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
-  const integrationName = `acme.uninstall-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+  const integrationName = `acme/uninstall-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
     {
       type: "system.integration",
@@ -125,7 +125,7 @@ async function createIntegration(): Promise<{
   id: string;
   manifestName: string;
 }> {
-  const integrationName = `acme.install-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+  const integrationName = `acme/install-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
     {
       type: "system.integration",
@@ -516,7 +516,7 @@ async function installItemEventConnection(): Promise<{
     .then((keys) => keys.find((k) => k.role === "admin"));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
-  const integrationName = `acme.preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+  const integrationName = `acme/preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
     {
       type: "system.integration",

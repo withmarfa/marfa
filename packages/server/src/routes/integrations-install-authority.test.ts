@@ -114,7 +114,7 @@ function installRequest(integrationId: string, key: string): Request {
 describe("the bearer install path refuses below space-admin", () => {
   it("refuses a member key installing an integration", async () => {
     if (!ctx.storage.spaces) return;
-    const id = await registerIntegration("acme.install-authority-refused");
+    const id = await registerIntegration("acme/install-authority-refused");
     const space = await ctx.storage.spaces.create("install-authority-refused");
     const memberKey = await mintKey(space.id, "member");
 
@@ -131,7 +131,7 @@ describe("the bearer install path refuses below space-admin", () => {
 
   it("still admits a space admin, whose job installing is", async () => {
     if (!ctx.storage.spaces) return;
-    const id = await registerIntegration("acme.install-authority-allowed");
+    const id = await registerIntegration("acme/install-authority-allowed");
     const space = await ctx.storage.spaces.create("install-authority-allowed");
     const adminKey = await mintKey(space.id, "space_admin");
 

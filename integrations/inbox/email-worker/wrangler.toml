@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-# Cloudflare Email Worker — companion to the withmarfa.inbox integration,
+# Cloudflare Email Worker — companion to the marfa/inbox integration,
 # and the one Worker the hosted deployment keeps: Email Routing can only
 # deliver inbound mail to a Worker or forward it to a mailbox, so this
 # Worker is the integration's substrate.

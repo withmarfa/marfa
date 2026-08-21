@@ -1,5 +1,5 @@
 /**
- * Manifest for the withmarfa.inbox email-capture integration.
+ * Manifest for the marfa/inbox email-capture integration.
  *
  * Substrate-shaped: no upstream API, no OAuth, no static token. The
  * substrate IS the upstream — Cloudflare Email Routing receives mail

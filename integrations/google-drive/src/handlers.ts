@@ -763,7 +763,7 @@ export async function handleWebhook(
   }
   return handleSchedule(ctx, {
     kind: "schedule",
-    integration_name: "google.drive",
+    integration_name: "google/drive",
     connection_id: ctx.connection_id,
     scheduled_for_ms: Date.now(),
   });

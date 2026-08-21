@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { WITHMARFA_INBOX_MANIFEST } from "./manifest.js";
 
-describe("withmarfa.inbox manifest", () => {
+describe("marfa/inbox manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
     const result = IntegrationManifestSchema.safeParse(
       WITHMARFA_INBOX_MANIFEST,

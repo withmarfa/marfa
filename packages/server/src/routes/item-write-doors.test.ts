@@ -299,8 +299,8 @@ describe.each(DOORS)("$name", (door) => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
     const space = await ctx.storage.spaces!.create(slug);
     spaceId = space.id;
-    mine = await credentialFor(spaceId, `acme.${slug}-mine`);
-    sibling = await credentialFor(spaceId, `acme.${slug}-sibling`);
+    mine = await credentialFor(spaceId, `acme/${slug}-mine`);
+    sibling = await credentialFor(spaceId, `acme/${slug}-sibling`);
   });
 
   async function activityRows(): Promise<Item[]> {
@@ -533,8 +533,8 @@ describe.each(ROW_DOORS)("$name", (door) => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
     const space = await ctx.storage.spaces!.create(slug);
     spaceId = space.id;
-    mine = await credentialFor(spaceId, `acme.${slug}-mine`);
-    sibling = await credentialFor(spaceId, `acme.${slug}-sib`);
+    mine = await credentialFor(spaceId, `acme/${slug}-mine`);
+    sibling = await credentialFor(spaceId, `acme/${slug}-sib`);
   });
 
   it("refuses to reach a sibling Connection's row", async () => {
@@ -574,7 +574,7 @@ describe("tier on a system.* row", () => {
   beforeAll(async () => {
     const space = await ctx.storage.spaces!.create("tier-rules");
     spaceId = space.id;
-    mine = await credentialFor(spaceId, "acme.tier-rules");
+    mine = await credentialFor(spaceId, "acme/tier-rules");
   });
 
   it("is refused on create, and on every door that updates", async () => {

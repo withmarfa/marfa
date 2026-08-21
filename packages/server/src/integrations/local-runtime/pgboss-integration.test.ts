@@ -25,10 +25,12 @@ describe("sanitizeQueueName", () => {
     expect(sanitizeQueueName("marfa.integrations.local.schedule:rss")).toBe(
       "marfa.integrations.local.schedule_rss",
     );
-    // Valid names (dots, hyphens) pass through unchanged.
+    // Valid names (dots, hyphens, the identifier's slash) pass through
+    // unchanged — pg-boss admits `/`, which is why an integration name can
+    // carry its publisher handle into a queue name without translation.
     expect(
-      sanitizeQueueName("marfa.integrations.local.schedule.google.calendar"),
-    ).toBe("marfa.integrations.local.schedule.google.calendar");
+      sanitizeQueueName("marfa.integrations.local.schedule.google/calendar"),
+    ).toBe("marfa.integrations.local.schedule.google/calendar");
     expect(sanitizeQueueName("name with spaces")).toBe("name_with_spaces");
   });
 });

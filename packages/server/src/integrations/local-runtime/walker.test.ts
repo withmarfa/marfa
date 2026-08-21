@@ -15,7 +15,7 @@ afterAll(async () => {
 });
 
 const MANIFEST_LOCAL = {
-  name: "test.walker-local",
+  name: "test/walker-local",
   version: "0.0.1",
   publisher: "test",
   description: "Walker test (local-only)",
@@ -36,7 +36,7 @@ const MANIFEST_LOCAL = {
 
 const MANIFEST_HOSTED_ONLY = {
   ...MANIFEST_LOCAL,
-  name: "test.walker-hosted",
+  name: "test/walker-hosted",
   runtime_compatibility: ["hosted"],
 };
 
@@ -133,7 +133,7 @@ describe("local-runtime connection walker", () => {
     // schedule's only source on this runtime — if it does not gate here,
     // pause reports success and the connection keeps running. The gate
     // is the walk itself, so resume needs no re-arm.
-    const pauseManifest = { ...MANIFEST_LOCAL, name: "test.walker-paused" };
+    const pauseManifest = { ...MANIFEST_LOCAL, name: "test/walker-paused" };
     const integrationId = await createIntegrationItem(pauseManifest);
     const pausedId = await createConnection({
       integrationItemId: integrationId,

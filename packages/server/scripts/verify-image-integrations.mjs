@@ -189,11 +189,11 @@ try {
       },
       message: {
         kind: "schedule",
-        integration_name: "marfa.template",
+        integration_name: "acme/template",
         connection_id: "verify-image-connection",
         scheduled_for_ms: Date.now(),
       },
-      integrationName: "marfa.template",
+      integrationName: "acme/template",
       echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
       hopBudget: 5,
       cursorSnapshot: {},
