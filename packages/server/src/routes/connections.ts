@@ -161,10 +161,26 @@ const installRoute = createRoute({
   },
 });
 
+// Three kinds of credential, and the response distinguishes them. A
+// reader who sees only the first two concludes the secret they handed
+// Marfa is gone, because nothing on the wire said otherwise.
+const UpstreamCredentialOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("none") }),
+  z.object({ status: z.literal("already_gone"), credential_id: z.string() }),
+  z.object({ status: z.literal("purged"), credential_id: z.string() }),
+  z.object({
+    status: z.literal("retained"),
+    credential_id: z.string(),
+    reason: z.literal("in_use_by_other_connections"),
+    connection_ids: z.array(z.string()),
+  }),
+]);
+
 const UninstallResultSchema = z.object({
   connection_id: z.string(),
   revoked_credential_ids: z.array(z.string()),
   oauth_tokens_deleted: z.boolean(),
+  upstream_credential: UpstreamCredentialOutcomeSchema,
   leased_tokens_revoked: z.number().int().nonnegative(),
   inbound_webhooks_disabled: z.number().int().nonnegative(),
   activity_id: z.string(),
@@ -456,7 +472,7 @@ const uninstallRoute = createRoute({
   tags: ["Connections"],
   summary: "Uninstall an integration connection",
   description:
-    "Tears down a connection in one pass: revokes its credentials and leased tokens, drops upstream OAuth tokens, disables inbound webhooks, and transitions it to `revoked`. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
+    "Tears down a connection in one pass: revokes its runtime credentials and leased tokens, drops the proxy's cached upstream OAuth tokens, disables inbound webhooks, transitions it to `revoked`, and removes the upstream credential it was installed with unless another live connection still shares it. `upstream_credential` in the response says which of those happened. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,

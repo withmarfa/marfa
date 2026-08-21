@@ -278,3 +278,210 @@ describe("performUninstall — partial-state semantics", () => {
     expect(result.revoked_credential_ids.length).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The upstream credential — the token the user handed Marfa.
+//
+// None of the cases below could fail before this was covered, because
+// `installFresh` passes no `credentialRef` at all: every existing test
+// installs a connection with no upstream credential and so never reaches
+// the code that was missing.
+// ---------------------------------------------------------------------------
+
+async function makeCredential(
+  kind: "api_token" | "oauth_token",
+): Promise<string> {
+  const credential = await ctx.storage.items.create(
+    {
+      type: "system.credential",
+      properties: {
+        kind,
+        label: `upstream ${kind} ${Date.now().toString()}`,
+        secret_encrypted: "aaa|bbb|ccc",
+        ...(kind === "api_token"
+          ? {
+              api_token_config: {
+                upstream_base_url: "https://api.example.test",
+                auth_scheme: "Bearer",
+              },
+            }
+          : {
+              oauth_provider_config: {
+                upstream_base_url: "https://api.example.test",
+                authorize_url: "https://example.test/authorize",
+                token_url: "https://example.test/token",
+                client_id: "client",
+              },
+            }),
+      },
+    },
+    undefined,
+  );
+  return credential.id;
+}
+
+async function installWithCredential(credentialRef: string): Promise<{
+  apiKeyId: string;
+  connectionId: string;
+}> {
+  const adminKey = await ctx.storage.keys
+    .list()
+    .then((keys) => keys.find((k) => k.role === "admin"));
+  if (!adminKey) throw new Error("admin key not found in test ctx");
+
+  const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest_name: `acme.upstream-${stamp}`,
+        manifest_version: "1.0.0",
+        publisher: "Acme",
+        direction: "both",
+        manifest: manifest(),
+        registered_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+
+  const result = await performInstall(ctx.storage, "test-salt", {
+    apiKeyId: adminKey.id,
+    spaceId: undefined,
+    authMode: "keys",
+    integrationItemId: integration.id,
+    manifest: { ...manifest(), name: `acme.upstream-${stamp}` },
+    label: `upstream credential test ${stamp}`,
+    credentialRef,
+  });
+
+  return { apiKeyId: adminKey.id, connectionId: result.connection_id };
+}
+
+describe("performUninstall — the upstream credential", () => {
+  it("purges an api-token credential and says so", async () => {
+    const credentialId = await makeCredential("api_token");
+    const installed = await installWithCredential(credentialId);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.upstream_credential).toEqual({
+      status: "purged",
+      credential_id: credentialId,
+    });
+    expect(await ctx.storage.items.get(credentialId, undefined)).toBeNull();
+  });
+
+  it("purges an oauth-token credential and says so", async () => {
+    const credentialId = await makeCredential("oauth_token");
+    const installed = await installWithCredential(credentialId);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.upstream_credential).toEqual({
+      status: "purged",
+      credential_id: credentialId,
+    });
+    expect(await ctx.storage.items.get(credentialId, undefined)).toBeNull();
+  });
+
+  it("keeps a credential another live connection still shares, and names it", async () => {
+    // The four Google integrations do exactly this, so the shared case is
+    // the normal one rather than an edge.
+    const credentialId = await makeCredential("oauth_token");
+    const first = await installWithCredential(credentialId);
+    const second = await installWithCredential(credentialId);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: first.apiKeyId,
+      connectionId: first.connectionId,
+    });
+
+    expect(result.upstream_credential).toEqual({
+      status: "retained",
+      credential_id: credentialId,
+      reason: "in_use_by_other_connections",
+      connection_ids: [second.connectionId],
+    });
+    const survivor = await ctx.storage.items.get(credentialId, undefined);
+    expect(survivor?.type).toBe("system.credential");
+
+    // And once the sibling goes too, the credential goes with it.
+    const secondResult = await performUninstall(ctx.storage, {
+      apiKeyId: second.apiKeyId,
+      connectionId: second.connectionId,
+    });
+    expect(secondResult.upstream_credential).toEqual({
+      status: "purged",
+      credential_id: credentialId,
+    });
+    expect(await ctx.storage.items.get(credentialId, undefined)).toBeNull();
+  });
+
+  it("reports `none` when the connection carried no credential", async () => {
+    const installed = await installFresh();
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.upstream_credential).toEqual({ status: "none" });
+  });
+
+  it("reports `already_gone` for a ref pointing at nothing", async () => {
+    const credentialId = await makeCredential("api_token");
+    const installed = await installWithCredential(credentialId);
+
+    // Removed by hand, which is exactly how the two stranded credentials
+    // this defect produced were cleaned up before it was fixed.
+    await ctx.storage.items.transition(credentialId, "revoked", undefined);
+    await ctx.storage.items.purge(credentialId, undefined);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.upstream_credential).toEqual({
+      status: "already_gone",
+      credential_id: credentialId,
+    });
+  });
+
+  it("carries the outcome onto the activity and audit rows", async () => {
+    const credentialId = await makeCredential("api_token");
+    const installed = await installWithCredential(credentialId);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      connectionId: installed.connectionId,
+    });
+
+    const activity = await ctx.storage.items.get(result.activity_id, undefined);
+    const detail = (
+      activity?.properties as { detail?: Record<string, unknown> }
+    ).detail;
+    expect(detail?.upstream_credential).toEqual({
+      status: "purged",
+      credential_id: credentialId,
+    });
+
+    const audit = await ctx.storage.audit.list({
+      action: "integration.uninstall",
+      resource_id: installed.connectionId,
+      limit: 5,
+    });
+    const row = audit.data[0];
+    expect(
+      (row?.details as { upstream_credential?: unknown } | undefined)
+        ?.upstream_credential,
+    ).toEqual({ status: "purged", credential_id: credentialId });
+  });
+});

@@ -25,8 +25,18 @@
  *      to `revoked`, and set `properties.status` to match in the same
  *      transaction. The two are the same fact stored twice, and they were
  *      allowed to disagree.
- *   7. Emit a `system.activity` row recording the uninstall.
- *   8. Awaited audit-log write.
+ *   7. Release the upstream credential the connection was installed with
+ *      — the user's own API or OAuth token — purging it unless another
+ *      live connection still shares it. Runs after step 6 so a failure
+ *      here leaves the connection revoked rather than half-installed.
+ *   8. Emit a `system.activity` row recording the uninstall.
+ *   9. Awaited audit-log write.
+ *
+ * **Three kinds of credential, reported separately.** Steps 2, 3 and 7
+ * remove different things, and the result says which of them happened to
+ * each. Reporting only the first two was not inaccurate about them — it
+ * was silent about the third, and silence about the user's own secret
+ * reads as "it is gone". See `upstream-credential.ts`.
  *
  * Authorization lives at the route layer — this function is callable
  * with any storage handle and trusts the caller to have gated already.
@@ -40,6 +50,10 @@
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
+import {
+  releaseUpstreamCredential,
+  type UpstreamCredentialOutcome,
+} from "./upstream-credential.js";
 
 export interface UninstallInput {
   /** The api_keys row id of the caller (audit trail). */
@@ -54,12 +68,20 @@ export interface UninstallInput {
 
 export interface UninstallResult {
   connection_id: string;
-  /** Ids of every runtime credential revoked. Usually a single id; the
-   *  pipeline tolerates the rare multi-credential case. */
+  /** Ids of every **runtime** credential revoked — Marfa's own, minted per
+   *  dispatch. Not the upstream credential; see `upstream_credential`.
+   *  Usually a single id, and routinely empty: superseded runtime
+   *  credentials are revoked on every mint and reaped hourly, so a
+   *  connection that is not mid-dispatch has none left to revoke. */
   revoked_credential_ids: string[];
-  /** True when a connection_oauth_tokens row was deleted; false when
-   *  the connection had never bootstrapped upstream OAuth. */
+  /** True when a connection_oauth_tokens row was deleted — the proxy's
+   *  cached upstream tokens. Always false for an api-token connection,
+   *  which never has one. */
   oauth_tokens_deleted: boolean;
+  /** What became of the upstream credential the connection was installed
+   *  with. Always present, including when there was nothing to do, so a
+   *  reader can tell "no credential" from "kept" from "removed". */
+  upstream_credential: UpstreamCredentialOutcome;
   /** Number of `connection_leased_tokens` rows revoked. Zero when none
    *  were active. */
   leased_tokens_revoked: number;
@@ -220,7 +242,23 @@ async function performUninstallLocked(
   });
 
   // -------------------------------------------------------------------
-  // Step 7: emit system.activity row.
+  // Step 7: release the upstream credential.
+  //
+  // After step 6 deliberately. Uninstall is monotonic toward
+  // "uninstalled", and a connection left revoked with its credential
+  // still present is closer to that than a live connection whose secret
+  // has been removed from under it. The dependent scan excludes this
+  // connection explicitly rather than relying on the revoke above, so
+  // the ordering stays a safety property and not a correctness one.
+  // -------------------------------------------------------------------
+  const upstreamCredential = await releaseUpstreamCredential(
+    storage,
+    connection,
+    input.spaceId,
+  );
+
+  // -------------------------------------------------------------------
+  // Step 8: emit system.activity row.
   // -------------------------------------------------------------------
   const integrationRef = connection.properties.integration_ref as
     | string
@@ -236,6 +274,7 @@ async function performUninstallLocked(
           integration_ref: integrationRef ?? null,
           revoked_credential_ids: revokedCredentialIds,
           oauth_tokens_deleted: oauthTokensDeleted,
+          upstream_credential: upstreamCredential,
           leased_tokens_revoked: leasedTokensRevoked,
           inbound_webhooks_disabled: inboundWebhooksDisabled,
         },
@@ -245,7 +284,7 @@ async function performUninstallLocked(
   );
 
   // -------------------------------------------------------------------
-  // Step 8: audit log. Awaited — failures are not silently swallowed.
+  // Step 9: audit log. Awaited — failures are not silently swallowed.
   // -------------------------------------------------------------------
   await storage.audit.log({
     key_id: input.apiKeyId,
@@ -258,6 +297,7 @@ async function performUninstallLocked(
       integration_ref: integrationRef ?? null,
       revoked_credential_ids: revokedCredentialIds,
       oauth_tokens_deleted: oauthTokensDeleted,
+      upstream_credential: upstreamCredential,
       leased_tokens_revoked: leasedTokensRevoked,
       inbound_webhooks_disabled: inboundWebhooksDisabled,
       activity_id: activity.id,
@@ -268,6 +308,7 @@ async function performUninstallLocked(
     connection_id: input.connectionId,
     revoked_credential_ids: revokedCredentialIds,
     oauth_tokens_deleted: oauthTokensDeleted,
+    upstream_credential: upstreamCredential,
     leased_tokens_revoked: leasedTokensRevoked,
     inbound_webhooks_disabled: inboundWebhooksDisabled,
     activity_id: activity.id,
