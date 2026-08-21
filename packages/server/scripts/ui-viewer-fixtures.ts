@@ -22,6 +22,7 @@ import { renderForgotPasswordPage } from "../src/routes/forgot-password-page.js"
 import { renderResetPasswordPage } from "../src/routes/reset-password-page.js";
 import { renderConsentScreen } from "../src/routes/consent.js";
 import { renderAuthorizeExpiredPage } from "../src/routes/authorize-expired-page.js";
+import { renderSignInLinkFailedPage } from "../src/routes/sign-in-link-page.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -375,6 +376,20 @@ const AUTH_SCREENS: GalleryScreen[] = [
         id: "expired",
         label: "Request expired",
         render: () => renderAuthorizeExpiredPage(),
+      },
+    ],
+  },
+  {
+    id: "sign-in-link",
+    label: "Sign-in link",
+    variants: [
+      {
+        // Where a dead one-time link lands. Only reachable by clicking a
+        // link that has already been spent or has timed out, which is
+        // exactly the kind of state nobody looks at until a user hits it.
+        id: "failed",
+        label: "Link did not work",
+        render: () => renderSignInLinkFailedPage({ returnTo: RETURN_TO }),
       },
     ],
   },
