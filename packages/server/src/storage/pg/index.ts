@@ -60,6 +60,9 @@ export async function createPgStorage(
     /** What kind of endpoint `connectionString` points at. `transaction`
      *  makes `directConnectionString` mandatory — see `createConnection`. */
     poolMode?: DbPoolMode;
+    /** Label this process's connections carry into `pg_stat_activity` —
+     *  see `createConnection`. */
+    applicationName?: string;
   },
 ): Promise<Storage> {
   const { db, baseDb, client, sessionClient, jobHolderClient, close } =
@@ -68,6 +71,7 @@ export async function createPgStorage(
       skipBootstrap: options?.skipBootstrap,
       directConnectionString: options?.directConnectionString,
       poolMode: options?.poolMode,
+      applicationName: options?.applicationName,
     });
 
   const versionStore = new PgVersionStore(db);

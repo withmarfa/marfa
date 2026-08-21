@@ -64,6 +64,15 @@ export async function createConnection(
      *  test files don't exhaust PG's cluster-wide `max_connections`
      *  (default 100). */
     maxPoolSize?: number;
+    /**
+     * Label this process's connections carry into `pg_stat_activity` as
+     * their `application_name`, suffixed per client (`:app`, `:session`,
+     * `:lock`). It is what lets `/health` say how much of the cluster's
+     * connection ceiling this deployment is holding and which pool is
+     * holding it — a figure a managed provider does not publish and that a
+     * self-hoster has no other route to. Defaults to `marfa`.
+     */
+    applicationName?: string;
     /** Skip the bootstrap `SCHEMA_SQL` + migration-journal stamp.
      *  Tests against a database cloned from a pre-built template
      *  (`createPgTestStorage`) already have the schema applied; running
@@ -167,8 +176,10 @@ export async function createConnection(
     );
   }
 
+  const appName = options?.applicationName ?? "marfa";
   const client = postgres(connectionString, {
     max: options?.maxPoolSize ?? 10,
+    connection: { application_name: `${appName}:app` },
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // Named prepared statements live on the backend that saw the PREPARE.
@@ -207,6 +218,7 @@ export async function createConnection(
     // tight connection ceilings — and a reservation that cannot be
     // served times out rather than queueing forever.
     max: Math.min(options?.maxPoolSize ?? 10, 5),
+    connection: { application_name: `${appName}:session` },
     // Same reasoning as the app pool. This one matters more per socket:
     // between streams it holds its slots open with nothing to show for it.
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
@@ -216,6 +228,7 @@ export async function createConnection(
   });
   const jobHolderClient = postgres(sessionModeUrl, {
     max: 1,
+    connection: { application_name: `${appName}:lock` },
     // The idle timeout only ever fires on a process that lost the
     // election and released its reservation — a held reservation is
     // exempt by construction — so the loser's probe connection closes

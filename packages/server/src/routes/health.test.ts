@@ -38,6 +38,7 @@ interface HealthBody {
     blob_storage?: { status: string; error?: string };
   };
   placement?: { region?: string; location?: string; country?: string };
+  database_connections?: unknown;
 }
 
 describe("GET /health", () => {
@@ -55,6 +56,21 @@ describe("GET /health", () => {
     expect(body.status).toBe("ok");
     expect(body.components.database?.status).toBe("ok");
     expect(body.components.blob_storage?.status).toBe("ok");
+  });
+
+  // The reading comes from `pg_stat_activity`, so there is nothing to read
+  // on a dialect that has neither a pool nor that view. Absent is the honest
+  // answer; a zeroed block would read as a deployment holding no
+  // connections, which is a different and wrong claim.
+  it("omits the connection reading on a storage with no pool", async () => {
+    const app = healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.database_connections).toBeUndefined();
   });
 
   it("answers degraded instead of hanging when the database probe never returns", async () => {
