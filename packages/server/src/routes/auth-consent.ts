@@ -96,6 +96,7 @@ import {
 } from "../auth/default-bundles.js";
 import { renderConsentScreen } from "./consent.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
+import type { AuthorizeFailure } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
@@ -236,9 +237,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // verification hop, routinely outruns it — so an honest user reaching
     // this is ordinary, and a raw 400 would leave them stranded on a
     // developer's error message with nothing to do next.
-    if ((await verifySignedQuery(auth, oauthQuery)) !== "valid") {
+    const getVerdict = await verifySignedQuery(auth, oauthQuery);
+    if (getVerdict !== "valid") {
       setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage(), 400);
+      return c.html(renderAuthorizeExpiredPage(failureCopy(getVerdict)), 400);
     }
 
     // OIDC `prompt` rides the signed query verbatim:
@@ -599,9 +601,13 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // form submit from a browser, and the likeliest way to reach it is a
     // user who read the consent screen for longer than the signed window
     // lasts.
-    if ((await verifySignedQuery(deps.auth, oauthQuery)) !== "valid") {
+    const decisionVerdict = await verifySignedQuery(deps.auth, oauthQuery);
+    if (decisionVerdict !== "valid") {
       setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage(), 400);
+      return c.html(
+        renderAuthorizeExpiredPage(failureCopy(decisionVerdict)),
+        400,
+      );
     }
 
     // Parse `client_id` + `scope` from the verified `oauth_query`, NOT
@@ -829,6 +835,21 @@ async function proxyConsentDecision(
  * second in the first.
  */
 type SignedQueryVerdict = "valid" | "expired" | "unsigned";
+
+/**
+ * Which failure screen a non-valid verdict earns.
+ *
+ * `unsigned` covers a signature that did not match, a missing one, and an
+ * `exp` that never parsed. None of those is a timeout, and calling them one
+ * sends an honest user hunting for a clock problem while an operator reads
+ * routine traffic where there is a forged request. The user-facing wording
+ * lives with the page.
+ */
+function failureCopy(
+  verdict: Exclude<SignedQueryVerdict, "valid">,
+): AuthorizeFailure {
+  return verdict === "expired" ? "expired" : "unverifiable";
+}
 
 /**
  * Order a parameter set the way the OAuth Provider plugin orders it
