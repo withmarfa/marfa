@@ -2,7 +2,7 @@
   "id": "system.integration",
   "label": "Integration",
   "description": "A registered Integration release — the persisted form of an Integration manifest. One item per (publisher.name, version) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. Installed at runtime via POST /integrations (platform credential gated). system.connection.integration references the item id via integration_ref.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "manifest_name": {
       "type": "string",
@@ -24,11 +24,6 @@
       "type": "enum",
       "description": "Read/write direction declared by the manifest. Drives consent-screen wording.",
       "enum_values": ["read", "write", "both"]
-    },
-    "runtime_compatibility": {
-      "type": "array",
-      "items_type": "string",
-      "description": "Manifest's declared runtime compatibility (subset of `hosted | self-hosted | local`). Determines which Worker tier the install pipeline targets."
     },
     "manifest": {
       "type": "object",
