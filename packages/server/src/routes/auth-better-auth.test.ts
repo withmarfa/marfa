@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  authUserExists,
   createTestContext,
   markEmailVerified,
   request,
@@ -52,6 +53,62 @@ async function signIn(
   });
 }
 
+const MAGIC_CALLBACK = "http://localhost:0/callback";
+
+async function requestMagicLink(
+  c: TestContext,
+  email: string,
+): Promise<Response> {
+  return request(c.app, "POST", "/auth/sign-in/magic-link", {
+    body: { email, callbackURL: MAGIC_CALLBACK },
+    headers: { origin: ORIGIN },
+  });
+}
+
+async function followMagicLink(
+  c: TestContext,
+  token: string,
+): Promise<Response> {
+  return request(
+    c.app,
+    "GET",
+    `/auth/magic-link/verify?token=${encodeURIComponent(token)}&callbackURL=${encodeURIComponent(MAGIC_CALLBACK)}`,
+    { headers: { origin: ORIGIN } },
+  );
+}
+
+/** A spy transport, so the test can read the token the email carried. */
+function emailSpy(): {
+  transport: import("../email/transport.js").EmailTransport;
+  sent: import("../email/transport.js").EmailMessage[];
+} {
+  const sent: import("../email/transport.js").EmailMessage[] = [];
+  return {
+    sent,
+    transport: {
+      backend: "none",
+      send(message) {
+        sent.push(message);
+        return Promise.resolve({
+          ok: true,
+          messageId: `spy/${message.idempotencyKey}`,
+        });
+      },
+    },
+  };
+}
+
+/** `instance.ts` stamps the token onto the idempotency key as
+ *  `magic-link/<token>`, which is the only place the test can reach it
+ *  without parsing the rendered email body. */
+function magicLinkToken(
+  sent: import("../email/transport.js").EmailMessage[],
+): string | undefined {
+  const prefix = "magic-link/";
+  const message = sent.find((m) => m.idempotencyKey.startsWith(prefix));
+  return message?.idempotencyKey.slice(prefix.length);
+}
+
 describe("better-auth /auth/* surface", () => {
   it("allows email + password sign-up when MARFA_AUTH_ALLOW_SIGNUP=true", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
@@ -67,6 +124,60 @@ describe("better-auth /auth/* surface", () => {
     // better-auth returns 403 when sign-up is disabled.
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
+  });
+
+  /**
+   * `MARFA_AUTH_ALLOW_SIGNUP` is the one switch that decides whether a
+   * stranger can create an account. The password path above has always
+   * honored it. The magic-link path did not: better-auth creates the
+   * user when none exists unless the plugin is told otherwise, so an
+   * instance with sign-up deliberately closed still grew an account —
+   * and, through the space-provisioning hook, a space — for any address
+   * that asked for a link.
+   *
+   * The refusal lands at verify rather than at send. An unknown address
+   * still receives a link and only the click fails. That is the
+   * plugin's non-enumeration behavior and is deliberate: refusing the
+   * send would tell a stranger which addresses hold accounts.
+   */
+  it("does not create an account via magic link when MARFA_AUTH_ALLOW_SIGNUP=false", async () => {
+    const { transport, sent } = emailSpy();
+    ctx = await createTestContext({ authAllowSignup: false }, transport);
+
+    const res = await requestMagicLink(ctx, "stranger@example.com");
+    // Not refused: the send is deliberately indistinguishable from one
+    // for an address that does hold an account.
+    expect(res.status).toBe(200);
+
+    const token = magicLinkToken(sent);
+    expect(token).toBeTruthy();
+
+    const verify = await followMagicLink(ctx, token!);
+    expect(verify.headers.get("location") ?? "").toContain(
+      "new_user_signup_disabled",
+    );
+    await expect(
+      authUserExists(ctx.storage, "stranger@example.com"),
+    ).resolves.toBe(false);
+  });
+
+  it("creates an account via magic link when MARFA_AUTH_ALLOW_SIGNUP=true", async () => {
+    const { transport, sent } = emailSpy();
+    ctx = await createTestContext({ authAllowSignup: true }, transport);
+
+    const res = await requestMagicLink(ctx, "newcomer@example.com");
+    expect(res.status).toBe(200);
+
+    const token = magicLinkToken(sent);
+    expect(token).toBeTruthy();
+
+    const verify = await followMagicLink(ctx, token!);
+    expect(verify.headers.get("location") ?? "").not.toContain(
+      "new_user_signup_disabled",
+    );
+    await expect(
+      authUserExists(ctx.storage, "newcomer@example.com"),
+    ).resolves.toBe(true);
   });
 
   it("authenticates an existing user via sign-in/email", async () => {

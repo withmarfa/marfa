@@ -780,8 +780,23 @@ export function authRoutes(
     // error callback. A token that was already spent and one that timed out
     // both arrive as INVALID_TOKEN, so the page names both rather than
     // guessing between them.
-    if (url.searchParams.get("error")) {
-      return c.html(renderSignInLinkFailedPage({ returnTo: next }), 400);
+    //
+    // `new_user_signup_disabled` is the one code worth splitting out: it
+    // means the link resolved to an address with no account on an instance
+    // where sign-up is off, so the default copy's "send yourself another and
+    // it will work" would be a loop rather than a fix.
+    const verifyError = url.searchParams.get("error");
+    if (verifyError) {
+      return c.html(
+        renderSignInLinkFailedPage({
+          returnTo: next,
+          reason:
+            verifyError === "new_user_signup_disabled"
+              ? "signup_closed"
+              : "expired",
+        }),
+        400,
+      );
     }
 
     // The session cookie rode in on this request, so the actor is known here
