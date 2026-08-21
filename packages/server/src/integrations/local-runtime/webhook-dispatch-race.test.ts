@@ -64,9 +64,8 @@ const TEMPLATE_MANIFEST = {
   version: "0.0.1",
   publisher: "test",
   description: "Test integration for the local runtime race guard",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
   direction: "bidirectional" as const,
-  runtime_compatibility: ["local"] as const,
   target_types: ["core.note"] as const,
   triggers: [{ type: "schedule" as const, config: { cron: "*/5 * * * *" } }],
   bidirectional_handling: {

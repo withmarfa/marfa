@@ -16,7 +16,6 @@
  *   - `properties.integration_ref` resolves to a `system.integration` whose
  *     manifest:
  *       - validates against `IntegrationManifestSchema`
- *       - declares `runtime_compatibility` that includes `"local"`
  *       - has the integration name we're walking for
  *
  * The walk is cursor-paginated; cron-tick latency is bounded by the
@@ -107,11 +106,11 @@ async function resolveManifestName(
   const intProps = integration.properties as IntegrationProperties;
   const validated = validateManifest(intProps.manifest);
   if (!validated.ok) return null;
-  // The integration is only eligible for the local substrate if its
-  // manifest opts in. Nothing else fans out any more; an
-  // integration declaring only `"hosted"` stays exclusively on
-  // Cloudflare.
-  if (!validated.manifest.runtime_compatibility.includes("local")) return null;
+  // No substrate check any more. There is one runtime, so an integration
+  // either has a registration here or it does not, and the supervisor
+  // answers that question when the envelope arrives. The manifest field
+  // that used to gate this described a choice between substrates that
+  // stopped existing when the Workers estate was deleted.
   return { integrationName: validated.manifest.name };
 }
 

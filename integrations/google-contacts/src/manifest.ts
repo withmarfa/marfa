@@ -68,8 +68,8 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
 export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   name: "google/contacts",
-  version: "0.2.0",
-  manifest_schema_version: "1.3.0",
+  version: "0.3.0",
+  manifest_schema_version: "2.0.0",
   configuration_schema: {
     write_family: {
       type: "string",
@@ -83,7 +83,6 @@ export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Contacts (People API) and Marfa. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Marfa-side mutations back via OAuth proxy with etag-based concurrency.",
   direction: "both",
-  runtime_compatibility: ["local"],
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time
   // configuration chooses which family a connection actually writes.

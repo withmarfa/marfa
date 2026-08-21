@@ -14209,12 +14209,6 @@
                         "both"
                       ]
                     },
-                    "runtime_compatibility": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
                     "registered_at": {
                       "type": "string"
                     },
@@ -14231,7 +14225,6 @@
                     "manifest_version",
                     "publisher",
                     "direction",
-                    "runtime_compatibility",
                     "registered_at",
                     "manifest"
                   ]
@@ -14470,12 +14463,6 @@
                               "both"
                             ]
                           },
-                          "runtime_compatibility": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
                           "registered_at": {
                             "type": "string"
                           },
@@ -14492,7 +14479,6 @@
                           "manifest_version",
                           "publisher",
                           "direction",
-                          "runtime_compatibility",
                           "registered_at",
                           "manifest"
                         ]
@@ -14605,12 +14591,6 @@
                         "both"
                       ]
                     },
-                    "runtime_compatibility": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
                     "registered_at": {
                       "type": "string"
                     },
@@ -14627,7 +14607,6 @@
                     "manifest_version",
                     "publisher",
                     "direction",
-                    "runtime_compatibility",
                     "registered_at",
                     "manifest"
                   ]

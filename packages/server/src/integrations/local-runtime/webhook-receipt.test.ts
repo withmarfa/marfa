@@ -32,9 +32,8 @@ const MANIFEST = {
   version: "0.0.1",
   publisher: "test",
   description: "Webhook receipt test",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
   direction: "read" as const,
-  runtime_compatibility: ["local"],
   target_types: ["core.note"],
   triggers: [{ type: "webhook" as const }],
   bidirectional_handling: {

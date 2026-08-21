@@ -26,7 +26,7 @@ describe("Readwise manifest", () => {
     expect(READWISE_MANIFEST.token_requirements).toEqual({
       readwise: "required",
     });
-    expect(READWISE_MANIFEST.manifest_schema_version).toBe("1.1.0");
+    expect(READWISE_MANIFEST.manifest_schema_version).toMatch(/^2\./);
   });
 
   it("declares no OAuth requirements", () => {

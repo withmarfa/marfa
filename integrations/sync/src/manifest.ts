@@ -36,17 +36,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
   name: "marfa/sync",
-  // Unmoved on purpose. Only the prose above changed, and the manifest
-  // lock hashes what a manifest declares rather than its comments, so a
-  // bump here would be a version with nothing behind it, which the lock
-  // refuses.
-  version: "0.1.1",
-  manifest_schema_version: "1.0.0",
+  version: "0.2.0",
+  manifest_schema_version: "2.0.0",
   publisher: "withmarfa",
   description:
     "Local file-sync client. Watches configured roots on disk; the items it writes belong to you and are editable like anything you create. Installs as a connection so it gets credentials, configuration, and observability the same way integrations do.",
   direction: "both",
-  runtime_compatibility: ["local"],
   target_types: ["core.note", "core.file"],
   triggers: [{ type: "manual" }],
   bidirectional_handling: {

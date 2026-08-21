@@ -56,13 +56,12 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "podcast";
 
 export const PODCASTS_MANIFEST: IntegrationManifest = {
   name: "marfa/podcasts",
-  version: "0.2.0",
-  manifest_schema_version: "1.3.0",
+  version: "0.3.0",
+  manifest_schema_version: "2.0.0",
   publisher: "withmarfa",
   description:
     "Polls podcast RSS feeds on a schedule and mirrors each show and its episodes, joined by in-collection edges. Writes its own podcast types by default, or the core media types when a connection chooses interoperability over fidelity. Read-only.",
   direction: "read",
-  runtime_compatibility: ["local"],
   target_types: [
     FAMILY_DEFINITIONS.podcast.types.show,
     FAMILY_DEFINITIONS.podcast.types.episode,

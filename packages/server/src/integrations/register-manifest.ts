@@ -32,7 +32,6 @@ export interface IntegrationCatalogProperties {
   publisher: string;
   summary?: string;
   direction: "read" | "write" | "both";
-  runtime_compatibility: readonly string[];
   manifest: IntegrationManifest;
   registered_at: string;
 }
@@ -167,7 +166,6 @@ export async function registerIntegrationManifest(
     publisher: manifest.publisher,
     summary: manifest.description,
     direction: manifest.direction,
-    runtime_compatibility: manifest.runtime_compatibility,
     manifest,
     registered_at: new Date().toISOString(),
   };

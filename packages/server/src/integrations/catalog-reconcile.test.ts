@@ -39,7 +39,6 @@ function makeManifest(
     direction: "read",
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
-    runtime_compatibility: ["local"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -48,7 +47,7 @@ function makeManifest(
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.3.0",
+    manifest_schema_version: "2.0.0",
     ...overrides,
   };
 }

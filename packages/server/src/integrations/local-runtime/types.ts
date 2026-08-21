@@ -21,7 +21,7 @@ import type {
  *   - `dispatch` runs one queue message synchronously. The supervisor
  *     wraps the call with the advisory-lock + cursor-state plumbing.
  *   - `manifest` is read for the schedule cron + bidirectional handling
- *     (echo TTL) + runtime_compatibility check.
+ *     (echo TTL).
  *   - `handlerModulePath` is the absolute path to the integration's
  *     handler entry — passed to the worker_thread so each thread can
  *     `await import()` the handlers once on startup.

@@ -55,9 +55,9 @@ export function resolveLocalEntry(
 
 /**
  * Load every in-tree integration's `local.ts` entry from
- * `integrations/<name>/dist/local.js`. Skips integrations that ship no
- * local entry or whose manifest does not declare `"local"` — those do
- * not run, and the skip is logged loudly.
+ * `integrations/<name>/dist/local.js`. An integration that ships no local
+ * entry is skipped: its code runs somewhere else, which is what makes it
+ * a client rather than an integration.
  *
  * The default integration list mirrors the in-tree set; callers can
  * override for tests or alternate self-host bundles.
@@ -95,17 +95,6 @@ export async function loadInTreeRegistrations(options: {
       console.error(
         `[local-runtime] ${dir} local.js manifest is invalid; skipping.`,
         validated.errors,
-      );
-      continue;
-    }
-    if (!validated.manifest.runtime_compatibility.includes("local")) {
-      // The manifest's declared compatibility is honored even though no
-      // other substrate exists: an integration that opts out of "local"
-      // is deliberately not run, loudly, rather than silently.
-      console.warn(
-        `[local-runtime] ${dir} declares runtime_compatibility=${JSON.stringify(
-          validated.manifest.runtime_compatibility,
-        )} without "local"; it will not run anywhere until that changes.`,
       );
       continue;
     }

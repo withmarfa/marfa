@@ -78,8 +78,8 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
 export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   name: "google/youtube",
-  version: "0.2.0",
-  manifest_schema_version: "1.3.0",
+  version: "0.3.0",
+  manifest_schema_version: "2.0.0",
   configuration_schema: {
     materialise_playlists: {
       type: "boolean",
@@ -91,7 +91,6 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   description:
     "Inbound YouTube (Data API v3) integration — liked videos, subscriptions, and user-created playlists. Consumer surface only; outbound deferred.",
   direction: "read",
-  runtime_compatibility: ["local"],
   target_types: [
     FAMILY_DEFINITIONS.google.types.video,
     FAMILY_DEFINITIONS.google.types.playlist,

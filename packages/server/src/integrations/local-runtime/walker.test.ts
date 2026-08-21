@@ -19,9 +19,8 @@ const MANIFEST_LOCAL = {
   version: "0.0.1",
   publisher: "test",
   description: "Walker test (local-only)",
-  manifest_schema_version: "1.0.0",
+  manifest_schema_version: "2.0.0",
   direction: "read" as const,
-  runtime_compatibility: ["local"],
   target_types: ["core.note"],
   triggers: [{ type: "schedule" as const, config: { cron: "*/1 * * * *" } }],
   bidirectional_handling: {
@@ -37,7 +36,6 @@ const MANIFEST_LOCAL = {
 const MANIFEST_HOSTED_ONLY = {
   ...MANIFEST_LOCAL,
   name: "test/walker-hosted",
-  runtime_compatibility: ["hosted"],
 };
 
 async function createIntegrationItem(

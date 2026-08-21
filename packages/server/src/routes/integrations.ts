@@ -52,7 +52,6 @@ const IntegrationItemSchema = z.object({
   publisher: z.string(),
   summary: z.string().optional(),
   direction: z.enum(["read", "write", "both"]),
-  runtime_compatibility: z.array(z.string()),
   registered_at: z.string(),
   manifest: z.record(z.string(), z.unknown()),
 });
@@ -207,7 +206,6 @@ interface IntegrationProperties {
   publisher: string;
   summary?: string;
   direction: "read" | "write" | "both";
-  runtime_compatibility: string[];
   manifest: Record<string, unknown>;
   registered_at: string;
 }
@@ -224,7 +222,6 @@ function toResponse(item: {
     publisher: props.publisher,
     summary: props.summary,
     direction: props.direction,
-    runtime_compatibility: props.runtime_compatibility,
     registered_at: props.registered_at,
     manifest: props.manifest,
   };

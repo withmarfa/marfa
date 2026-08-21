@@ -17,13 +17,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const READWISE_MANIFEST: IntegrationManifest = {
   name: "readwise/highlights",
-  version: "0.1.0",
-  manifest_schema_version: "1.1.0",
+  version: "0.2.0",
+  manifest_schema_version: "2.0.0",
   publisher: "readwise",
   description:
     "Inbound sync of Readwise highlights + parent books via the Export API. Polls hourly with an `updatedAfter` watermark; lands highlights as readwise.highlight items with parent-of edges to readwise.book items.",
   direction: "read",
-  runtime_compatibility: ["local"],
   target_types: ["readwise.highlight", "readwise.book"],
   triggers: [
     { type: "schedule", config: { cron: "0 * * * *" } }, // hourly

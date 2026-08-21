@@ -1,62 +1,62 @@
 {
   "google/calendar": {
-    "version": "0.2.0",
-    "hash": "026af5bb74584ce92b9079b3ce3c0392c7831708e0f099bcfa1e80c98a6829b5"
+    "version": "0.3.0",
+    "hash": "147a447ba69b73d543da34171fecf5e61dbcd9f2b7fe5fa09d57c04027f4e139"
   },
   "google/contacts": {
-    "version": "0.2.0",
-    "hash": "261513cd546a96c0e0f6c8fb74491d52ea4857e4a4104eea3a5f03a90285b5e6"
+    "version": "0.3.0",
+    "hash": "a3ed247ed214d3016872f6726a1f0913271a1155e9225e21570bf9d635965dc3"
   },
   "google/drive": {
-    "version": "0.2.0",
-    "hash": "0f0d033ce824e5c0e045c9d75da524a8bc897fa2609952d8bd8aeec2fa980e44"
+    "version": "0.3.0",
+    "hash": "bfdc0be944a7db77ac03b2be540733dc660e1344fa1ff6c3a5a852acc08bfad2"
   },
   "google/tasks": {
-    "version": "0.2.0",
-    "hash": "2dbb5609f12ff3a870eb5624fa11281c54095292188abe18d8e12a26eefb7e2c"
+    "version": "0.3.0",
+    "hash": "0fa23eb0e5e05ca4fc19c75abbb5e90a567574ec87ad65ba387b5b96bf2d27a5"
   },
   "google/youtube": {
-    "version": "0.2.0",
-    "hash": "d20345f3a768f21823caaaecbc5b1b37c3820dcb04702f6dd65b1a6fd6cf326e"
+    "version": "0.3.0",
+    "hash": "0092d9f5e335382119e76787fd9397dac5ea6ece49daae94db21a4b2b793b28f"
   },
   "marfa/github-webhooks": {
-    "version": "0.1.0",
-    "hash": "fb7745f31b9e7367f242d5c99b89860a8033fd312b01763f0a6428a604a1d828"
+    "version": "0.2.0",
+    "hash": "c320886f1afed0ded82b291756688479e6652801b347d59db0576372b3b6f6a0"
   },
   "marfa/inbox": {
-    "version": "0.2.0",
-    "hash": "61e22aeeb93205bdca047773c2751353e52bf9ebea6a1c11b54cfab720713bb8"
+    "version": "0.3.0",
+    "hash": "9b3894007bb190134aebf90c5ba82aaf0ec74d88e0b5dca4b853cea50bab1c62"
   },
   "marfa/podcasts": {
-    "version": "0.2.0",
-    "hash": "8e006e7fa41e515a500a986aedb1103e41d34d45bb7a8ac2d79ff48291dcd156"
+    "version": "0.3.0",
+    "hash": "2b316e5724194f092317e5d7ca73714c115b81d59fc75f2fd95fcec77e821ba9"
   },
   "marfa/rss-watcher": {
-    "version": "0.3.0",
-    "hash": "e64fc6a74e5fa1eaff3e250274403cddd5c8b4452b341a8f0af2e8a6bbc0c67d"
+    "version": "0.4.0",
+    "hash": "d3beb2ba1806f2a976727a73da3e0b9dc559cbab9dc7d1274761138714dd04c6"
   },
   "marfa/sync": {
-    "version": "0.1.1",
-    "hash": "68e0b6534140894316702436919f0c2e01ba04040852c968c3528b66b5a1f293"
+    "version": "0.2.0",
+    "hash": "835532827927b0bd85bfd06eea0a5a8784af87a15f260ac74b4ba936ce4f2e9e"
   },
   "marfa/task-auto-archive": {
-    "version": "0.1.0",
-    "hash": "958cb05c0c82793852bdcfb0cd59dd907f908ad2ea0ab8094a964f0dd7d14007"
+    "version": "0.2.0",
+    "hash": "4cc6c0ca3651c0ccdf065186ba2378f6c7915bf28ba703e6428f249009c32743"
   },
   "raindrop/bookmarks": {
-    "version": "0.1.0",
-    "hash": "fa4fed2f8e5701d934af2b6cbc4c6ec691712bfc73f63939ceda4d1475e60f19"
+    "version": "0.2.0",
+    "hash": "a5edbed6dc6b1685390472f99e12d2680b5221b94677428f591c5c0bd72e3b16"
   },
   "readwise/highlights": {
-    "version": "0.1.0",
-    "hash": "c9e477da115ba27c08b91b789d41298f056ed60c42010ecb8d73da2791ea715f"
+    "version": "0.2.0",
+    "hash": "5d01b2e3cfac1ff8b2a797a037ae5f497505bae1be2cb90c962295c3d965d3f0"
   },
   "readwise/reader": {
-    "version": "0.1.0",
-    "hash": "a6566fce50a560148b3a867834845499255c624aeea6985b3b1385edaa1d9251"
+    "version": "0.2.0",
+    "hash": "105df53a153796bd988551e7a902b1a41ab2be039490f38c1c1cbb59b6dec2c7"
   },
   "todoist/tasks": {
-    "version": "0.1.0",
-    "hash": "35f5aa0518e6c26ff58565febf9c2862f7d1a76ca8c6f7b16d32af3db2dc7b33"
+    "version": "0.2.0",
+    "hash": "ecb3f67d19d5dd54d4190c215c58787dff475c51e79162c29e1dd92fe0719fc8"
   }
 }

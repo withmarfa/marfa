@@ -50,9 +50,8 @@ function makeManifest(direction: "read" | "write" | "both" = "read") {
     version: "0.0.1",
     publisher: "test",
     description: "Ingests notes and nothing else",
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
     direction,
-    runtime_compatibility: ["local"] as const,
     target_types: ["core.note"] as const,
     triggers: [{ type: "schedule" as const, config: { cron: "*/5 * * * *" } }],
     bidirectional_handling: {

@@ -21,8 +21,8 @@ export const DEFAULT_ARCHIVE_AFTER_DAYS = 30;
 
 export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
   name: "marfa/task-auto-archive",
-  version: "0.1.0",
-  manifest_schema_version: "1.2.0",
+  version: "0.2.0",
+  manifest_schema_version: "2.0.0",
   configuration_schema: {
     archive_after_days: {
       type: "number",
@@ -35,7 +35,6 @@ export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
   description:
     "Archives core.task items older than N days (configurable per-install).",
   direction: "write",
-  runtime_compatibility: ["local"],
   target_types: ["core.task"],
   triggers: [
     { type: "item-event" },

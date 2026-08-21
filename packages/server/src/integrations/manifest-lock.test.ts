@@ -34,13 +34,12 @@ function manifest(
   return {
     name: "acme/thing",
     version: "1.0.0",
-    manifest_schema_version: "1.3.0",
+    manifest_schema_version: "2.0.0",
     publisher: "acme",
     description: "A thing.",
     direction: "read",
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
-    runtime_compatibility: ["local"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,

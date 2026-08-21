@@ -68,7 +68,7 @@ To install end-to-end:
 
 ## Runtime contract
 
-Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The manifest declares `runtime_compatibility`; the runtime loads integrations that include `"local"`. Build invariants:
+Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The runtime loads every integration that ships a built handler entry; there is one runtime, so there is nothing to declare compatibility with. An integration without a handler entry is a client, and its code runs wherever the client runs. Build invariants:
 
 - `tsup.config.ts` emits `dist/local.js`, which the server's supervisor loads at boot.
 - `@cloudflare/workers-types` remains a types-only devDependency: handler code types upstream responses through its generic `json<T>()` fetch typings. Nothing Cloudflare-specific runs; the runtime is Node.

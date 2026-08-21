@@ -18,13 +18,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GITHUB_WEBHOOKS_MANIFEST: IntegrationManifest = {
   name: "marfa/github-webhooks",
-  version: "0.1.0",
-  manifest_schema_version: "1.0.0",
+  version: "0.2.0",
+  manifest_schema_version: "2.0.0",
   publisher: "withmarfa",
   description:
     "Receives GitHub webhook deliveries (issues, pull_request) and creates a core.bookmark per opened item.",
   direction: "read",
-  runtime_compatibility: ["local"],
   target_types: ["core.bookmark"],
   triggers: [{ type: "webhook" }],
   bidirectional_handling: {

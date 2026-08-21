@@ -32,7 +32,7 @@ describe("Todoist manifest", () => {
     expect(TODOIST_MANIFEST.token_requirements).toEqual({
       todoist: "required",
     });
-    expect(TODOIST_MANIFEST.manifest_schema_version).toBe("1.1.0");
+    expect(TODOIST_MANIFEST.manifest_schema_version).toMatch(/^2\./);
   });
 
   it("declares no OAuth requirements (this is a token-credential integration)", () => {

@@ -21,11 +21,14 @@ describe("Raindrop manifest", () => {
     expect(RAINDROP_MANIFEST.direction).toBe("read");
   });
 
-  it("declares token_requirements for the raindrop capability + 1.1.0 schema version", () => {
+  it("declares token_requirements for the raindrop capability", () => {
     expect(RAINDROP_MANIFEST.token_requirements).toEqual({
       raindrop: "required",
     });
-    expect(RAINDROP_MANIFEST.manifest_schema_version).toBe("1.1.0");
+    // The schema version is pinned by the shared contract's supported
+    // major rather than by this integration, so asserting a specific
+    // value here only restates what validation already enforces.
+    expect(RAINDROP_MANIFEST.manifest_schema_version).toMatch(/^2\./);
   });
 
   it("targets raindrop.raindrop + raindrop.collection", () => {

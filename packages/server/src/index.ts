@@ -824,7 +824,7 @@ async function main() {
       if (registrations.length === 0) {
         log(
           "warn",
-          "Integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js.",
+          "Integration runtime enabled but no integrations ship a dist/local.js handler entry.",
         );
       }
       // The shared pg-boss instance always exists on this branch: it is

@@ -251,7 +251,6 @@ async function seedGoogleCalendarConnection(
         manifest_version: "0.1.0",
         publisher: "google",
         direction: "both",
-        runtime_compatibility: ["hosted", "local"],
         // The real shipped manifest, not a lookalike: a fixture shaped by
         // hand drifted from the integration once, and the behavior these
         // tests protect keyed on details the copy no longer had. The name
@@ -696,7 +695,6 @@ describe("the configuration surface answers a browser session", () => {
       direction: "read",
       triggers: [{ type: "manual" }],
       target_types: ["core.note"],
-      runtime_compatibility: ["hosted"],
       configuration_schema: {
         folder: { type: "string", description: "Folder to read from." },
       },
@@ -708,7 +706,7 @@ describe("the configuration surface answers a browser session", () => {
       },
       oauth_requirements: {},
       webhook_verification: { method: "hmac-sha256" },
-      manifest_schema_version: "1.2.0",
+      manifest_schema_version: "2.0.0",
     };
   }
 

@@ -33,7 +33,6 @@ function makeManifest(
     direction: "read",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -42,7 +41,7 @@ function makeManifest(
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
     ...overrides,
   };
 }
@@ -74,7 +73,6 @@ async function createIntegration(
         manifest_version: manifest.version,
         publisher: manifest.publisher,
         direction: manifest.direction,
-        runtime_compatibility: manifest.runtime_compatibility,
         manifest: manifest,
         registered_at: new Date().toISOString(),
       },
@@ -149,7 +147,6 @@ describe("resolveConnectionManifest", () => {
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "read",
-          runtime_compatibility: ["hosted"],
           manifest: { name: "broken", version: "missing fields" },
           registered_at: new Date().toISOString(),
         },

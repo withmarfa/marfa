@@ -54,7 +54,6 @@ function baseManifest(
       { type: "webhook" },
     ],
     target_types: ["core.note", "core.task"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -63,7 +62,7 @@ function baseManifest(
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
     permissions: {
       extension: { "acme.cursor": "write" },
       edge: {},
@@ -78,7 +77,6 @@ interface RegisterResponse {
   manifest_version: string;
   publisher: string;
   direction: "read" | "write" | "both";
-  runtime_compatibility: string[];
   manifest: Record<string, unknown>;
   registered_at: string;
 }
@@ -657,7 +655,6 @@ describe("GET /integrations — catalog visibility", () => {
           publisher: "Acme",
           summary: "Space-A-only manifest fixture",
           direction: "read" as const,
-          runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
           manifest: { name: "acme/space-a-private", version: "1.0.0" },
         },
@@ -718,7 +715,6 @@ describe("GET /integrations — catalog visibility", () => {
           integration_ref: "irrelevant",
           credential_ref: "irrelevant",
           triggers: [],
-          runtime_compatibility: ["hosted"],
         },
       },
       undefined, // space_id: null
@@ -919,7 +915,6 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "read" as const,
-          runtime_compatibility: ["hosted"],
           registered_at: new Date().toISOString(),
           manifest: { name: "acme/t234-space-a-only", version: "1.0.0" },
         },

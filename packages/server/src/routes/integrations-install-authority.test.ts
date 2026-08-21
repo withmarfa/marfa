@@ -53,7 +53,6 @@ function manifest(name: string) {
     // Deliberately wider than the installing key's own permissions: the
     // credential this mints could write types the member cannot.
     target_types: ["core.note", "core.task"],
-    runtime_compatibility: ["hosted" as const],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -62,7 +61,7 @@ function manifest(name: string) {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" as const },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
     permissions: { extension: { "acme.cursor": "write" as const }, edge: {} },
   };
 }

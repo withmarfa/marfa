@@ -31,7 +31,6 @@ function manifest(): IntegrationManifest {
     direction: "both",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -40,7 +39,7 @@ function manifest(): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
   };
 }
 
@@ -108,7 +107,6 @@ describe("performInstall — happy path", () => {
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "both",
-          runtime_compatibility: ["hosted"],
           manifest: manifest(),
           registered_at: new Date().toISOString(),
         },
@@ -175,7 +173,6 @@ describe("performInstall — the manifest's declared defaults are written in", (
         manifest_version: withDefaults.version,
         publisher: withDefaults.publisher,
         direction: withDefaults.direction,
-        runtime_compatibility: withDefaults.runtime_compatibility,
         manifest: withDefaults,
         registered_at: new Date().toISOString(),
       },
@@ -446,7 +443,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
           manifest_version: "1.0.0",
           publisher: "Acme",
           direction: "both",
-          runtime_compatibility: ["hosted"],
           manifest: manifest(),
           registered_at: new Date().toISOString(),
         },

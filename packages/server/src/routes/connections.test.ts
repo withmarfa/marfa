@@ -42,7 +42,6 @@ function manifest(name: string): IntegrationManifest {
     direction: "both",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -51,7 +50,7 @@ function manifest(name: string): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.2.0",
+    manifest_schema_version: "2.0.0",
     configuration_schema: {
       custom_knob: {
         type: "number",
@@ -79,7 +78,6 @@ async function installFresh(): Promise<{
         manifest_version: "1.0.0",
         publisher: "Acme",
         direction: "both",
-        runtime_compatibility: ["hosted"],
         manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
       },
@@ -134,7 +132,6 @@ async function createIntegration(): Promise<{
         manifest_version: "1.0.0",
         publisher: "Acme",
         direction: "both",
-        runtime_compatibility: ["hosted"],
         manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
       },
@@ -495,7 +492,6 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
     direction: "both",
     triggers: [{ type: "item-event" }], // buildEntryForConnection returns null without this trigger
     target_types: ["core.note"],
-    runtime_compatibility: ["hosted"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,
       lag_window_seconds: 60,
@@ -504,7 +500,7 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
     },
     oauth_requirements: {},
     webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "1.0.0",
+    manifest_schema_version: "2.0.0",
   };
 }
 
@@ -525,7 +521,6 @@ async function installItemEventConnection(): Promise<{
         manifest_version: "1.0.0",
         publisher: "Acme",
         direction: "both",
-        runtime_compatibility: ["hosted"],
         manifest: manifestWithItemEventTrigger(integrationName),
         registered_at: new Date().toISOString(),
       },
