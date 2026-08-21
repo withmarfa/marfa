@@ -24,7 +24,9 @@ Typed data layer. This monorepo holds seven active workspace packages, sixteen i
 
 **Infra (`infra/`):** `digitalocean` — compose files, Caddyfile, env templates, and the deploy shape for the droplet deployments (`deploy-server.yml` targets it).
 
-`@withmarfa/shared`, `@withmarfa/sdk`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
+`@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/runtime-sdk`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
+
+`@withmarfa/runtime-sdk` publishes after `@withmarfa/shared` and `@withmarfa/sdk` in that workflow, and the order is load-bearing: `pnpm pack` resolves its `workspace:*` dependencies to concrete version numbers, so packing it before those versions exist on the registry produces a tarball nobody can install.
 
 ## Tech stack
 
