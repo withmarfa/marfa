@@ -25,6 +25,35 @@ updates:
     open-pull-requests-limit: 1
     labels:
       - "dependencies"
+    ignore:
+      # Two esbuild advisories that no published version can satisfy, both
+      # reached only through a parent that pins the vulnerable line.
+      #
+      # GHSA-g7r4-m6w7-qqqr, arbitrary file read from the development server
+      # on Windows, patched in 0.28.1. It arrives through `tsup`, whose
+      # current release declares `esbuild: ^0.27.0` and therefore cannot
+      # admit the fix. Revisit when tsup widens that range.
+      #
+      # GHSA-67mh-4wv8-2f99, the development server answering requests from
+      # any website, patched in 0.25.0. It arrives through `drizzle-kit` ->
+      # `@esbuild-kit/esm-loader` -> `@esbuild-kit/core-utils`, which pins
+      # `esbuild: ~0.18.20`. Both `@esbuild-kit` packages are deprecated
+      # ("Merged into tsx") and drizzle-kit's current release still depends
+      # on them, so there is nothing to upgrade to. Revisit when drizzle-kit
+      # drops them.
+      #
+      # Neither is an exposure here. Both require running esbuild's
+      # development server, and neither parent starts one: tsup uses esbuild
+      # to bundle, and the esbuild-kit chain is a module loader for a
+      # migration CLI. Nothing ships either to a browser or serves from
+      # them. Forcing a patched version through an override would put tsup
+      # outside its own declared range, which trades a non-exposure for a
+      # real build risk.
+      #
+      # Scoped to the one package deliberately. A broader ignore would hide
+      # esbuild advisories that do matter, including any that reach a
+      # version we can actually move.
+      - dependency-name: "esbuild"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
