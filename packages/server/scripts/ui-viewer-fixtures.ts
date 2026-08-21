@@ -23,6 +23,7 @@ import { renderResetPasswordPage } from "../src/routes/reset-password-page.js";
 import { renderConsentScreen } from "../src/routes/consent.js";
 import { renderAuthorizeExpiredPage } from "../src/routes/authorize-expired-page.js";
 import { renderSignInLinkFailedPage } from "../src/routes/sign-in-link-page.js";
+import { renderSignedOutPage } from "../src/routes/signed-out-page.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -398,6 +399,20 @@ const AUTH_SCREENS: GalleryScreen[] = [
         id: "failed",
         label: "Link did not work",
         render: () => renderSignInLinkFailedPage({ returnTo: RETURN_TO }),
+      },
+    ],
+  },
+  {
+    id: "signed-out",
+    label: "Signed out",
+    variants: [
+      {
+        // The floor under browser logout: reached when the plugin ends the
+        // session but has no registered return URI to send the person to,
+        // which it otherwise answers with an empty document.
+        id: "default",
+        label: "Session ended",
+        render: () => renderSignedOutPage(),
       },
     ],
   },
