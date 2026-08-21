@@ -148,7 +148,10 @@ export function createScheduleHandler(
         // One bad entry shouldn't block the rest. Surface via activity.
         await ctx.activity.emit({
           severity: "action_required",
-          summary: `RSS Watcher failed to create bookmark for entry ${entry.id}`,
+          // Not "bookmark": a mapped connection writes whatever type its
+          // rules name, and reporting the family's noun for it sends
+          // somebody looking for an item that was never attempted.
+          summary: `RSS Watcher failed to create an item for entry ${entry.id}`,
           detail: { error: errorMessage(err) },
         });
       }
@@ -157,16 +160,31 @@ export function createScheduleHandler(
     cursor.last_run_at = new Date(message.scheduled_for_ms).toISOString();
     await ctx.cursor.write(CURSOR_KEY, cursor);
 
+    // Count what was actually written rather than assuming the family.
+    // A connection carrying a user mapping writes the type its rules
+    // name, and reporting "20 bookmark(s)" for twenty rows of somebody's
+    // own type is the kind of small dishonesty that makes an operator
+    // distrust the whole feed.
+    const writtenByType = new Map<string, number>();
+    for (const item of created) {
+      writtenByType.set(item.type, (writtenByType.get(item.type) ?? 0) + 1);
+    }
+    const writtenSummary = [...writtenByType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, count]) => `${String(count)} ${type}`)
+      .join(", ");
+
     await ctx.activity.emit({
       severity: "info",
       summary:
         created.length === 0
           ? "RSS Watcher tick — no new entries"
-          : `RSS Watcher created ${String(created.length)} bookmark(s)`,
+          : `RSS Watcher created ${writtenSummary}`,
       detail: {
         feed_url: feedUrl,
         entries_seen: parsed.entries.length,
         entries_created: created.length,
+        written_by_type: Object.fromEntries(writtenByType),
       },
     });
 
