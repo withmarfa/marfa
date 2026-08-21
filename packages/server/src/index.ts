@@ -141,6 +141,10 @@ async function main() {
         authMode: config.authMode,
         directConnectionString: directUrl,
         poolMode: config.dbPoolMode,
+        // Names this process's connections in `pg_stat_activity`, which is
+        // what lets `/health` attribute the cluster's connection usage to a
+        // role rather than reporting one undifferentiated number.
+        applicationName: `marfa-${config.processRole ?? "both"}`,
         ...(config.dbPoolSize !== undefined && {
           maxPoolSize: config.dbPoolSize,
         }),

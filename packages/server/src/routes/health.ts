@@ -7,6 +7,7 @@ import type { BlobBackend } from "../storage/blob-backend.js";
 import type { AppConfig } from "../config.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OidcProviderHealth } from "../auth/oidc-availability.js";
+import type { PgClient } from "../storage/pg/connection.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
@@ -57,6 +58,20 @@ function readPlacement(): Placement | null {
 }
 
 /**
+ * How much of the database's connection ceiling this deployment is holding,
+ * and which pool is holding it.
+ */
+interface DatabaseConnections {
+  /** Connections to this database from every client, Marfa's or not. */
+  total: number;
+  /** The cluster's `max_connections`. The number `total` is racing. */
+  ceiling: number;
+  /** Counts by backend state, keyed by client. Marfa's own pools are named
+   *  (`marfa-web:app`, `marfa-worker:lock`); anything else is `other`. */
+  clients: Record<string, Record<string, number>>;
+}
+
+/**
  * How long a component probe may take before this endpoint stops waiting
  * on it and reports what it knows.
  *
@@ -103,6 +118,80 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
   }
 }
 
+/**
+ * How long a connection reading may be cached before it is taken again.
+ *
+ * The compose healthcheck hits `/health` far more often than any external
+ * watcher does, and this probe costs a pool slot — the resource it exists to
+ * measure. Fifteen seconds keeps the figure current enough to watch a pool
+ * fill while making the probe a rounding error against the traffic that
+ * asks for it.
+ */
+const CONNECTIONS_CACHE_MS = 15_000;
+
+/**
+ * Read how many connections this database is carrying, from the database's
+ * own view of them.
+ *
+ * The driver is postgres.js, which keeps its pool queues module-local and
+ * exposes nothing to count — the pool-depth properties an operator expects
+ * belong to a different client library that this server does not use. So the
+ * count comes from `pg_stat_activity` instead, which is a better answer
+ * anyway: it sees every connection to the database whatever opened it, so the
+ * web container reports the whole deployment's usage against the ceiling
+ * rather than only its own share, and a self-hoster's `psql` session shows up
+ * in the same total that is racing `max_connections`.
+ *
+ * Two limits worth knowing. A non-superuser sees every row but only reads
+ * `application_name` and `state` for backends belonging to its own role, so
+ * anything connecting as another role lands in `other` — the total stays
+ * right, the attribution does not claim more than it knows. And the reading
+ * is omitted rather than guessed when the probe cannot complete: a pool held
+ * hard enough to starve this query has already failed the database component
+ * above, which is what a watcher alerts on. The value here is watching the
+ * number climb toward the ceiling beforehand.
+ */
+/** The `application_name` shape `createConnection` sets: an optional role
+ *  suffix on the base label, then the pool that opened the connection. */
+const MARFA_CLIENT = /^marfa(-[a-z]+)?:(app|session|lock)$/;
+
+async function readDatabaseConnections(
+  client: PgClient,
+): Promise<DatabaseConnections> {
+  const rows = (await client`
+    select
+      coalesce(nullif(application_name, ''), 'other') as client,
+      coalesce(state, 'unknown') as state,
+      count(*)::int as connections,
+      current_setting('max_connections')::int as ceiling
+    from pg_stat_activity
+    where datname = current_database()
+    group by 1, 2
+  `) as unknown as {
+    client: string;
+    state: string;
+    connections: number;
+    ceiling: number;
+  }[];
+
+  const clients: Record<string, Record<string, number>> = {};
+  let total = 0;
+  let ceiling = 0;
+  for (const row of rows) {
+    // Only Marfa's own pools are reported under their own name, matched
+    // against the shape this server sets rather than a loose prefix. Every
+    // other client folds into one bucket: the ceiling is shared so the count
+    // matters, but this endpoint is unauthenticated and has no business
+    // publishing arbitrary connection labels from someone else's cluster.
+    const key = MARFA_CLIENT.test(row.client) ? row.client : "other";
+    const byState = (clients[key] ??= {});
+    byState[row.state] = (byState[row.state] ?? 0) + row.connections;
+    total += row.connections;
+    ceiling = row.ceiling;
+  }
+  return { total, ceiling, clients };
+}
+
 export function healthRoutes(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -110,6 +199,14 @@ export function healthRoutes(
   getAuth?: () => MarfaAuth | undefined,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
+
+  // Undefined on SQLite, where there is no pool and no `pg_stat_activity`
+  // to read, so the block is absent rather than zeroed. Cast at the
+  // consumer site, matching how the other escape hatches on `Storage` are
+  // consumed.
+  const pgClient = storage.pgClient as PgClient | undefined;
+  let connectionsCache: { at: number; value: DatabaseConnections } | null =
+    null;
 
   // Read once rather than per request. The file cannot change under a
   // running process — a new build is a new container — and a liveness
@@ -206,6 +303,31 @@ export function healthRoutes(
       if (unavailable.length > 0) overall = "degraded";
     }
 
+    // How much of the connection ceiling this deployment is holding. Not a
+    // component: it carries no status and never degrades the response. Pool
+    // exhaustion has taken this deployment down twice and nothing published
+    // the number that would have shown either coming — the provider offers
+    // no connection-count metric at all, so the server that owns the pools
+    // is the only thing that can say.
+    let databaseConnections: DatabaseConnections | undefined;
+    if (pgClient) {
+      const cached = connectionsCache;
+      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
+        databaseConnections = cached.value;
+      } else {
+        try {
+          const outcome = await withBudget(readDatabaseConnections(pgClient));
+          if (outcome !== TIMED_OUT) {
+            databaseConnections = outcome;
+            connectionsCache = { at: performance.now(), value: outcome };
+          }
+        } catch {
+          // Omitted rather than guessed. The database component above has
+          // already reported whatever stopped this from answering.
+        }
+      }
+    }
+
     const version = await readVersion();
     const placement = readPlacement();
 
@@ -213,6 +335,9 @@ export function healthRoutes(
       status: overall,
       auth_mode: config.authMode,
       components,
+      ...(databaseConnections && {
+        database_connections: databaseConnections,
+      }),
       ...(placement && { placement }),
       ...(version && { version }),
     });
