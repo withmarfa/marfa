@@ -2685,6 +2685,27 @@ exports[`every gallery variant renders > renders 'auth/sign-up/weak-password' 1`
 </html>"
 `;
 
+exports[`every gallery variant renders > renders 'auth/signed-out/default' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>You&#39;re signed out</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--confirm" aria-label="You&#39;re signed out">
+    
+    <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
+    <h1 class="title">You're signed out</h1>
+    <p class="sub" role="status">Your session on this device has ended. You can close this tab, or sign in again from the app you were using.</p>
+  
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'auth/verify-email/failure' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">
