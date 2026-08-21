@@ -1,6 +1,8 @@
 # @withmarfa/runtime-sdk
 
-The SDK that Connection integrations import. Provides the handler-registration API, per-Connection state primitives, the connection-scoped client, echo suppression, and the dispatch glue the server's integration runtime calls into. Private package — workspace-only.
+The SDK that Connection integrations import. Provides the handler-registration API, per-Connection state primitives, the connection-scoped client, echo suppression, and the dispatch glue the server's integration runtime calls into. **Published**, because it is the contract an integration is written against and an integration outside this repository cannot depend on a workspace reference.
+
+**The breaking-change posture is the server's.** This package describes what the server's integration runtime will call and what it guarantees while doing so, so its major version tracks that contract rather than its own internals: a change that makes an existing handler stop compiling or stop behaving is a major, and everything else is not. It stays in this repository for the same reason. It is versioned in lockstep with the server that implements it, and a separate repository would only add a synchronisation problem.
 
 ## Layout
 

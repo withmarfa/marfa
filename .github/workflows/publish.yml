@@ -97,6 +97,30 @@ jobs:
           pnpm pack
           npm publish withmarfa-sdk-*.tgz --access=public
 
+      # The authoring contract for an integration. Published because an
+      # integration that lives outside this repository cannot depend on a
+      # workspace reference, which is what kept every integration in-tree.
+      - name: Check @withmarfa/runtime-sdk publish status
+        id: check_runtime_sdk
+        working-directory: packages/runtime-sdk
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          published_versions=$(npm view @withmarfa/runtime-sdk versions --json 2>/dev/null || echo '[]')
+          if echo "$published_versions" | grep -q "\"$local_version\""; then
+            echo "@withmarfa/runtime-sdk@$local_version is already published — skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@withmarfa/runtime-sdk@$local_version is new — will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish @withmarfa/runtime-sdk
+        if: steps.check_runtime_sdk.outputs.should_publish == 'true'
+        working-directory: packages/runtime-sdk
+        run: |
+          pnpm pack
+          npm publish withmarfa-runtime-sdk-*.tgz --access=public
+
       - name: Check @withmarfa/webhooks publish status
         id: check_webhooks
         working-directory: packages/webhooks
