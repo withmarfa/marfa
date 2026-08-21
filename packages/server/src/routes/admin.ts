@@ -604,6 +604,84 @@ export interface AdminRoutesOptions {
   apiKeySalt: string;
 }
 
+const deleteSpaceRoute = createRoute({
+  operationId: "adminDeleteSpace",
+  method: "post",
+  path: "/spaces/{id}/delete",
+  tags: ["Admin"],
+  summary: "Delete a space and everything it holds, immediately",
+  description:
+    "Hard-deletes a space that no account owns, along with its items, edges, blobs, keys, webhooks, connection tokens and quota. There is no grace window and no undo. A space that still has users is refused: that case belongs to `POST /accounts/{id}/delete`, which owns the account teardown as well. The body's `confirm` must be the space id, spelled exactly; the mismatch refusal is the fat-finger gate on an action with no undo.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string().describe("The space id.") }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            confirm: z
+              .string()
+              .min(1)
+              .describe(
+                "The space id, exactly. Refused otherwise. The id rather than the name because a space name is neither required nor unique.",
+              ),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ deleted: z.literal(true) }),
+        },
+      },
+      description: "Space deleted",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "confirm did not match the space id",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "Space not found",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description: "The space still has users; delete the account instead",
+    },
+  },
+});
+
 const deleteAccountRoute = createRoute({
   operationId: "adminDeleteAccount",
   method: "post",
@@ -970,6 +1048,58 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       details: { purged_count: purgedCount, run_at: runAt },
     });
     return c.json({ purged_count: purgedCount, run_at: runAt }, 200);
+  });
+
+  router.openapi(deleteSpaceRoute, async (c) => {
+    const actor = requireAdmin(c);
+    const { id } = c.req.valid("param");
+    const { confirm } = c.req.valid("json");
+
+    // The account route confirms on the email, a second fact independent
+    // of the path. A space has no such fact: `name` is optional and not
+    // unique — staging currently holds four spaces named "Probe 453" and
+    // several with no name at all — so confirming on it would refuse
+    // legitimate deletes and accept the wrong space. The id typed twice
+    // still catches the common error, which is a wrong value pasted into
+    // a script.
+    if (confirm !== id) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "confirm must be the space id, exactly",
+      );
+    }
+
+    const outcome = await storage.deleteSpace(id);
+    if (outcome === "not_found") {
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
+    }
+    if (outcome === "has_users") {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Space ${id} still has users. Delete the account with POST /admin/accounts/{id}/delete, which removes the space with it.`,
+      );
+    }
+
+    // Drop the per-instance status cache: a gated write holding a stale
+    // `active` for a space that no longer exists would read as a puzzling
+    // permission error rather than a missing space.
+    evictSpaceStatus(id);
+
+    // Awaited rather than fire-and-forget, matching the account delete:
+    // an operator-initiated deletion should not answer before its own
+    // trail is durable. The store swallows write failures internally, so
+    // this cannot throw.
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      space_id: null,
+      key_id: actor.id,
+      action: "space.hard_deleted",
+      resource_type: "space",
+      resource_id: id,
+      details: {},
+    });
+
+    return c.json({ deleted: true as const }, 200);
   });
 
   router.openapi(deleteAccountRoute, async (c) => {

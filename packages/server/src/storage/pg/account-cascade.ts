@@ -72,6 +72,111 @@ import {
   users,
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
+import type { PgTxContext } from "./request-context.js";
+
+/**
+ * Delete every row scoped to a space, leaving the `spaces` row itself and
+ * the auth island alone.
+ *
+ * Steps 2 through 6 of the cascade above, extracted so a space deletion
+ * that has no account behind it reaches the same teardown. Two copies of
+ * this list would drift the first time a space-scoped table is added, and
+ * the failure that produces is a stranded row nobody looks for.
+ *
+ * The caller owns the transaction, the `FOR UPDATE` lock on the space row,
+ * and the decision about whether the space may be deleted at all. This
+ * function only sweeps.
+ *
+ * `system.connection` items are not uninstalled through the route-layer
+ * pipeline — it is not reachable from storage — so the minimal subset of
+ * its effects is done directly here. The connection items themselves go
+ * with the bulk purge.
+ */
+export async function pgPurgeSpaceScopedRows(
+  tx: PgTxContext,
+  storage: Storage,
+  spaceId: string,
+): Promise<void> {
+  await tx
+    .delete(connectionOauthTokens)
+    .where(eq(connectionOauthTokens.space_id, spaceId));
+  await tx
+    .delete(connectionLeasedTokens)
+    .where(eq(connectionLeasedTokens.space_id, spaceId));
+  await tx.delete(inboundWebhookEvents).where(
+    sql`${inboundWebhookEvents.inbound_webhook_id} IN (
+        SELECT ${inboundWebhooks.id} FROM ${inboundWebhooks}
+        WHERE ${inboundWebhooks.space_id} = ${spaceId}
+      )`,
+  );
+  await tx.delete(inboundWebhooks).where(eq(inboundWebhooks.space_id, spaceId));
+
+  await tx.delete(edges).where(eq(edges.space_id, spaceId));
+
+  // Cascades metadata + versions via FK; the search index needs explicit
+  // cleanup, which `bulkPurge` already wires.
+  const spaceItems = await tx
+    .select({ id: items.id })
+    .from(items)
+    .where(eq(items.space_id, spaceId));
+  const ids = spaceItems.map((r) => r.id);
+  if (ids.length > 0) {
+    await storage.items.bulkPurge(ids, spaceId);
+  }
+
+  await tx.delete(blobs).where(eq(blobs.space_id, spaceId));
+
+  await tx.delete(apiKeys).where(eq(apiKeys.space_id, spaceId));
+  await tx
+    .delete(outboundWebhooks)
+    .where(eq(outboundWebhooks.space_id, spaceId));
+  await tx.delete(spaceQuotas).where(eq(spaceQuotas.space_id, spaceId));
+}
+
+/**
+ * Hard-delete a space that no account owns.
+ *
+ * The counterpart to `pgDeleteAccountCascade` for the case it cannot
+ * serve: a space provisioned by a platform credential rather than by
+ * sign-up has no `auth_user` to cascade from, and until this existed
+ * there was no way to remove one at all. Conformance is the standing
+ * example — it creates a space per run and its own comments record that
+ * nothing can delete them.
+ *
+ * **Refuses a space that still has users.** The account cascade owns the
+ * auth island (`auth_verification`, `users`, `auth_user`, and the audit
+ * redaction that goes with it), and a second path deleting the space out
+ * from under an account would leave that island referencing a space that
+ * no longer exists. One cascade stays authoritative; this one reports
+ * `has_users` and the caller is directed at it.
+ */
+export async function pgDeleteSpace(
+  db: PgDb,
+  storage: Storage,
+  spaceId: string,
+): Promise<"deleted" | "not_found" | "has_users"> {
+  return db.transaction(async (tx) => {
+    // Same lock and the same reason as the cascade: it must be taken
+    // before the quota row is deleted, or a concurrent quota update can
+    // reinsert one after the sweep and strand it.
+    const [row] = await tx
+      .select({ id: spaces.id })
+      .from(spaces)
+      .where(eq(spaces.id, spaceId))
+      .for("update");
+    if (!row) return "not_found";
+
+    const owners = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.space_id, spaceId));
+    if (owners.length > 0) return "has_users";
+
+    await pgPurgeSpaceScopedRows(tx, storage, spaceId);
+    await tx.delete(spaces).where(eq(spaces.id, spaceId));
+    return "deleted";
+  });
+}
 
 export async function pgDeleteAccountCascade(
   db: PgDb,
@@ -123,47 +228,8 @@ export async function pgDeleteAccountCascade(
         .where(eq(spaces.id, spaceId))
         .for("update");
 
-      // ---- 2. Connection-tied artifacts. --------------------------------
-      // The full uninstall pipeline isn't reachable from storage; do the
-      // minimal subset. system.connection items themselves drop in step 4.
-      await tx
-        .delete(connectionOauthTokens)
-        .where(eq(connectionOauthTokens.space_id, spaceId));
-      await tx
-        .delete(connectionLeasedTokens)
-        .where(eq(connectionLeasedTokens.space_id, spaceId));
-      await tx.delete(inboundWebhookEvents).where(
-        sql`${inboundWebhookEvents.inbound_webhook_id} IN (
-            SELECT ${inboundWebhooks.id} FROM ${inboundWebhooks}
-            WHERE ${inboundWebhooks.space_id} = ${spaceId}
-          )`,
-      );
-      await tx
-        .delete(inboundWebhooks)
-        .where(eq(inboundWebhooks.space_id, spaceId));
-
-      // ---- 3. Edges teardown. -------------------------------------------
-      await tx.delete(edges).where(eq(edges.space_id, spaceId));
-
-      // ---- 4. Items bulk-purge (cascades metadata + versions). ----------
-      const spaceItems = await tx
-        .select({ id: items.id })
-        .from(items)
-        .where(eq(items.space_id, spaceId));
-      const ids = spaceItems.map((r) => r.id);
-      if (ids.length > 0) {
-        await storage.items.bulkPurge(ids, spaceId);
-      }
-
-      // ---- 5. Space blobs. ---------------------------------------------
-      await tx.delete(blobs).where(eq(blobs.space_id, spaceId));
-
-      // ---- 6. api_keys, webhooks, quotas. -------------------------------
-      await tx.delete(apiKeys).where(eq(apiKeys.space_id, spaceId));
-      await tx
-        .delete(outboundWebhooks)
-        .where(eq(outboundWebhooks.space_id, spaceId));
-      await tx.delete(spaceQuotas).where(eq(spaceQuotas.space_id, spaceId));
+      // ---- 2-6. Everything scoped to the space. -------------------------
+      await pgPurgeSpaceScopedRows(tx, storage, spaceId);
     }
 
     // ---- 7. auth_verification rows (cancel token + any in-flight reset/verify tokens). --
