@@ -7,8 +7,16 @@
  *
  * The bridge reuses the `evaluateDispatch` + `buildQueueMessageBody`
  * helpers from `envelope.ts` so the per-subscriber gate (system-type,
- * self-event, cross-space, type-not-targeted) is identical to the
- * hosted side. The substrate-specific piece is the send step.
+ * self-event, cross-space, type-not-targeted) decides every event. The
+ * substrate-specific piece is the send step.
+ *
+ * Deletes go through that gate like anything else. They used to be dropped
+ * one line above it, which meant a bidirectional integration declaring
+ * `tombstone_mapping` could never hear a Marfa-side delete and its
+ * delete-upstream path was unreachable — while `preview-event` cheerfully
+ * reported a dispatch that would never happen. The gate is already
+ * delete-safe by construction: an item's type is fixed for its life, so the
+ * payload's type is as sound to judge on a delete as on an update.
  */
 import { emitWake, subscribe, type ItemEventWithId } from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
@@ -170,7 +178,6 @@ export function createLocalReactiveBridge(
         const next = await iter.next();
         if (next.done) break;
         if (stopRequested) break;
-        if (next.value.type === "deleted") continue;
         if (!isItemEvent(next.value)) continue;
         await fanoutEvent(next.value);
       }
