@@ -32,7 +32,16 @@ FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
 # `...` builds the server plus its transitive workspace dependencies.
-RUN pnpm --filter @withmarfa/server... build
+#
+# The heap ceiling is load-bearing rather than cautious. tsup generates
+# declarations in a worker thread, and that worker inherits Node's default
+# old-space size, which is derived from the container's reported memory and
+# lands well below what the server's type surface now needs. It died with
+# ERR_WORKER_OUT_OF_MEMORY the first time three ordinary pull requests
+# landed between two deploys, so the failure arrives as a broken deploy on
+# a green `main` rather than as a red pull request: nothing in CI builds
+# this image. Raise it deliberately here, where the build actually runs.
+RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... build
 # Build every integration's local-runtime entry and stage the dist trees.
 # The image must carry integrations/<name>/dist/local.js: the loader's
 # default root resolves relative to the monorepo, which does not exist in
