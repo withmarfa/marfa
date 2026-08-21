@@ -624,6 +624,13 @@
       "when": 1787267921387,
       "tag": "0088_integration_identifiers_take_the_slash",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1787272816803,
+      "tag": "0089_registered_types_carry_their_provenance",
+      "breakpoints": true
     }
   ]
 }

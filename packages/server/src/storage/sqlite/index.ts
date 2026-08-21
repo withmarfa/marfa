@@ -35,8 +35,10 @@ import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
   registerTypeSchema,
-  isCoreType,
+  seedPlatformTypes as seedPlatformRegistry,
+  shippedPlatformTypes,
 } from "@withmarfa/shared";
+import type { SeededPlatformType } from "@withmarfa/shared";
 
 export async function createSqliteStorage(
   sqlitePath: string,
@@ -94,12 +96,26 @@ export async function createSqliteStorage(
   // could arrive. It is seeded data now, so returning storage before the
   // registry is filled opens a window in which `core.note` does not resolve
   // and ordinary writes fail validation for a type that plainly exists.
-  const loadedCustomTypes = await typeStore.loadCustomTypes();
-  for (const { space_id, schema } of loadedCustomTypes) {
+  // The platform vocabulary is data this instance holds, not a fact about the
+  // build it happens to be running. Seed the shipped set into rows (an upsert,
+  // so a redeploy carrying a changed schema moves the row), then fill the
+  // in-memory registry from what the rows actually say. A type added by a seed
+  // alone therefore resolves without a redeploy, and an instance never
+  // resolves something its own rows do not carry.
+  await typeStore.seedPlatformTypes(shippedPlatformTypes());
+  const loadedTypes = await typeStore.loadCustomTypes();
+  const platformRows: SeededPlatformType[] = [];
+  for (const row of loadedTypes) {
+    if (row.origin === "platform") {
+      platformRows.push({ schema: row.schema, family: row.family ?? "core" });
+      continue;
+    }
     // Register into the owning space's overlay so one space's custom types
-    // never resolve for another space's lookups.
-    if (!isCoreType(schema.id)) registerTypeSchema(schema, space_id);
+    // never resolve for another space's lookups. The empty-string sentinel
+    // maps to the null-space bucket.
+    registerTypeSchema(row.schema, row.space_id);
   }
+  seedPlatformRegistry(platformRows);
 
   const storage = {
     items: itemStore,
