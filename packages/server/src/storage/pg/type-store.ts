@@ -7,7 +7,7 @@ import {
   ErrorCode,
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -89,10 +89,20 @@ export class PgTypeStore implements TypeStore {
   }
 
   async listCustom(spaceId?: string): Promise<TypeSchema[]> {
+    // `origin != 'platform'` is load-bearing, not a tidy-up. The shipped
+    // vocabulary lives in this table now, so "the space's own registrations"
+    // has to say so explicitly. Without it an archive would carry the platform
+    // set as if the space had registered it, and the restore that replayed it
+    // would be refused for trying to register a locked type.
     const rows = await this.db
       .select()
       .from(customTypes)
-      .where(eq(customTypes.space_id, spaceId ?? ""))
+      .where(
+        and(
+          eq(customTypes.space_id, spaceId ?? ""),
+          ne(customTypes.origin, "platform"),
+        ),
+      )
       .execute();
     const results: TypeSchema[] = [];
     for (const row of rows) {
@@ -168,7 +178,8 @@ export class PgTypeStore implements TypeStore {
   async countCustom(): Promise<number> {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)::int` })
-      .from(customTypes);
+      .from(customTypes)
+      .where(ne(customTypes.origin, "platform"));
     return row?.count ?? 0;
   }
 }

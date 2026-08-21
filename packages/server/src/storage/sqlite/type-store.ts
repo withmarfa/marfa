@@ -73,10 +73,15 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   async listCustom(spaceId?: string): Promise<TypeSchema[]> {
+    // `origin != 'platform'` is load-bearing, not a tidy-up. The shipped
+    // vocabulary lives in this table now, so "the space's own registrations"
+    // has to say so explicitly. Without it an archive would carry the platform
+    // set as if the space had registered it, and the restore that replayed it
+    // would be refused for trying to register a locked type.
     const rows = await this.db
       .select()
       .from(customTypes)
-      .where(sql`space_id = ${spaceId ?? ""}`)
+      .where(sql`space_id = ${spaceId ?? ""} AND origin != 'platform'`)
       .all();
     const results: TypeSchema[] = [];
     for (const row of rows) {
@@ -140,6 +145,7 @@ export class SqliteTypeStore implements TypeStore {
     const row = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(customTypes)
+      .where(sql`origin != 'platform'`)
       .get();
     return row?.count ?? 0;
   }
