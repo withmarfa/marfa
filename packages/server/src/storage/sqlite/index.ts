@@ -79,21 +79,27 @@ export async function createSqliteStorage(
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
   const enrichmentStore = new SqliteEnrichmentStore(db);
 
-  void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
-    for (const { space_id, schema } of types) {
-      // Register into the owning space's overlay so one space's custom
-      // edge types never resolve for another space's lookups.
-      if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, space_id);
-    }
-  });
+  // Awaited for the same reason as the type warmup below: a registry filled
+  // after storage is handed back is a registry some request can miss.
+  const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
+  for (const { space_id, schema } of loadedCustomEdgeTypes) {
+    // Register into the owning space's overlay so one space's custom
+    // edge types never resolve for another space's lookups.
+    if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, space_id);
+  }
 
-  void typeStore.loadCustomTypes().then((types) => {
-    for (const { space_id, schema } of types) {
-      // Register into the owning space's overlay so one space's custom types
-      // never resolve for another space's lookups.
-      if (!isCoreType(schema.id)) registerTypeSchema(schema, space_id);
-    }
-  });
+  // Awaited, unlike the fire-and-forget this used to be. The Postgres path
+  // has always awaited its equivalent; the asymmetry was harmless only while
+  // the platform vocabulary was compiled in and resolved before any request
+  // could arrive. It is seeded data now, so returning storage before the
+  // registry is filled opens a window in which `core.note` does not resolve
+  // and ordinary writes fail validation for a type that plainly exists.
+  const loadedCustomTypes = await typeStore.loadCustomTypes();
+  for (const { space_id, schema } of loadedCustomTypes) {
+    // Register into the owning space's overlay so one space's custom types
+    // never resolve for another space's lookups.
+    if (!isCoreType(schema.id)) registerTypeSchema(schema, space_id);
+  }
 
   const storage = {
     items: itemStore,
