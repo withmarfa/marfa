@@ -43,9 +43,15 @@ RUN pnpm --filter @withmarfa/server... build
 # must resolve upward to the server's copies in /app/node_modules because
 # both carry module-singleton state. Staging node_modules alongside an
 # entry would shadow that resolution and break handler registration
-# invisibly. Integrations without a src/local.ts (the sync integration,
-# whose agent lives outside the server process) are skipped by the same
-# rule the runtime loader applies.
+# invisibly.
+#
+# An integration without a src/local.ts still ships a manifest, and the
+# catalog reconcile at boot needs it: the catalog describes what is
+# installable, which is a larger set than what dispatches. The sync
+# integration is the standing case, a client whose agent lives outside
+# the server process. Its dist/ is staged so the catalog can carry a
+# current manifest for it, and the runtime loader still skips it because
+# there is no local.js to dispatch into.
 #
 # This build runs before the deploy prune below: `pnpm deploy` rewrites
 # the workspace's modules state, and any later `pnpm run` then fails the
@@ -61,8 +67,12 @@ RUN mkdir /integrations-staged && \
         fi; \
         mkdir -p "/integrations-staged/$name" && \
         cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
+      elif [ -f "$dir/dist/manifest.js" ]; then \
+        echo "staging $name: manifest only (catalog needs it, runtime skips it)"; \
+        mkdir -p "/integrations-staged/$name" && \
+        cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
       else \
-        echo "skipping $name: no src/local.ts (not a local-substrate integration)"; \
+        echo "skipping $name: no src/local.ts and no built manifest"; \
       fi; \
     done
 # Prune to a self-contained production deploy at /app/out

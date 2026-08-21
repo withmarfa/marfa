@@ -50,6 +50,11 @@ import {
   type LocalRuntimeBundle,
 } from "./integrations/local-runtime/index.js";
 import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
+import { loadInTreeManifests } from "./integrations/load-manifests.js";
+import {
+  describeReconcile,
+  reconcileIntegrationCatalog,
+} from "./integrations/catalog-reconcile.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
 import {
@@ -753,6 +758,51 @@ async function main() {
   });
 
   const oidcSigner = await OidcSigner.init(storage);
+
+  // Bring the integration catalog up to what this build ships, before the
+  // runtime starts dispatching against it. Registers absent (name, version)
+  // pairs only: an existing row is the manifest some connection is already
+  // resolving, and moving a connection forward is a deliberate, consented
+  // act rather than a side effect of a deploy.
+  //
+  // Not gated on the dialect. Integrations only RUN on Postgres, but the
+  // catalog describes what is installable rather than what is dispatching,
+  // and a SQLite instance whose catalog silently disagreed with its build
+  // would be the same defect in a quieter place.
+  try {
+    const catalogRoot = resolveIntegrationsRoot();
+    if (catalogRoot) {
+      const loaded = await loadInTreeManifests({
+        integrationsRoot: catalogRoot,
+      });
+      for (const skip of loaded.skipped) {
+        log("warn", "Integration manifest not loaded for the catalog", {
+          integration: skip.dirName,
+          reason: skip.reason,
+        });
+      }
+      const reconciled = await reconcileIntegrationCatalog(
+        storage,
+        loaded.manifests,
+      );
+      log("info", describeReconcile(reconciled), {
+        registered: reconciled.registered.map((r) => `${r.name}@${r.version}`),
+        failed: reconciled.failed,
+      });
+    } else {
+      log(
+        "warn",
+        "Integration catalog not reconciled: the integrations root could not be resolved. Set MARFA_INTEGRATIONS_ROOT.",
+      );
+    }
+  } catch (err) {
+    // A catalog that could not reconcile is a stale catalog, which is the
+    // state this instance was already in. Say so and boot; refusing to
+    // start would turn a drift problem into an outage.
+    log("error", "Integration catalog reconcile failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   // Integrations run in-process (Node + pg-boss), which needs Postgres —
   // on SQLite we skip them rather than crash the zero-config quickstart.

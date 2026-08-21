@@ -11,9 +11,12 @@
  * Three checks, in order:
  *
  *   1. Presence and count. Every directory under the integrations root
- *      must carry dist/local.js, and there must be at least MIN_ENTRIES
- *      of them. The count is a tripwire: removing an integration should
- *      be a visible decision here, not a silent shrink of the image.
+ *      must carry either dist/local.js (a dispatchable integration) or
+ *      dist/manifest.js (a manifest-only entry the catalog reconcile
+ *      reads and the runtime never dispatches, such as sync). There must
+ *      be at least MIN_DISPATCHABLE of the former. The count is a
+ *      tripwire: removing an integration should be a visible decision
+ *      here, not a silent shrink of the image.
  *
  *   2. Main-process import. The server's loader imports each entry on
  *      boot to read its manifest; this repeats that read and fails on a
@@ -41,8 +44,9 @@ const WORKER_ENTRY =
   resolve(HERE, "dist", "worker-entry.js");
 // 14 shipping integrations with a local entry plus the template. The sync
 // integration has no local.js by design: its agent lives outside the
-// server process. Update this number deliberately when the set changes.
-const MIN_ENTRIES = 15;
+// server process, so it stages manifest-only and does not count here.
+// Update this number deliberately when the set changes.
+const MIN_DISPATCHABLE = 15;
 
 function fail(msg) {
   console.error(`[verify-image-integrations] FAIL: ${msg}`);
@@ -61,23 +65,33 @@ const dirs = readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
   .filter((e) => e.isDirectory())
   .map((e) => e.name)
   .sort();
-const entries = dirs
-  .map((name) => ({
-    name,
-    localJs: resolve(INTEGRATIONS_ROOT, name, "dist", "local.js"),
-  }))
-  .filter((e) => {
-    if (!existsSync(e.localJs)) {
-      fail(`${e.name} is staged without dist/local.js`);
-    }
-    return true;
-  });
-if (entries.length < MIN_ENTRIES) {
+const entries = [];
+const manifestOnly = [];
+for (const name of dirs) {
+  const localJs = resolve(INTEGRATIONS_ROOT, name, "dist", "local.js");
+  if (existsSync(localJs)) {
+    entries.push({ name, localJs });
+    continue;
+  }
+  // Manifest-only is a deliberate shape, not a broken build: the catalog
+  // reconcile reads it and the runtime loader skips it.
+  if (existsSync(resolve(INTEGRATIONS_ROOT, name, "dist", "manifest.js"))) {
+    manifestOnly.push(name);
+    continue;
+  }
+  fail(`${name} is staged without dist/local.js or dist/manifest.js`);
+}
+if (entries.length < MIN_DISPATCHABLE) {
   fail(
-    `expected at least ${String(MIN_ENTRIES)} integration entries, found ${String(entries.length)}: ${dirs.join(", ")}`,
+    `expected at least ${String(MIN_DISPATCHABLE)} dispatchable integration entries, found ${String(entries.length)}: ${dirs.join(", ")}`,
   );
 }
-info(`${String(entries.length)} integration entries staged`);
+info(
+  `${String(entries.length)} dispatchable integration entries staged` +
+    (manifestOnly.length > 0
+      ? `, plus ${String(manifestOnly.length)} manifest-only (${manifestOnly.join(", ")})`
+      : ""),
+);
 
 // Check 2: each entry imports and exports a manifest. Importing also runs
 // each entry's registerHandlers() against this process's registry; that

@@ -18,6 +18,11 @@ import {
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
 import type { UninstallResult } from "../connections/uninstall-pipeline.js";
+import {
+  performUpgrade,
+  previewUpgrade,
+  UpgradeError,
+} from "../connections/upgrade-pipeline.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import {
   computeEffectiveHopCount,
@@ -232,6 +237,149 @@ const resumeRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: pauseResponses,
+});
+
+const UpgradeGrantSchema = z.object({
+  name: z.string(),
+  from: z.enum(["read", "write"]).optional(),
+  to: z.enum(["read", "write"]),
+});
+
+const UpgradePreviewSchema = z.object({
+  connection_id: z.string(),
+  current: z.object({
+    manifest_name: z.string(),
+    manifest_version: z.string(),
+  }),
+  candidate: z
+    .object({ manifest_name: z.string(), manifest_version: z.string() })
+    .nullable(),
+  candidate_integration_ref: z.string().nullable(),
+  delta: z
+    .object({
+      widens: z.boolean(),
+      types: z.array(UpgradeGrantSchema),
+      extensions: z.array(UpgradeGrantSchema),
+      edges: z.array(UpgradeGrantSchema),
+      oauth: z.array(
+        z.object({
+          name: z.string(),
+          from: z.string().optional(),
+          to: z.string(),
+        }),
+      ),
+      tokens: z.array(z.object({ name: z.string(), to: z.string() })),
+      configurationRequired: z.array(z.string()),
+    })
+    .nullable(),
+  consent_lines: z.array(z.string()),
+});
+
+const upgradePreviewRoute = createRoute({
+  operationId: "previewConnectionUpgrade",
+  method: "get",
+  path: "/{id}/upgrade",
+  tags: ["Connections"],
+  summary: "See what moving a connection to a newer manifest would change",
+  description:
+    "A connection resolves the manifest it was installed against, frozen on its catalog row, so a newer version of the same integration does not reach it until somebody moves it. This reports whether a newer version is registered and exactly what it would newly be allowed to do, computed as a permission diff rather than a version comparison. `consent_lines` is empty when the move takes no more than the connection already has.",
+  security: [{ bearerAuth: [] }],
+  request: { params: ConnectionIdParam },
+  responses: {
+    200: {
+      content: { "application/json": { schema: UpgradePreviewSchema } },
+      description: "What an upgrade would change.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized.",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller is not an admin.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
+      description: "Connection not found.",
+    },
+  },
+});
+
+const upgradeRoute = createRoute({
+  operationId: "upgradeConnection",
+  method: "post",
+  path: "/{id}/upgrade",
+  tags: ["Connections"],
+  summary: "Move a connection to a newer version of its integration",
+  description:
+    "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs a space admin's approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
+  security: [{ bearerAuth: [] }],
+  request: { params: ConnectionIdParam },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            connection_id: z.string(),
+            from: z.object({
+              manifest_name: z.string(),
+              manifest_version: z.string(),
+            }),
+            to: z.object({
+              manifest_name: z.string(),
+              manifest_version: z.string(),
+            }),
+            integration_ref: z.string(),
+            revoked_credential_ids: z.array(z.string()),
+            activity_id: z.string(),
+          }),
+        },
+      },
+      description: "The connection now resolves the newer manifest.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "Not an integration connection, revoked, already current, or its settings do not satisfy the newer manifest.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized.",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description:
+        "Caller is not an admin, or the newer manifest widens what the connection may do and needs consent.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
+      description: "Connection not found.",
+    },
+  },
 });
 
 const uninstallRoute = createRoute({
@@ -745,5 +893,70 @@ export function connectionRoutes(storage: Storage, salt: string) {
     return c.json(uninstalled, 200);
   });
 
+  r.openapi(upgradePreviewRoute, async (c) => {
+    const apiKey = requireSpaceAdmin(c);
+    const { id } = c.req.valid("param");
+    try {
+      const preview = await previewUpgrade(storage, {
+        spaceId: apiKey.space_id ?? undefined,
+        connectionId: id,
+      });
+      return c.json(preview, 200);
+    } catch (err) {
+      throw mapUpgradeError(err);
+    }
+  });
+
+  r.openapi(upgradeRoute, async (c) => {
+    const apiKey = requireSpaceAdmin(c);
+    const { id } = c.req.valid("param");
+    const spaceId = apiKey.space_id ?? undefined;
+    let result;
+    try {
+      // `consentedToWidening` is deliberately not readable from the
+      // request. A widening move is approved by a person on the consent
+      // screen, and a caller that could set the flag on its own request
+      // would be approving it for them.
+      result = await performUpgrade(storage, {
+        apiKeyId: apiKey.id,
+        spaceId,
+        connectionId: id,
+        clientIp: c.var.clientIp,
+      });
+    } catch (err) {
+      throw mapUpgradeError(err);
+    }
+    // Same invalidation contract as pause/resume: the pipeline's write is
+    // a storage write, so the reactive bridge re-reads this connection's
+    // subscription entry only if the route says so — and it must, because
+    // the triggers it subscribes on may have just changed.
+    const upgraded = await storage.items.get(id, spaceId);
+    if (upgraded) {
+      const metadata = await storage.metadata.get(upgraded.id);
+      await publish({ type: "updated", item: upgraded, metadata, spaceId });
+    }
+    return c.json(result, 200);
+  });
+
   return r;
+}
+
+/** Map the pipeline's typed failures onto the wire. `consent_required` is
+ *  a 403 carrying the grant lines, so a caller is told what to approve
+ *  rather than only that it was refused. */
+function mapUpgradeError(err: unknown): unknown {
+  if (!(err instanceof UpgradeError)) return err;
+  if (err.code === "connection_not_found") {
+    return new MarfaError(ErrorCode.NOT_FOUND, err.message);
+  }
+  if (err.code === "consent_required") {
+    return new MarfaError(ErrorCode.FORBIDDEN, err.message, {
+      upgrade_error_code: err.code,
+      ...(err.detail ?? {}),
+    });
+  }
+  return new MarfaError(ErrorCode.VALIDATION_ERROR, err.message, {
+    upgrade_error_code: err.code,
+    ...(err.detail ?? {}),
+  });
 }

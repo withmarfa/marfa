@@ -1,12 +1,14 @@
 /**
  * Register every in-tree integration manifest against a Marfa server.
  *
- * The integration catalog (`GET /integrations`) is empty on a freshly
- * bootstrapped instance — manifests are registered at runtime via
- * `POST /integrations` (platform-credential gated). This script imports
- * each in-tree manifest from `integrations/<dir>/src/manifest.ts` and
- * registers it, so a self-hoster (or staging) gets a populated catalog
- * without hand-writing manifest bodies.
+ * Mostly historical now: the server reconciles its own catalog at boot
+ * (`integrations/catalog-reconcile.ts`), so a deployed instance registers
+ * every shipped manifest version without anyone running anything. This
+ * script remains useful against an instance you are not deploying to, and
+ * for registering a manifest from source rather than from built output.
+ *
+ * It imports each in-tree manifest from `integrations/<dir>/src/manifest.ts`
+ * and registers it via `POST /integrations` (platform-credential gated).
  *
  * Usage (from the monorepo root):
  *   MARFA_API_URL=https://your-instance \
@@ -19,27 +21,17 @@
  */
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { IN_TREE_INTEGRATIONS } from "@withmarfa/shared";
 
-// In-tree integration directories under `integrations/`. `_template` carries
-// no real manifest and is skipped; any dir without a manifest export is
-// skipped with a warning rather than failing the run.
-const DIRS = [
-  "podcasts",
-  "rss-watcher",
-  "readwise",
-  "readwise-reader",
-  "todoist",
-  "raindrop",
-  "github-webhooks",
-  "google-calendar",
-  "google-contacts",
-  "google-drive",
-  "google-tasks",
-  "google-youtube",
-  "task-auto-archive",
-  "inbox",
-  "sync",
-];
+// The in-tree set, read from the one table that already describes it.
+// This list was written out by hand here until now, which made it a
+// second enumeration of the same thing with nothing keeping the two in
+// agreement. They happened to agree; nothing said they had to, and the
+// hand-maintained copy is exactly the kind of list a new integration
+// gets added to in one place and not the other. `_template` carries no
+// real manifest and is not in the table; any dir without a manifest
+// export is skipped with a warning rather than failing the run.
+const DIRS = IN_TREE_INTEGRATIONS.map((i) => i.dirName);
 
 interface Manifest {
   name: string;
