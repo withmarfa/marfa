@@ -10,7 +10,12 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   name: "marfa/rss-watcher",
-  version: "0.1.0",
+  // 0.2.0 because `supports_user_mappings` was added to this manifest while
+  // the version stood still. Registration keys on (name, version), so a
+  // manifest that changes without moving its version cannot be registered:
+  // it collides with the stale row it is meant to replace, and the catalog
+  // keeps answering for a capability the build has.
+  version: "0.2.0",
   manifest_schema_version: "1.3.0",
   configuration_schema: {
     feed_url: {
