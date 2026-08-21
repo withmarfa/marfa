@@ -18,7 +18,7 @@ export default [
             "integrations/*/vitest.config.ts",
             // The marfa/inbox integration ships a nested
             // Cloudflare Email Worker as its own workspace package
-            // (`integrations/withmarfa-inbox/email-worker/`). Its
+            // (`integrations/inbox/email-worker/`). Its
             // vitest.config.ts also falls through to the default
             // project.
             "integrations/*/email-worker/vitest.config.ts",
