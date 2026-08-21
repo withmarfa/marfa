@@ -4,6 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { surveyConnectionDrift } from "../connections/auto-upgrade.js";
 
 const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
@@ -37,6 +38,18 @@ const MetricsResponseSchema = z.object({
       total: z.number(),
       active: z.number(),
     }),
+  }),
+  // Drift is the number T-709's automatic pass exists to keep at zero, and
+  // it had no aggregate surface at all: `previewUpgrade` answers for one
+  // connection, so "how much drift is there" was only answerable by
+  // iterating by hand. `behind` above zero on a settled deployment means
+  // something is waiting on a person, and the two counts below say which.
+  connections: z.object({
+    live: z.number(),
+    behind: z.number(),
+    upgradable: z.number(),
+    awaiting_consent: z.number(),
+    blocked: z.number(),
   }),
   webhooks: z.object({
     total: z.number(),
@@ -103,6 +116,7 @@ export function metricsRoutes(storage: Storage) {
       runtimeCredentialCounts,
       webhookCount,
       customTypeCount,
+      drift,
     ] = await Promise.all([
       storage.items.stats(undefined),
       storage.blobs.count(),
@@ -110,6 +124,7 @@ export function metricsRoutes(storage: Storage) {
       storage.keys.countRuntimeCredentials(new Date().toISOString()),
       storage.outboundWebhooks.count(),
       storage.types.countCustom(),
+      surveyConnectionDrift(storage),
     ]);
 
     const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
@@ -134,6 +149,7 @@ export function metricsRoutes(storage: Storage) {
         total: keyCount,
         runtime_credentials: runtimeCredentialCounts,
       },
+      connections: drift.summary,
       webhooks: {
         total: webhookCount,
       },

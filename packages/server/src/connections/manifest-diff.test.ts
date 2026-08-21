@@ -194,3 +194,86 @@ describe("diffManifestGrants", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Triggers and capability declarations, ruled non-widening.
+//
+// These cases pass on the code as it stands, and that is the point: the
+// answer was a fallthrough rather than a decision, because `triggers`
+// appears nowhere in the diff at all. Pinning it makes the ruling
+// deliberate, and makes any later attempt to fold triggers into the
+// permission model fail here rather than silently start demanding consent
+// for a change that grants nothing.
+//
+// The rule: a trigger changes *when* an integration runs, not what it can
+// reach. Reach is target types, the permission maps and the auth
+// requirements, and those already gate.
+// ---------------------------------------------------------------------------
+
+describe("diffManifestGrants — triggers grant nothing", () => {
+  it("adding a manual trigger does not widen", () => {
+    // The case that proves the rule: `manual` lets a person ask for the
+    // sweep the schedule already performs. It reaches nothing new.
+    const d = diffManifestGrants(
+      manifest(),
+      manifest({
+        triggers: [
+          { type: "schedule", config: { cron: "0 * * * *" } },
+          { type: "manual" },
+        ],
+      }),
+    );
+    expect(d.widens).toBe(false);
+    expect(describeGrantDelta(d)).toEqual([]);
+  });
+
+  it("adding a webhook trigger does not widen", () => {
+    const d = diffManifestGrants(
+      manifest(),
+      manifest({
+        triggers: [
+          { type: "schedule", config: { cron: "0 * * * *" } },
+          { type: "webhook" },
+        ],
+      }),
+    );
+    expect(d.widens).toBe(false);
+  });
+
+  it("changing the schedule does not widen", () => {
+    const d = diffManifestGrants(
+      manifest(),
+      manifest({
+        triggers: [{ type: "schedule", config: { cron: "*/5 * * * *" } }],
+      }),
+    );
+    expect(d.widens).toBe(false);
+  });
+
+  it("declaring support for user mappings does not widen", () => {
+    // A capability declaration, not a grant. It says the integration can
+    // honor a mapping the user writes; it takes nothing.
+    const d = diffManifestGrants(
+      manifest(),
+      manifest({ supports_user_mappings: true }),
+    );
+    expect(d.widens).toBe(false);
+  });
+
+  it("a trigger addition alongside a real widening still widens, on the widening", () => {
+    // Guards the inverse mistake: treating triggers as inert must not make
+    // the rest of the diff inert on the same manifest.
+    const d = diffManifestGrants(
+      manifest(),
+      manifest({
+        triggers: [
+          { type: "schedule", config: { cron: "0 * * * *" } },
+          { type: "manual" },
+        ],
+        target_types: ["core.note", "core.bookmark"],
+      }),
+    );
+    expect(d.widens).toBe(true);
+    expect(d.types).toEqual([{ name: "core.bookmark", to: "write" }]);
+  });
+});

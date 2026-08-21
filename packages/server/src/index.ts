@@ -36,6 +36,7 @@ import {
   RuntimeCredentialReaper,
   runSpaceCleanup,
 } from "./storage/retention.js";
+import { ConnectionUpgrader } from "./connections/auto-upgrade.js";
 import type { SpaceFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import {
@@ -655,6 +656,38 @@ async function main() {
       },
       () => {
         runtimeCredentialReaper.start();
+      },
+    );
+  }
+
+  // Connections follow the manifest their own deployment ships. The boot
+  // reconcile registers new versions and re-binds nothing, so without this
+  // every manifest bump leaves drift standing until somebody clears it by
+  // hand, and a number that is never green is one nobody reads. A widening
+  // move still waits for a person.
+  const connectionUpgradeIntervalMs =
+    config.connectionUpgradeIntervalMs ?? 3_600_000;
+  const connectionUpgrader =
+    connectionUpgradeIntervalMs > 0
+      ? new ConnectionUpgrader(
+          storage,
+          connectionUpgradeIntervalMs,
+          storage.coordination,
+        )
+      : undefined;
+  if (connectionUpgrader) {
+    scheduleJob(
+      {
+        name: "connection-auto-upgrade",
+        logName: "Connection auto-upgrade",
+        intervalMs: connectionUpgradeIntervalMs,
+        // Behind the boot reconcile, which registers the versions this
+        // pass then moves connections onto.
+        firstRunDelaySeconds: 45,
+        runOnce: () => connectionUpgrader.runScheduled(),
+      },
+      () => {
+        connectionUpgrader.start();
       },
     );
   }
