@@ -24,10 +24,12 @@ interface Placement {
 }
 
 /**
- * Read the placement the container runtime publishes into its own
- * environment. Cloudflare Containers sets these; nothing else does, so the
- * block is absent on a self-hosted deployment rather than carrying empty
- * strings that would read as a real answer.
+ * Read the placement this deployment states about itself. The variables are
+ * platform-neutral and set per environment, so the answer describes where the
+ * server actually runs rather than which provider it runs on, and a
+ * self-hoster can set them without pretending to be on one. Unset means the
+ * block is absent rather than carrying empty strings that would read as a
+ * real answer.
  *
  * It is here because placement is otherwise invisible from outside the
  * platform's own API, and getting it wrong produces no error, no failed
@@ -35,11 +37,17 @@ interface Placement {
  * takes the blame. Production ran a continent away from its data for four
  * months while every check stayed green, and the one field that would have
  * said so did not exist.
+ *
+ * These replaced a set of provider-supplied variables the container runtime
+ * populated on its own. That was cheaper to operate and is exactly why the
+ * field vanished when the deployment moved: nothing outside that provider
+ * sets them, so the check went quiet without ever failing. A stated value is
+ * worth the three lines of configuration it costs.
  */
 function readPlacement(): Placement | null {
-  const region = process.env.CLOUDFLARE_REGION;
-  const location = process.env.CLOUDFLARE_LOCATION;
-  const country = process.env.CLOUDFLARE_COUNTRY_A2;
+  const region = process.env.MARFA_PLACEMENT_REGION;
+  const location = process.env.MARFA_PLACEMENT_LOCATION;
+  const country = process.env.MARFA_PLACEMENT_COUNTRY;
   if (!region && !location && !country) return null;
   return {
     ...(region && { region }),

@@ -569,6 +569,7 @@ Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; ho
 - `OTEL_EXPORTER_OTLP_HEADERS` — `k=v,k2=v2` (e.g. `Authorization=Bearer <token>`).
 - `MARFA_OTEL_SAMPLE_RATIO` — baseline trace sampling (default 0.05). Errors export at 100% regardless.
 - `OTEL_SERVICE_NAME` — resource service name (default `marfa-server`).
+- `MARFA_OTEL_ENVIRONMENT` — the `deployment.environment` resource attribute, and **required** once telemetry is actually exported: the bootstrap throws if it is unset while enabled with an endpoint configured. There is no default because there is nothing to infer one from. It read `NODE_ENV` once, which is `production` on every container by construction, so staging exported its logs under production's name and every filter on the attribute quietly narrowed to pre-cutover rows.
 
 **Sampling (5% + 100% on errors).** Head sampling can't see a future error, so the SDK records every span (`AlwaysOnSampler`) and an `ErrorBucketFilterSpanProcessor` (`src/otel/error-aware-sampler.ts`) gates _export_ at span end: error / 5xx spans always export, others export only if the trace id falls in the deterministic baseline bucket. Per-trace, stateless, stable across instances.
 
