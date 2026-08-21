@@ -260,7 +260,7 @@ export async function consumeBatch(
         const ctx = await buildConnectionContext(env, message);
         await ctx.activity.emit({
           severity: "error",
-          summary: `Reactive event dropped — cycle hop budget (${String(hopBudget)}) reached at the SDK boundary`,
+          summary: `Reactive event dropped: cycle hop budget (${String(hopBudget)}) reached at the SDK boundary`,
           detail: {
             connection_id: message.connection_id,
             originating_connection_id: message.cycle.originating_connection_id,

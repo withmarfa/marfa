@@ -42,6 +42,7 @@ import {
   readConnectionRuntimeState,
   recordRuntimeError,
 } from "./pg-cursor-store.js";
+import { stampSyncSuccess, stampSyncFailure } from "./connection-timings.js";
 import type {
   LocalIntegrationRegistration,
   LocalRuntime,
@@ -225,7 +226,21 @@ export function createSupervisor(
     response: WorkerDispatchResponse,
     result: HandlerResult,
   ): Promise<void> {
-    if (result.ok) return;
+    if (result.ok) {
+      // Only a run that means "sync" records one. An item-event dispatch is
+      // a reaction, not a sync run, and stamping every one of them would
+      // both misreport the field and put a write behind every reactive
+      // event at whatever rate the space produces them.
+      if (message.kind === "schedule" || message.kind === "manual") {
+        await stampSyncSuccess(
+          storage,
+          message.connection_id,
+          message.space_id,
+          Date.now(),
+        );
+      }
+      return;
+    }
     // { ok: false, retry: true } propagates back as a throw so pg-boss applies
     // its retry policy and dead-letters after the limit (see the dead-letter
     // worker in start()). Non-retryable failures are terminal now — record them.
@@ -246,11 +261,18 @@ export function createSupervisor(
     reasonMessage: string,
     className: string,
   ): Promise<void> {
+    const failedAtMs = Date.now();
     await recordRuntimeError(storage, message.connection_id, {
-      timestamp_ms: Date.now(),
+      timestamp_ms: failedAtMs,
       reason: reasonMessage,
       message_kind: message.kind,
     }).catch(() => undefined);
+    await stampSyncFailure(
+      storage,
+      message.connection_id,
+      message.space_id,
+      failedAtMs,
+    );
     try {
       const credential = await mintLocalRuntimeCredential(
         storage,
@@ -308,7 +330,7 @@ export function createSupervisor(
       const activity = createActivitySink(client, message.connection_id);
       await activity.emit({
         severity: "error",
-        summary: `Reactive event dropped — cycle hop budget (${String(hopBudget)}) reached at the local-runtime boundary`,
+        summary: `Reactive event dropped: cycle hop budget (${String(hopBudget)}) reached at the local-runtime boundary`,
         detail: {
           connection_id: message.connection_id,
           originating_connection_id: message.cycle.originating_connection_id,
@@ -388,7 +410,13 @@ export function createSupervisor(
         // returning worker replay hours of identical fan-outs.
         await boss.createQueue(scheduleName, { policy: "stately" });
         await boss.work(scheduleName, { batchSize: 1 }, async () => {
-          await fanOutSchedule(storage, runtime, reg.name, Date.now());
+          await fanOutSchedule(
+            storage,
+            runtime,
+            reg.name,
+            Date.now(),
+            reg.scheduleCron,
+          );
         });
         await boss.schedule(scheduleName, reg.scheduleCron);
       }
