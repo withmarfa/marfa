@@ -154,15 +154,85 @@ describe("POST /admin/spaces/:id/delete", () => {
       { key: ctx.adminKey, body: { confirm: user.space_id } },
     );
     expect(res.status).toBe(409);
-    // The refusal has to say where to go, or the operator's next move is
-    // to reach for the database.
+    // The refusal has to name the id the other route needs, not a
+    // placeholder. Pointing at `{id}` sent the operator to a route whose
+    // required input nothing served, and the only way through was a query
+    // against the database.
     const body = (await res.json()) as { error?: { message?: string } };
-    expect(body.error?.message ?? "").toContain("/admin/accounts/{id}/delete");
+    const message = body.error?.message ?? "";
+    expect(message).toContain(`/admin/accounts/${row.auth_user_id}/delete`);
+    expect(message).not.toContain("{id}");
 
     // Refused means untouched, not partly swept.
     expect(await ctx.storage.spaces?.get(user.space_id)).not.toBeNull();
     expect(
       await ctx.storage.users?.getByAuthUserId(row.auth_user_id),
     ).not.toBeNull();
+  });
+
+  // The other half of the same gap: the id has to be obtainable before you
+  // hit a refusal, so an operator can delete an account without first having
+  // to provoke an error to learn its identifier.
+  it("names the owner's account id on the space detail and the listing", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const signUp = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "owner-id@example.com",
+        password: "correct horse",
+        name: "Owner Id",
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(signUp.status).toBe(200);
+    await markEmailVerified(ctx.storage, "owner-id@example.com");
+    const lifecycle = ctx.storage.accountLifecycle;
+    if (!lifecycle)
+      throw new Error("account lifecycle expected in hosted mode");
+    const row = await lifecycle.getAccountLifecycleByEmail(
+      "owner-id@example.com",
+    );
+    if (!row) throw new Error("provisioned account not found");
+    const user = await ctx.storage.users?.getByAuthUserId(row.auth_user_id);
+    if (!user) throw new Error("provisioned users row not found");
+
+    const detail = await request(
+      ctx.app,
+      "GET",
+      `/admin/spaces/${user.space_id}`,
+      { key: ctx.adminKey },
+    );
+    expect(detail.status).toBe(200);
+    const shown = (await detail.json()) as {
+      space?: { owner_auth_user_id?: string | null; owner_email?: string };
+    };
+    expect(shown.space?.owner_auth_user_id).toBe(row.auth_user_id);
+    // It sits beside the email, and the two must name the same account.
+    expect(shown.space?.owner_email).toBe("owner-id@example.com");
+
+    const list = await request(ctx.app, "GET", "/admin/spaces", {
+      key: ctx.adminKey,
+    });
+    const listed = (await list.json()) as {
+      data?: { id: string; owner_auth_user_id?: string | null }[];
+    };
+    const mine = (listed.data ?? []).find((s) => s.id === user.space_id);
+    expect(mine?.owner_auth_user_id).toBe(row.auth_user_id);
+  });
+
+  // A space nobody owns has no account id, and null is the honest answer.
+  // Anything else would be a value an operator could paste into a delete.
+  it("reports a null account id for a space with no account", async () => {
+    ctx = await createTestContext();
+    const spaceId = await seedAccountlessSpace(ctx);
+    const detail = await request(ctx.app, "GET", `/admin/spaces/${spaceId}`, {
+      key: ctx.adminKey,
+    });
+    const shown = (await detail.json()) as {
+      space?: { owner_auth_user_id?: string | null };
+    };
+    expect(shown.space?.owner_auth_user_id).toBeNull();
   });
 });

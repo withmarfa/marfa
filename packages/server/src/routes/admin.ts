@@ -54,6 +54,14 @@ const SpaceSchema = z.object({
 const AdminSpaceSchema = SpaceSchema.extend({
   owner_email: z.string().nullable(),
   owner_email_verified: z.boolean().nullable(),
+  // The id `POST /admin/accounts/{id}/delete` takes. Without it that route was
+  // unusable through the API: it is keyed on the account's auth user id, no
+  // route returned one, and the space delete route's own refusal names it as
+  // the way forward. An operator following that instruction reached a route
+  // whose required input the platform would not give them, and the only way
+  // through was a hand-written query against the database — an irreversible
+  // action driven by a lookup with no audit trail of its own.
+  owner_auth_user_id: z.string().nullable(),
 });
 
 const QuotaSchema = z.object({
@@ -765,6 +773,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
         ...space,
         owner_email: null,
         owner_email_verified: null,
+        owner_auth_user_id: null,
       };
     }
     const user = await storage.users.getBySpaceId(space.id);
@@ -775,6 +784,8 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       ...space,
       owner_email: owner?.email ?? null,
       owner_email_verified: owner?.email_verified ?? null,
+      // Already in hand from the lookup above, and previously discarded.
+      owner_auth_user_id: user?.auth_user_id ?? null,
     };
   }
 
@@ -1074,9 +1085,16 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
     if (outcome === "has_users") {
+      // Names the id the other route needs, rather than a placeholder. This
+      // refusal is the documented way forward and used to point at a route
+      // whose required input nothing served, so following it led to the
+      // database. `GET /admin/spaces/{id}` now carries the same value.
+      const owner = storage.users ? await storage.users.getBySpaceId(id) : null;
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Space ${id} still has users. Delete the account with POST /admin/accounts/{id}/delete, which removes the space with it.`,
+        owner?.auth_user_id
+          ? `Space ${id} still has users. Delete the account instead, with POST /admin/accounts/${owner.auth_user_id}/delete, which removes this space with it.`
+          : `Space ${id} still has users, but no account could be resolved for it. That should not happen: it means a user row references this space and its auth user is missing.`,
       );
     }
 
