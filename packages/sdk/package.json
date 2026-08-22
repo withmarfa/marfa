@@ -36,17 +36,17 @@
   },
   "dependencies": {
     "@withmarfa/shared": "workspace:*",
-    "oauth4webapi": "^3.8.6"
+    "oauth4webapi": "^3.8.7"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@withmarfa/server": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "@tanstack/db": "^0.6.17"
+    "@tanstack/db": "^0.8.0"
   },
   "peerDependencies": {
-    "@tanstack/db": "^0.6.17"
+    "@tanstack/db": "^0.8.0"
   },
   "peerDependenciesMeta": {
     "@tanstack/db": {
