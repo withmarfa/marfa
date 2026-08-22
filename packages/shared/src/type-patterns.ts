@@ -43,6 +43,12 @@ export function subtreeWildcardRoot(pattern: string): string | null {
   const root = pattern.slice(0, -2);
   return root.length > 0 ? root : null;
 }
+/**
+ * Confusable pair: this takes ONE pattern; `matchesTypePattern` in
+ * validation.ts takes a LIST. Both read (type, pattern-or-patterns), so a
+ * wrong-function call typechecks while meaning something else. See T-738
+ * for the incident that cost.
+ */
 
 /**
  * Whether a type identifier is covered by a single pattern.

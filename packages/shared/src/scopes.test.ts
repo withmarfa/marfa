@@ -204,6 +204,57 @@ describe("scopeCovers", () => {
     );
   });
 
+  // Every case above uses an exact type, which is why the wildcard defect
+  // survived: a grant of `core.*:read` reported as covering nothing.
+  it("a subtree wildcard grant covers a concrete type beneath it", () => {
+    expect(scopeCovers(["core.*:read"], "core.bookmark", "read")).toBe(true);
+  });
+
+  it("a subtree wildcard write grant covers a read requirement beneath it", () => {
+    expect(scopeCovers(["core.*:write"], "core.bookmark", "read")).toBe(true);
+  });
+
+  it("the global wildcard covers any type", () => {
+    expect(scopeCovers(["*:read"], "marfa.podcast.show", "read")).toBe(true);
+  });
+
+  it("a wildcard read grant still does not cover a write requirement", () => {
+    expect(scopeCovers(["core.*:read"], "core.bookmark", "write")).toBe(false);
+  });
+
+  it("a wildcard does not reach outside its own subtree", () => {
+    expect(scopeCovers(["core.*:write"], "marfa.podcast.show", "read")).toBe(
+      false,
+    );
+  });
+
+  // Kind confusion. `edge` and `metadata` are not reserved roots, so
+  // `edge.foo` is a registrable item type, and `edge.*:write` is a scope the
+  // server both advertises and issues. The exact comparison this replaced
+  // happened to contain that; a pattern match does not, so the guard is
+  // explicit and these pin it.
+  it("an edge grant does not satisfy an item-type requirement", () => {
+    expect(scopeCovers(["edge.*:write"], "edge.foo", "write")).toBe(false);
+  });
+
+  it("an edge grant does not satisfy a concrete edge-named item type", () => {
+    expect(scopeCovers(["edge.parent-of:read"], "edge.parent-of", "read")).toBe(
+      false,
+    );
+  });
+
+  it("an oidc scope satisfies nothing", () => {
+    expect(scopeCovers(["openid"], "openid", "read")).toBe(false);
+  });
+
+  // The load-bearing non-regression for the new matcher: a bare identifier is
+  // exact, not a subtree. A later swap to subtree semantics has to fail here.
+  it("a bare identifier does not reach its descendants", () => {
+    expect(scopeCovers(["core.note:read"], "core.note.private", "read")).toBe(
+      false,
+    );
+  });
+
   it("empty scopes returns false", () => {
     expect(scopeCovers([], "core.note", "read")).toBe(false);
   });
