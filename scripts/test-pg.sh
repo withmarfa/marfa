@@ -5,24 +5,25 @@
 # locally before push.
 #
 # Container: postgres:17, same creds as the CI workflow.
-# Port: 55432 (deliberately non-standard to avoid collision with any local pg).
+# Port: assigned by the kernel at bind time and read back afterwards.
 #
-# Container name + port carry the invoking shell's PID so concurrent
-# test:pg runs across different worktrees / agents don't stomp on each
-# other's containers. Pre-PID this script hard-coded `marfa-test-pg`
-# and `55432`; two agents running test:pg simultaneously killed each
-# other's containers via the `docker rm -f` at start. With PID
-# suffixing each invocation owns its own container + port.
+# The container name carries the invoking shell's PID so concurrent test:pg
+# runs across different worktrees / agents don't stomp on each other's
+# containers. Pre-PID this script hard-coded `marfa-test-pg` and `55432`; two
+# agents running test:pg simultaneously killed each other's containers via the
+# `docker rm -f` at start.
+#
+# The port used to carry the PID too, as `55432 + ($$ % 1000)`. Two shells
+# whose pids differ by a multiple of 1000 got the same port and the second
+# container failed to start, before a single test had run — a red check
+# carrying no information about the branch. That range also sat inside the
+# kernel's ephemeral range, so an ordinary outbound connection could take it
+# just as easily as another job could.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 CONTAINER_NAME="marfa-test-pg-$$"
-# Port: a deterministic-per-PID offset above 55432 so concurrent runs
-# don't collide on the host port either. Modulo keeps it in a sane
-# range (55432-56431); collisions across PIDs spaced exactly 1000 apart
-# are vanishingly unlikely in practice.
-PG_PORT=$((55432 + ($$ % 1000)))
 PG_USER="marfa"
 PG_PASSWORD="marfa"
 PG_DB="marfa_test"
@@ -55,7 +56,7 @@ trap cleanup EXIT
 # Remove any prior container (e.g. from a crashed previous run)
 docker rm -f -v "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
-echo "→ Starting ${CONTAINER_NAME} (postgres:17) on port ${PG_PORT}"
+echo "→ Starting ${CONTAINER_NAME} (postgres:17)"
 # `-c max_connections=500` raises the per-cluster connection cap above PG's
 # default 100. With the template-DB pattern (one cloned DB per test file)
 # and parallel test workers, each worker keeps its own pool open — peak
@@ -66,9 +67,25 @@ docker run -d --rm \
   -e "POSTGRES_USER=${PG_USER}" \
   -e "POSTGRES_PASSWORD=${PG_PASSWORD}" \
   -e "POSTGRES_DB=${PG_DB}" \
-  -p "${PG_PORT}:5432" \
+  -p "0:5432" \
   postgres:17 \
   postgres -c max_connections=500 >/dev/null
+
+# Read back what the kernel assigned. `docker port` prints a line per address
+# family, so take the IPv4 one; everything below connects over localhost.
+# `sed -n '1s/.*://p'` rather than a grep for a particular bind address. Two
+# reasons. It exits 0 on no match, so `set -euo pipefail` cannot kill the
+# script at this assignment before the check below can report anything -- a
+# grep here exits 1 on no match and pipefail propagates it. And the last-colon
+# rule reads `0.0.0.0:N`, `[::]:N` and `127.0.0.1:N` identically, so a daemon
+# configured to publish on loopback still works instead of hard-failing.
+PG_PORT="$(docker port "${CONTAINER_NAME}" 5432/tcp | sed -n '1s/.*://p')"
+if [ -z "${PG_PORT}" ]; then
+  echo "✗ Postgres started but no host port was published for 5432/tcp." >&2
+  docker port "${CONTAINER_NAME}" >&2 || true
+  exit 1
+fi
+echo "  published on port ${PG_PORT}"
 
 echo "→ Waiting for Postgres to accept connections"
 # `pg_isready` only checks the postmaster is listening — it returns OK
@@ -89,6 +106,24 @@ for i in {1..60}; do
   fi
   sleep 1
 done
+
+# Prove the port we are about to advertise actually reaches something, from the
+# host, which the readiness gate above does not: it runs `docker exec` inside
+# the container, so it reports ready whether or not the published mapping
+# works. Without this a shadowed mapping surfaces much later as a hang in
+# whatever ran next.
+#
+# What it does not prove: that the listener is *our* container. Docker's
+# allocator has no visibility into macOS-side port usage, so a port already
+# held on the host could in principle be published over. That is far narrower
+# than the old behaviour -- the allocator starts near 32768 while the host's
+# ephemeral range starts at 49152 -- but it is not zero, and pretending
+# otherwise is how the previous version read as safe.
+if ! (echo > /dev/tcp/127.0.0.1/"${PG_PORT}") >/dev/null 2>&1; then
+  echo "✗ Postgres is ready inside the container but ${PG_PORT} does not accept" >&2
+  echo "  connections from the host, so the published mapping is not working." >&2
+  exit 1
+fi
 
 echo "→ Running server tests (Postgres)"
 # Uses the root `pnpm test` (vitest projects config); scoping to server alone
