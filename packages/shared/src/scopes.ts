@@ -215,7 +215,14 @@ export function scopeCovers(
   for (const scope of held) {
     const parsed = parseScope(scope);
     if (!parsed) continue;
-    if (parsed.typePattern !== requiredType) continue;
+    // `typeMatchesPattern`, not `!==`. The held scope carries a *pattern*
+    // (`core.*`, `*`) and the requirement carries a concrete type, so string
+    // inequality reported every wildcard grant as covering nothing — failing
+    // closed, but wrongly, and silently.
+    //
+    // Note the neighbour: `matchesTypePattern` takes a list of patterns and
+    // `typeMatchesPattern` takes one. Type first, pattern second.
+    if (!typeMatchesPattern(requiredType, parsed.typePattern)) continue;
     if (parsed.operation === "write") return true;
     if (requiredOp === "read") return true;
   }

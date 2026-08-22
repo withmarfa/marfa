@@ -204,6 +204,30 @@ describe("scopeCovers", () => {
     );
   });
 
+  // Every case above uses an exact type, which is why the wildcard defect
+  // survived: a grant of `core.*:read` reported as covering nothing.
+  it("a subtree wildcard grant covers a concrete type beneath it", () => {
+    expect(scopeCovers(["core.*:read"], "core.bookmark", "read")).toBe(true);
+  });
+
+  it("a subtree wildcard write grant covers a read requirement beneath it", () => {
+    expect(scopeCovers(["core.*:write"], "core.bookmark", "read")).toBe(true);
+  });
+
+  it("the global wildcard covers any type", () => {
+    expect(scopeCovers(["*:read"], "marfa.podcast.show", "read")).toBe(true);
+  });
+
+  it("a wildcard read grant still does not cover a write requirement", () => {
+    expect(scopeCovers(["core.*:read"], "core.bookmark", "write")).toBe(false);
+  });
+
+  it("a wildcard does not reach outside its own subtree", () => {
+    expect(scopeCovers(["core.*:write"], "marfa.podcast.show", "read")).toBe(
+      false,
+    );
+  });
+
   it("empty scopes returns false", () => {
     expect(scopeCovers([], "core.note", "read")).toBe(false);
   });
