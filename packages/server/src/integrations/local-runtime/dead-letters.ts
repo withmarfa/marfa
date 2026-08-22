@@ -51,10 +51,32 @@ export interface ReplayResult {
   id: string;
 }
 
+/**
+ * What `/health` needs to say a dead letter exists, in one aggregate rather
+ * than a listing. The count is unbounded on purpose: a listing capped at
+ * twenty would report twenty when there are five hundred, and the number is
+ * the thing a watcher reacts to.
+ */
+export interface DeadLetterSummary {
+  count: number;
+  /** Oldest terminal failure still unresolved, ISO 8601. */
+  oldest_failed_at: string | null;
+  /**
+   * Which connections are affected, so the surface that says the instance is
+   * degraded also says where to look. Capped, because this rides a liveness
+   * response: past the cap the count is still exact and this is a sample.
+   */
+  connection_ids: string[];
+}
+
 export interface DeadLetterOps {
   list(limit: number): Promise<DeadLetterJob[]>;
   replay(id: string): Promise<ReplayResult>;
+  summary(): Promise<DeadLetterSummary>;
 }
+
+/** How many affected connections `summary` names before it stops. */
+export const SUMMARY_CONNECTION_SAMPLE = 10;
 
 /** The SQL renders timestamps through `to_json`, which always emits ISO
  *  8601 text (driver-independent) but with Postgres's microsecond + numeric
@@ -108,6 +130,35 @@ interface FailedJobRow {
 
 export function createDeadLetterOps(boss: PgBoss, db: PgDb): DeadLetterOps {
   return {
+    async summary(): Promise<DeadLetterSummary> {
+      // One aggregate against the same predicate the listing uses. It runs on
+      // the liveness path, so it counts and samples rather than materialising
+      // rows: the envelope is only opened for the sample.
+      const rows = await db.execute<{
+        count: string | number;
+        oldest: string | null;
+        connection_ids: string[] | null;
+      }>(
+        sql`SELECT count(*) AS count,
+                   to_json(min(completed_on)) #>> '{}' AS oldest,
+                   (array_agg(DISTINCT data -> 'message' ->> 'connection_id')
+                      FILTER (WHERE data -> 'message' ->> 'connection_id' IS NOT NULL)
+                   )[1:${SUMMARY_CONNECTION_SAMPLE}] AS connection_ids
+            FROM pgboss.job
+            WHERE name = ${QUEUE_NAME} AND state = 'failed'`,
+      );
+      const row = rows[0];
+      return {
+        count: row ? Number(row.count) : 0,
+        // Through the same normaliser the listing uses. Postgres emits
+        // microseconds and a numeric offset here, and two surfaces reporting
+        // the same failure in two timestamp formats is the kind of small
+        // inconsistency that costs somebody an afternoon.
+        oldest_failed_at: toIso(row?.oldest ?? null),
+        connection_ids: row?.connection_ids ?? [],
+      };
+    },
+
     async list(limit: number): Promise<DeadLetterJob[]> {
       // `pgboss.job` is the partitioned parent; non-partitioned queues all
       // share its default partition, so the name predicate narrows via the

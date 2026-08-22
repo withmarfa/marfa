@@ -47,6 +47,13 @@ function stubOps(): DeadLetterOps & {
   return {
     replayed,
     limits,
+    summary() {
+      return Promise.resolve({
+        count: 1,
+        oldest_failed_at: sampleJob.failed_at,
+        connection_ids: [sampleJob.connection_id],
+      });
+    },
     list(limit: number) {
       limits.push(limit);
       return Promise.resolve([sampleJob].slice(0, limit));

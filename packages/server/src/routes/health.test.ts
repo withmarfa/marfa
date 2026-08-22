@@ -36,9 +36,30 @@ interface HealthBody {
   components: {
     database?: { status: string; error?: string };
     blob_storage?: { status: string; error?: string };
+    dead_letters?: {
+      status: string;
+      error?: string;
+      count?: number;
+      oldest_failed_at?: string | null;
+      connection_ids?: string[];
+    };
   };
   placement?: { region?: string; location?: string; country?: string };
   database_connections?: unknown;
+}
+
+function buildDeadLetters(
+  summary: () => Promise<{
+    count: number;
+    oldest_failed_at: string | null;
+    connection_ids: string[];
+  }>,
+) {
+  return {
+    summary,
+    list: () => Promise.resolve([]),
+    replay: () => Promise.resolve({ replayed: true as const, id: "x" }),
+  };
 }
 
 describe("GET /health", () => {
@@ -71,6 +92,98 @@ describe("GET /health", () => {
 
     const body = (await (await app.request("/")).json()) as HealthBody;
     expect(body.database_connections).toBeUndefined();
+  });
+
+  // The point of the component. A dispatch that gave up was already recorded
+  // honestly on an admin route nobody calls, so a captured email sat dropped
+  // for two days behind a green liveness check. Degrading is what makes the
+  // external poller that already watches this endpoint say so.
+  it("degrades and names the connections when a dispatch has given up", async () => {
+    const app = healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+      undefined,
+      buildDeadLetters(() =>
+        Promise.resolve({
+          count: 2,
+          oldest_failed_at: "2026-08-20T13:39:39.925Z",
+          connection_ids: ["01a01ef6-fb73-7c70-8cce-4dc9d02ff14d"],
+        }),
+      ),
+    );
+
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.status).toBe("degraded");
+    expect(body.components.dead_letters?.status).toBe("degraded");
+    expect(body.components.dead_letters?.count).toBe(2);
+    expect(body.components.dead_letters?.oldest_failed_at).toBe(
+      "2026-08-20T13:39:39.925Z",
+    );
+    // Naming where to look is half the value: the poller says the instance is
+    // degraded, and the same response says which connection dropped work.
+    expect(body.components.dead_letters?.connection_ids).toEqual([
+      "01a01ef6-fb73-7c70-8cce-4dc9d02ff14d",
+    ]);
+    expect(body.components.dead_letters?.error).toContain("reached nobody");
+  });
+
+  it("stays ok when the queue is empty, and says so rather than staying silent", async () => {
+    const app = healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+      undefined,
+      buildDeadLetters(() =>
+        Promise.resolve({
+          count: 0,
+          oldest_failed_at: null,
+          connection_ids: [],
+        }),
+      ),
+    );
+
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.status).toBe("ok");
+    expect(body.components.dead_letters?.status).toBe("ok");
+    expect(body.components.dead_letters?.count).toBe(0);
+    expect(body.components.dead_letters?.error).toBeUndefined();
+  });
+
+  // A deployment with no local substrate has no dispatch queue. Absent is the
+  // honest answer; a zero would be a claim that nothing has failed.
+  it("omits the component entirely with no local substrate", async () => {
+    const app = healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.components.dead_letters).toBeUndefined();
+  });
+
+  // The failure that matters most for this component: a probe that cannot
+  // find out must not answer zero. A zero here would be the endpoint claiming
+  // nothing has failed on the strength of a query that did not run, which is
+  // the reporting shape the whole component exists to remove.
+  it("omits the component rather than reporting zero when the probe cannot answer", async () => {
+    for (const broken of [
+      () => Promise.reject(new Error("queue unreadable")),
+      () => never,
+    ]) {
+      const app = healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        buildBlobs(() => Promise.resolve(false)),
+        config,
+        undefined,
+        buildDeadLetters(broken),
+      );
+
+      const body = (await (await app.request("/")).json()) as HealthBody;
+      expect(body.components.dead_letters).toBeUndefined();
+      expect(body.status).toBe("ok");
+    }
   });
 
   it("answers degraded instead of hanging when the database probe never returns", async () => {

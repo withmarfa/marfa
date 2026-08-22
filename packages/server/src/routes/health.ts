@@ -8,6 +8,10 @@ import type { AppConfig } from "../config.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OidcProviderHealth } from "../auth/oidc-availability.js";
 import type { PgClient } from "../storage/pg/connection.js";
+import type {
+  DeadLetterOps,
+  DeadLetterSummary,
+} from "../integrations/local-runtime/dead-letters.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
@@ -15,6 +19,10 @@ interface ComponentStatus {
   error?: string;
   /** Per-provider detail, present only on `identity_providers`. */
   providers?: OidcProviderHealth[];
+  /** Present only on `dead_letters`. */
+  count?: number;
+  oldest_failed_at?: string | null;
+  connection_ids?: string[];
 }
 
 /** Where the platform says this instance is running. */
@@ -221,8 +229,11 @@ export function healthRoutes(
   blobBackend: BlobBackend,
   config: AppConfig,
   getAuth?: () => MarfaAuth | undefined,
+  deadLetterOps?: DeadLetterOps | null,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
+
+  let deadLettersCache: { at: number; value: DeadLetterSummary } | null = null;
 
   // Undefined on SQLite, where there is no pool and no `pg_stat_activity`
   // to read, so the block is absent rather than zeroed. Cast at the
@@ -325,6 +336,56 @@ export function healthRoutes(
         }),
       };
       if (unavailable.length > 0) overall = "degraded";
+    }
+
+    // Dispatches that exhausted their retries and gave up. Absent on a
+    // deployment with no local substrate, which has no dispatch queue.
+    //
+    // This is the surface that makes a dead letter reach somebody. The
+    // failure is already recorded honestly on an admin route, but that route
+    // is one a person has to think to call, so a captured email sat dropped
+    // for two days while the connection that dropped it reported healthy and
+    // every liveness check stayed green. Degrading here means the external
+    // poller that already watches `/health` raises it with no new machinery,
+    // and it names the affected connections so the answer to "where" arrives
+    // with the answer to "something".
+    //
+    // It stays degraded until a person replays or discards the job, which is
+    // the intent: a dead letter is an unresolved failure and there is no
+    // clock that makes it not one.
+    if (deadLetterOps) {
+      const cached = deadLettersCache;
+      let summary: DeadLetterSummary | undefined;
+      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
+        summary = cached.value;
+      } else {
+        try {
+          const outcome = await withBudget(deadLetterOps.summary());
+          if (outcome !== TIMED_OUT) {
+            summary = outcome;
+            deadLettersCache = { at: performance.now(), value: outcome };
+          }
+        } catch {
+          // Omitted rather than guessed. A zero here would be a claim that
+          // nothing has failed, made by a probe that could not find out,
+          // which is the shape of reporting this component exists to remove.
+          summary = undefined;
+        }
+      }
+      if (summary) {
+        components.dead_letters = {
+          status: summary.count === 0 ? "ok" : "degraded",
+          count: summary.count,
+          oldest_failed_at: summary.oldest_failed_at,
+          ...(summary.connection_ids.length > 0 && {
+            connection_ids: summary.connection_ids,
+          }),
+          ...(summary.count > 0 && {
+            error: `${String(summary.count)} dispatch${summary.count === 1 ? "" : "es"} gave up and reached nobody; replay or discard through the dead-letter route`,
+          }),
+        };
+        if (summary.count > 0) overall = "degraded";
+      }
     }
 
     // How much of the connection ceiling this deployment is holding. Not a
