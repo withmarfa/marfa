@@ -425,11 +425,19 @@ jobs:
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.code == 'true'
+      # No typecheck or lint here. `ci-sqlite` runs both on the same source with
+      # the same commands, and the two jobs share a gate: both are job-level
+      # `if: github.event_name != 'workflow_dispatch'` and both gate their steps
+      # on `needs.changes.outputs.code`, so they always run together and this
+      # source is never unchecked.
+      #
+      # That shared gate is what makes the removal safe, so decoupling the two
+      # conditions later would silently drop the checks rather than fail
+      # visibly. If either job's `if:` changes, put these back or move them
+      # somewhere that runs unconditionally.
+      #
+      # `pnpm build` stays: `test:pg` needs the built output.
       - run: pnpm build
-        if: needs.changes.outputs.code == 'true'
-      - run: pnpm typecheck
-        if: needs.changes.outputs.code == 'true'
-      - run: pnpm lint
         if: needs.changes.outputs.code == 'true'
       # The same script a contributor runs locally, rather than a second
       # definition of the same environment in YAML. It boots its own
