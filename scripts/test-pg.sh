@@ -73,10 +73,15 @@ docker run -d --rm \
 
 # Read back what the kernel assigned. `docker port` prints a line per address
 # family, so take the IPv4 one; everything below connects over localhost.
-PG_PORT="$(docker port "${CONTAINER_NAME}" 5432/tcp | grep '^0\.0\.0\.0:' | head -1 | sed 's/.*://')"
+# `sed -n '1s/.*://p'` rather than a grep for a particular bind address. Two
+# reasons. It exits 0 on no match, so `set -euo pipefail` cannot kill the
+# script at this assignment before the check below can report anything -- a
+# grep here exits 1 on no match and pipefail propagates it. And the last-colon
+# rule reads `0.0.0.0:N`, `[::]:N` and `127.0.0.1:N` identically, so a daemon
+# configured to publish on loopback still works instead of hard-failing.
+PG_PORT="$(docker port "${CONTAINER_NAME}" 5432/tcp | sed -n '1s/.*://p')"
 if [ -z "${PG_PORT}" ]; then
   echo "✗ Postgres started but no host port was published for 5432/tcp." >&2
-  echo "  This is a Docker port-publishing failure, not port contention." >&2
   docker port "${CONTAINER_NAME}" >&2 || true
   exit 1
 fi
@@ -101,6 +106,24 @@ for i in {1..60}; do
   fi
   sleep 1
 done
+
+# Prove the port we are about to advertise actually reaches something, from the
+# host, which the readiness gate above does not: it runs `docker exec` inside
+# the container, so it reports ready whether or not the published mapping
+# works. Without this a shadowed mapping surfaces much later as a hang in
+# whatever ran next.
+#
+# What it does not prove: that the listener is *our* container. Docker's
+# allocator has no visibility into macOS-side port usage, so a port already
+# held on the host could in principle be published over. That is far narrower
+# than the old behaviour -- the allocator starts near 32768 while the host's
+# ephemeral range starts at 49152 -- but it is not zero, and pretending
+# otherwise is how the previous version read as safe.
+if ! (echo > /dev/tcp/127.0.0.1/"${PG_PORT}") >/dev/null 2>&1; then
+  echo "✗ Postgres is ready inside the container but ${PG_PORT} does not accept" >&2
+  echo "  connections from the host, so the published mapping is not working." >&2
+  exit 1
+fi
 
 echo "→ Running server tests (Postgres)"
 # Uses the root `pnpm test` (vitest projects config); scoping to server alone
