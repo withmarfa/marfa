@@ -1,28 +1,64 @@
 version: 2
 updates:
-  # Globs rather than an enumerated list. The list named five of the
-  # twenty-five workspace packages, so twenty received no dependency updates at
-  # all — including `packages/webhooks`, which is published to npm and verifies
-  # inbound signatures. Nothing reports a package that is merely absent from
-  # this file, so the gap is silent, and adding a workspace package would
-  # otherwise mean remembering to add it here too.
+  # One npm entry at the workspace root, not one per package.
   #
-  # `directories` supports globbing; the singular `directory` key does not.
+  # This repository is a single pnpm workspace with one lockfile at the root.
+  # A job that runs at `/` reads `pnpm-workspace.yaml`, expands the globs in
+  # it, and pulls in every member manifest, so the root already covers all
+  # twenty-five packages. Naming the members separately buys no coverage. It
+  # makes one job walk the same workspace once per directory.
+  #
+  # An earlier version of this file named five directories and was widened to
+  # six globs on the belief that the other twenty packages were going without
+  # updates. They were not. The grouped pull requests raised under the
+  # five-directory form updated manifests in directories that form never
+  # named, because the root job reaches them through the workspace. Widening
+  # to globs added twenty-four redundant passes and nothing else, and every
+  # run afterwards was killed at Dependabot's time limit, which is fixed on
+  # GitHub's side and cannot be raised. The only lever is how much work the
+  # job has to do, so the fix is to stop doing the same work twenty-five
+  # times.
+  #
+  # The root entry is also the one that cannot go stale: a package added to
+  # `pnpm-workspace.yaml` is covered with no change here. Its one gap is an
+  # npm manifest placed outside the workspace, which would need an entry of
+  # its own. There is none today.
   - package-ecosystem: "npm"
-    directories:
-      - "/"
-      - "/packages/*"
-      - "/infra/cloudflare"
-      - "/infra/cloudflare/server-container"
-      - "/integrations/*"
-      - "/integrations/inbox/email-worker"
+    directory: "/"
     schedule:
       interval: "monthly"
+    # Two groups rather than one bucket of everything. A single `*` group put
+    # every bump behind one review, majors included, and no such pull request
+    # has ever been merged. Minor and patch updates usually land together on a
+    # green run; majors have to be read one at a time and should not hold the
+    # rest hostage.
+    #
+    # Order is load-bearing. A dependency joins the first group it matches, so
+    # the minor and patch group has to come first for the major group to
+    # receive anything.
+    #
+    # This split is about mergeability, not about the time limit. It adds one
+    # more pass to the job rather than removing any; the directory reduction
+    # above is what pays for it.
     groups:
-      all-npm:
+      npm-minor-and-patch:
+        applies-to: "version-updates"
         patterns:
           - "*"
-    open-pull-requests-limit: 1
+        update-types:
+          - "minor"
+          - "patch"
+      npm-major:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+    # Two groups can hold two pull requests open at once, and the limit counts
+    # every open version-update pull request from this entry rather than one
+    # per group. The previous value of one would have let whichever group ran
+    # first starve the other for as long as its pull request stayed open.
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
     ignore:
