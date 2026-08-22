@@ -14,6 +14,8 @@
  *   - GET    /admin/spaces/:id/metrics           — usage snapshot
  *   - GET    /admin/spaces/:id/keys              — a space's API keys
  *   - POST   /admin/spaces/:id/keys              — mint a key bound to that space
+ *   - POST   /admin/spaces/:id/delete            — hard-delete a space nobody owns
+ *   - POST   /admin/accounts/:id/delete          — delete an account and its space
  *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep
  *
  * Quotas READ/WRITE for a specific space reuses the existing
@@ -54,6 +56,14 @@ const SpaceSchema = z.object({
 const AdminSpaceSchema = SpaceSchema.extend({
   owner_email: z.string().nullable(),
   owner_email_verified: z.boolean().nullable(),
+  // The id `POST /admin/accounts/{id}/delete` takes. Without it that route was
+  // unusable through the API: it is keyed on the account's auth user id, no
+  // route returned one, and the space delete route's own refusal names it as
+  // the way forward. An operator following that instruction reached a route
+  // whose required input the platform would not give them, and the only way
+  // through was a hand-written query against the database — an irreversible
+  // action driven by a lookup with no audit trail of its own.
+  owner_auth_user_id: z.string().nullable(),
 });
 
 const QuotaSchema = z.object({
@@ -611,7 +621,7 @@ const deleteSpaceRoute = createRoute({
   tags: ["Admin"],
   summary: "Delete a space and everything it holds, immediately",
   description:
-    "Hard-deletes a space that no account owns, along with its items, edges, blobs, keys, webhooks, connection tokens and quota. There is no grace window and no undo. A space that still has users is refused: that case belongs to `POST /accounts/{id}/delete`, which owns the account teardown as well. The body's `confirm` must be the space id, spelled exactly; the mismatch refusal is the fat-finger gate on an action with no undo.",
+    "Hard-deletes a space that no account owns, along with its items, edges, blobs, keys, webhooks, connection tokens and quota. There is no grace window and no undo. A space that still has users is refused: that case belongs to `POST /admin/accounts/{id}/delete`, which owns the account teardown as well. The body's `confirm` must be the space id, spelled exactly; the mismatch refusal is the fat-finger gate on an action with no undo.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("The space id.") }),
@@ -765,6 +775,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
         ...space,
         owner_email: null,
         owner_email_verified: null,
+        owner_auth_user_id: null,
       };
     }
     const user = await storage.users.getBySpaceId(space.id);
@@ -775,6 +786,8 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       ...space,
       owner_email: owner?.email ?? null,
       owner_email_verified: owner?.email_verified ?? null,
+      // Already in hand from the lookup above, and previously discarded.
+      owner_auth_user_id: user?.auth_user_id ?? null,
     };
   }
 
@@ -1074,9 +1087,38 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
     }
     if (outcome === "has_users") {
+      // Names the id the other route needs rather than a placeholder, because
+      // this refusal is the documented way forward and used to point at a
+      // route whose required input nothing served.
+      //
+      // Resolving it is best-effort, and the fallback still names the route.
+      // `storage.users` is wired in hosted mode only, while this refusal comes
+      // from a direct query against the table, so the two do not agree: on a
+      // keys-mode deployment holding user rows there is nothing to resolve
+      // through, and that is ordinary rather than a fault. Claiming otherwise
+      // would tell the operator an integrity violation had occurred and drop
+      // the pointer in the case where they are most stuck.
+      //
+      // The lookup is guarded because this is an error path. A refusal turning
+      // into an opaque 500 for the sake of a message string is a bad trade.
+      //
+      // The message does not promise the space goes with the account. The
+      // cascade drops the space row only when no other user remains, and the
+      // schema permits more than one.
+      let ownerId: string | null = null;
+      if (storage.users) {
+        try {
+          ownerId =
+            (await storage.users.getBySpaceId(id))?.auth_user_id ?? null;
+        } catch {
+          ownerId = null;
+        }
+      }
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Space ${id} still has users. Delete the account with POST /admin/accounts/{id}/delete, which removes the space with it.`,
+        ownerId
+          ? `Space ${id} still has users. Delete the account instead, with POST /admin/accounts/${ownerId}/delete.`
+          : `Space ${id} still has users. Delete the account instead, through POST /admin/accounts/{id}/delete. The owning account could not be resolved from here, which is expected on a deployment with no user store.`,
       );
     }
 
