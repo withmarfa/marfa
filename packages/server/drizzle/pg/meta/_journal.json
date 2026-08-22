@@ -638,6 +638,13 @@
       "when": 1787273954201,
       "tag": "0090_stored_catalog_rows_take_the_current_manifest_shape",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1787359417000,
+      "tag": "0091_the_logout_hook_gets_its_index",
+      "breakpoints": true
     }
   ]
 }

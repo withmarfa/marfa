@@ -468,6 +468,8 @@ CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_authorization_code_id\`
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_client_id\` ON \`auth_oauth_access_token\` (\`client_id\`);
 
+CREATE INDEX IF NOT EXISTS "idx_auth_oauth_access_token_session_id" ON "auth_oauth_access_token" ("session_id");
+
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_token\` ON \`auth_oauth_access_token\` (\`token\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_access_token_user_id\` ON \`auth_oauth_access_token\` (\`user_id\`);
@@ -489,6 +491,8 @@ CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_authorization_code_id\
   ON \`auth_oauth_refresh_token\` (\`authorization_code_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_client_id\` ON \`auth_oauth_refresh_token\` (\`client_id\`);
+
+CREATE INDEX IF NOT EXISTS "idx_auth_oauth_refresh_token_session_id" ON "auth_oauth_refresh_token" ("session_id");
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_token\` ON \`auth_oauth_refresh_token\` (\`token\`);
 
