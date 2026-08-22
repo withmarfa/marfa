@@ -14788,6 +14788,10 @@
                     "trash_retention_days": {
                       "type": "integer",
                       "minimum": 0
+                    },
+                    "activity_retention_days": {
+                      "type": "integer",
+                      "minimum": 0
                     }
                   }
                 }
@@ -14964,6 +14968,10 @@
                   "trash_retention_days": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "activity_retention_days": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 }
               }
@@ -15048,6 +15056,10 @@
                       "minimum": 0
                     },
                     "trash_retention_days": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "activity_retention_days": {
                       "type": "integer",
                       "minimum": 0
                     }

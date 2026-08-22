@@ -232,6 +232,38 @@ describe("Space config — hosted mode", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
+  it("PUT persists the activity retention override rather than discarding it", async () => {
+    // The purger already fans out per space on this field, so a value the
+    // route accepts and drops is worse than one it refuses: PUT is a full
+    // replacement, so following the documentation un-sets the neighbours.
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { activity_retention_days: 30, trash_retention_days: 7 },
+    });
+    expect(res.status).toBe(200);
+
+    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+    });
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      activity_retention_days?: number;
+      trash_retention_days?: number;
+    };
+    expect(getBody.activity_retention_days).toBe(30);
+    expect(getBody.trash_retention_days).toBe(7);
+  });
+
+  it("PUT rejects a negative activity retention override with 400", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { activity_retention_days: -1 },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
+  });
+
   it("PUT persists a valid config and records an audit entry", async () => {
     const config = {
       enforcement: { strict_mode: { types: ["core.note"] } },
