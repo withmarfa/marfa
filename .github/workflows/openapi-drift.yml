@@ -89,6 +89,14 @@ jobs:
     # Reports this scheduled run's outcome to aic-alerts. Runs hosted rather than
     # on the self-hosted pool deliberately: when the pool is the thing that broke,
     # a notifier living on it cannot tell anyone.
+    #
+    # The verdict keys on the drift job's own result, and `cancelled` opens an
+    # alert rather than staying silent: the drift job runs on the self-hosted
+    # pool (CI_RUNNER), and a run queued there that never gets picked up is
+    # cancelled by GitHub's queue limit, which is the pool-down case this job
+    # exists for. A rare deliberate cancel pays one benign alert that the next
+    # scheduled run resolves, which is cheap against the guard silently going
+    # dark.
     needs: [drift]
     if: always() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -102,15 +110,10 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           case ",$RESULTS," in
-            *,failure,*|*,timed_out,*) STATE=open ;;
-            *,cancelled,*) exit 0 ;;
-            *) STATE=resolved ;;
+            *,failure,*|*,timed_out,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
+            *,cancelled,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
+            *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
           esac
-          if [ "$STATE" = open ]; then
-            TITLE="$WORKFLOW failed on $REPO"
-          else
-            TITLE="$WORKFLOW is green again on $REPO"
-          fi
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
                 --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
