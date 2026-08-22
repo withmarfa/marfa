@@ -118,8 +118,12 @@ describe("POST /admin/spaces/:id/delete", () => {
     const list = await request(ctx.app, "GET", "/admin/spaces", {
       key: ctx.adminKey,
     });
-    const body = (await list.json()) as { spaces?: { id: string }[] };
-    expect((body.spaces ?? []).some((s) => s.id === spaceId)).toBe(false);
+    // `data`, not `spaces`. The route has always returned `data`, so the
+    // previous shape made this assertion pass against an undefined array
+    // whatever the listing contained.
+    const body = (await list.json()) as { data?: { id: string }[] };
+    expect(body.data).toBeDefined();
+    expect((body.data ?? []).some((s) => s.id === spaceId)).toBe(false);
   });
 
   it("refuses a space that still has users, naming the account route", async () => {
@@ -224,15 +228,144 @@ describe("POST /admin/spaces/:id/delete", () => {
 
   // A space nobody owns has no account id, and null is the honest answer.
   // Anything else would be a value an operator could paste into a delete.
+  //
+  // Hosted mode on purpose. `createTestContext()` defaults to keys, where
+  // `storage.users` is not wired at all, so `withOwner` takes its first branch
+  // and returns a hardcoded null — which means the branch that actually
+  // computes this value was executed by no test, and changing it to return the
+  // space id would have passed.
   it("reports a null account id for a space with no account", async () => {
-    ctx = await createTestContext();
+    ctx = await createTestContext({ authMode: "hosted" });
     const spaceId = await seedAccountlessSpace(ctx);
     const detail = await request(ctx.app, "GET", `/admin/spaces/${spaceId}`, {
       key: ctx.adminKey,
     });
     const shown = (await detail.json()) as {
-      space?: { owner_auth_user_id?: string | null };
+      space?: {
+        owner_auth_user_id?: string | null;
+        owner_email?: string | null;
+      };
     };
     expect(shown.space?.owner_auth_user_id).toBeNull();
+    // And the email is null too, which is what makes the pair coherent: this
+    // space has no account, rather than an account whose id we failed to read.
+    expect(shown.space?.owner_email).toBeNull();
+  });
+
+  // The point of the whole change: the id the detail hands you drives the
+  // delete. Nothing tested that the loop actually closes.
+  it("the id from the space detail drives the account delete", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const signUp = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "end-to-end@example.com",
+        password: "correct horse",
+        name: "End To End",
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(signUp.status).toBe(200);
+    await markEmailVerified(ctx.storage, "end-to-end@example.com");
+    const lifecycle = ctx.storage.accountLifecycle;
+    if (!lifecycle)
+      throw new Error("account lifecycle expected in hosted mode");
+    const row = await lifecycle.getAccountLifecycleByEmail(
+      "end-to-end@example.com",
+    );
+    if (!row) throw new Error("provisioned account not found");
+    const user = await ctx.storage.users?.getByAuthUserId(row.auth_user_id);
+    if (!user) throw new Error("provisioned users row not found");
+
+    // Read the id the way an operator would, from the API rather than the store.
+    const detail = await request(
+      ctx.app,
+      "GET",
+      `/admin/spaces/${user.space_id}`,
+      { key: ctx.adminKey },
+    );
+    const shown = (await detail.json()) as {
+      space?: {
+        owner_auth_user_id?: string | null;
+        owner_email?: string | null;
+      };
+    };
+    const id = shown.space?.owner_auth_user_id;
+    const email = shown.space?.owner_email;
+    expect(id).toBeTruthy();
+
+    // And drive the delete with exactly those two values, nothing else.
+    const deleted = await request(
+      ctx.app,
+      "POST",
+      `/admin/accounts/${String(id)}/delete`,
+      { key: ctx.adminKey, body: { confirm: String(email) } },
+    );
+    expect(deleted.status).toBe(200);
+
+    // The account and its space are gone, which is what makes this the whole
+    // loop rather than two halves that happen to agree.
+    expect(
+      await ctx.storage.users?.getByAuthUserId(row.auth_user_id),
+    ).toBeNull();
+    expect(await ctx.storage.spaces?.get(user.space_id)).toBeNull();
+  });
+
+  // The refusal must survive the lookup failing. Resolving the owner is a
+  // convenience on an error path, and letting it turn a 409 into an opaque 500
+  // would trade a clear refusal for a worse one. The same branch is what a
+  // keys-mode deployment takes, where the user store is not wired at all while
+  // the refusal still comes from a direct query against the table.
+  it("still names the route when the owner lookup fails", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const signUp = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "lookup-fails@example.com",
+        password: "correct horse",
+        name: "Lookup Fails",
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(signUp.status).toBe(200);
+    await markEmailVerified(ctx.storage, "lookup-fails@example.com");
+    const lifecycle = ctx.storage.accountLifecycle;
+    if (!lifecycle)
+      throw new Error("account lifecycle expected in hosted mode");
+    const row = await lifecycle.getAccountLifecycleByEmail(
+      "lookup-fails@example.com",
+    );
+    if (!row) throw new Error("provisioned account not found");
+    const user = await ctx.storage.users?.getByAuthUserId(row.auth_user_id);
+    if (!user) throw new Error("provisioned users row not found");
+
+    const users = ctx.storage.users;
+    if (!users) throw new Error("user store expected in hosted mode");
+    const original = users.getBySpaceId.bind(users);
+    users.getBySpaceId = () => {
+      throw new Error("the store is unavailable");
+    };
+    try {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/admin/spaces/${user.space_id}/delete`,
+        { key: ctx.adminKey, body: { confirm: user.space_id } },
+      );
+      // A refusal, not a server error.
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error?: { message?: string } };
+      const message = body.error?.message ?? "";
+      // And it still points somewhere followable rather than asserting that
+      // something impossible has happened.
+      expect(message).toContain("/admin/accounts/{id}/delete");
+      expect(message).not.toContain("That should not happen");
+    } finally {
+      users.getBySpaceId = original;
+    }
   });
 });
