@@ -335,6 +335,10 @@ export function isValidTypePattern(value: string): boolean {
 // ---------------------------------------------------------------------------
 // Type permission resolution
 // ---------------------------------------------------------------------------
+/**
+ * Confusable pair: this takes a LIST of patterns; `typeMatchesPattern` in
+ * type-patterns.ts takes ONE. See T-738 for the incident this caused.
+ */
 
 /**
  * Returns true if the type matches any of the given patterns. Patterns are

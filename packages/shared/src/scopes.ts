@@ -215,9 +215,27 @@ export function scopeCovers(
   for (const scope of held) {
     const parsed = parseScope(scope);
     if (!parsed) continue;
+
+    // Item-type scopes only, matching the guard `scopesToTypePermissions`
+    // already applies. This is load-bearing rather than tidiness: `edge` and
+    // `metadata` are claimable publisher handles, so `edge.foo` is a
+    // registrable item type, and `edge.*:write` is a scope the server both
+    // advertises and issues. Without this guard a pattern match would let an
+    // edge grant satisfy an item-type requirement.
+    //
+    // The exact string comparison this replaced happened to contain that,
+    // because `edge.*` never equalled `edge.foo`. A pattern match does not,
+    // so the guard has to be explicit.
+    if (
+      parsed.kind === "metadata" ||
+      parsed.kind === "edge" ||
+      parsed.kind === "oidc"
+    )
+      continue;
+
     // `typeMatchesPattern`, not `!==`. The held scope carries a *pattern*
     // (`core.*`, `*`) and the requirement carries a concrete type, so string
-    // inequality reported every wildcard grant as covering nothing — failing
+    // inequality reported every wildcard grant as covering nothing: failing
     // closed, but wrongly, and silently.
     //
     // Note the neighbour: `matchesTypePattern` takes a list of patterns and
