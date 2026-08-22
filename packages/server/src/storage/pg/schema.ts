@@ -975,6 +975,11 @@ export const auth_oauth_refresh_token = pgTable(
     index("idx_auth_oauth_refresh_token_authorization_code_id").on(
       table.authorizationCodeId,
     ),
+    // The session-delete hook queries this column on every sign-out, and the
+    // auth plugin's own declared schema marks it indexed. This side had
+    // silently diverged from that declaration, so every sign-out ran a
+    // sequential scan of both token tables.
+    index("idx_auth_oauth_refresh_token_session_id").on(table.sessionId),
   ],
 );
 
@@ -1019,6 +1024,11 @@ export const auth_oauth_access_token = pgTable(
     index("idx_auth_oauth_access_token_authorization_code_id").on(
       table.authorizationCodeId,
     ),
+    // The session-delete hook queries this column on every sign-out, and the
+    // auth plugin's own declared schema marks it indexed. This side had
+    // silently diverged from that declaration, so every sign-out ran a
+    // sequential scan of both token tables.
+    index("idx_auth_oauth_access_token_session_id").on(table.sessionId),
   ],
 );
 

@@ -1123,6 +1123,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_authorization_code_id ON 
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_client_id ON public.auth_oauth_access_token USING btree (client_id);
 
+CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_session_id ON public.auth_oauth_access_token USING btree (session_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_oauth_access_token_token ON public.auth_oauth_access_token USING btree (token);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_user_id ON public.auth_oauth_access_token USING btree (user_id);
@@ -1138,6 +1140,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_reference_id ON public.auth_oa
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_authorization_code_id ON public.auth_oauth_refresh_token USING btree (authorization_code_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_client_id ON public.auth_oauth_refresh_token USING btree (client_id);
+
+CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_session_id ON public.auth_oauth_refresh_token USING btree (session_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_token ON public.auth_oauth_refresh_token USING btree (token);
 
