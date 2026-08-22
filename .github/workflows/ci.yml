@@ -425,20 +425,36 @@ jobs:
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.code == 'true'
-      # No typecheck or lint here. `ci-sqlite` runs both on the same source with
-      # the same commands, and the two jobs share a gate: both are job-level
-      # `if: github.event_name != 'workflow_dispatch'` and both gate their steps
-      # on `needs.changes.outputs.code`, so they always run together and this
-      # source is never unchecked.
-      #
-      # That shared gate is what makes the removal safe, so decoupling the two
-      # conditions later would silently drop the checks rather than fail
-      # visibly. If either job's `if:` changes, put these back or move them
-      # somewhere that runs unconditionally.
-      #
-      # `pnpm build` stays: `test:pg` needs the built output.
       - run: pnpm build
         if: needs.changes.outputs.code == 'true'
+      # No typecheck or lint here: `ci-sqlite` runs both, on the same source,
+      # with the same commands, from the same checkout.
+      #
+      # What keeps that safe is not that the two jobs happen to run together.
+      # It is that `ci-sqlite` still runs those two steps and `CI (SQLite)` is
+      # still a required status check in the repository ruleset. Both halves
+      # matter and only the first is visible in this file.
+      #
+      # So the change to watch for is not either job's `if:`. Removing a job
+      # that branch protection requires is the loudest failure available — the
+      # check never reports and the pull request hangs unmergeable, which is
+      # what the comment above `ci-sqlite` describes. The quiet ones are:
+      # deleting these steps from `ci-sqlite`, where both required checks stay
+      # green and nothing type-checks at all; renaming that job, which detaches
+      # it from the required context; and dropping `CI (SQLite)` from the
+      # ruleset, which is edited through the API and leaves no diff to review.
+      #
+      # Before this, two required checks each ran typecheck and lint, so losing
+      # one still caught a type error. Now one does. That is the cost, taken
+      # deliberately: `pnpm format:check` already had single-lane coverage, and
+      # Postgres is the longer lane in sixteen of the last twenty-one runs at a
+      # median of 444 seconds, so these two steps were about a fifth of the
+      # critical path being spent twice.
+      #
+      # If you put them back, put them here, below the build. Cross-package
+      # typechecks resolve workspace dependencies through each package's
+      # `dist/*.d.ts`, which do not exist on a fresh checkout until the build
+      # has run.
       # The same script a contributor runs locally, rather than a second
       # definition of the same environment in YAML. It boots its own
       # `postgres:17`, waits on a real `SELECT 1`, exports both PG URLs the
