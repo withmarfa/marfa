@@ -6,17 +6,21 @@ import { requireAdmin, requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
+// Strict at every level, not only the outer one. `.strict()` does not recurse,
+// so refusing an unknown key on the config object while accepting one inside
+// `enforcement` would leave the same silent drop one level down, on the block
+// where a dropped key means a rule nobody is enforcing.
 const EnforcementSchema = z
-  .object({
-    strict_mode: z.object({ types: z.array(z.string()) }).optional(),
+  .strictObject({
+    strict_mode: z.strictObject({ types: z.array(z.string()) }).optional(),
     source_allowlist: z
-      .object({
+      .strictObject({
         types: z.array(z.string()),
         sources: z.array(z.string()),
       })
       .optional(),
     source_filter: z
-      .object({
+      .strictObject({
         types: z.array(z.string()),
         sources: z.array(z.string()),
       })
@@ -31,7 +35,15 @@ const SpaceConfigSchema = z.object({
   // all, which is the tightest the leash goes; human-originated writes are
   // never subject to it. Resolved per space on the publish path and at the
   // runtime's own boundary, so raising it takes effect for both.
-  max_event_hop_budget: z.number().int().min(0).optional(),
+  //
+  // Capped, unlike the retention windows below, because the two fail
+  // differently. A retention window set absurdly high keeps data longer; a hop
+  // budget set absurdly high is the protection switched off, and the thing it
+  // protects against is an integration spinning a feedback loop. The ceiling
+  // is a backstop against "effectively unbounded" rather than a view on how
+  // deep a pipeline may reasonably be: twenty times the default is already far
+  // past any real chain.
+  max_event_hop_budget: z.number().int().min(0).max(100).optional(),
   // Per-space retention overrides for the cleanup jobs. Each falls back
   // to the instance env default when unset. `0` disables the job for
   // that space (matches env-default semantics for `TRASH_RETENTION_DAYS=0`);
