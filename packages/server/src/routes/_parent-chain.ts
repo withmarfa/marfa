@@ -6,26 +6,32 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * Three routes run this check and have to agree on which chains are legal:
  * `POST /types`, `PUT /types/:id` and the archive restore. They previously
  * agreed by the two files holding a copy of this number each, with a comment
- * in one saying it mirrored the other. Nothing made that true:
- * changing one would have left the archive able to carry a type
- * registration would refuse, or refusing one registration allows, and the
- * disagreement would first surface as a confusing rejection partway through
- * a restore.
+ * in one claiming to mirror the other. Nothing made that true, and the two
+ * ways it could have gone wrong fail differently:
+ *
+ * - **A stricter archive cap** rejects partway through a restore, because
+ *   the restore writes types one at a time and outside a transaction, so
+ *   earlier entries have already landed when a later one is refused.
+ * - **A stricter registration cap** rejects nothing at restore time. The
+ *   archive quietly accepts a chain `POST /types` would refuse, and the
+ *   disagreement shows up later at a registration, or never.
  *
  * These are not the only paths that put a schema into the registry. Manifest
  * registration writes declared schemas without checking a parent chain at
  * all, which is its own defect rather than something this file closes.
  *
- * Distinct from the registry's own `MAX_INHERITANCE_DEPTH` of 100 in
- * `@withmarfa/shared`. That one is a generous runtime backstop on the
- * resolution walks, sized so a real hierarchy never reaches it. This is the
- * bound on what a caller may register in one step, and it sits well below
- * the backstop deliberately.
+ * Distinct from the resolution backstops of 100 that sit above it. There are
+ * two, guarding different walks and each declared without reference to the
+ * other: `MAX_INHERITANCE_DEPTH` in `@withmarfa/shared` guards the registry's
+ * own walks, and `MAX_CHAIN_DEPTH` in `storage/policy.ts` guards the chain
+ * the merge policy and role set are built from. Both are sized so a real
+ * hierarchy never reaches them. This is the bound on what one checked
+ * registration may produce, and it sits well below both deliberately.
  *
  * It does not bound a chain's final depth. Re-parenting through
  * `PUT /types/:id` walks upward from the type being changed and revalidates
  * none of its descendants, so a chain can be grown past this cap, and past
- * the backstop above it, in steps that each pass.
+ * the backstops above it, in steps that each pass.
  */
 export const MAX_INHERITANCE_DEPTH = 10;
 

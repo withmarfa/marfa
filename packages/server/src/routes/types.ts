@@ -49,7 +49,7 @@ function isLockedPlatformType(id: string): boolean {
   return TYPE_REGISTRY.has(id);
 }
 
-/** The registration door's phrasing of a rejected parent chain. */
+/** How `POST /types` and `PUT /types/:id` phrase a rejected chain. */
 function validateParentChain(
   typeId: string,
   parentId: string,

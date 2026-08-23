@@ -467,9 +467,9 @@ describe("archives carry custom type registrations", () => {
     // as the registration door's message.
     //
     // The unknown-parent and circular phrasings this door also supplies are
-    // not reachable from an archive alone. The loop below skips a schema
-    // whose immediate parent has not resolved and raises its own error when
-    // nothing more can be written, so it reports the stall first. They need
+    // not reachable from an archive alone. The restore's own loop skips a
+    // schema whose immediate parent has not resolved and raises its own
+    // error when nothing more can be written, so it reports the stall first. They need
     // the registry to already hold a chain that points at nothing, and two
     // paths produce that. Deleting a type does not check for types that
     // inherit from it, and manifest registration writes a declared schema

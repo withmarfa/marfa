@@ -120,14 +120,16 @@ describe("the space a parent resolves in", () => {
 
 describe("the registration cap against the registry's own backstop", () => {
   it("leaves the deepest legally registered type resolvable on the read path", () => {
-    // The registry caps its resolution walks far above this. Raise this cap
-    // above that and every read of a legally registered deep type throws.
+    // The resolution walks are capped far above this one. Raise this cap
+    // past theirs and a type registered at the new depth stops being usable:
+    // the walks that resolve its fields and its roles both throw, and those
+    // run per write and per edge check.
     //
     // A type registered on top of the deepest legal parent walks one more
-    // node than the cap itself, which is the deepest a single *checked*
-    // registration produces. Neither the deepest a chain can get: a
-    // re-parent grows one without registering past the cap, and manifest
-    // registration runs no check at all.
+    // node than the cap itself, which is the deepest a single checked
+    // registration produces. It is not the deepest a chain can get: a
+    // re-parent grows one without ever registering past the cap, and
+    // manifest registration runs no check at all.
     const deepest = "acme.deepest";
     registerTypeSchema(
       {

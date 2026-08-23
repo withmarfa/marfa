@@ -51,10 +51,13 @@ export interface ArchiveTypeResult {
  * registry, after the batch's own parents are registered so a parent-child
  * pair in one archive validates in either input order.
  *
- * The two doors share the check rather than each holding a copy, so a
- * restore cannot accept a chain registration would refuse. Only the
- * phrasing differs: an archive entry has to be named, because the caller
+ * The routes that check a parent chain share the check rather than holding a
+ * copy, so a restore cannot accept a chain `POST /types` would refuse. Only
+ * the phrasing differs: an archive entry has to be named, because the caller
  * handed over a bundle rather than that type individually.
+ *
+ * Manifest registration is not one of them and checks nothing, which is a
+ * gap in that path rather than in this one.
  */
 function assertParentChainResolves(
   typeId: string,
