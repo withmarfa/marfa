@@ -26,6 +26,7 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import { assertParentChain } from "./_parent-chain.js";
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -48,42 +49,18 @@ function isLockedPlatformType(id: string): boolean {
   return TYPE_REGISTRY.has(id);
 }
 
-const MAX_INHERITANCE_DEPTH = 10;
-
-/** Validate parent chain: parent must exist, no circular references, depth
- *  capped. Parents resolve within the caller's space so a custom type may
- *  inherit from another of the space's custom types (or from a core type). */
+/** How `POST /types` and `PUT /types/:id` phrase a rejected chain. */
 function validateParentChain(
   typeId: string,
   parentId: string,
   spaceId?: string,
 ): void {
-  let current = parentId;
-  let depth = 0;
-  while (current) {
-    depth++;
-    if (depth > MAX_INHERITANCE_DEPTH) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Inheritance chain exceeds maximum depth of ${String(MAX_INHERITANCE_DEPTH)}`,
-      );
-    }
-    if (current === typeId) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Circular inheritance detected",
-      );
-    }
-    const parentSchema = getTypeSchema(current, spaceId);
-    if (!parentSchema) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Parent type "${current}" not found`,
-      );
-    }
-    current = parentSchema.parent ?? "";
-    if (!current) break;
-  }
+  assertParentChain(typeId, parentId, spaceId, {
+    tooDeep: (maxDepth) =>
+      `Inheritance chain exceeds maximum depth of ${String(maxDepth)}`,
+    circular: () => "Circular inheritance detected",
+    unknownParent: (parent) => `Parent type "${parent}" not found`,
+  });
 }
 
 // ---------------------------------------------------------------------------

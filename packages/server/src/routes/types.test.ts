@@ -201,6 +201,27 @@ describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () 
 });
 
 describe("inheritance rule enforcement", () => {
+  it("names the parent it could not resolve", async () => {
+    // The walk is shared with the archive restore, and each door supplies its
+    // own phrasing. Nothing else asserts what this door actually says, so a
+    // transposed interpolation would read as the other door's message.
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.orphan_child",
+        label: "Orphan Child",
+        version: 1,
+        parent: "test.no_such_parent",
+        fields: {},
+      },
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      'Parent type "test.no_such_parent" not found',
+    );
+  });
+
   it("rejects a child type that reshapes an ancestor field with INHERITANCE_VIOLATION", async () => {
     // core.bookmark declares `body` as a string. A child that redeclares it
     // as something else leaves two incompatible readings of one property

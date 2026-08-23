@@ -460,6 +460,61 @@ describe("archives carry custom type registrations", () => {
     expect(items.data).toHaveLength(0);
   });
 
+  it("names the archive entry whose chain runs too deep", async () => {
+    // The depth cap and the walk behind it are shared with `POST /types`,
+    // and each door supplies its own phrasing. This is the archive door's,
+    // and nothing else asserts it, so a transposed interpolation would read
+    // as the registration door's message.
+    //
+    // The unknown-parent and circular phrasings this door also supplies are
+    // not reachable from an archive alone. The restore's own loop skips a
+    // schema whose immediate parent has not resolved and raises its own
+    // error when nothing more can be written, so it reports the stall first. They need
+    // the registry to already hold a chain that points at nothing, and two
+    // paths produce that. Deleting a type does not check for types that
+    // inherit from it, and manifest registration writes a declared schema
+    // without checking its parent resolves at all. Both are defects of their
+    // own, and the cases for these two messages belong with either fix.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-at-d-${Math.random().toString(36).slice(2, 10)}`;
+    await source.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "innocent" },
+        source: "at-d",
+        source_id: "d1",
+      },
+      space,
+    );
+
+    // Eleven ancestors above the last entry, one past the cap.
+    const suffix = uniqueSuffix();
+    const link = (n: number): string => `user.deep${String(n)}_${suffix}`;
+    const chain = Array.from({ length: 12 }, (_, n) =>
+      JSON.stringify({
+        custom_type: {
+          id: link(n),
+          name: `Deep ${String(n)}`,
+          description: "One link of a chain built to outrun the cap.",
+          version: 1,
+          ...(n > 0 ? { parent: link(n - 1) } : {}),
+          fields: {},
+        },
+      }),
+    ).join("\n");
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const tampered = await repack(entries, { "types.ndjson": chain + "\n" });
+
+    const res = await restore(destination, space, tampered);
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      `Archive type "${link(11)}" has an inheritance chain deeper than 10`,
+    );
+  });
+
   it("refuses an archive redefining a core edge type", async () => {
     const source = await newContext();
     const destination = await newContext();
