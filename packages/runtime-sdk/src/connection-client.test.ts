@@ -305,6 +305,63 @@ describe("ConnectionClient.bulkUpsertItems", () => {
     expect(sent.items?.map((i) => i.source_id)).toEqual(["up_1", "up_2"]);
   });
 
+  // The route defaults `emit_events` off, so moving a sweep from POST /items
+  // to this endpoint silently stopped its mirrors announcing themselves and
+  // nothing in the space reacted to them any more. The route's default is
+  // right for a caller sending five thousand rows; a sweep is not that, and
+  // the caller is the only one who can tell the difference.
+  const bodyOf = async (
+    call: (c: ConnectionClient) => Promise<unknown>,
+  ): Promise<{ emit_events?: boolean }> => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({
+                counts: { created: 1, updated: 0, skipped: 0, errored: 0 },
+                results: [{ index: 0, outcome: "created", id: "item_1" }],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+        ],
+        captured,
+      ),
+    });
+    await call(client);
+    return JSON.parse(captured[0]?.body ?? "{}") as { emit_events?: boolean };
+  };
+
+  const ONE = [{ type: "core.note", source_id: "up_1" }];
+
+  it("announces its writes by default", async () => {
+    expect((await bodyOf((c) => c.bulkUpsertItems(ONE))).emit_events).toBe(
+      true,
+    );
+  });
+
+  it("lets a genuine import say so", async () => {
+    expect(
+      (await bodyOf((c) => c.bulkUpsertItems(ONE, { announce: false })))
+        .emit_events,
+    ).toBe(false);
+  });
+
+  it("sends the flag explicitly rather than relying on the route's default", async () => {
+    // Both directions are stated on the wire. Omitting the key would work
+    // today only because the route happens to default the way one of them
+    // wants, and that is the coupling this exists to remove.
+    for (const announce of [true, false]) {
+      const sent = await bodyOf((c) => c.bulkUpsertItems(ONE, { announce }));
+      expect(Object.hasOwn(sent, "emit_events")).toBe(true);
+      expect(sent.emit_events).toBe(announce);
+    }
+  });
+
   it("reports a per-entry failure rather than throwing the batch away", async () => {
     // Best-effort by design: one malformed upstream record must not take
     // the other ninety-nine documents down with it.
