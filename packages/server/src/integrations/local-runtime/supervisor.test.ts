@@ -27,6 +27,7 @@ import {
   type ScheduleMessage,
   familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
+import { initEventLog, __resetCycleDetectionForTests } from "../../pubsub.js";
 import { createSupervisor } from "./supervisor.js";
 import type {
   LocalIntegrationRegistration,
@@ -424,6 +425,82 @@ describe("local-runtime supervisor", () => {
     });
     expect(result.ok).toBe(true);
     expect(dispatchCount).toBe(0);
+  });
+
+  // The budget is the space's, not the SDK constant. It was the constant
+  // here while the publish path resolved per space, so an operator who
+  // raised `max_event_hop_budget` got events past the bus and dropped at
+  // this boundary, with the activity row naming a number they never chose.
+  it("honors a raised per-space hop budget instead of the SDK default", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    const raised = SDK_DEFAULT_HOP_BUDGET + 4;
+
+    initEventLog(ctx.storage.eventLog, {
+      getHopBudget: () => Promise.resolve(raised),
+    });
+
+    let dispatchCount = 0;
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: () => {
+        dispatchCount++;
+        return Promise.resolve({
+          result: { ok: true },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: false,
+        });
+      },
+      echo: { echo_ttl_seconds: 60 },
+      triggerKinds: new Set(["item-event"]),
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const message = (hops: number) =>
+      ({
+        integration_name: TEMPLATE_MANIFEST.name,
+        message: {
+          kind: "item-event" as const,
+          integration_name: TEMPLATE_MANIFEST.name,
+          connection_id: connectionId,
+          event_type: "item.created",
+          item_id: "item_test",
+          cycle: {
+            originating_connection_id: "other_conn",
+            hop_count: hops,
+          },
+          payload: { item: {}, metadata: {} },
+        },
+      }) as Parameters<typeof runtime.dispatchForTest>[0];
+
+    try {
+      // At the old constant, which the raised budget now allows through.
+      const allowed = await runtime.dispatchForTest(
+        message(SDK_DEFAULT_HOP_BUDGET),
+      );
+      expect(allowed.ok).toBe(true);
+      expect(dispatchCount).toBe(1);
+
+      // At the raised budget, which still stops it.
+      const stopped = await runtime.dispatchForTest(message(raised));
+      expect(stopped.ok).toBe(true);
+      expect(dispatchCount).toBe(1);
+    } finally {
+      __resetCycleDetectionForTests();
+    }
   });
 
   it("rejects dispatch for a revoked Connection at the credential mint", async () => {

@@ -26,6 +26,12 @@ const EnforcementSchema = z
 
 const SpaceConfigSchema = z.object({
   enforcement: EnforcementSchema,
+  // How many hops a single event may travel before the bus drops it as a
+  // suspected cycle. `0` stops integration-originated events propagating at
+  // all, which is the tightest the leash goes; human-originated writes are
+  // never subject to it. Resolved per space on the publish path and at the
+  // runtime's own boundary, so raising it takes effect for both.
+  max_event_hop_budget: z.number().int().min(0).optional(),
   // Per-space retention overrides for the cleanup jobs. Each falls back
   // to the instance env default when unset. `0` disables the job for
   // that space (matches env-default semantics for `TRASH_RETENTION_DAYS=0`);
@@ -35,6 +41,20 @@ const SpaceConfigSchema = z.object({
   trash_retention_days: z.number().int().min(0).optional(),
   activity_retention_days: z.number().int().min(0).optional(),
 });
+
+/**
+ * The write shape, which refuses a key it does not know.
+ *
+ * `PUT` is a full replacement, so stripping an unknown key is destructive
+ * rather than merely useless: `{"activity_retention_day": 30}` is one missing
+ * letter, and it used to answer 200 having erased every override the space
+ * had. A caller cannot tell that from success.
+ *
+ * Read stays permissive. A client that refuses to parse a field added after it
+ * shipped is the mirror-image failure, and the response is not what erases
+ * anything.
+ */
+const SpaceConfigWriteSchema = SpaceConfigSchema.strict();
 
 const getConfigRoute = createRoute({
   operationId: "getSpaceConfig",
@@ -78,12 +98,12 @@ const putConfigRoute = createRoute({
   tags: ["Spaces"],
   summary: "Replace the current space's configuration",
   description:
-    "Overwrites the space's config with the supplied object — full replacement, not a merge. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
+    "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
       content: {
-        "application/json": { schema: SpaceConfigSchema },
+        "application/json": { schema: SpaceConfigWriteSchema },
       },
     },
   },
@@ -309,7 +329,11 @@ export function spaceRoutes(storage: Storage) {
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    const body = c.req.valid("json") as SpaceConfig;
+    // No cast. The validated shape and `SpaceConfig` are the same type now
+    // that the schema declares every field the interface does, and the cast
+    // that used to bridge them was hiding exactly the field this route could
+    // not set.
+    const body: SpaceConfig = c.req.valid("json");
 
     if (!key.space_id || !storage.spaces) {
       throw new MarfaError(
