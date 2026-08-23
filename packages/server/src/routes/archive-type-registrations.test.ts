@@ -460,6 +460,56 @@ describe("archives carry custom type registrations", () => {
     expect(items.data).toHaveLength(0);
   });
 
+  it("names the archive entry whose chain runs too deep", async () => {
+    // The depth cap and the walk behind it are shared with `POST /types`,
+    // and each door supplies its own phrasing. This is the archive door's,
+    // and nothing else asserts it, so a transposed interpolation would read
+    // as the registration door's message.
+    //
+    // The unknown-parent and circular phrasings this door also supplies are
+    // not reachable from here: the loop below skips a schema whose immediate
+    // parent has not resolved yet and raises its own error when nothing more
+    // can be written, so it reports the stall before the walk ever sees it.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-at-d-${Math.random().toString(36).slice(2, 10)}`;
+    await source.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "innocent" },
+        source: "at-d",
+        source_id: "d1",
+      },
+      space,
+    );
+
+    // Eleven ancestors above the last entry, one past the cap.
+    const suffix = uniqueSuffix();
+    const link = (n: number): string => `user.deep${String(n)}_${suffix}`;
+    const chain = Array.from({ length: 12 }, (_, n) =>
+      JSON.stringify({
+        custom_type: {
+          id: link(n),
+          name: `Deep ${String(n)}`,
+          description: "One link of a chain built to outrun the cap.",
+          version: 1,
+          ...(n > 0 ? { parent: link(n - 1) } : {}),
+          fields: {},
+        },
+      }),
+    ).join("\n");
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const tampered = await repack(entries, { "types.ndjson": chain + "\n" });
+
+    const res = await restore(destination, space, tampered);
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: { message: string } };
+    expect(payload.error.message).toBe(
+      `Archive type "${link(11)}" has an inheritance chain deeper than 10`,
+    );
+  });
+
   it("refuses an archive redefining a core edge type", async () => {
     const source = await newContext();
     const destination = await newContext();

@@ -59,10 +59,10 @@ export function resolveMergePolicy(
 }
 
 /**
- * Guards against a cyclic or pathologically deep `parent` chain. Registration
- * rejects both (`validateParentChain`), so reaching either bound means a
- * schema got into the registry another way. Kept above the registration cap so
- * a legitimately deep hierarchy never trips it.
+ * Guards against a cyclic or pathologically deep `parent` chain. The
+ * registration doors reject both (`routes/_parent-chain.ts`), so reaching
+ * either bound means a schema got into the registry another way. Kept above
+ * the registration cap so a legitimately deep hierarchy never trips it.
  */
 const MAX_CHAIN_DEPTH = 100;
 

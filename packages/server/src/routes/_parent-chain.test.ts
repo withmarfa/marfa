@@ -71,8 +71,10 @@ describe("the depth a registered chain may reach", () => {
 });
 
 describe("a chain that reaches back to the type being registered", () => {
-  it("reports a cycle rather than walking until the cap trips", () => {
-    // `a5` is five steps up from `a9`, well inside the depth bound.
+  it("reports a cycle when the loop closes inside the depth bound", () => {
+    // `a5` is five steps up from `a9`, well inside the depth bound. Depth is
+    // checked first, so a loop that only closes past the cap reports as too
+    // deep instead, which is what both doors did before this was shared.
     expect(() => {
       assertParentChain(link(5), link(9), SPACE, MESSAGES);
     }).toThrow("circular");
@@ -116,13 +118,33 @@ describe("the space a parent resolves in", () => {
 });
 
 describe("the registration cap against the registry's own backstop", () => {
-  it("leaves a legally registered chain resolvable on the read path", () => {
+  it("leaves the deepest legally registered type resolvable on the read path", () => {
     // The registry caps its resolution walks far above this, so that hitting
     // that bound means a cycle got past this check rather than that a real
     // hierarchy grew too tall. Raise this cap above it and every read of a
     // legally registered deep type throws instead.
-    expect(() => {
-      getResolvedFields(link(MAX_INHERITANCE_DEPTH - 1), SPACE);
-    }).not.toThrow();
+    //
+    // The worst case is a type registered on top of the deepest legal parent,
+    // so the walk covers one more node than the cap itself.
+    const deepest = "acme.deepest";
+    registerTypeSchema(
+      {
+        id: deepest,
+        version: 1,
+        parent: link(MAX_INHERITANCE_DEPTH - 1),
+        fields: { own: { type: "string", description: "Own field" } },
+      },
+      SPACE,
+    );
+    try {
+      const fields = getResolvedFields(deepest, SPACE);
+      // Asserting the result, not just the absence of a throw: an unknown
+      // type resolves to `undefined` without throwing, so `not.toThrow()`
+      // alone would pass against a type that never registered.
+      expect(fields).toBeDefined();
+      expect(fields).toHaveProperty("own");
+    } finally {
+      unregisterTypeSchema(deepest, SPACE);
+    }
   });
 });

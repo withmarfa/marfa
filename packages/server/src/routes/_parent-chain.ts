@@ -3,13 +3,17 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
 /**
  * How deep a registered type's parent chain may go.
  *
- * Two doors register types — `POST /types` and the archive restore — and
- * they have to agree on which chains are legal. They previously agreed by
- * each holding a copy of this number, with a comment in one saying it
- * mirrored the other. Nothing made that true: changing one would have left
- * the archive able to carry a type registration would refuse, or refusing
- * one registration allows, and the disagreement would first surface as a
- * confusing rejection partway through a restore.
+ * `POST /types` and the archive restore have to agree on which chains are
+ * legal. They previously agreed by each holding a copy of this number, with
+ * a comment in one saying it mirrored the other. Nothing made that true:
+ * changing one would have left the archive able to carry a type
+ * registration would refuse, or refusing one registration allows, and the
+ * disagreement would first surface as a confusing rejection partway through
+ * a restore.
+ *
+ * These are not the only paths that put a schema into the registry. Manifest
+ * registration writes declared schemas without checking a parent chain at
+ * all, which is its own defect rather than something this file closes.
  *
  * Distinct from the registry's own `MAX_INHERITANCE_DEPTH` of 100 in
  * `@withmarfa/shared`. That one is a generous runtime backstop on the
