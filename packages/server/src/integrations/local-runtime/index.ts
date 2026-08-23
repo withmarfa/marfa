@@ -42,7 +42,6 @@ export { createSupervisor } from "./supervisor.js";
 export { createExecutor } from "./executor.js";
 export { createLocalReactiveBridge } from "./reactive-bridge.js";
 export { registerWebhookReceiptRoute } from "./webhook-receipt.js";
-export { mintLocalRuntimeCredential } from "./credentials.js";
 export {
   readConnectionRuntimeState,
   applyCursorDelta,

@@ -88,7 +88,7 @@ export function assertMintableSpaceScope(
  * earlier dispatch on this connection is still holding its credential, and
  * every sibling can go.
  *
- * That serialisation is why this revokes unconditionally now. It used to
+ * That serialization is why this revokes unconditionally now. It used to
  * revoke only *expired* siblings, on the reasoning that the bearer gate
  * already refuses those so revoking one cannot break a running dispatch.
  * The reasoning was sound and the bound it produced was not: nothing retired

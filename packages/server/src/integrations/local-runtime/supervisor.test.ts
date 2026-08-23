@@ -16,7 +16,11 @@
  *     correctly via the in-process short-circuit
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestContext, TEST_API_KEY_SALT } from "../../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import {
   registerScheduleHandler,
@@ -31,6 +35,7 @@ import { initEventLog, __resetCycleDetectionForTests } from "../../pubsub.js";
 import { createSupervisor } from "./supervisor.js";
 import type {
   LocalIntegrationRegistration,
+  LocalRuntime,
   WorkerDispatchRequest,
   WorkerDispatchResponse,
 } from "./types.js";
@@ -136,6 +141,7 @@ async function createIntegrationItem(): Promise<string> {
 
 async function createActiveConnection(
   integrationItemId: string,
+  properties: Record<string, unknown> = {},
 ): Promise<string> {
   const item = await ctx.storage.items.create(
     {
@@ -145,6 +151,7 @@ async function createActiveConnection(
         status: "active",
         integration_ref: integrationItemId,
         granted_at: new Date().toISOString(),
+        ...properties,
       },
     },
     undefined,
@@ -297,6 +304,30 @@ describe("local-runtime supervisor", () => {
     expect(state.recent_errors.length).toBe(1);
     expect(state.recent_errors[0]?.reason).toBe("test_permanent_failure");
     expect(state.recent_errors[0]?.message_kind).toBe("schedule");
+
+    // The operator-facing half. The tail entry is per-connection state; this
+    // is the row a person actually sees, and it used to be written through a
+    // credential minted outside the dispatch lock.
+    const activity = await ctx.storage.items.list({ type: "system.activity" });
+    const reported = activity.data.filter((item) => {
+      const props = item.properties as {
+        summary?: string;
+        connection_id?: string;
+        severity?: string;
+      };
+      return (
+        props.connection_id === connectionId &&
+        (props.summary ?? "").includes("Permanent failure")
+      );
+    });
+    expect(reported).toHaveLength(1);
+    expect((reported[0]?.properties as { severity?: string }).severity).toBe(
+      "action_required",
+    );
+    expect(
+      (reported[0]?.properties as { detail?: { reason?: string } }).detail
+        ?.reason,
+    ).toBe("test_permanent_failure");
   });
 
   it("retries a handler throw on the first delivery, terminal on a redelivery", async () => {
@@ -373,6 +404,346 @@ describe("local-runtime supervisor", () => {
     );
     expect(afterSecond.recent_errors).toHaveLength(1);
     expect(afterSecond.recent_errors[0]?.reason).toBe("upstream blip");
+  });
+
+  it("leaves a running dispatch's credential alone when an event is dropped", async () => {
+    // The mint that starts a dispatch retires the connection's other
+    // credentials, on the evidence that it holds `connection-dispatch:<id>`
+    // and so nothing else can be running. The hop-budget row is written
+    // before that lock is taken, and used to mint a credential of its own to
+    // write through, which retired the one the dispatch below is holding.
+    // The bearer gate refuses a revoked credential exactly as it refuses an
+    // expired one, so the dispatch started taking 401s partway through with
+    // nothing logged where the revocation happened.
+    const integrationId = await createIntegrationItem();
+    // Opted into feed surfacing, so the row this writes has to carry the
+    // tier the route would have stamped on it.
+    const connectionId = await createActiveConnection(integrationId, {
+      feed_activity: true,
+    });
+
+    let held: string | undefined;
+    // The registration needs the supervisor that the supervisor needs the
+    // registration to build, so the handler reaches it through a holder
+    // rather than closing over a binding that does not exist yet.
+    const supervisor: { current?: LocalRuntime } = {};
+
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: async (dispatchRequest: WorkerDispatchRequest) => {
+        held = dispatchRequest.credential.api_key;
+        // An over-budget item event for the same connection, arriving while
+        // this dispatch is mid-flight. It mints ahead of the lock, so it
+        // does not wait on the dispatch that is running.
+        await supervisor.current!.dispatchForTest({
+          integration_name: TEMPLATE_MANIFEST.name,
+          message: {
+            kind: "item-event",
+            integration_name: TEMPLATE_MANIFEST.name,
+            connection_id: connectionId,
+            event_type: "item.created",
+            item_id: "item_out_of_band",
+            cycle: {
+              originating_connection_id: "other_conn",
+              hop_count: SDK_DEFAULT_HOP_BUDGET,
+            },
+            payload: { item: {}, metadata: {} },
+          },
+        });
+        const response: WorkerDispatchResponse = {
+          result: { ok: true },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: false,
+        };
+        return response;
+      },
+      echo: { echo_ttl_seconds: 60 },
+      triggerKinds: new Set(["schedule", "item-event"]),
+    };
+
+    supervisor.current = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, dispatchRequest) =>
+          reg.directDispatch!(dispatchRequest),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const before = await ctx.storage.keys.countRuntimeCredentials(
+      new Date().toISOString(),
+    );
+
+    const result = await supervisor.current.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(held).toBeDefined();
+
+    const res = await request(ctx.app, "POST", "/items", {
+      key: held,
+      body: { type: "core.note", properties: { body: "written after" } },
+    });
+    expect(res.status).toBe(201);
+
+    // The dropped event still gets recorded, which is also what proves the
+    // path ran: it is best-effort and swallows its own failures, so without
+    // this the case above would pass just as well against a boundary that
+    // had gone quiet.
+    const activity = await ctx.storage.items.list({ type: "system.activity" });
+    const dropped = activity.data.filter((item) => {
+      const props = item.properties as {
+        summary?: string;
+        connection_id?: string;
+      };
+      return (
+        props.connection_id === connectionId &&
+        (props.summary ?? "").includes("cycle hop budget")
+      );
+    });
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.tier).toBe("feed");
+
+    // And it minted nothing to write it with. Counted rather than listed,
+    // because `listByConnectionId` hides revoked rows: it answers one both
+    // when the boundary minted nothing and when it minted a replacement and
+    // revoked the credential the dispatch was holding, which is the defect.
+    // `total` counts revoked rows precisely so accumulation is visible.
+    const after = await ctx.storage.keys.countRuntimeCredentials(
+      new Date().toISOString(),
+    );
+    expect(after.total).toBe(before.total + 1);
+  });
+
+  it("writes the row for a hosted connection whose message carries no space", async () => {
+    // The space comes from the connection, not the message. A manual run
+    // carries the caller's space, and a platform admin has none, so keying
+    // the hosted guard on the message would drop the row for an in-space
+    // connection somebody ran by hand. The mint this replaced read the
+    // connection.
+    if (!ctx.storage.spaces) {
+      throw new Error("spaces store missing, test pre-condition violated");
+    }
+    const space = await ctx.storage.spaces.create("supervisor-hosted-space");
+    const integrationItem = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: TEMPLATE_MANIFEST.name,
+          manifest_version: TEMPLATE_MANIFEST.version,
+          publisher: TEMPLATE_MANIFEST.publisher,
+          manifest: TEMPLATE_MANIFEST,
+          registered_at: new Date().toISOString(),
+        },
+      },
+      space.id,
+    );
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          integration_ref: integrationItem.id,
+          granted_at: new Date().toISOString(),
+        },
+      },
+      space.id,
+    );
+
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: () =>
+        Promise.resolve({
+          result: { ok: false, retry: false, reason: "hosted_failure" },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: false,
+        } as WorkerDispatchResponse),
+      echo: { echo_ttl_seconds: 60 },
+      triggerKinds: new Set(["schedule"]),
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "hosted" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, dispatchRequest) =>
+          reg.directDispatch!(dispatchRequest),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "manual",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connection.id,
+        requested_at_ms: Date.now(),
+      },
+    });
+
+    const inSpace = await ctx.storage.items.list({
+      spaceId: space.id,
+      type: "system.activity",
+    });
+    const reported = inSpace.data.filter(
+      (item) =>
+        (item.properties as { connection_id?: string }).connection_id ===
+        connection.id,
+    );
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.space_id).toBe(space.id);
+  });
+
+  it("writes nothing for a hosted connection that has no space", async () => {
+    // A space-less credential is the platform tier, so the hosted mint
+    // refuses one. Such a connection cannot dispatch at all: the mint throws
+    // before the handler runs. The two paths that reach the row without
+    // minting are the hop-budget boundary, which runs before the lock, and
+    // the dead-letter worker. This drives the first.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    let dispatched = 0;
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: () => {
+        dispatched += 1;
+        return Promise.resolve({
+          result: { ok: true },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: false,
+        } as WorkerDispatchResponse);
+      },
+      echo: { echo_ttl_seconds: 60 },
+      triggerKinds: new Set(["item-event"]),
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "hosted" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, dispatchRequest) =>
+          reg.directDispatch!(dispatchRequest),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "item-event",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        event_type: "item.created",
+        item_id: "item_spaceless",
+        cycle: {
+          originating_connection_id: "other_conn",
+          hop_count: SDK_DEFAULT_HOP_BUDGET,
+        },
+        payload: { item: {}, metadata: {} },
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(dispatched).toBe(0);
+
+    const activity = await ctx.storage.items.list({ type: "system.activity" });
+    expect(
+      activity.data.filter(
+        (item) =>
+          (item.properties as { connection_id?: string }).connection_id ===
+          connectionId,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("still retires the previous dispatch's credential on the next dispatch", async () => {
+    // The control for the case above. Without it, that one would pass just
+    // as well against a mint that had stopped superseding altogether.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const seen: string[] = [];
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: (dispatchRequest: WorkerDispatchRequest) => {
+        seen.push(dispatchRequest.credential.api_key);
+        const response: WorkerDispatchResponse = {
+          result: { ok: true },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: false,
+        };
+        return Promise.resolve(response);
+      },
+      echo: { echo_ttl_seconds: 60 },
+      triggerKinds: new Set(["schedule"]),
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, dispatchRequest) =>
+          reg.directDispatch!(dispatchRequest),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+
+    const envelope = {
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule" as const,
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    };
+    await runtime.dispatchForTest(envelope);
+    await runtime.dispatchForTest(envelope);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBe(seen[1]);
+
+    const refused = await request(ctx.app, "POST", "/items", {
+      key: seen[0],
+      body: { type: "core.note", properties: { body: "superseded" } },
+    });
+    expect(refused.status).toBe(401);
+
+    // The second one works, so the 401 above is the supersede rather than
+    // runtime credentials being broken outright.
+    const accepted = await request(ctx.app, "POST", "/items", {
+      key: seen[1],
+      body: { type: "core.note", properties: { body: "current" } },
+    });
+    expect(accepted.status).toBe(201);
   });
 
   it("acks item-event messages that meet the hop budget without dispatching the handler", async () => {
