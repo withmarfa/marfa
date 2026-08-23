@@ -115,6 +115,34 @@ export interface BulkUpsertResult {
   error?: { code: string; message: string };
 }
 
+/** Options for {@link ConnectionClient.bulkUpsertItems}. */
+export interface BulkUpsertOptions {
+  /**
+   * Whether the items announce themselves, so reactive integrations wake and
+   * outbound webhooks fire. Defaults to **true**, which is the difference
+   * between this and calling `POST /items/bulk` directly.
+   *
+   * The route defaults it off, and is right to: a caller sending up to five
+   * thousand rows in one request is doing a bulk import, and flooding every
+   * subscriber with it is rarely what anyone wants. An integration's inbound
+   * sweep is not that. It is the integration doing its ordinary job a page at
+   * a time, and before these writes were batched each mirrored document
+   * announced itself. Which endpoint the handler happens to call is not a
+   * reason for the rest of the space to stop hearing about its items.
+   *
+   * Set `false` for a genuine first-run backfill of a large library, where
+   * the volume really is an import and the subscriber does not need each
+   * document as it lands. That is a judgment the handler can make and the
+   * route cannot.
+   *
+   * Announcing is not free: the server re-reads each written item and its
+   * metadata to build the event, so a page of a hundred costs two hundred
+   * extra reads. The cycle guard bounds how far any one of those events can
+   * cascade, not how many there are.
+   */
+  announce?: boolean;
+}
+
 export interface BulkUpsertResponse {
   counts: {
     created: number;
@@ -243,11 +271,15 @@ export class ConnectionClient {
    * `counts.errored` and decide, rather than assuming the batch applied
    * in full.
    */
-  async bulkUpsertItems(items: CreateItemInput[]): Promise<BulkUpsertResponse> {
+  async bulkUpsertItems(
+    items: CreateItemInput[],
+    options: BulkUpsertOptions = {},
+  ): Promise<BulkUpsertResponse> {
     return this.request<BulkUpsertResponse>("POST", "/items/bulk", {
       items,
       mode: "upsert",
       atomic: false,
+      emit_events: options.announce ?? true,
     });
   }
 

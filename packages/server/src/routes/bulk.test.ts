@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { subscribe } from "../pubsub.js";
 
 let ctx: TestContext;
 
@@ -684,5 +685,114 @@ describe("POST /items/bulk", () => {
       errored: 0,
     });
     expect(body.results).toEqual([]);
+  });
+});
+
+/**
+ * Whether a bulk write announces itself.
+ *
+ * The route defaults `emit_events` off so a five-thousand-row import does
+ * not flood every subscriber, and that default is right for the caller it
+ * was written for. It is the wrong one for an integration's inbound sweep,
+ * which is the integration doing its ordinary job a page at a time, and
+ * moving those writes onto this endpoint silently stopped their mirrors
+ * announcing themselves. Nothing in the space reacted to them any more.
+ *
+ * The runtime client now asks for `true`, so this is the half that proves
+ * asking for it does something. Neither direction had a test.
+ *
+ * The negative case is proven with a sentinel rather than a timeout: a
+ * single-item create always publishes, so if the first event to arrive
+ * after a quiet bulk write is the sentinel, the bulk write published
+ * nothing. A wall-clock wait would have said the same thing less reliably
+ * on a loaded machine.
+ */
+describe("POST /items/bulk — emit_events", () => {
+  const noteBatch = (suffix: string) => [
+    {
+      type: "core.note",
+      properties: { body: "announce 1" },
+      source_id: `emit-${suffix}-1`,
+    },
+    {
+      type: "core.note",
+      properties: { body: "announce 2" },
+      source_id: `emit-${suffix}-2`,
+    },
+  ];
+
+  /**
+   * Starts the listener and returns a promise for the next `count` item ids.
+   *
+   * The first `next()` is what attaches the emitter listener, and the emitter
+   * has no replay buffer, so it has to be in flight before the request that
+   * publishes. Awaiting it here instead would block until an event arrived,
+   * which is a request that never gets issued and a test that times out.
+   */
+  const collect = (count: number) => {
+    const iter = subscribe()[Symbol.asyncIterator]();
+    const ids = (async (): Promise<string[]> => {
+      const out: string[] = [];
+      while (out.length < count) {
+        const next = await iter.next();
+        if (next.done) break;
+        out.push(next.value.item.id);
+      }
+      return out;
+    })();
+    void ids.catch(() => undefined);
+    return { ids, close: () => void iter.return(undefined) };
+  };
+
+  it("publishes one event per written item when asked to", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const stream = collect(2);
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: { items: noteBatch(suffix), emit_events: true },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: { id?: string }[] };
+
+    const seen = await stream.ids;
+    stream.close();
+    expect(seen.slice().sort()).toEqual(
+      body.results
+        .map((r) => r.id)
+        .filter((id): id is string => Boolean(id))
+        .sort(),
+    );
+  });
+
+  it("publishes nothing by default", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const stream = collect(1);
+
+    const quiet = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: { items: noteBatch(suffix) },
+    });
+    expect(quiet.status).toBe(200);
+
+    // A single-item create always publishes, so it is the first thing to
+    // arrive unless the bulk write put something in front of it. A sentinel
+    // rather than a timeout, so the assertion does not depend on how loaded
+    // the machine is.
+    const marker = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "sentinel" },
+        source_id: `emit-${suffix}-sentinel`,
+      },
+    });
+    expect(marker.status).toBe(201);
+    const markerId = ((await marker.json()) as { item: { id: string } }).item
+      .id;
+
+    const seen = await stream.ids;
+    stream.close();
+    expect(seen).toEqual([markerId]);
   });
 });
