@@ -57,6 +57,7 @@ import {
 import {
   runtimeCredentialItemSource,
   withConnectionLifecycleLock,
+  withConnectionLifecycleLockInTransaction,
 } from "./lifecycle-lock.js";
 import { assertMintableSpaceScope } from "./runtime-credential-lifecycle.js";
 
@@ -280,8 +281,47 @@ export async function performInstall(
     // compensation walker logs and swallows. The visible result was a
     // rollback that left the Connection active: every install failure
     // after this point stranded a live Connection nobody had asked for.
-    // Terminal either way, and it matches what uninstall writes.
-    await storage.items.transition(connection.id, "revoked", input.spaceId);
+    //
+    // The state alone is not the whole of it. `properties.status` is the
+    // type's own lifecycle status and `runtime_status` describes a runtime
+    // that a rolled-back install never got, and every surface a person
+    // looks at reads those rather than the item's state. Writing one and
+    // not the others produced a row disagreeing with itself: revoked, and
+    // active, and healthy. Uninstall writes all three together for exactly
+    // this reason; this is the other producer of the same shape.
+    //
+    // Under the lifecycle lock, in one transaction. This was the only
+    // lifecycle-state write in this directory running unlocked: uninstall,
+    // pause and upgrade all take it, and the connection is externally
+    // visible and mutable from the moment step 1 commits, so a rollback
+    // racing a pause could interleave with it.
+    //
+    // The transaction-riding shape rather than the bracketing one, because
+    // this is pure database work. The bracketing form holds a pool
+    // connection for the length of the callback and then needs a second
+    // slot for the work inside it, which is the shape that once stopped the
+    // server answering.
+    //
+    // Only the two fields. `items.update` merges against what is stored, so
+    // resubmitting the create-time object would be redundant on the ordinary
+    // path and a revert on any path where something had touched the
+    // connection in between.
+    // The transaction is nested inside deliberately rather than relying on
+    // the lock helper to supply one. It supplies a transaction on Postgres
+    // and not on SQLite, where it falls back to the bracketing form, so
+    // taking the helper alone would have quietly left the two writes
+    // unatomic on one dialect while the comment above claimed otherwise.
+    // Postgres resolves the inner call to a savepoint.
+    await withConnectionLifecycleLockInTransaction(storage, connection.id, () =>
+      storage.runInTransaction(async () => {
+        await storage.items.transition(connection.id, "revoked", input.spaceId);
+        await storage.items.update(
+          connection.id,
+          { properties: { status: "revoked", runtime_status: "revoked" } },
+          input.spaceId,
+        );
+      }),
+    );
   });
 
   // -------------------------------------------------------------------
