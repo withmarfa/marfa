@@ -224,6 +224,23 @@ The server does **not** migrate on boot. The deploy applies pending migrations a
 
   This still applies now the roll is forced. Migrations run in an earlier job, so the old build serves the migrated schema for the length of the deploy job plus one request. The pipeline can't detect either case; it's per-migration authoring discipline.
 
+## Narrowing a contract that stored rows already match
+
+Several contracts here are validated against **stored** data on every read rather than only at write: the integration manifest most of all, which is re-parsed on every resolution, with `.strict()`, and a runtime credential's permissions projected from the result. A mint fails closed, so a resolution failure is not a degradation, it is a stop.
+
+Each part of that is correct on its own, and together they mean **a narrowing has no grace period unless you write one**.
+
+**Enumerate everything the change tightens, not the thing that prompted it.** Removing one required field from the manifest shipped with a tolerance for that field, written deliberately by someone who knew the hazard. But dropping a required field is not additive, so the same change moved the schema major, and the supported-major gate then refused every row written under the old one. Eleven of eleven staging connections stopped resolving, naming a version no user had ever set. The tolerance was real and covered a third of what the change did, which reads exactly like covering all of it until deploy.
+
+The list to walk before narrowing:
+
+- the field or shape itself,
+- the contract or schema **version gate**, if the change moves a major,
+- any **strictness** that now rejects what the old shape carried,
+- any **second validator** over the same document.
+
+**Then replay the new validator over real stored rows before trusting the tolerance.** Pull every row the validator will meet on the deployed environments and run it locally. It takes minutes, it is the step that was skipped, and it is what has since proved a follow-on migration safe. Verifying after deploy is where the recovery time goes.
+
 ## OpenAPI
 
 Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from route definitions, not maintained manually. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` to update the committed spec. The spec is served at `GET /openapi.json` on a running server.

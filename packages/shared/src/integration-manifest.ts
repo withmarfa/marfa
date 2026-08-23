@@ -583,6 +583,12 @@ export function validateConnectionConfiguration(
  * every resolution, and a credential mint fails closed when resolution
  * fails. Narrowing it is therefore a change to live data handling, not a
  * constant, and it is only ever safe once the rows have moved.
+ *
+ * Moving this is one of the four things a narrowing tightens, and it is the
+ * one that gets forgotten because nothing in the change mentions it. The
+ * other three, and the replay-over-stored-rows check that catches all of
+ * them, are under "Narrowing a contract that stored rows already match" in
+ * the repository's AGENTS.md.
  */
 export const MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS: readonly number[] = [2];
 
