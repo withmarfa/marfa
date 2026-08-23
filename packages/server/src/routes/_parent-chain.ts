@@ -3,9 +3,10 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
 /**
  * How deep a registered type's parent chain may go.
  *
- * `POST /types` and the archive restore have to agree on which chains are
- * legal. They previously agreed by each holding a copy of this number, with
- * a comment in one saying it mirrored the other. Nothing made that true:
+ * Three routes run this check and have to agree on which chains are legal:
+ * `POST /types`, `PUT /types/:id` and the archive restore. They previously
+ * agreed by the two files holding a copy of this number each, with a comment
+ * in one saying it mirrored the other. Nothing made that true:
  * changing one would have left the archive able to carry a type
  * registration would refuse, or refusing one registration allows, and the
  * disagreement would first surface as a confusing rejection partway through

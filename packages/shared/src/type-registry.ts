@@ -432,7 +432,9 @@ export function unregisterTypeSchema(
 }
 
 // Hard bound on inheritance-chain depth for the hot-path walks below
-// (`getResolvedFields`, `isSubtypeOf`). The server's registration doors reject
+// (`getResolvedFields`, `isSubtypeOf`, `typeHasRole`). It is really a depth
+// bound: a cycle short enough to fit inside it trips the `seen` check first.
+// The server's registration doors reject
 // a cycle and an over-deep chain before a schema enters the registry, in
 // `routes/_parent-chain.ts`. `validateTypeSchema` does not: it tolerates an
 // unresolvable or cyclic parent rather than erroring, so it is not one of the

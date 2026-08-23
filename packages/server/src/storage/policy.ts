@@ -59,10 +59,19 @@ export function resolveMergePolicy(
 }
 
 /**
- * Guards against a cyclic or pathologically deep `parent` chain. The
- * registration doors reject both (`routes/_parent-chain.ts`), so reaching
- * either bound means a schema got into the registry another way. Kept above
- * the registration cap so a legitimately deep hierarchy never trips it.
+ * Guards against a cyclic or pathologically deep `parent` chain, and it is
+ * the depth half that this bound is really for: a cycle short enough to fit
+ * inside it trips the `seen` check first.
+ *
+ * Reaching the depth means either that a schema entered the registry by a
+ * path running no parent-chain check, or that a chain was grown past the
+ * registration cap in steps that each passed it. Manifest registration is
+ * the first; re-parenting through `PUT /types/:id` is the second, because
+ * the check walks upward from the type being changed and revalidates none
+ * of its descendants.
+ *
+ * Kept above the registration cap so a legitimately deep hierarchy never
+ * trips it.
  */
 const MAX_CHAIN_DEPTH = 100;
 

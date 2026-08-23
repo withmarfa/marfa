@@ -470,10 +470,10 @@ describe("archives carry custom type registrations", () => {
     // not reachable from an archive alone. The loop below skips a schema
     // whose immediate parent has not resolved and raises its own error when
     // nothing more can be written, so it reports the stall first. They need
-    // the registry to already hold a broken chain, which it can: deleting a
-    // type does not check for children, and re-parenting revalidates none of
-    // a type's descendants. Both are defects in their own right, and the
-    // cases for these two messages belong with whichever of them is fixed.
+    // the registry to already hold a chain that points at nothing, and one
+    // path produces that: deleting a type does not check for types that
+    // inherit from it. That is a defect of its own, and the cases for these
+    // two messages belong with its fix.
     const source = await newContext();
     const destination = await newContext();
     const space = `t-at-d-${Math.random().toString(36).slice(2, 10)}`;
