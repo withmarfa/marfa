@@ -547,6 +547,13 @@
       "when": 1787359417000,
       "tag": "0077_the_logout_hook_gets_its_index",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1787445817000,
+      "tag": "0078_the_retired_capture_identifier_leaves_the_registry",
+      "breakpoints": true
     }
   ]
 }

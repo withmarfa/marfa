@@ -233,9 +233,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "readwise.document": "Readwise Reader documents",
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
-  // Legacy identifier superseded by marfa.captured_email; still registered
-  // so grants and rows that predate the rename keep resolving to a label.
-  "withmarfa.captured_email": "Captured emails",
+
   "user.*": "Your custom types",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",

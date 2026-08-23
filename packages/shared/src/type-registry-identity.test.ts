@@ -66,7 +66,6 @@ const INTEGRATION_TYPE_IDENTIFIERS = [
   "readwise.document",
   "readwise.highlight",
   "todoist.task",
-  "withmarfa.captured_email",
 ];
 
 const SYSTEM_TYPE_IDENTIFIERS = [
