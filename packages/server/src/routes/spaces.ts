@@ -6,30 +6,34 @@ import { requireAdmin, requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
-// Strict at every level, not only the outer one. `.strict()` does not recurse,
-// so refusing an unknown key on the config object while accepting one inside
-// `enforcement` would leave the same silent drop one level down, on the block
-// where a dropped key means a rule nobody is enforcing.
-const EnforcementSchema = z
-  .strictObject({
-    strict_mode: z.strictObject({ types: z.array(z.string()) }).optional(),
-    source_allowlist: z
-      .strictObject({
-        types: z.array(z.string()),
-        sources: z.array(z.string()),
-      })
-      .optional(),
-    source_filter: z
-      .strictObject({
-        types: z.array(z.string()),
-        sources: z.array(z.string()),
-      })
-      .optional(),
-  })
-  .optional();
+const TYPE_LIST = z.array(z.string());
 
-const SpaceConfigSchema = z.object({
-  enforcement: EnforcementSchema,
+/**
+ * One shape, built twice: permissive for reads and strict for the write.
+ *
+ * `.strict()` does not recurse, so the outer object refusing an unknown key
+ * while `enforcement` accepted one would leave the same silent drop a level
+ * down, on the block where a dropped key means a rule nobody is enforcing.
+ * Applying it at every level is the fix, and it has to be applied to the write
+ * shape alone: sharing one strict `enforcement` between the two would make the
+ * response strict inside and permissive outside, which is both inconsistent
+ * and the wrong half to tighten.
+ *
+ * Taking the shape as a parameter rather than writing it out twice is what
+ * stops the two drifting, which is the failure this whole change is about.
+ */
+const enforcementSchema = (strict: boolean) => {
+  const obj = strict ? z.strictObject : z.object;
+  const typesAndSources = { types: TYPE_LIST, sources: z.array(z.string()) };
+  return obj({
+    strict_mode: obj({ types: TYPE_LIST }).optional(),
+    source_allowlist: obj(typesAndSources).optional(),
+    source_filter: obj(typesAndSources).optional(),
+  }).optional();
+};
+
+const spaceConfigShape = (strict: boolean) => ({
+  enforcement: enforcementSchema(strict),
   // How many hops a single event may travel before the bus drops it as a
   // suspected cycle. `0` stops integration-originated events propagating at
   // all, which is the tightest the leash goes; human-originated writes are
@@ -54,19 +58,22 @@ const SpaceConfigSchema = z.object({
   activity_retention_days: z.number().int().min(0).optional(),
 });
 
+/** The read shape, permissive at every level. */
+const SpaceConfigSchema = z.object(spaceConfigShape(false));
+
 /**
- * The write shape, which refuses a key it does not know.
+ * The write shape, which refuses a key it does not know, at every level.
  *
  * `PUT` is a full replacement, so stripping an unknown key is destructive
  * rather than merely useless: `{"activity_retention_day": 30}` is one missing
  * letter, and it used to answer 200 having erased every override the space
  * had. A caller cannot tell that from success.
  *
- * Read stays permissive. A client that refuses to parse a field added after it
- * shipped is the mirror-image failure, and the response is not what erases
- * anything.
+ * Read stays permissive, deliberately and all the way down. A client that
+ * refuses to parse a field added after it shipped is the mirror-image failure,
+ * and a response has never erased anything.
  */
-const SpaceConfigWriteSchema = SpaceConfigSchema.strict();
+const SpaceConfigWriteSchema = z.strictObject(spaceConfigShape(true));
 
 const getConfigRoute = createRoute({
   operationId: "getSpaceConfig",

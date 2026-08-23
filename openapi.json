@@ -14779,7 +14779,8 @@
                     },
                     "max_event_hop_budget": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 100
                     },
                     "audit_retention_days": {
                       "type": "integer",
@@ -14915,7 +14916,8 @@
                         },
                         "required": [
                           "types"
-                        ]
+                        ],
+                        "additionalProperties": false
                       },
                       "source_allowlist": {
                         "type": "object",
@@ -14936,7 +14938,8 @@
                         "required": [
                           "types",
                           "sources"
-                        ]
+                        ],
+                        "additionalProperties": false
                       },
                       "source_filter": {
                         "type": "object",
@@ -14957,13 +14960,16 @@
                         "required": [
                           "types",
                           "sources"
-                        ]
+                        ],
+                        "additionalProperties": false
                       }
-                    }
+                    },
+                    "additionalProperties": false
                   },
                   "max_event_hop_budget": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 100
                   },
                   "audit_retention_days": {
                     "type": "integer",
@@ -15058,7 +15064,8 @@
                     },
                     "max_event_hop_budget": {
                       "type": "integer",
-                      "minimum": 0
+                      "minimum": 0,
+                      "maximum": 100
                     },
                     "audit_retention_days": {
                       "type": "integer",

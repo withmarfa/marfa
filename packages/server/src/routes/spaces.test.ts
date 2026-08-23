@@ -299,6 +299,38 @@ describe("Space config — hosted mode", () => {
   // Documented in the shared type as admin-writable through this route, read
   // by the publish path, and absent from the route's schema until now, so the
   // one way it was documented to be set was the one way it could not be.
+  // The outer object refusing an unknown key while the nested one accepts it
+  // is the same defect one level down, and `.strict()` does not recurse.
+  it("PUT refuses a mistyped key inside enforcement too", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { enforcement: { strict_modes: { types: ["core.note"] } } },
+    });
+    expect(res.status).toBe(400);
+
+    // And one level deeper again, inside a block that does exist.
+    const deeper = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { enforcement: { strict_mode: { types: [], typo: 1 } } },
+    });
+    expect(deeper.status).toBe(400);
+  });
+
+  it("PUT refuses a hop budget past the ceiling", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: 101 },
+    });
+    expect(res.status).toBe(400);
+
+    // At the ceiling is fine. A bound nobody can reach is not a bound.
+    const ok = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: 100 },
+    });
+    expect(ok.status).toBe(200);
+  });
+
   it("PUT accepts the hop budget the event pipeline reads", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
       key: hosted.spaceAdminKey,
