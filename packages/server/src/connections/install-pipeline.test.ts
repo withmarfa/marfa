@@ -242,6 +242,24 @@ describe("performInstall — compensating writes on activity failure", () => {
           calls.push(`transition:${id}:${state}`);
           return await Promise.resolve(null);
         },
+        update: async (
+          id: string,
+          patch: { properties?: Record<string, unknown> },
+        ): Promise<unknown> => {
+          const p = patch.properties ?? {};
+          // Every key, not only the two under test. The rollback writes a
+          // delta and `items.update` merges it against what is stored, so a
+          // stub that looked at `status` and `runtime_status` alone could not
+          // tell that from resubmitting the whole create-time object, which
+          // would revert anything that had touched the connection meanwhile.
+          calls.push(
+            `update:${id}:${Object.entries(p)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .sort()
+              .join(",")}`,
+          );
+          return await Promise.resolve(null);
+        },
       },
       keys: {
         createRuntimeCredential: async (): Promise<{ id: string }> => {
@@ -260,6 +278,12 @@ describe("performInstall — compensating writes on activity failure", () => {
           await Promise.resolve();
         },
       },
+      runInTransaction: async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        calls.push("tx:begin");
+        const out = await fn();
+        calls.push("tx:commit");
+        return out;
+      },
     };
 
     await expect(
@@ -277,8 +301,15 @@ describe("performInstall — compensating writes on activity failure", () => {
       ),
     ).rejects.toThrow(/forced activity failure/);
 
-    // Rollback fires in reverse: credential revoke, then the Connection
-    // to its terminal state. The lock brackets the mint and nothing else.
+    // Rollback fires in reverse: credential revoke, then the Connection to
+    // its terminal state. The lock brackets the mint and nothing else.
+    //
+    // The terminal state is three writes, not one, and they are asserted
+    // together because that is the property. `properties.status` is the
+    // type's own lifecycle status and every surface a person reads shows it
+    // rather than the item's state, so a transition alone left a rolled-back
+    // install rendering as active and healthy. One transaction, so a partial
+    // failure cannot recreate the disagreement.
     expect(calls).toEqual([
       "create:connection",
       "lock:connection-lifecycle:itm_conn_fake",
@@ -286,7 +317,12 @@ describe("performInstall — compensating writes on activity failure", () => {
       "unlock:connection-lifecycle:itm_conn_fake",
       "create:activity:throw",
       "revoke:api_cred_fake",
+      "lock:connection-lifecycle:itm_conn_fake",
+      "tx:begin",
       "transition:itm_conn_fake:revoked",
+      "update:itm_conn_fake:runtime_status=revoked,status=revoked",
+      "tx:commit",
+      "unlock:connection-lifecycle:itm_conn_fake",
     ]);
   });
 
@@ -316,6 +352,24 @@ describe("performInstall — compensating writes on activity failure", () => {
           calls.push(`transition:${id}:${state}`);
           return await Promise.resolve(null);
         },
+        update: async (
+          id: string,
+          patch: { properties?: Record<string, unknown> },
+        ): Promise<unknown> => {
+          const p = patch.properties ?? {};
+          // Every key, not only the two under test. The rollback writes a
+          // delta and `items.update` merges it against what is stored, so a
+          // stub that looked at `status` and `runtime_status` alone could not
+          // tell that from resubmitting the whole create-time object, which
+          // would revert anything that had touched the connection meanwhile.
+          calls.push(
+            `update:${id}:${Object.entries(p)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .sort()
+              .join(",")}`,
+          );
+          return await Promise.resolve(null);
+        },
       },
       keys: {
         createRuntimeCredential: async (): Promise<{ id: string }> => {
@@ -333,6 +387,12 @@ describe("performInstall — compensating writes on activity failure", () => {
           calls.push("audit:log:throw");
           return Promise.reject(new Error("audit DB unavailable"));
         },
+      },
+      runInTransaction: async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        calls.push("tx:begin");
+        const out = await fn();
+        calls.push("tx:commit");
+        return out;
       },
     };
 
@@ -361,7 +421,12 @@ describe("performInstall — compensating writes on activity failure", () => {
       "create:activity",
       "audit:log:throw",
       "revoke:api_cred_audit",
+      "lock:connection-lifecycle:itm_conn_audit",
+      "tx:begin",
       "transition:itm_conn_audit:revoked",
+      "update:itm_conn_audit:runtime_status=revoked,status=revoked",
+      "tx:commit",
+      "unlock:connection-lifecycle:itm_conn_audit",
     ]);
   });
 
@@ -391,6 +456,19 @@ describe("performInstall — compensating writes on activity failure", () => {
           calls.push(`transition:${id}:${state}`);
           return Promise.resolve(null);
         },
+        update: (
+          id: string,
+          patch: { properties?: Record<string, unknown> },
+        ): Promise<unknown> => {
+          const p = patch.properties ?? {};
+          calls.push(
+            `update:${id}:${Object.entries(p)
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .sort()
+              .join(",")}`,
+          );
+          return Promise.resolve(null);
+        },
       },
       keys: {
         createRuntimeCredential: (): Promise<{ id: string }> => {
@@ -405,6 +483,12 @@ describe("performInstall — compensating writes on activity failure", () => {
       coordination: lockRecorder(calls),
       audit: {
         log: (): Promise<void> => Promise.resolve(),
+      },
+      runInTransaction: async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        calls.push("tx:begin");
+        const out = await fn();
+        calls.push("tx:commit");
+        return out;
       },
     };
 
@@ -428,7 +512,12 @@ describe("performInstall — compensating writes on activity failure", () => {
       "lock:connection-lifecycle:itm_1",
       "create:credential:throw",
       "unlock:connection-lifecycle:itm_1",
+      "lock:connection-lifecycle:itm_1",
+      "tx:begin",
       "transition:itm_1:revoked",
+      "update:itm_1:runtime_status=revoked,status=revoked",
+      "tx:commit",
+      "unlock:connection-lifecycle:itm_1",
     ]);
   });
 });
