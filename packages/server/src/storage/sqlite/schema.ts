@@ -872,6 +872,8 @@ export const auth_oauth_refresh_token = sqliteTable(
      *  with the bearer middleware so lookup paths are symmetric. */
     token: text("token").notNull(),
     clientId: text("client_id").notNull(),
+    /** Same as `auth_oauth_access_token.session_id` below, including the
+     *  `set null` and what it costs. */
     sessionId: text("session_id").references(() => auth_session.id, {
       onDelete: "set null",
     }),
@@ -920,6 +922,10 @@ export const auth_oauth_access_token = sqliteTable(
      *  can WHERE on it directly. */
     token: text("token").notNull().unique(),
     clientId: text("client_id").notNull(),
+    /** The session this token was issued under, and what a sign-out matches
+     *  on to revoke it. `set null` rather than `cascade`, so the row outlives
+     *  the session and loses the record of which one. See the note on the
+     *  Postgres side of this column for why that matters. */
     sessionId: text("session_id").references(() => auth_session.id, {
       onDelete: "set null",
     }),
