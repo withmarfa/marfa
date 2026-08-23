@@ -169,8 +169,15 @@ function summarize(group: ScopeGroup): string {
   let openEnded = false;
   for (const scope of group.scopes) {
     if (scope.typePattern.includes("*")) openEnded = true;
+    // Same chain the toggle list uses, humanized floor included. Stopping at
+    // the curated map left an uncurated scope out of this sentence while the
+    // list below still showed it, so the summary undercounted exactly the
+    // scopes a reader is least likely to recognize. It is the same failure
+    // this function's own docstring describes, from the other end.
     const label =
-      SCOPE_LABELS[scope.typePattern] ?? OIDC_LABELS[scope.typePattern];
+      SCOPE_LABELS[scope.typePattern] ??
+      OIDC_LABELS[scope.typePattern] ??
+      (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
     if (label && !names.includes(label)) names.push(label);
   }
   if (names.length === 0) return group.desc;
@@ -233,9 +240,6 @@ export const SCOPE_LABELS: Record<string, string> = {
   "readwise.document": "Readwise Reader documents",
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
-  // Legacy identifier superseded by marfa.captured_email; still registered
-  // so grants and rows that predate the rename keep resolving to a label.
-  "withmarfa.captured_email": "Captured emails",
   "user.*": "Your custom types",
   "system.connection": "Connected accounts",
   "system.integration": "Available integrations",

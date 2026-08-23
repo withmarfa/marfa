@@ -383,6 +383,21 @@ describe("group summaries describe the request", () => {
       scopes,
     });
 
+  // The summary and the toggle list must describe the same request. The
+  // summary stopped at the curated label map while the list below fell
+  // through to a humanized type name, so an uncurated scope was rendered in
+  // one and silently absent from the other, and absent from the "and N more"
+  // count that is meant to catch exactly that.
+  it("counts a scope with no curated label, as the list below does", () => {
+    const html = render([
+      scope("core.note", "read"),
+      scope("acme.widget", "read"),
+    ]);
+    const joined = summariesOf(html).join(" ");
+    expect(joined).toContain("Notes");
+    expect(joined).toContain("Widget");
+  });
+
   it("names only what a narrow request asked for", () => {
     const html = render([
       scope("core.note", "read"),
