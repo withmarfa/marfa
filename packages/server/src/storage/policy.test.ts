@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { TYPE_REGISTRY } from "@withmarfa/shared";
+import { TYPE_REGISTRY, typeHasRole } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
-import { resolveMergePolicy } from "./policy.js";
+import { resolveMergePolicy, resolveTypeSchema } from "./policy.js";
 import type { TypeResolver } from "./policy.js";
 
 // The core registry resolves types globally; wrap it as a resolver function.
@@ -163,5 +163,83 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
         baked.default,
       );
     }
+  });
+});
+
+/**
+ * The read surface has to agree with the rule it describes.
+ *
+ * `in-collection` constrains its target on `role:container`, and `typeHasRole`
+ * answers that by walking the parent chain, so a subtype of a container is
+ * already an acceptable target. The type read used to project `roles` away
+ * entirely: every type reported none, including the three that declare it, so
+ * a client had no way to build the list except by hardcoding names or
+ * attempting a write to find out. A generated kit surfaced the field as always
+ * empty, which reads as a definite "declares no roles" rather than as missing.
+ */
+describe("resolveTypeSchema roles", () => {
+  it("returns the role for a type that declares it", () => {
+    for (const id of ["core.media.series", "core.media.album"]) {
+      expect(resolveTypeSchema(id, coreResolver)?.roles).toEqual(["container"]);
+    }
+  });
+
+  it("omits the field entirely for a type with no roles", () => {
+    const resolved = resolveTypeSchema("core.bookmark", coreResolver);
+    expect(resolved).toBeDefined();
+    // Absent, not empty. A client cannot tell `[]` from "declares none", and
+    // an always-empty array in a generated kit is worse than no field at all.
+    expect(resolved && "roles" in resolved).toBe(false);
+  });
+
+  it("inherits a role from an ancestor, because the rule does", () => {
+    const resolver = makeResolver([
+      { id: "acme.shelf", version: 1, fields: {}, roles: ["container"] },
+      { id: "acme.shelf.rare", version: 1, fields: {}, parent: "acme.shelf" },
+    ]);
+    expect(resolveTypeSchema("acme.shelf.rare", resolver)?.roles).toEqual([
+      "container",
+    ]);
+  });
+
+  it("agrees with the check the edge constraint actually runs", () => {
+    // The property that matters. If these two ever disagree, the API says a
+    // type is not a container while the write path accepts it as one.
+    for (const id of [
+      "core.media.series",
+      "core.media.album",
+      "core.bookmark",
+      "core.note",
+      "core.media",
+    ]) {
+      const projected =
+        resolveTypeSchema(id, coreResolver)?.roles?.includes("container") ??
+        false;
+      expect(projected, id).toBe(typeHasRole(id, "container"));
+    }
+  });
+
+  it("does not invent a role on the parent of a container", () => {
+    // `core.media.series` declares it; `core.media`, its parent, does not.
+    // Roles travel down the chain, never up.
+    expect(
+      resolveTypeSchema("core.media", coreResolver)?.roles,
+    ).toBeUndefined();
+  });
+
+  it("merges roles declared at more than one level, without duplicating", () => {
+    const resolver = makeResolver([
+      { id: "acme.base", version: 1, fields: {}, roles: ["container"] },
+      {
+        id: "acme.mid",
+        version: 1,
+        fields: {},
+        parent: "acme.base",
+        roles: ["container"],
+      },
+    ]);
+    expect(resolveTypeSchema("acme.mid", resolver)?.roles).toEqual([
+      "container",
+    ]);
   });
 });

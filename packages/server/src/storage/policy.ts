@@ -9,6 +9,7 @@ import type {
   FieldDefinition,
   MergePolicy,
   MergeStrategy,
+  TypeRole,
   TypeSchema,
   VersionPolicy,
 } from "@withmarfa/shared";
@@ -128,6 +129,21 @@ export function resolveTypeSchema(
     versionPolicy = { ...(versionPolicy ?? {}), ...vp };
   }
 
+  // roles: the union across the chain, because that is what the rule they
+  // drive already does. `typeHasRole` walks the parent chain and answers true
+  // for a role any ancestor declares, so an edge constrained on `role:container`
+  // already admits a subtype of a container. Projecting only the leaf's own
+  // roles would have the read surface say a type carries no roles while the
+  // write path accepts it, which is a worse answer than the field being absent.
+  //
+  // Sorted so the response does not depend on chain order, and omitted rather
+  // than emitted empty: a client cannot distinguish `[]` from "declares none",
+  // and a generated kit surfacing an always-empty array reads as a definite no.
+  const roles = new Set<TypeRole>();
+  for (const ancestor of chain) {
+    for (const role of ancestor.roles ?? []) roles.add(role);
+  }
+
   const mergePolicy = resolveMergePolicy(typeId, resolve);
   const hasMergePolicy =
     mergePolicy.fields !== undefined || mergePolicy.default !== undefined;
@@ -146,5 +162,6 @@ export function resolveTypeSchema(
   if (displayHints) resolved.display_hints = displayHints;
   if (versionPolicy) resolved.version_policy = versionPolicy;
   if (hasMergePolicy) resolved.merge_policy = mergePolicy;
+  if (roles.size > 0) resolved.roles = [...roles].sort();
   return resolved;
 }
