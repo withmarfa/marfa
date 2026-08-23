@@ -142,6 +142,27 @@ describe("GET /types", () => {
     const noteType = types.find((t) => t.id === "core.note");
     expect(noteType).toBeTruthy();
   });
+
+  // On the wire, not in a resolver. Nothing asserted the field survives the
+  // response at all, and it is the field a client reads this endpoint for:
+  // "which of these can hold a collection" is a question about the list.
+  it("carries roles for the types that have them, and omits them otherwise", async () => {
+    const res = await request(ctx.app, "GET", "/types", { key: ctx.adminKey });
+    const types = (await res.json()) as TypeSchema[];
+
+    const containers = types
+      .filter((t) => t.roles?.includes("container"))
+      .map((t) => t.id)
+      .sort();
+    expect(containers).toEqual([
+      "core.media.album",
+      "core.media.series",
+      "marfa.podcast.show",
+    ]);
+
+    const note = types.find((t) => t.id === "core.note");
+    expect(note && "roles" in note).toBe(false);
+  });
 });
 
 // The shipped set spans three families and all three are equally immutable:
