@@ -26,6 +26,19 @@ All handlers receive a `ConnectionContext` first arg:
 
 Handler results: `{ ok: true }` for success, `{ ok: false, retry: boolean, reason: string }` for failure. `retry: true` reschedules via queue retry; `retry: false` acks but emits an `action_required` activity row.
 
+### A run that changed nothing does not write a row
+
+Every activity row is an item write: a transaction, a quota reservation, an index update and a published event. So the rule is that a run reports what it did, and a run that did nothing reports nothing.
+
+- **A run that changed something always reports**, whatever triggered it.
+- **A run that changed nothing reports only on a schedule trigger.** One row a day is a heartbeat a person can read. One row per upstream write is not, and an item-event trigger fires at whatever rate the space produces events.
+- **Failures report where they happen**, separately from the summary, so a run that half worked says which half. A `catch` that falls back to a default without saying so is the shape this rule exists against: the run looks ordinary and behaves differently.
+- **Liveness does not need a row.** The supervisor stamps a sync-success timestamp on the connection for schedule and manual dispatches, and the cursor records the run for any integration that keeps one. A webhook dispatch gets no stamp, so a webhook-only integration's run record is whatever it writes to its own cursor: `github-webhooks` keeps a delivery ring and writes it on every handled delivery, which is the pattern.
+
+This is a convention rather than something the runtime enforces, and it exists because per-author discipline is what failed: one integration emitting on every reactive no-op accounted for 88% of every activity row on production, and retention only bounds how many exist at once rather than how many get written.
+
+The in-tree fleet does not all follow it yet. Several inbound sweeps end with an unconditional counts row, and three webhook handlers report deliveries that built nothing, which is the closer match to the case above because a webhook fires per upstream write. Those are being corrected separately; the rule is what a new integration follows.
+
 ## Bidirectional handling
 
 The manifest's `bidirectional_handling` block declares four primitives the substrate enforces, not the handler:

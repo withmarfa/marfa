@@ -109,7 +109,10 @@ describe("template integration handlers", () => {
     expect(await ctx.cursor.read("main")).toMatchObject({ run_count: 2 });
   });
 
-  it("webhook handler emits an activity row", async () => {
+  it("webhook handler writes no activity row", async () => {
+    // Same rule as the item-event handler. A webhook handler runs once per
+    // upstream write, so a row saying it ran is a row per write, and the
+    // scaffold is what every integration is copied from.
     const { ctx, emitted } = buildContext();
     const result = await handleWebhook(ctx, {
       delivery_id: "d_1",
@@ -118,14 +121,15 @@ describe("template integration handlers", () => {
       verified_at_ms: 1_700_000_000_000,
     });
     expect(result).toEqual({ ok: true });
-    expect(emitted[0]!.properties).toMatchObject({
-      summary: "Template received a webhook",
-    });
+    expect(emitted).toHaveLength(0);
   });
 
-  it("item-event handler propagates hop count into the activity summary", async () => {
+  it("item-event handler writes no activity row", async () => {
+    // The scaffold is what every integration is copied from, so a
+    // demonstration row here becomes a row per upstream write in fifteen
+    // places. It is silent on purpose and the comment beside it says so.
     const { ctx, emitted } = buildContext();
-    await handleItemEvent(ctx, {
+    const result = await handleItemEvent(ctx, {
       kind: "item-event",
       integration_name: "acme/template",
       connection_id: "conn_template_test",
@@ -134,8 +138,7 @@ describe("template integration handlers", () => {
       cycle: { originating_connection_id: "conn_other", hop_count: 2 },
       payload: {},
     });
-    expect(emitted[0]!.properties).toMatchObject({
-      summary: "Template saw item.updated (hop=2)",
-    });
+    expect(result).toEqual({ ok: true });
+    expect(emitted).toHaveLength(0);
   });
 });

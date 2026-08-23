@@ -65,6 +65,8 @@ interface BuildOpts {
   archiveAfterDays?: number;
   /** Make transitionItem reject for this task id. */
   failOnId?: string;
+  /** Fail every transition, for the all-failed paths. */
+  failEvery?: boolean;
   /** Override the page size the stubbed listItems returns
    *  (defaults to PAGE_SIZE). */
   pageSize?: number;
@@ -141,7 +143,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
     },
     transitionItem: (id: string, to: ItemState): Promise<ItemResource> => {
       transitionCalls.push({ id, to });
-      if (opts.failOnId === id) {
+      if (opts.failEvery === true || opts.failOnId === id) {
         return Promise.reject(new Error("server 500"));
       }
       const t = tasks.find((x) => x.id === id);
@@ -219,7 +221,7 @@ describe("task-auto-archive handlers", () => {
 
     const summary = emitted.at(-1);
     expect(summary?.properties?.summary).toBe(
-      "task-auto-archive archived 2 task(s) (schedule)",
+      "task-auto-archive archived 2 of 2 due (schedule)",
     );
     expect(summary?.properties?.detail).toMatchObject({
       archive_after_days: DEFAULT_ARCHIVE_AFTER_DAYS,
@@ -349,17 +351,143 @@ describe("task-auto-archive handlers", () => {
     });
   });
 
-  it("emits an info activity even when nothing is due", async () => {
+  it("reports a scheduled sweep that found nothing, as a heartbeat", async () => {
     const now = 1_700_000_000_000;
     const { ctx, emitted } = buildContext({ tasks: [task("t_5", 5, now)] });
     await handleSchedule(ctx, SCHEDULE_MSG(now));
     const summary = emitted.at(-1);
     expect(summary?.properties?.summary).toBe(
-      "task-auto-archive sweep — nothing due (schedule)",
+      "task-auto-archive sweep, nothing due (schedule)",
     );
     expect(summary?.properties?.detail).toMatchObject({
       archived: 0,
       stop_reason: "no_more_due",
+    });
+  });
+
+  it("writes no row when a reactive sweep finds nothing", async () => {
+    // The daily run is a heartbeat; one of these per `core.task` write is
+    // not. Measured on production, this was 5,365 of 6,062 activity rows,
+    // each one a transaction, a quota reservation, an index update and a
+    // published event to say that nothing happened.
+    // Real time, because an item-event sweep dates its cutoff from now.
+    const now = Date.now();
+    const { ctx, emitted } = buildContext({ tasks: [task("t_5", 5, now)] });
+    await handleItemEvent(ctx, ITEM_EVENT_MSG("created"));
+    expect(emitted).toHaveLength(0);
+  });
+
+  it("still reports a reactive sweep that archived something", async () => {
+    const now = Date.now();
+    const { ctx, emitted, finalStates } = buildContext({
+      tasks: [task("t_old", 200, now)],
+    });
+    await handleItemEvent(ctx, ITEM_EVENT_MSG("created"));
+    expect(finalStates().get("t_old")).toBe("archived");
+    expect(emitted.at(-1)?.properties?.summary).toBe(
+      "task-auto-archive archived 1 of 1 due (item-event(created))",
+    );
+  });
+
+  it("writes no summary when a page-capped reactive sweep archived nothing", async () => {
+    // The case the page cap needs no condition of its own for. Every page
+    // it walked held due tasks, so reaching the cap with nothing archived
+    // means every transition failed, and each failure has already said so
+    // at `action_required`. A summary on top would add a row to a run that
+    // is already the loudest thing in the feed.
+    const now = Date.now();
+    const totalTasks = (MAX_PAGES_PER_TICK + 1) * 2;
+    const tasks = Array.from({ length: totalTasks }, (_, i) =>
+      task(`t_${String(i)}`, 100 - i, now),
+    );
+    const { ctx, emitted } = buildContext({
+      tasks,
+      pageSize: 2,
+      failEvery: true,
+    });
+    await handleItemEvent(ctx, ITEM_EVENT_MSG("created"));
+
+    const failures = emitted.filter(
+      (e) => e.properties?.severity === "action_required",
+    );
+    expect(failures).toHaveLength(MAX_PAGES_PER_TICK * 2);
+    // On the total rather than on the summary text or its severity. The
+    // wording has already changed once under this assertion, and a guard
+    // that a string change can silently disarm is the regression it exists
+    // to prevent. Only the per-item failures should be here.
+    expect(emitted).toHaveLength(MAX_PAGES_PER_TICK * 2);
+  });
+
+  it("does not claim completeness when it stopped on the page cap", async () => {
+    // `dueIds` is what this tick collected, not what is due. Reporting
+    // "N of N due" beside a stop reason that says there is more reads as
+    // completeness, and somebody stops looking at a backlog that is still
+    // growing.
+    const now = 1_700_000_000_000;
+    const totalTasks = (MAX_PAGES_PER_TICK + 1) * 2;
+    const tasks = Array.from({ length: totalTasks }, (_, i) =>
+      task(`t_${String(i)}`, 100 - i, now),
+    );
+    const { ctx, emitted } = buildContext({ tasks, pageSize: 2 });
+    await handleSchedule(ctx, SCHEDULE_MSG(now));
+
+    const last = emitted.at(-1)?.properties;
+    expect(last?.detail).toMatchObject({ stop_reason: "page_cap" });
+    expect(last?.summary).toBe(
+      `task-auto-archive archived ${String(MAX_PAGES_PER_TICK * 2)} of ${String(
+        MAX_PAGES_PER_TICK * 2,
+      )} due so far (schedule)`,
+    );
+  });
+
+  it("calls a sweep that ended on its last allowed page complete", async () => {
+    // Exactly the cap's worth of pages, with the list ending on the last
+    // one. It finished, so reporting a backlog would send somebody looking
+    // for work that is not there.
+    const now = 1_700_000_000_000;
+    const tasks = Array.from({ length: MAX_PAGES_PER_TICK * 2 }, (_, i) =>
+      task(`t_${String(i)}`, 100 - i, now),
+    );
+    const { ctx, emitted } = buildContext({ tasks, pageSize: 2 });
+    await handleSchedule(ctx, SCHEDULE_MSG(now));
+
+    expect(emitted.at(-1)?.properties?.detail).toMatchObject({
+      pages_walked: MAX_PAGES_PER_TICK,
+      stop_reason: "complete",
+    });
+  });
+
+  it("counts what was due, not only what it archived", async () => {
+    // A run where every transition failed archived nothing and had plenty
+    // due. Calling that "nothing due" contradicts the detail beside it.
+    const now = 1_700_000_000_000;
+    const tasks = [task("t_a", 90, now), task("t_b", 80, now)];
+    const { ctx, emitted } = buildContext({ tasks, failEvery: true });
+    await handleSchedule(ctx, SCHEDULE_MSG(now));
+
+    expect(emitted.at(-1)?.properties?.summary).toBe(
+      "task-auto-archive archived 0 of 2 due (schedule)",
+    );
+    expect(emitted.at(-1)?.properties?.detail).toMatchObject({
+      inspected: 2,
+      archived: 0,
+    });
+  });
+
+  it("still reports a reactive sweep that worked through a page cap", async () => {
+    // The backlog case: more due than one tick can reach. It reports
+    // because it archived something. The case where it archives nothing is
+    // covered above, and between them they are why the page cap needs no
+    // condition of its own.
+    const now = Date.now();
+    const totalTasks = (MAX_PAGES_PER_TICK + 1) * 2;
+    const tasks = Array.from({ length: totalTasks }, (_, i) =>
+      task(`t_${String(i)}`, 100 - i, now),
+    );
+    const { ctx, emitted } = buildContext({ tasks, pageSize: 2 });
+    await handleItemEvent(ctx, ITEM_EVENT_MSG("created"));
+    expect(emitted.at(-1)?.properties?.detail).toMatchObject({
+      stop_reason: "page_cap",
     });
   });
 

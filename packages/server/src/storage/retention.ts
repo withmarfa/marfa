@@ -156,23 +156,27 @@ export class TrashPurger {
 /**
  * Ages out `system.activity` items.
  *
- * An integration reports every run as an activity row, including the runs
- * that found nothing to do, so on a space with connections this is the
- * fastest-growing item type by a wide margin. Retention existed for
- * trash, audit rows, the event log, versions, sessions and runtime
- * credentials; activity is an ordinary item and had no job at all, so the
- * table only ever grew. Production reached 6,015 activity items against
- * 805 of everything else before this landed.
+ * An integration reports what a run did, and a run that did nothing is
+ * supposed to say nothing. That convention arrived after this job did, and
+ * before it one integration's reactive path wrote a row per upstream write,
+ * which alone made this the fastest-growing item type by a wide margin.
+ *
+ * Retention existed for trash, audit rows, the event log, versions,
+ * sessions and runtime credentials; activity is an ordinary item and had no
+ * job at all, so the table only ever grew. Production reached 6,015
+ * activity items against 805 of everything else before this landed, and was
+ * still above six thousand five days later.
  *
  * Same shape as `TrashPurger` above: a per-space fan-out honoring
  * `activity_retention_days` overrides, falling back to a single unscoped
  * sweep when `spaces` is not wired.
  *
- * **This job bounds the rows; it does not decide whether a no-op run
- * deserves a row in the first place.** That is the other half of the same
- * ticket and waits on connections carrying a last-run timestamp, because
- * dropping the no-op rows before that exists removes the only evidence an
- * integration ran at all.
+ * **This job bounds the rows; it does not decide whether a run deserves
+ * one.** That is the integration's call, and the guide in `integrations/`
+ * carries the rule. Retention on its own was never going to be enough:
+ * it caps how many rows exist at once, not how many get written, and each
+ * one costs a transaction, a quota reservation, an index update and a
+ * published event whether it is purged an hour later or a fortnight.
  */
 export class ActivityPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
