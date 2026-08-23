@@ -56,7 +56,17 @@ export interface FilterExpression {
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_INPUT_LENGTH = 2048;
+/**
+ * Longest filter expression the parser will look at.
+ *
+ * Exported because a caller that builds an expression from a value it did
+ * not choose has to know the bound to stay inside it. Interpolating an
+ * unbounded value and hoping is how a caller ends up throwing on every
+ * attempt forever, and a second copy of the number is how it ends up
+ * checking against the wrong one.
+ */
+export const MAX_FILTER_INPUT_LENGTH = 2048;
+const MAX_INPUT_LENGTH = MAX_FILTER_INPUT_LENGTH;
 const MAX_CONDITIONS = 10;
 
 const SYSTEM_FIELDS = new Set([

@@ -415,7 +415,7 @@ export function parseEpisode(itemXmlRaw: string): ParsedEpisode {
 /**
  * A whole feed. Items keep the order the document gave them, which is
  * newest first by convention; the caller reverses before writing so that
- * progress through a back catalogue runs oldest to newest.
+ * progress through a back catalog runs oldest to newest.
  *
  * An item with no title is dropped: title is the one field required on
  * every type this writes, and an untitled row cannot be told from another

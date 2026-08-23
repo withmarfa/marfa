@@ -96,7 +96,7 @@ export const PODCASTS_MANIFEST: IntegrationManifest = {
   /**
    * A feed dropping an item is indistinguishable from a feed that publishes
    * only a recent window, and hosts do both. Treating a disappearance as a
-   * deletion would trash a back catalogue the first time a publisher
+   * deletion would trash a back catalog the first time a publisher
    * switched to a ten-item feed, so it is ignored.
    *
    * The echo and lag windows exist because the schema requires them. Nothing

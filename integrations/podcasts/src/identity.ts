@@ -163,7 +163,7 @@ export async function episodeLocalId(
  *
  * The scope is the show's identity rather than its address, and it is read
  * from stored state rather than recomputed, so that re-pointing a
- * subscription cannot re-key a catalogue that is already stored.
+ * subscription cannot re-key a catalog that is already stored.
  */
 export function showSourceId(scopeKey: string): string {
   return `show:${scopeKey}`;

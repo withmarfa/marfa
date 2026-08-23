@@ -1,4 +1,5 @@
 import { familyOnlyMappingResolver } from "@withmarfa/runtime-sdk";
+import { MAX_FILTER_INPUT_LENGTH } from "@withmarfa/shared";
 /* eslint-disable @typescript-eslint/require-await --
    The harness stubs stand in for asynchronous SDK methods, so they are
    async to match the interface they replace rather than because their
@@ -41,6 +42,16 @@ interface HarnessOptions {
   ensureEdgeThrows?: boolean;
   configReadThrows?: boolean;
   cursors?: Record<string, unknown>;
+  /** How many episode rows a `listItems` lookup finds. Defaults to one,
+   *  because the stale-checkpoint check only fires on none. */
+  storedEpisodes?: number;
+  /** Overrides `storedEpisodes` per item state. */
+  storedEpisodesByState?: Record<string, number>;
+  /** Overrides both, per episode type and then per item state. */
+  storedEpisodesByType?: Record<string, Record<string, number>>;
+  /** Throw from `activity.emit` on summaries matching this. */
+  activityThrowsOn?: (summary: string) => boolean;
+  listItemsThrows?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -57,6 +68,12 @@ function harness(opts: HarnessOptions = {}) {
     detail?: Record<string, unknown>;
   }[] = [];
   const bulkCalls: BulkCall[] = [];
+  const listQueries: {
+    type?: string;
+    filter?: string;
+    state?: string;
+    limit?: number;
+  }[] = [];
   const edges: EdgeCall[] = [];
   const created: {
     type: string;
@@ -121,6 +138,32 @@ function harness(opts: HarnessOptions = {}) {
       edges.push(input);
       return "created" as const;
     },
+    async listItems(query: {
+      type?: string;
+      filter?: string;
+      state?: string;
+      limit?: number;
+    }) {
+      listQueries.push(query);
+      if (opts.listItemsThrows === true) throw new Error("list failed");
+      // Keyed by type first, then by state, so a test can put a show's
+      // episodes under the other write family or in the trash and still say
+      // they exist.
+      const byType = opts.storedEpisodesByType?.[query.type ?? ""];
+      const count =
+        byType?.[query.state ?? "active"] ??
+        (byType === undefined
+          ? (opts.storedEpisodesByState?.[query.state ?? "active"] ??
+            (query.state === "active" ? (opts.storedEpisodes ?? 1) : 0))
+          : 0);
+      return {
+        data: Array.from({ length: count }, (_, i) => ({
+          id: `stored-${String(i)}`,
+        })),
+        cursor: null,
+        has_more: false,
+      };
+    },
   };
 
   const ctx = {
@@ -146,6 +189,9 @@ function harness(opts: HarnessOptions = {}) {
         summary: string;
         detail?: Record<string, unknown>;
       }) {
+        if (opts.activityThrowsOn?.(a.summary) === true) {
+          throw new Error("activity emit failed");
+        }
         activity.push(a);
       },
     },
@@ -171,6 +217,7 @@ function harness(opts: HarnessOptions = {}) {
     cursorWrites,
     activity,
     bulkCalls,
+    listQueries,
     edges,
     created,
     fetched,
@@ -188,7 +235,11 @@ function feedResponse(
   });
 }
 
-function feedXml(episodes: number, guidPrefix = "ep"): string {
+function feedXml(
+  episodes: number,
+  guidPrefix = "ep",
+  showGuid = "11111111-2222-5333-8444-555555555555",
+): string {
   const items = Array.from({ length: episodes }, (_, i) => {
     const n = episodes - i; // newest first, as feeds are written
     return `<item><title>Episode ${String(n)}</title><guid isPermaLink="false">${guidPrefix}-${String(n)}</guid>
@@ -199,7 +250,7 @@ function feedXml(episodes: number, guidPrefix = "ep"): string {
   return `<?xml version="1.0"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0">
   <channel><title>A Show</title><link>https://example.com</link>
-  <podcast:guid>11111111-2222-5333-8444-555555555555</podcast:guid>
+  <podcast:guid>${showGuid}</podcast:guid>
   ${items}</channel></rss>`;
 }
 
@@ -309,7 +360,7 @@ describe("progress is recorded as it happens", () => {
       retried_after_failure: boolean;
       last_seen_published: string | null;
     };
-    // Held forever, one bad episode makes every tick re-walk the catalogue.
+    // Held forever, one bad episode makes every tick re-walk the catalog.
     expect(afterSecond.retried_after_failure).toBe(false);
     expect(afterSecond.last_seen_published).not.toBeNull();
   });
@@ -543,7 +594,7 @@ describe("configuration", () => {
       (v) => (v as { retired_at?: string | null }).retired_at != null,
     );
     expect(retired).toHaveLength(1);
-    // Kept, not deleted: re-adding must not replay the back catalogue.
+    // Kept, not deleted: re-adding must not replay the back catalog.
     expect(retired[0]).toHaveProperty("recent_entry_ids");
   });
 
@@ -623,5 +674,511 @@ describe("many feeds", () => {
     expect(h.fetched.map((f) => f.url)).not.toContain(
       "https://elsewhere.example/feed",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A checkpoint that outlived the rows it refers to                     */
+/* ------------------------------------------------------------------ */
+
+/** A first sweep that writes everything, so the ring is full and real. */
+async function sweptOnce(
+  opts: { etag?: string } = {},
+): Promise<Record<string, unknown>> {
+  const first = harness({
+    responses: {
+      "https://feeds.example/show": [
+        feedResponse(
+          feedXml(3),
+          opts.etag === undefined ? {} : { headers: { etag: opts.etag } },
+        ),
+      ],
+    },
+  });
+  await createScheduleHandler({ fetch: first.fetchImpl })(first.ctx, MSG);
+  const carried: Record<string, unknown> = {};
+  for (const [k, v] of first.store) carried[k] = v;
+  return carried;
+}
+
+const REPORT = "remembers episodes the space no longer has";
+
+function reports(activity: { summary: string }[]): { summary: string }[] {
+  return activity.filter((a) => a.summary.includes(REPORT));
+}
+
+describe("a ring that remembers episodes the space does not have", () => {
+  it("says so, and leaves the checkpoint alone", async () => {
+    // The shape that swept hourly for three days and imported nothing. It
+    // reports rather than repairing, because "no rows anywhere" cannot tell
+    // rows that were lost from rows somebody deleted: a trashed item is
+    // purged when its retention expires, and after that the two look the
+    // same. Re-importing a catalog somebody deleted is the worse fault.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    const said = h.activity.filter((a) => a.summary.includes(REPORT));
+    expect(said).toHaveLength(1);
+    expect(said[0]?.severity).toBe("action_required");
+    expect(said[0]?.detail).toMatchObject({ remembered: 3 });
+    expect(said[0]?.detail?.remedy).toBe(
+      "reinstall the connection to re-import the feed",
+    );
+    // Precise about what stops. A newly published episode is not in the ring
+    // and imports normally; it is the back catalog that does not return.
+    expect(said[0]?.summary).toContain("back catalog will not be re-imported");
+
+    const last = feedCursors(h.cursorWrites).at(-1)?.value;
+    expect(last?.recent_entry_ids).toHaveLength(3);
+  });
+
+  it("still says so when the feed answers 304", async () => {
+    // The case a check further down would miss entirely. A feed that serves
+    // an ETag answers 304 and the sweep returns before it looks at any
+    // episode, so a stuck connection on such a feed would never be noticed.
+    const carried = await sweptOnce({ etag: '"v1"' });
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse("", { status: 304 })],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(1);
+    expect(h.bulkCalls).toHaveLength(0);
+  });
+
+  it("says it once, not every hour", async () => {
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(3)),
+          feedResponse(feedXml(3)),
+        ],
+      },
+    });
+    const handler = createScheduleHandler({ fetch: h.fetchImpl });
+    await handler(h.ctx, MSG);
+    await handler(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(1);
+  });
+
+  it("clears the marker when an episode lands, so a recurrence can report", async () => {
+    // A write means the situation changed, so a later recurrence is a new
+    // fact rather than the same one repeated. Against a real server the
+    // second report needs a second loss event; the stub holds the space
+    // empty throughout, which is what makes the cleared marker observable.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(3)),
+          feedResponse(feedXml(4)),
+          feedResponse(feedXml(4)),
+        ],
+      },
+    });
+    const handler = createScheduleHandler({ fetch: h.fetchImpl });
+    await handler(h.ctx, MSG);
+    expect(reports(h.activity)).toHaveLength(1);
+    await handler(h.ctx, MSG);
+    expect(h.bulkCalls.length).toBeGreaterThan(0);
+    await handler(h.ctx, MSG);
+    expect(reports(h.activity)).toHaveLength(2);
+  });
+
+  it("scopes the lookup to this show's own episodes", async () => {
+    // An unscoped lookup would find another show's episodes and conclude
+    // this one was fine, which would make the check silently useless.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    // The literal scope the fixture declares, not merely something
+    // scope-shaped: a regression using the wrong key would still match a
+    // loose pattern.
+    for (const q of h.listQueries) {
+      expect(q.filter).toBe(
+        'source_id starts_with "ep:11111111-2222-5333-8444-555555555555:"',
+      );
+      expect(q.limit).toBe(1);
+    }
+    // The whole sequence, not the distinct set of each column. A set would
+    // be satisfied by asking one type for one state and the other for the
+    // rest, which is not the same property.
+    expect(
+      h.listQueries.map((q) => `${q.type ?? ""}/${q.state ?? ""}`),
+    ).toEqual([
+      "marfa.podcast.episode/active",
+      "marfa.podcast.episode/archived",
+      "marfa.podcast.episode/trashed",
+      "core.media.episode/active",
+      "core.media.episode/archived",
+      "core.media.episode/trashed",
+    ]);
+  });
+
+  it("says nothing when the episodes are there", async () => {
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(0);
+    // Stops at the first hit, so the ordinary case costs one lookup rather
+    // than six.
+    expect(h.listQueries).toHaveLength(1);
+  });
+
+  it("says nothing when the episodes are under the other write family", async () => {
+    // `write_family` is configurable per connection and the ring does not
+    // record which one wrote an entry, so a connection that switched has its
+    // episodes under the other type. Checking only the current one would
+    // tell somebody to reinstall a connection whose rows are right there.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      writeFamily: "core",
+      storedEpisodesByType: {
+        "core.media.episode": { active: 0, archived: 0, trashed: 0 },
+        "marfa.podcast.episode": { active: 3 },
+      },
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(0);
+    // The fall-through, asserted rather than assumed: the connection's own
+    // family is asked first and comes back empty in all three states, and
+    // the other family is what stops the check.
+    expect(
+      h.listQueries.map((q) => `${q.type ?? ""}/${q.state ?? ""}`),
+    ).toEqual([
+      "core.media.episode/active",
+      "core.media.episode/archived",
+      "core.media.episode/trashed",
+      "marfa.podcast.episode/active",
+    ]);
+  });
+
+  it("warns again after a lookup recovers and then fails once more", async () => {
+    // The failure marker is cleared by the next lookup that succeeds, so a
+    // second outage is a second fact rather than the same one suppressed.
+    const carried = await sweptOnce();
+    const failing = harness({
+      cursors: carried,
+      listItemsThrows: true,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: failing.fetchImpl })(failing.ctx, MSG);
+    const afterFailure: Record<string, unknown> = {};
+    for (const [k, v] of failing.store) afterFailure[k] = v;
+
+    // A tick where the lookup works and finds the episodes.
+    const healthy = harness({
+      cursors: afterFailure,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: healthy.fetchImpl })(healthy.ctx, MSG);
+    const afterRecovery: Record<string, unknown> = {};
+    for (const [k, v] of healthy.store) afterRecovery[k] = v;
+
+    const h = harness({
+      cursors: afterRecovery,
+      listItemsThrows: true,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(
+      h.activity.filter((a) => a.summary.includes("could not check")),
+    ).toHaveLength(1);
+  });
+
+  it("says nothing when the episodes were put in the trash", async () => {
+    // Somebody who trashed a show's episodes still has them.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      storedEpisodesByState: { active: 0, archived: 0, trashed: 3 },
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(0);
+  });
+
+  it("refuses an identifier too long to ask about, and says so", async () => {
+    // Declared guids come from third-party XML. The filter grammar caps its
+    // input, so a long enough one would throw on every tick forever.
+    // Refused here instead, once, on its own marker.
+    //
+    // A backslash is deliberately not refused: the grammar escapes quotes
+    // and consumes any other backslash literally, and the one shape it
+    // cannot express is a value ending in one, which the trailing colon on
+    // every prefix rules out.
+    const enormous = "a".repeat(2100);
+    const first = harness({
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(3, "ep", enormous)),
+        ],
+      },
+    });
+    await createScheduleHandler({ fetch: first.fetchImpl })(first.ctx, MSG);
+    const carried: Record<string, unknown> = {};
+    for (const [k, v] of first.store) carried[k] = v;
+
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(feedXml(3, "ep", enormous)),
+        ],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    // No lookup attempted, and no false finding either.
+    expect(h.listQueries).toHaveLength(0);
+    expect(reports(h.activity)).toHaveLength(0);
+    const refused = h.activity.filter((a) =>
+      a.summary.includes("too long to ask about"),
+    );
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.severity).toBe("warning");
+  });
+
+  it("asks about an identifier carrying quotes and backslashes", async () => {
+    // The grammar consumes a backslash literally unless it precedes a
+    // quote, so escaping quotes alone round-trips every value. Refusing on
+    // a backslash, which an earlier revision did, would have switched the
+    // detector off for any feed whose declared identifier contained one.
+    const awkward = 'a\\b"c';
+    const first = harness({
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3, "ep", awkward))],
+      },
+    });
+    await createScheduleHandler({ fetch: first.fetchImpl })(first.ctx, MSG);
+    const carried: Record<string, unknown> = {};
+    for (const [k, v] of first.store) carried[k] = v;
+
+    const h = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3, "ep", awkward))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    // Asked about rather than refused, and the quote is escaped.
+    expect(h.listQueries.length).toBeGreaterThan(0);
+    expect(h.listQueries[0]?.filter).toContain('\\"');
+    expect(reports(h.activity)).toHaveLength(1);
+  });
+
+  it("asks at the grammar's limit and refuses one character past it", async () => {
+    // Pins the boundary rather than a number well clear of it. The cap the
+    // grammar enforces is the one this checks against, imported rather than
+    // copied, so the two cannot drift.
+    const overhead = 'source_id starts_with "ep::"'.length;
+    const exact = "a".repeat(MAX_FILTER_INPUT_LENGTH - overhead);
+
+    for (const [guid, expectLookup] of [
+      [exact, true],
+      [exact + "a", false],
+    ] as const) {
+      const first = harness({
+        responses: {
+          "https://feeds.example/show": [feedResponse(feedXml(3, "ep", guid))],
+        },
+      });
+      await createScheduleHandler({ fetch: first.fetchImpl })(first.ctx, MSG);
+      const carried: Record<string, unknown> = {};
+      for (const [k, v] of first.store) carried[k] = v;
+
+      const h = harness({
+        cursors: carried,
+        storedEpisodes: 0,
+        responses: {
+          "https://feeds.example/show": [feedResponse(feedXml(3, "ep", guid))],
+        },
+      });
+      await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+      expect(h.listQueries.length > 0).toBe(expectLookup);
+    }
+  });
+
+  it("still reports a finding after a lookup has failed once", async () => {
+    // The two markers are separate on purpose. Sharing one meant a single
+    // transient error suppressed the finding for the life of the cursor,
+    // and on a feed that is genuinely stuck nothing ever clears it, because
+    // the thing that clears it is an episode landing.
+    const carried = await sweptOnce();
+    const failing = harness({
+      cursors: carried,
+      listItemsThrows: true,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: failing.fetchImpl })(failing.ctx, MSG);
+    expect(
+      failing.activity.filter((a) => a.summary.includes("could not check")),
+    ).toHaveLength(1);
+
+    const afterwards: Record<string, unknown> = {};
+    for (const [k, v] of failing.store) afterwards[k] = v;
+
+    const h = harness({
+      cursors: afterwards,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(1);
+  });
+
+  it("does not let a failed report wedge the rest of the connection", async () => {
+    // The check runs before the fetch and before the index that rotates
+    // feeds is advanced. A throw there would leave the same feed at the head
+    // of the rotation forever, so every other feed on the connection would
+    // stop being swept: a far worse failure than the one it detects.
+    const one = "https://feeds.example/show";
+    const two = "https://feeds.example/other";
+    const seed = harness({
+      feedUrls: [one, two],
+      responses: {
+        [one]: [feedResponse(feedXml(3))],
+        [two]: [feedResponse(feedXml(2))],
+      },
+    });
+    await createScheduleHandler({ fetch: seed.fetchImpl })(seed.ctx, MSG);
+    const carried: Record<string, unknown> = {};
+    for (const [k, v] of seed.store) carried[k] = v;
+
+    const h = harness({
+      cursors: carried,
+      feedUrls: [one, two],
+      storedEpisodes: 0,
+      activityThrowsOn: (summary) => summary.includes(REPORT),
+      responses: {
+        [one]: [feedResponse(feedXml(3))],
+        [two]: [feedResponse(feedXml(2))],
+      },
+    });
+    const result = await createScheduleHandler({ fetch: h.fetchImpl })(
+      h.ctx,
+      MSG,
+    );
+
+    expect(result).toEqual({ ok: true });
+    // Both feeds were fetched, so the throw on the first did not stop the
+    // second.
+    expect(new Set(h.fetched.map((f) => f.url))).toEqual(new Set([one, two]));
+    // And the rotation index was written. That is the assertion that
+    // distinguishes a wedge: the write happens after the sweep loop, so a
+    // throw anywhere inside it leaves the index untouched and the same feed
+    // at the head of the rotation next tick.
+    expect(h.cursorWrites.filter((w) => w.key === "main")).not.toHaveLength(0);
+  });
+
+  it("retires the feeds when the last one is removed", async () => {
+    // Emptying the configuration used to return before the retirement loop,
+    // so every cursor stayed un-retired and orphaned from an index that no
+    // longer named it. Adding the feeds back then gave a full ring with its
+    // report marker intact and the detector silent, which is the outcome of
+    // the most natural way anyone tries to reset a connection.
+    // Seeded with the marker actually set, so the clear is observable
+    // rather than asserting a value that was already null.
+    const carried = await sweptOnce();
+    const reported = harness({
+      cursors: carried,
+      storedEpisodes: 0,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: reported.fetchImpl })(
+      reported.ctx,
+      MSG,
+    );
+    expect(reports(reported.activity)).toHaveLength(1);
+    const marked: Record<string, unknown> = {};
+    for (const [k, v] of reported.store) marked[k] = v;
+    expect(
+      feedCursors(reported.cursorWrites).at(-1)?.value
+        .stale_checkpoint_reported_at,
+    ).toBeTruthy();
+
+    const h = harness({ cursors: marked, feedUrls: [], responses: {} });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    const retired = feedCursors(h.cursorWrites).at(-1)?.value;
+    expect(retired?.retired_at).toBeTruthy();
+    expect(retired?.stale_checkpoint_reported_at).toBeNull();
+    expect(retired?.checkpoint_lookup_failed_at).toBeNull();
+  });
+
+  it("reports a lookup it could not perform, rather than going quiet", async () => {
+    // A detector that switches itself off on an error is the failure this
+    // whole check exists against, one level up.
+    const carried = await sweptOnce();
+    const h = harness({
+      cursors: carried,
+      listItemsThrows: true,
+      responses: {
+        "https://feeds.example/show": [feedResponse(feedXml(3))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(reports(h.activity)).toHaveLength(0);
+    const warned = h.activity.filter((a) =>
+      a.summary.includes("could not check whether"),
+    );
+    expect(warned).toHaveLength(1);
+    expect(warned[0]?.severity).toBe("warning");
   });
 });
