@@ -18,8 +18,16 @@
  * the bearer gate. Its TTL is deliberately longer than the dispatch bound
  * (see `DEFAULT_RUNTIME_CREDENTIAL_TTL_MS`): the local substrate cannot
  * refresh mid-run, so a credential must outlive any dispatch that holds
- * it. Each mint retires the connection's already-expired credentials, so
- * per-dispatch minting cannot accumulate live keys.
+ * it. Each mint retires the connection's other credentials outright, live
+ * ones included, so per-dispatch minting cannot accumulate live keys.
+ *
+ * What makes that safe is that the only caller holds
+ * `connection-dispatch:<id>` and mints inside it, so nothing else on the
+ * connection can be holding one. A caller that does not hold that lock must
+ * not reach this function: it would retire the credential a running dispatch
+ * is using, and the bearer gate refuses a revoked credential exactly as it
+ * refuses an expired one, so the dispatch would take 401s partway through
+ * with nothing logged where the revocation happened.
  */
 import { randomBytes } from "node:crypto";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
@@ -194,20 +202,14 @@ export async function mintLocalRuntimeCredential(
         spaceId,
       );
 
-      // Retire this connection's runtime credentials that are already past
-      // their own expiry. Expired is the right cutoff: the bearer gate
-      // already refuses those keys, so revoking one cannot break a dispatch
-      // that is still running — it would have been failing anyway. Rows
-      // predating expiry stamping carry no `expires_at`, so fall back to
-      // their age against the same TTL.
+      // Retire this connection's other runtime credentials, live ones
+      // included. Expiry is not the cutoff and has not been for two
+      // revisions: sparing an unexpired sibling left three mints holding
+      // three usable credentials, which is the accumulation this exists to
+      // stop. What makes revoking a live one safe is the dispatch lock the
+      // only caller holds, not the age of what it retires.
       //
-      // An earlier revision waited a further TTL as a "grace for in-flight
-      // dispatches". That was decorative: expiry bites a full TTL before
-      // such a cutoff, so the window only ever spared credentials that were
-      // already dead. Since the TTL now exceeds the longest dispatch, an
-      // unexpired credential is by construction still usable and is spared.
-      //
-      // Best-effort — a supersede failure must not fail the dispatch that
+      // Best-effort. A supersede failure must not fail the dispatch that
       // triggered the mint; the retention reaper is the backstop.
       await revokeSupersededRuntimeCredentials(
         storage,

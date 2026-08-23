@@ -27,12 +27,12 @@
  * calls it; this supervisor is the in-process path.
  */
 import {
-  ConnectionClient,
-  createActivitySink,
   SDK_DEFAULT_HOP_BUDGET,
   type HandlerResult,
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
+import type { Item } from "@withmarfa/shared";
+import { log } from "../../middleware/logger.js";
 import { resolveHopBudget } from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
 import {
@@ -170,6 +170,10 @@ export function createSupervisor(
           }
           return { ok: true as const };
         }
+        // The only mint in this file, and it runs inside
+        // `connection-dispatch:<id>`, which is what makes retiring the
+        // connection's other credentials safe: no earlier dispatch on it can
+        // still be running.
         const credential = await mintLocalRuntimeCredential(
           storage,
           config.apiKeySalt,
@@ -286,30 +290,108 @@ export function createSupervisor(
       message.space_id,
       failedAtMs,
     );
+    await emitActivity(message.connection_id, message.space_id, {
+      severity: "action_required",
+      summary: `Permanent failure handling ${message.kind} message (local runtime)`,
+      detail: {
+        reason: reasonMessage,
+        connection_id: message.connection_id,
+        class_name: className,
+      },
+    });
+  }
+
+  /**
+   * Write a `system.activity` row for the connection, without a credential.
+   *
+   * These rows record something the runtime did *to* a message rather than
+   * something a handler did, so there is no handler holding a credential to
+   * write through and no reason to mint one. Minting here used to retire the
+   * connection's other credentials, including the one a dispatch was holding
+   * at the time, and the bearer gate refuses a revoked credential exactly as
+   * it refuses an expired one, so the dispatch took 401s partway through
+   * with nothing logged where the revocation happened.
+   *
+   * Not minting a non-superseding credential instead: both callers fire on
+   * message traffic rather than on dispatches, so nothing retires what they
+   * leave until the connection's next dispatch, and the reaper does not help
+   * because it only marks credentials already past their expiry. A connection
+   * taking a burst of at-budget reactive events would hold every credential
+   * it minted for a full TTL.
+   *
+   * The route stamps `tier: "feed"` on a connection that opted into feed
+   * surfacing, so this does too. Skipping it would take exactly the two rows
+   * an operator turns that toggle on for out of the feed, while a handler's
+   * own rows kept arriving.
+   *
+   * Two differences from the route are accepted rather than reproduced. The
+   * row carries no `source`, because that came from the credential, and
+   * nothing keys off it. And a connection that is no longer active gets a
+   * row where the mint would have refused one: the dead-letter worker
+   * draining jobs queued before an uninstall now says so, which is better
+   * than the silence it used to produce.
+   */
+  async function emitActivity(
+    connectionId: string,
+    spaceId: string | undefined,
+    activity: {
+      severity: "info" | "warning" | "error" | "action_required";
+      summary: string;
+      detail: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    // Read for the connection's own space and its feed preference. The
+    // message's space is not a substitute: a manual run carries the
+    // caller's space, and a platform admin has none, so keying on it would
+    // drop the row for an in-space connection somebody ran by hand.
+    //
+    // Failing this read must not cost the row. It decides a tier stamp and
+    // a fallback space, and on the hop-budget path the row is the only
+    // record there is.
+    let connection: Item | null = null;
     try {
-      const credential = await mintLocalRuntimeCredential(
-        storage,
-        config.apiKeySalt,
-        message.connection_id,
-        config.authMode,
-      );
-      const client = new ConnectionClient({
-        apiUrl: config.apiUrl,
-        credential,
-        refreshCredential: () => Promise.resolve(credential),
-      });
-      const activity = createActivitySink(client, message.connection_id);
-      await activity.emit({
-        severity: "action_required",
-        summary: `Permanent failure handling ${message.kind} message (local runtime)`,
-        detail: {
-          reason: reasonMessage,
-          connection_id: message.connection_id,
-          class_name: className,
-        },
-      });
+      connection = await storage.items.get(connectionId);
     } catch {
-      // Best-effort; the recent_errors entry is the primary operator signal.
+      // Fall through with what the caller gave us.
+    }
+    const props =
+      connection?.type === "system.connection"
+        ? (connection.properties as {
+            feed_activity?: unknown;
+          })
+        : undefined;
+    const effectiveSpace = connection?.space_id ?? spaceId;
+
+    // A hosted credential could not be minted for a space-less connection,
+    // so this path wrote nothing for one and there is no reason to start.
+    // Such a connection is undispatchable anyway, and the row would be
+    // invisible to every in-space reader.
+    if (config.authMode === "hosted" && effectiveSpace == null) return;
+
+    try {
+      await storage.items.create(
+        {
+          type: "system.activity",
+          properties: {
+            connection_id: connectionId,
+            severity: activity.severity,
+            summary: activity.summary,
+            detail: activity.detail,
+          },
+          ...(props?.feed_activity === true ? { tier: "feed" as const } : {}),
+        },
+        effectiveSpace ?? undefined,
+      );
+    } catch (err) {
+      // Best-effort, but not silent. For a hop-budget drop this row is the
+      // only record there is: the publish path writes its own row only
+      // above the budget, and an event that reaches this boundary is one it
+      // let through, so the two never cover the same event.
+      log("error", "Local runtime failed to record an activity row", {
+        connection_id: connectionId,
+        summary: activity.summary,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -328,31 +410,20 @@ export function createSupervisor(
     message: Extract<QueueMessage, { kind: "item-event" }>,
     hopBudget: number,
   ): Promise<void> {
-    try {
-      const credential = await mintLocalRuntimeCredential(
-        storage,
-        config.apiKeySalt,
-        message.connection_id,
-        config.authMode,
-      );
-      const client = new ConnectionClient({
-        apiUrl: config.apiUrl,
-        credential,
-        refreshCredential: () => Promise.resolve(credential),
-      });
-      const activity = createActivitySink(client, message.connection_id);
-      await activity.emit({
-        severity: "error",
-        summary: `Reactive event dropped: cycle hop budget (${String(hopBudget)}) reached at the local-runtime boundary`,
-        detail: {
-          connection_id: message.connection_id,
-          originating_connection_id: message.cycle.originating_connection_id,
-          hop_count: message.cycle.hop_count,
-        },
-      });
-    } catch {
-      // Swallow — best-effort.
-    }
+    // Not a duplicate of the publish path's overflow row. That one fires
+    // only above the budget and names the originating connection; this
+    // boundary drops at it and names the receiving one, so an event
+    // reaching here is one the publish path let through and wrote nothing
+    // for.
+    await emitActivity(message.connection_id, message.space_id, {
+      severity: "error",
+      summary: `Reactive event dropped: cycle hop budget (${String(hopBudget)}) reached at the local-runtime boundary`,
+      detail: {
+        connection_id: message.connection_id,
+        originating_connection_id: message.cycle.originating_connection_id,
+        hop_count: message.cycle.hop_count,
+      },
+    });
   }
 
   const runtime: LocalRuntime = {
