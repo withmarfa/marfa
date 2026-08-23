@@ -36,6 +36,10 @@
  * sweep; each surfaces as a `system.activity` row with severity
  * `action_required`. The outer handler still returns ok=true so
  * the queue ack proceeds.
+ *
+ * Reporting: a sweep that archived something says so, whatever fired it.
+ * A sweep that found nothing reports only on the schedule, because one
+ * row a day is a heartbeat and one row per `core.task` write is not.
  */
 import {
   registerScheduleHandler,
@@ -64,7 +68,12 @@ export async function handleSchedule(
   message: ScheduleMessage,
 ): Promise<HandlerResult> {
   const archiveAfterDays = await resolveArchiveAfterDays(ctx);
-  await runSweep(ctx, archiveAfterDays, "schedule", message.scheduled_for_ms);
+  await runSweep(
+    ctx,
+    archiveAfterDays,
+    { kind: "schedule", label: "schedule" },
+    message.scheduled_for_ms,
+  );
   return { ok: true };
 }
 
@@ -76,7 +85,7 @@ export async function handleItemEvent(
   await runSweep(
     ctx,
     archiveAfterDays,
-    `item-event(${message.event_type})`,
+    { kind: "item-event", label: `item-event(${message.event_type})` },
     Date.now(),
   );
   return { ok: true };
@@ -87,10 +96,16 @@ export function registerHandlers(): void {
   registerItemEventHandler(handleItemEvent);
 }
 
+interface SweepTrigger {
+  kind: "schedule" | "item-event";
+  /** How the run is named in an activity row. */
+  label: string;
+}
+
 async function runSweep(
   ctx: ConnectionContext,
   archiveAfterDays: number,
-  triggerLabel: string,
+  trigger: SweepTrigger,
   nowMs: number,
 ): Promise<void> {
   const cutoffMs = nowMs - archiveAfterDays * 24 * 60 * 60 * 1000;
@@ -103,6 +118,8 @@ async function runSweep(
   let cursor: string | undefined;
   let pages = 0;
   let stopReason: "complete" | "no_more_due" | "page_cap" = "complete";
+  /** Set when the walk ran out of pages to ask for, rather than out of budget. */
+  let exhausted = false;
   const dueIds: string[] = [];
 
   outer: while (pages < MAX_PAGES_PER_TICK) {
@@ -125,12 +142,15 @@ async function runSweep(
       dueIds.push(item.id);
     }
     if (!page.has_more || page.cursor === null) {
-      stopReason = "complete";
+      exhausted = true;
       break;
     }
     cursor = page.cursor;
   }
-  if (pages >= MAX_PAGES_PER_TICK && stopReason === "complete") {
+  // Only the cap stopping the walk is a page cap. A sweep that reached the
+  // end of the list on its last allowed page has finished, and reporting a
+  // backlog it does not have would send somebody looking for one.
+  if (!exhausted && stopReason === "complete") {
     stopReason = "page_cap";
   }
 
@@ -155,14 +175,43 @@ async function runSweep(
   };
   await ctx.cursor.write(CURSOR_KEY, cursorBlob);
 
+  // A sweep that changed nothing does not write a row.
+  //
+  // Both outcomes used to be reported as steady-state information, which is
+  // true of one a day and not of one per `core.task` write. Measured on
+  // production: 5,365 of 6,062 activity rows were this integration saying it
+  // had nothing to do, and the hourly purge only bounds how many exist at
+  // once. Every one of them costs a transaction, a quota reservation, an
+  // index update and a published event.
+  //
+  // The liveness signal survives without them. The cursor above records
+  // `last_sweep_at` on every sweep including this one, and the schedule run
+  // still reports, so a reader still sees the integration is alive at a
+  // cadence a person can read.
+  //
+  // Stopping on the page cap needs no condition of its own. Every page it
+  // walked held due tasks, so either some were archived and the row goes out
+  // anyway, or every transition failed and each failure has already emitted
+  // an `action_required` row, which is louder than this summary.
+  const changedSomething = archived > 0;
+  if (!changedSomething && trigger.kind !== "schedule") {
+    return;
+  }
+
   await ctx.activity.emit({
-    // Archiving due tasks is the integration's normal, expected work —
-    // both the nothing-due and archived-N outcomes are steady-state info.
     severity: "info",
+    // Off the due count as well as the archived one, because a run where
+    // every transition failed archived nothing and had plenty due, and
+    // calling that "nothing due" contradicts the detail beside it.
+    //
+    // Qualified when the walk stopped on its page cap, where `dueIds` is
+    // what this tick collected rather than what is due. Without that,
+    // "1000 of 1000 due" reads as completeness in the same row whose stop
+    // reason says there is more, and somebody stops looking.
     summary:
-      archived === 0
-        ? `task-auto-archive sweep — nothing due (${triggerLabel})`
-        : `task-auto-archive archived ${String(archived)} task(s) (${triggerLabel})`,
+      dueIds.length === 0
+        ? `task-auto-archive sweep, nothing due (${trigger.label})`
+        : `task-auto-archive archived ${String(archived)} of ${String(dueIds.length)} due${stopReason === "page_cap" ? " so far" : ""} (${trigger.label})`,
     detail: {
       archive_after_days: archiveAfterDays,
       cutoff_iso: cutoffIso,
@@ -202,7 +251,16 @@ async function resolveArchiveAfterDays(
       }
     }
   } catch {
-    // Fall through.
+    // Swallowing and defaulting is the shape the reporting rule in
+    // `integrations/AGENTS.md` names as the one it exists against, and this
+    // is a live instance of it: a read that fails takes the default, and
+    // the sweep then archives against a window nobody chose. Against a
+    // longer configured window it archives more than it was asked to;
+    // against a shorter one it quietly stops archiving what was due.
+    //
+    // Left here deliberately. Fixing it means the sweep refuses to run
+    // rather than guessing, which changes this handler's control flow, and
+    // that is a different change from what a run reports.
   }
   return DEFAULT_ARCHIVE_AFTER_DAYS;
 }
