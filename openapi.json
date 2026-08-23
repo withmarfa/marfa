@@ -14777,6 +14777,11 @@
                         }
                       }
                     },
+                    "max_event_hop_budget": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
                     "audit_retention_days": {
                       "type": "integer",
                       "minimum": 0
@@ -14884,7 +14889,7 @@
           "Spaces"
         ],
         "summary": "Replace the current space's configuration",
-        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
+        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -14911,7 +14916,8 @@
                         },
                         "required": [
                           "types"
-                        ]
+                        ],
+                        "additionalProperties": false
                       },
                       "source_allowlist": {
                         "type": "object",
@@ -14932,7 +14938,8 @@
                         "required": [
                           "types",
                           "sources"
-                        ]
+                        ],
+                        "additionalProperties": false
                       },
                       "source_filter": {
                         "type": "object",
@@ -14953,9 +14960,16 @@
                         "required": [
                           "types",
                           "sources"
-                        ]
+                        ],
+                        "additionalProperties": false
                       }
-                    }
+                    },
+                    "additionalProperties": false
+                  },
+                  "max_event_hop_budget": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
                   },
                   "audit_retention_days": {
                     "type": "integer",
@@ -14973,7 +14987,8 @@
                     "type": "integer",
                     "minimum": 0
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -15046,6 +15061,11 @@
                           ]
                         }
                       }
+                    },
+                    "max_event_hop_budget": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100
                     },
                     "audit_retention_days": {
                       "type": "integer",

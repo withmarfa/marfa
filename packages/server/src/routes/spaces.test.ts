@@ -264,6 +264,100 @@ describe("Space config — hosted mode", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
+  // The destructive shape. PUT is a full replacement, so a key the schema
+  // did not know used to be dropped and the request answered 200 having
+  // erased everything the space had set. The test that existed round-tripped
+  // a well-formed body and would pass either way.
+  it("PUT refuses a mistyped key instead of dropping it", async () => {
+    const good = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { activity_retention_days: 30, trash_retention_days: 7 },
+    });
+    expect(good.status).toBe(200);
+
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { activity_retention_day: 30 },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
+
+    // And the refusal left the space's config alone, which is the whole
+    // point: the old behavior returned 200 with this now empty.
+    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+    });
+    const getBody = (await getRes.json()) as {
+      activity_retention_days?: number;
+      trash_retention_days?: number;
+    };
+    expect(getBody.activity_retention_days).toBe(30);
+    expect(getBody.trash_retention_days).toBe(7);
+  });
+
+  // Documented in the shared type as admin-writable through this route, read
+  // by the publish path, and absent from the route's schema until now, so the
+  // one way it was documented to be set was the one way it could not be.
+  // The outer object refusing an unknown key while the nested one accepts it
+  // is the same defect one level down, and `.strict()` does not recurse.
+  it("PUT refuses a mistyped key inside enforcement too", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { enforcement: { strict_modes: { types: ["core.note"] } } },
+    });
+    expect(res.status).toBe(400);
+
+    // And one level deeper again, inside a block that does exist.
+    const deeper = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { enforcement: { strict_mode: { types: [], typo: 1 } } },
+    });
+    expect(deeper.status).toBe(400);
+  });
+
+  it("PUT refuses a hop budget past the ceiling", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: 101 },
+    });
+    expect(res.status).toBe(400);
+
+    // At the ceiling is fine. A bound nobody can reach is not a bound.
+    const ok = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: 100 },
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("PUT accepts the hop budget the event pipeline reads", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: 9 },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { max_event_hop_budget?: number }).toEqual({
+      max_event_hop_budget: 9,
+    });
+
+    const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+    });
+    expect(
+      ((await getRes.json()) as { max_event_hop_budget?: number })
+        .max_event_hop_budget,
+    ).toBe(9);
+  });
+
+  it("PUT rejects a negative hop budget with 400", async () => {
+    const res = await request(hosted.app, "PUT", "/spaces/me/config", {
+      key: hosted.spaceAdminKey,
+      body: { max_event_hop_budget: -1 },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("PUT persists a valid config and records an audit entry", async () => {
     const config = {
       enforcement: { strict_mode: { types: ["core.note"] } },

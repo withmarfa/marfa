@@ -191,6 +191,13 @@ export function __resetCycleDetectionForTests(): void {
   // notifier over a since-dropped database must not leave it bound for
   // whatever runs next in the same process.
   notifyRemote = null;
+  // And the store itself. `initEventLog` sets four pieces of module state and
+  // this used to restore three, so a test that wired the log to its own
+  // context left the store bound to it for everything that ran afterwards in
+  // the same file. Files are forked apart, so it could never cross one, which
+  // is exactly what made it the kind of thing found by reading rather than by
+  // a failure.
+  eventLogStore = null;
 }
 
 /**

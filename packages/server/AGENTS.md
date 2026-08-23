@@ -178,13 +178,14 @@ If any condition is false the route runs on the owner connection, matching the p
 
 ## Per-space background cleanup
 
-Three cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup) fan out per-space. Each tick the job lists every space via `SpaceStore.list()`, resolves the effective retention (per-space `SpaceConfig` override OR env default), and runs the cleanup once per space scope plus once for the NULL-space bucket (single-space self-host items + any rows with no space scope).
+Four cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup, activity cleanup) fan out per-space. Each tick the job lists every space via `SpaceStore.list()`, resolves the effective retention (per-space `SpaceConfig` override OR env default), and runs the cleanup once per space scope plus once for the NULL-space bucket (single-space self-host items + any rows with no space scope).
 
 Per-space overrides on `SpaceConfig`:
 
 - `audit_retention_days` — overrides `AUDIT_RETENTION_DAYS`.
 - `event_log_retention_hours` — overrides `MARFA_EVENT_LOG_RETENTION_HOURS`.
 - `trash_retention_days` — overrides `TRASH_RETENTION_DAYS`.
+- `activity_retention_days` — overrides `MARFA_ACTIVITY_RETENTION_DAYS`.
 
 `0` disables the job for that space, matching the env-default semantics for `TRASH_RETENTION_DAYS=0`. Negatives are rejected at write.
 

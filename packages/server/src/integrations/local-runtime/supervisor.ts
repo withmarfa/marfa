@@ -22,7 +22,9 @@
  *      `recent_errors` tail.
  *
  * The retry / dlq semantics mirror `runtime-sdk/queue-consumer.ts`'s
- * `consumeBatch` (which the hosted substrate runs).
+ * `consumeBatch`, which the runtime SDK publishes for anyone driving
+ * dispatch from outside the server process. Nothing in this repository
+ * calls it; this supervisor is the in-process path.
  */
 import {
   ConnectionClient,
@@ -31,6 +33,7 @@ import {
   type HandlerResult,
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
+import { resolveHopBudget } from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   mintLocalRuntimeCredential,
@@ -122,8 +125,18 @@ export function createSupervisor(
     }
     const message = envelope.message;
     const lockName = `connection-dispatch:${message.connection_id}`;
-    // Ack over-budget item-event messages before the lock dance — mirrors consumeBatch.
-    const hopBudget = SDK_DEFAULT_HOP_BUDGET;
+    // Ack over-budget item-event messages before the lock dance.
+    //
+    // Resolved per space rather than taken from the SDK constant. The bus
+    // already resolves it that way, so a constant here silently capped the
+    // space's setting at the default: an operator raising the budget got
+    // events past the bus and dropped at this boundary, with the activity row
+    // naming a number they had not chosen. The lookup is the same 30-second
+    // per-space cache the publish path uses.
+    const hopBudget =
+      message.kind === "item-event"
+        ? await resolveHopBudget(message.space_id)
+        : SDK_DEFAULT_HOP_BUDGET;
     if (message.kind === "item-event" && message.cycle.hop_count >= hopBudget) {
       await emitHopBudgetActivity(message, hopBudget);
       return { ok: true };
