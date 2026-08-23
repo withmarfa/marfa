@@ -28,6 +28,7 @@ export type {
   ItemState,
   ListItemsQuery,
   ListItemsPage,
+  BulkUpsertOptions,
   BulkUpsertResult,
   BulkUpsertResponse,
   UploadBlobInput,
@@ -59,7 +60,11 @@ export type {
 export type { ConnectionContext } from "./connection-context.js";
 
 export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
-export type { ConsumerEnvironment, DlqProducer } from "./queue-consumer.js";
+export type {
+  ConsumerEnvironment,
+  DlqProducer,
+  QueueDeliveryMessage,
+} from "./queue-consumer.js";
 
 export type {
   CycleMetadata,
@@ -68,6 +73,7 @@ export type {
   WebhookHandlerInput,
   ScheduleMessage,
   ItemEventMessage,
+  ManualMessage,
   QueueMessage,
   HandlerResult,
   RuntimeCredential,
