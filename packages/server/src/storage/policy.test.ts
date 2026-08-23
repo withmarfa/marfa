@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { TYPE_REGISTRY } from "@withmarfa/shared";
+import {
+  TYPE_REGISTRY,
+  getTypeSchema,
+  registerTypeSchema,
+  typeHasRole,
+} from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
-import { resolveMergePolicy } from "./policy.js";
+import { resolveMergePolicy, resolveTypeSchema } from "./policy.js";
 import type { TypeResolver } from "./policy.js";
 
 // The core registry resolves types globally; wrap it as a resolver function.
@@ -163,5 +168,181 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
         baked.default,
       );
     }
+  });
+});
+
+/**
+ * The read surface has to agree with the rule it describes.
+ *
+ * `in-collection` constrains its target on `role:container`, and `typeHasRole`
+ * answers that by walking the parent chain, so a subtype of a container is
+ * already an acceptable target. The type read used to project `roles` away
+ * entirely: every type reported none, including the three that declare it, so
+ * a client had no way to build the list except by hardcoding names or
+ * attempting a write to find out. A generated kit surfaced the field as always
+ * empty, which reads as a definite "declares no roles" rather than as missing.
+ */
+describe("resolveTypeSchema roles", () => {
+  it("returns the role for a type that declares it", () => {
+    for (const id of ["core.media.series", "core.media.album"]) {
+      expect(resolveTypeSchema(id, coreResolver)?.roles).toEqual(["container"]);
+    }
+  });
+
+  it("omits the field entirely for a type with no roles", () => {
+    const resolved = resolveTypeSchema("core.bookmark", coreResolver);
+    expect(resolved).toBeDefined();
+    // Absent, not empty. A client cannot tell `[]` from "declares none", and
+    // an always-empty array in a generated kit is worse than no field at all.
+    expect(resolved && "roles" in resolved).toBe(false);
+  });
+
+  it("inherits a role from an ancestor, because the rule does", () => {
+    const resolver = makeResolver([
+      { id: "acme.shelf", version: 1, fields: {}, roles: ["container"] },
+      { id: "acme.shelf.rare", version: 1, fields: {}, parent: "acme.shelf" },
+    ]);
+    expect(resolveTypeSchema("acme.shelf.rare", resolver)?.roles).toEqual([
+      "container",
+    ]);
+  });
+
+  it("returns the role for the integration container too, which has no parent", () => {
+    // The third declaring type, and the only one outside `core.*` with a
+    // chain of length one. A mutation keyed on chain length or namespace
+    // passes against the two core types and breaks this.
+    expect(
+      resolveTypeSchema("marfa.podcast.show", coreResolver)?.roles,
+    ).toEqual(["container"]);
+  });
+
+  it("agrees with the check the edge constraint actually runs", () => {
+    // The property that matters: if these disagree, the API says a type is not
+    // a container while the write path accepts it as one.
+    //
+    // Registering a real inheriting type is what makes this test able to fail.
+    // No shipped type inherits the role, so every core id below either
+    // declares it or has none anywhere in its chain — exactly the case where
+    // leaf-only and chain-union agree. And `typeHasRole` reads the module
+    // registry rather than an injected resolver, so a hand-built resolver
+    // cannot be cross-checked against it at all.
+    const space = "01a02000-0000-7000-8000-000000000001";
+    registerTypeSchema(
+      { id: "acme.crate", version: 1, fields: {}, roles: ["container"] },
+      space,
+    );
+    registerTypeSchema(
+      { id: "acme.crate.wooden", version: 1, fields: {}, parent: "acme.crate" },
+      space,
+    );
+    const scoped: TypeResolver = (id) => getTypeSchema(id, space);
+
+    for (const id of [
+      "core.media.series",
+      "core.media.album",
+      "marfa.podcast.show",
+      "core.bookmark",
+      "core.note",
+      "core.media",
+      "acme.crate",
+      // The one that matters: declares nothing, inherits everything.
+      "acme.crate.wooden",
+    ]) {
+      const projected =
+        resolveTypeSchema(id, scoped)?.roles?.includes("container") ?? false;
+      expect(projected, id).toBe(typeHasRole(id, "container", space));
+    }
+  });
+
+  it("does not invent a role on the parent of a container", () => {
+    // `core.media.series` declares it; `core.media`, its parent, does not.
+    // Roles travel down the chain, never up.
+    expect(
+      resolveTypeSchema("core.media", coreResolver)?.roles,
+    ).toBeUndefined();
+  });
+
+  it("merges roles declared at more than one level, without duplicating", () => {
+    const resolver = makeResolver([
+      { id: "acme.base", version: 1, fields: {}, roles: ["container"] },
+      {
+        id: "acme.mid",
+        version: 1,
+        fields: {},
+        parent: "acme.base",
+        roles: ["container"],
+      },
+    ]);
+    expect(resolveTypeSchema("acme.mid", resolver)?.roles).toEqual([
+      "container",
+    ]);
+  });
+});
+
+// Registration rejects cycles, so nothing here is reachable through the API.
+// It is tested because the guard existed untested in every walker, and because
+// truncating instead of throwing is the failure mode that hurts: a partial
+// chain yields a partial answer that reads as a real one.
+describe("chain guards", () => {
+  const cyclic = makeResolver([
+    { id: "acme.a", version: 1, fields: {}, parent: "acme.b" },
+    {
+      id: "acme.b",
+      version: 1,
+      fields: {},
+      parent: "acme.a",
+      roles: ["container"],
+    },
+  ]);
+
+  it("throws on a cycle rather than returning a partial schema", () => {
+    expect(() => resolveTypeSchema("acme.a", cyclic)).toThrow(
+      /Inheritance cycle or excessive depth/,
+    );
+  });
+
+  it("throws on a cycle when resolving merge policy", () => {
+    expect(() => resolveMergePolicy("acme.a", cyclic)).toThrow(
+      /Inheritance cycle or excessive depth/,
+    );
+  });
+
+  it("throws on a chain deeper than the guard allows", () => {
+    const deep: TypeSchema[] = [{ id: "acme.d0", version: 1, fields: {} }];
+    for (let i = 1; i <= 120; i++) {
+      deep.push({
+        id: `acme.d${String(i)}`,
+        version: 1,
+        fields: {},
+        parent: `acme.d${String(i - 1)}`,
+      });
+    }
+    const resolve = makeResolver(deep);
+    expect(() => resolveTypeSchema("acme.d120", resolve)).toThrow(
+      /excessive depth/,
+    );
+    // Well within the bound, so depth alone must not trip it.
+    expect(resolveTypeSchema("acme.d50", resolve)?.id).toBe("acme.d50");
+  });
+
+  // The guard fires on the same input on both sides of the rule. Truncating
+  // here while `typeHasRole` throws is exactly the disagreement being closed.
+  it("agrees with the registry's own walker on cyclic input", () => {
+    expect(() => resolveTypeSchema("acme.a", cyclic)).toThrow();
+    registerTypeSchema(
+      { id: "acme.a", version: 1, fields: {}, parent: "acme.b" },
+      "01a02000-0000-7000-8000-000000000002",
+    );
+    registerTypeSchema(
+      { id: "acme.b", version: 1, fields: {}, parent: "acme.a" },
+      "01a02000-0000-7000-8000-000000000002",
+    );
+    expect(() =>
+      typeHasRole(
+        "acme.a",
+        "container",
+        "01a02000-0000-7000-8000-000000000002",
+      ),
+    ).toThrow();
   });
 });

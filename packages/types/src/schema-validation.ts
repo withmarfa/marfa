@@ -785,7 +785,12 @@ export function validateTypeSchema(
   if (typeof obj.description === "string") schema.description = obj.description;
   if (parentId) schema.parent = parentId;
   if (Array.isArray(obj.roles) && obj.roles.length > 0) {
-    schema.roles = [...new Set(obj.roles as TypeRole[])];
+    // Sorted as well as deduplicated, so the stored order is canonical. The
+    // register and update responses hand back what is stored, while the reads
+    // hand back a resolved union that is sorted by construction; without this
+    // the same type would come back in different orders from different
+    // endpoints the day a second role exists, and nothing would fail.
+    schema.roles = [...new Set(obj.roles as TypeRole[])].sort();
   }
   if (Array.isArray(obj.compatible_with)) {
     schema.compatible_with = obj.compatible_with as string[];

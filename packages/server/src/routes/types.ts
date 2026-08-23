@@ -19,7 +19,8 @@ import {
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { resolveTypeSchema } from "../storage/policy.js";
+import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
+import type { TypeResolver } from "../storage/policy.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -376,7 +377,22 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     // caller's space. `listTypes(spaceId)` returns core/system plus this
     // space's own custom types — never another space's.
     const spaceId = c.get("apiKey")?.space_id;
-    return c.json(listTypes(spaceId), 200);
+    const resolve: TypeResolver = (id) => getTypeSchema(id, spaceId);
+    // Schemas come back as declared, not resolved, which is deliberate:
+    // resolving fields and policies for every type in a vocabulary is work a
+    // caller who wants one type should pay per type. `roles` is the exception
+    // and has to be, because a role exists to be enumerated. A client asking
+    // "which of these can hold a collection" reads this list, and answering
+    // with declared roles omits every subtype of a container while the write
+    // path accepts them. Same helper as the single read, so the two cannot
+    // give different answers about the same type.
+    return c.json(
+      listTypes(spaceId).map((schema) => {
+        const roles = resolveRoles(schema.id, resolve);
+        return roles ? { ...schema, roles } : schema;
+      }),
+      200,
+    );
   });
 
   router.openapi(getTypeRoute, (c) => {
