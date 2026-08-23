@@ -432,10 +432,11 @@ export function unregisterTypeSchema(
 }
 
 // Hard bound on inheritance-chain depth for the hot-path walks below
-// (`getResolvedFields`, `isSubtypeOf`). The registration path
-// (`validateTypeSchema`, `routes/types.ts`) rejects cycles before a schema
-// enters the in-memory registry, so a chain exceeding this bound means a cycle
-// or pathological depth slipped past those guards. Throw a clear error rather
+// (`getResolvedFields`, `isSubtypeOf`). The registration doors reject cycles
+// before a schema enters the in-memory registry (`validateTypeSchema`, and the
+// depth cap the server holds once in `routes/_parent-chain.ts`), so a chain
+// exceeding this bound means a cycle or pathological depth slipped past those
+// guards. Throw a clear error rather
 // than loop forever — these walks run per-write and per-edge-check, so an
 // unbounded loop here would hang the request. The bound is generous: real type
 // hierarchies are a handful of levels deep.

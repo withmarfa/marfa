@@ -28,12 +28,11 @@ import type {
 } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { EdgeTypeRequestSchema } from "./edge-types.js";
+import { assertParentChain } from "./_parent-chain.js";
 
 /** Bounds an archive the same way the item and edge counts are bounded. */
 export const MAX_ARCHIVE_TYPES = 200;
 export const MAX_ARCHIVE_EDGE_TYPES = 200;
-
-const MAX_INHERITANCE_DEPTH = 10;
 
 export interface ArchiveTypeEntry {
   custom_type?: unknown;
@@ -48,42 +47,27 @@ export interface ArchiveTypeResult {
 }
 
 /**
- * A parent chain must resolve and must terminate. Mirrors the check
- * `POST /types` runs, against the same space-scoped registry, and runs
- * after the batch's own parents are registered so a parent-child pair in
- * one archive validates in either input order.
+ * Runs the same check `POST /types` runs, against the same space-scoped
+ * registry, after the batch's own parents are registered so a parent-child
+ * pair in one archive validates in either input order.
+ *
+ * The two doors share the check rather than each holding a copy, so a
+ * restore cannot accept a chain registration would refuse. Only the
+ * phrasing differs: an archive entry has to be named, because the caller
+ * handed over a bundle rather than that type individually.
  */
 function assertParentChainResolves(
   typeId: string,
   parentId: string,
   spaceId: string | undefined,
 ): void {
-  let current = parentId;
-  let depth = 0;
-  while (current) {
-    depth += 1;
-    if (depth > MAX_INHERITANCE_DEPTH) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Archive type "${typeId}" has an inheritance chain deeper than ${String(MAX_INHERITANCE_DEPTH)}`,
-      );
-    }
-    if (current === typeId) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Archive type "${typeId}" declares a circular parent chain`,
-      );
-    }
-    const parent = getTypeSchema(current, spaceId);
-    if (!parent) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Archive type "${typeId}" names an unknown parent "${current}"`,
-      );
-    }
-    if (!parent.parent) break;
-    current = parent.parent;
-  }
+  assertParentChain(typeId, parentId, spaceId, {
+    tooDeep: (maxDepth) =>
+      `Archive type "${typeId}" has an inheritance chain deeper than ${String(maxDepth)}`,
+    circular: () => `Archive type "${typeId}" declares a circular parent chain`,
+    unknownParent: (parent) =>
+      `Archive type "${typeId}" names an unknown parent "${parent}"`,
+  });
 }
 
 /** Two schemas are the same registration when they normalize identically. */

@@ -1,0 +1,70 @@
+import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
+
+/**
+ * How deep a registered type's parent chain may go.
+ *
+ * Two doors register types — `POST /types` and the archive restore — and
+ * they have to agree on which chains are legal. They previously agreed by
+ * each holding a copy of this number, with a comment in one saying it
+ * mirrored the other. Nothing made that true: changing one would have left
+ * the archive able to carry a type registration would refuse, or refusing
+ * one registration allows, and the disagreement would first surface as a
+ * confusing rejection partway through a restore.
+ *
+ * Distinct from the registry's own `MAX_INHERITANCE_DEPTH` of 100 in
+ * `@withmarfa/shared`. That one is a generous runtime backstop on the
+ * resolution walks, sized so that reaching it means a cycle slipped past
+ * this check rather than that a real hierarchy grew too tall. This is the
+ * bound on what a caller may register in the first place, and it sits well
+ * below the backstop deliberately.
+ */
+export const MAX_INHERITANCE_DEPTH = 10;
+
+/** How a caller phrases the three ways a parent chain can be rejected. */
+export interface ParentChainMessages {
+  tooDeep: (maxDepth: number) => string;
+  circular: () => string;
+  unknownParent: (parentId: string) => string;
+}
+
+/**
+ * A parent chain must terminate, must not reach back to the type being
+ * registered, and must resolve every ancestor within the caller's space.
+ *
+ * Parents resolve space-scoped so a custom type may inherit from another
+ * of the space's custom types as well as from a core one.
+ *
+ * The messages differ by door because they are read in different contexts:
+ * a restore names the offending archive entry, since the caller did not
+ * hand over that type individually and needs telling which one it was.
+ */
+export function assertParentChain(
+  typeId: string,
+  parentId: string,
+  spaceId: string | undefined,
+  messages: ParentChainMessages,
+): void {
+  let current = parentId;
+  let depth = 0;
+  while (current) {
+    depth += 1;
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        messages.tooDeep(MAX_INHERITANCE_DEPTH),
+      );
+    }
+    if (current === typeId) {
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, messages.circular());
+    }
+    const parent = getTypeSchema(current, spaceId);
+    if (!parent) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        messages.unknownParent(current),
+      );
+    }
+    if (!parent.parent) break;
+    current = parent.parent;
+  }
+}
