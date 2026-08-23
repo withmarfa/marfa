@@ -17,10 +17,14 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  *
  * Distinct from the registry's own `MAX_INHERITANCE_DEPTH` of 100 in
  * `@withmarfa/shared`. That one is a generous runtime backstop on the
- * resolution walks, sized so that reaching it means a cycle slipped past
- * this check rather than that a real hierarchy grew too tall. This is the
- * bound on what a caller may register in the first place, and it sits well
- * below the backstop deliberately.
+ * resolution walks, sized so a real hierarchy never reaches it. This is the
+ * bound on what a caller may register in one step, and it sits well below
+ * the backstop deliberately.
+ *
+ * It does not bound a chain's final depth. Re-parenting through
+ * `PUT /types/:id` walks upward from the type being changed and revalidates
+ * none of its descendants, so a chain can be grown past this cap, and past
+ * the backstop above it, in steps that each pass.
  */
 export const MAX_INHERITANCE_DEPTH = 10;
 
@@ -28,7 +32,11 @@ export const MAX_INHERITANCE_DEPTH = 10;
 export interface ParentChainMessages {
   tooDeep: (maxDepth: number) => string;
   circular: () => string;
-  unknownParent: (parentId: string) => string;
+  /**
+   * Receives the first ancestor that failed to resolve, which is the parent
+   * the caller supplied only when the chain is one link long.
+   */
+  unknownParent: (unresolvedId: string) => string;
 }
 
 /**

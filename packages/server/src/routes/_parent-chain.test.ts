@@ -72,7 +72,8 @@ describe("the depth a registered chain may reach", () => {
 
 describe("a chain that reaches back to the type being registered", () => {
   it("reports a cycle when the loop closes inside the depth bound", () => {
-    // `a5` is five steps up from `a9`, well inside the depth bound. Depth is
+    // `a5` is four levels above `a9`, so the walk reaches it on its fifth
+    // step, well inside the depth bound. Depth is
     // checked first, so a loop that only closes past the cap reports as too
     // deep instead, which is what both doors did before this was shared.
     expect(() => {
@@ -124,8 +125,10 @@ describe("the registration cap against the registry's own backstop", () => {
     // hierarchy grew too tall. Raise this cap above it and every read of a
     // legally registered deep type throws instead.
     //
-    // The worst case is a type registered on top of the deepest legal parent,
-    // so the walk covers one more node than the cap itself.
+    // A type registered on top of the deepest legal parent walks one more
+    // node than the cap itself, which is the deepest a single registration
+    // can produce. It is not the deepest chain the registry can hold: a
+    // re-parent grows one without ever registering past the cap.
     const deepest = "acme.deepest";
     registerTypeSchema(
       {
