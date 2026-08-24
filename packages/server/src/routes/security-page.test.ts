@@ -169,6 +169,85 @@ describe("renderSecurityPage", () => {
   });
 });
 
+/**
+ * The one line a person reads before deciding whether to revoke an app.
+ *
+ * It was assembled from `s.includes(":write")` and `s.includes(":read")`, so
+ * it judged a permission by its characters: a literal the parser does not
+ * recognize was classified anyway, and everything left over fell into
+ * "Limited access", which reads as a small amount of access to your data and
+ * was equally the answer for no access at all.
+ */
+describe("the summary of what an app can do", () => {
+  const summaryOf = (scopes: string[]): string => {
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [{ ...SAMPLE_GRANT, scopes }],
+      sessions: [],
+    });
+    return /<div class="row__meta">([^<]*)<\/div>/.exec(html)?.[1] ?? "";
+  };
+
+  it("says read and write for a permission that can change content", () => {
+    expect(summaryOf(["core.note:read", "core.task:write"])).toBe(
+      "Can read and write your data",
+    );
+  });
+
+  it("says read for permissions that only read", () => {
+    expect(summaryOf(["core.note:read", "core.task:read"])).toBe(
+      "Can read your data",
+    );
+  });
+
+  // Write is write on whichever axis it lands. Both of these were already
+  // reported as write, and would stop being if the summary were narrowed to
+  // content permissions rather than moved onto the parser.
+  it("counts a write outside the content types as a write", () => {
+    expect(summaryOf(["metadata.types:write"])).toBe(
+      "Can read and write your data",
+    );
+    expect(summaryOf(["edge.parent-of:write"])).toBe(
+      "Can read and write your data",
+    );
+  });
+
+  // A sign-in-only app reaches nothing in the space, and saying so is the
+  // point: "Limited access" told somebody weighing a revoke that this app has
+  // some of their data.
+  it("separates an app that only signs you in", () => {
+    expect(summaryOf(["openid", "profile", "email"])).toBe(
+      "Can see who you are, nothing else",
+    );
+  });
+
+  it("says so when a grant carries nothing", () => {
+    expect(summaryOf([])).toBe("No access to your data");
+  });
+
+  // A literal the parser refuses is enforced as nothing, because every
+  // permission map is projected through that same parser. The narrow reading
+  // is therefore the true one and needs no guessing. A substring test reached
+  // the same answer here for the wrong reason, by reading the characters
+  // after the colon.
+  it("treats a permission it cannot read as granting nothing", () => {
+    expect(summaryOf(["something-else:read"])).toBe("No access to your data");
+  });
+
+  // The case the guessing would have cost. Tightening the pattern grammar
+  // retires literals that stored grants still carry; those grants enforce as
+  // nothing from that release onward, and the page has to keep saying what
+  // the rest of the grant does rather than jumping to the widest claim.
+  it("ignores an unreadable permission beside a readable one", () => {
+    expect(summaryOf(["core.note:read", "something-else:read"])).toBe(
+      "Can read your data",
+    );
+    expect(summaryOf(["core.note:write", "something-else:read"])).toBe(
+      "Can read and write your data",
+    );
+  });
+});
+
 describe("GET /auth/security", () => {
   it("redirects to /auth/sign-in when no session cookie is present", async () => {
     ctx = await createTestContext();
