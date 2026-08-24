@@ -83,6 +83,7 @@ To install end-to-end:
 
 Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The runtime loads every integration that ships a built handler entry; there is one runtime, so there is nothing to declare compatibility with. An integration without a handler entry is a client, and its code runs wherever the client runs. Build invariants:
 
+- **The handler entry is `src/local.ts` and the built entry is `dist/local.js`.** Both halves are the convention rather than a preference: the image build pairs them to catch an integration whose source is present and whose output is missing, and the suite reads the source half to decide whether an integration ships a handler at all. Emitting `dist/local.js` from a differently named source satisfies neither reader, and the two then disagree about what the integration is.
 - `tsup.config.ts` emits `dist/local.js`, which the server's supervisor loads at boot.
 - `@cloudflare/workers-types` remains a types-only devDependency: handler code types upstream responses through its generic `json<T>()` fetch typings. Nothing Cloudflare-specific runs; the runtime is Node.
 - `@withmarfa/runtime-sdk` and `@withmarfa/shared` MUST stay external in every bundle that loads integrations alongside them; the handler `REGISTRY` and shared registries are module-singleton state.

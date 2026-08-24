@@ -41,6 +41,19 @@ afterEach(() => {
   scratchRoot = undefined;
 });
 
+/**
+ * The smallest export the verification accepts as a manifest, which is the
+ * same three fields the server's catalog loader requires. Writing less than
+ * this would make every fixture fail for the wrong reason.
+ */
+function manifestSource(name: string): string {
+  return `export const manifest = ${JSON.stringify({
+    manifest_schema_version: "2.0.0",
+    name,
+    version: "1.0.0",
+  })};\n`;
+}
+
 /** How the stand-in worker answers a dispatch. */
 type WorkerBehavior = "ok" | "not-ok" | "silent";
 
@@ -89,7 +102,7 @@ function image(options: {
       join(dist, manifestOnly ? "manifest.js" : "local.js"),
       bare
         ? "export const somethingElse = 1;\n"
-        : `export const manifest = { name: "acme/${name ?? raw}" };\n`,
+        : manifestSource(`acme/${name ?? raw}`),
     );
   }
 
@@ -103,10 +116,7 @@ function image(options: {
   if (options.fixture === true) {
     const dist = join(fixtureRoot, "_template", "dist");
     mkdirSync(dist, { recursive: true });
-    writeFileSync(
-      join(dist, "local.js"),
-      'export const manifest = { name: "acme/template" };\n',
-    );
+    writeFileSync(join(dist, "local.js"), manifestSource("acme/template"));
   }
 
   // A stand-in for dist/worker-entry.js. It imports whatever handler path
@@ -154,11 +164,6 @@ function verify(img: Image, overrides: Record<string, string> = {}): Run {
         MARFA_INSTALLED_INTEGRATIONS: img.declaration,
         MARFA_VERIFY_FIXTURE_ROOT: img.fixtureRoot,
         MARFA_VERIFY_WORKER_ENTRY: img.workerEntry,
-        // The real budgets are ten and fifteen seconds. Nothing here waits
-        // on a real handler, so a case that means to reach a timeout should
-        // reach it now rather than in ten seconds.
-        MARFA_VERIFY_READY_TIMEOUT_MS: "1500",
-        MARFA_VERIFY_DISPATCH_TIMEOUT_MS: "1500",
         ...overrides,
       },
     });
@@ -307,6 +312,12 @@ describe("the in-image integration verification", () => {
         fixture: true,
         worker: "silent",
       }),
+      // Only this case waits out a budget, so only this case shortens one.
+      // Every other case spawns a worker that answers, and the real ten
+      // second budget is the margin those need on a machine that also runs
+      // the CI pool: a shortened one there would be a timing test nobody
+      // asked for.
+      { MARFA_VERIFY_READY_TIMEOUT_MS: "1500" },
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("worker not ready");

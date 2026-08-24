@@ -72,12 +72,20 @@ const FIXTURE_ROOT =
   process.env.MARFA_VERIFY_FIXTURE_ROOT ?? resolve(HERE, "verify-fixtures");
 // Overridable only so the suite can drive the timeout paths without waiting
 // out the real budgets. An image never sets these.
-const READY_TIMEOUT_MS = Number(
-  process.env.MARFA_VERIFY_READY_TIMEOUT_MS ?? "10000",
-);
-const DISPATCH_TIMEOUT_MS = Number(
-  process.env.MARFA_VERIFY_DISPATCH_TIMEOUT_MS ?? "15000",
-);
+//
+// A bad value is refused rather than coerced. `Number("")` is 0 and
+// `Number("soon")` is NaN, and setTimeout treats both as fire-immediately,
+// so the permissive reading turns a typo into a timeout that always
+// expires: a check that fails for a reason unrelated to what it tests.
+function budget(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    fail(`${name} must be a positive number of milliseconds, not "${raw}"`);
+  }
+  return parsed;
+}
 
 function fail(msg) {
   console.error(`[verify-image-integrations] FAIL: ${msg}`);
@@ -87,6 +95,9 @@ function fail(msg) {
 function info(msg) {
   console.log(`[verify-image-integrations] ${msg}`);
 }
+
+const READY_TIMEOUT_MS = budget("MARFA_VERIFY_READY_TIMEOUT_MS", 10_000);
+const DISPATCH_TIMEOUT_MS = budget("MARFA_VERIFY_DISPATCH_TIMEOUT_MS", 15_000);
 
 // Check 1: the installed set is the declared set.
 //
@@ -193,11 +204,18 @@ function manifestFrom(mod) {
   return Object.values(mod).find(usableManifest);
 }
 
+// Deliberately the same three fields the server's own catalog loader
+// requires before it will even attempt validation. A weaker test here would
+// pass an entry the catalog then skips at boot, which is precisely the
+// failure this check exists to refuse, and it would also let the search
+// below settle on a different export than the loader would pick.
 function usableManifest(value) {
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof value.name === "string"
+    "manifest_schema_version" in value &&
+    typeof value.name === "string" &&
+    "version" in value
   );
 }
 
