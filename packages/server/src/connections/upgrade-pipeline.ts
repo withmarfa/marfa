@@ -40,6 +40,7 @@ import {
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
 import type { IntegrationManifest, Item } from "@withmarfa/shared";
+import { ConnectionMappingSchema } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
 import { resolveConnectionManifest } from "./resolve-manifest.js";
@@ -82,7 +83,8 @@ export class UpgradeError extends Error {
       | "already_current"
       | "no_newer_version"
       | "configuration_invalid"
-      | "consent_required",
+      | "consent_required"
+      | "mapping_would_be_stranded",
     message: string,
     public readonly detail?: Record<string, unknown>,
   ) {
@@ -230,6 +232,21 @@ async function pickCandidateRow(
     // Pinning is for choosing among an integration's own versions, never
     // for re-pointing a connection at a different integration.
     if (props.manifest_name !== current.name) return undefined;
+    // And never for moving one backwards. The unpinned branch below has
+    // always refused a candidate that is not newer; the pinned one refused
+    // only a different integration and the row already resolved, which was
+    // harmless while nothing set the pin and is not now. A connection
+    // upgraded by something else between a caller reading a version and
+    // this running would otherwise be walked back to the older one, with
+    // the narrowing that implies passing the consent gate unremarked.
+    if (
+      compareVersions(props.manifest_version ?? "0.0.0", current.version) <= 0
+    )
+      return undefined;
+    // Unreachable through the registrar, which stamps `manifest_version`
+    // from the manifest, so the resolved row always compares equal above.
+    // It stays for a catalog row written by something else, where the two
+    // could disagree.
     return row.id === resolved.integration_item_id ? undefined : row;
   }
   const rows = await listCatalogVersions(storage, current.name, input.spaceId);
@@ -248,6 +265,40 @@ export function performUpgrade(
   return withConnectionLifecycleLock(storage, input.connectionId, () =>
     applyUpgrade(storage, input),
   );
+}
+
+/**
+ * Would moving this connection leave a stored mapping it can no longer
+ * edit? Only when a mapping is actually stored: an integration dropping a
+ * capability it never had exercised takes nothing from anybody.
+ *
+ * Lives here because `applyUpgrade` is the one place every route and the
+ * background pass all pass through. It used to live beside the survey, so
+ * the pass refused the move and both routes applied it.
+ */
+export function wouldStrandMapping(
+  connection: Item,
+  candidateManifest: IntegrationManifest | undefined,
+): boolean {
+  if (candidateManifest === undefined) return false;
+  if (candidateManifest.supports_user_mappings === true) return false;
+  return ConnectionMappingSchema.safeParse(
+    (connection.properties as { mapping?: unknown }).mapping,
+  ).success;
+}
+
+/** The manifest on a catalog row, or nothing if the row is not one. */
+export async function manifestOfCatalogRow(
+  storage: Storage,
+  integrationItemId: string | null,
+  spaceId: string | undefined,
+): Promise<IntegrationManifest | undefined> {
+  if (integrationItemId === null) return undefined;
+  const row = await storage.items.get(integrationItemId, spaceId, {
+    includePlatformScoped: true,
+  });
+  if (row?.type !== "system.integration") return undefined;
+  return (row.properties as { manifest?: IntegrationManifest }).manifest;
 }
 
 async function applyUpgrade(
@@ -284,6 +335,33 @@ async function applyUpgrade(
       input.targetIntegrationItemId === undefined
         ? `Connection ${input.connectionId} already resolves the newest registered version of ${preview.current.manifest_name} (${preview.current.manifest_version})`
         : `The requested catalog entry is not a newer version of ${preview.current.manifest_name}`,
+    );
+  }
+
+  // A manifest that stops declaring mapping support strands a mapping the
+  // space already set: the rules keep being applied and nothing can edit
+  // them again. This lives here rather than at a caller because both doors
+  // pass through it, and it used to live at only one of them. The
+  // background pass refused such a move while the manual route applied it,
+  // and dropping mapping support does not register as widening, so the
+  // consent gate below never saw it either.
+  //
+  // Not a consent question. A grant is something a person can agree to;
+  // this is a capability going away, and agreeing to it would not bring
+  // the mapping back. Clear the mapping first, or stay where you are.
+  const candidateManifest = await manifestOfCatalogRow(
+    storage,
+    preview.candidate_integration_ref,
+    input.spaceId,
+  );
+  if (wouldStrandMapping(connection, candidateManifest)) {
+    throw new UpgradeError(
+      "mapping_would_be_stranded",
+      `Moving ${preview.current.manifest_name} to ${preview.candidate.manifest_version} would leave this connection's stored user mapping in place with no way to edit it, because that version does not support mappings. Clear the mapping first.`,
+      {
+        current_version: preview.current.manifest_version,
+        candidate_version: preview.candidate.manifest_version,
+      },
     );
   }
 

@@ -24,6 +24,7 @@ import {
   UpgradeError,
 } from "../connections/upgrade-pipeline.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
+import { listPendingConsent } from "../connections/auto-upgrade.js";
 import type { LocalRuntime } from "../integrations/local-runtime/types.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import {
@@ -308,6 +309,18 @@ const upgradePreviewRoute = createRoute({
       content: { "application/json": { schema: UpgradePreviewSchema } },
       description: "What an upgrade would change.",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
+      description:
+        "The connection carries no integration reference, or the manifest it resolves no longer validates.",
+    },
     401: {
       content: {
         "application/json": {
@@ -329,6 +342,140 @@ const upgradePreviewRoute = createRoute({
         },
       },
       description: "Connection not found.",
+    },
+  },
+});
+
+const PendingConsentSchema = z.object({
+  pending: z.array(
+    z.object({
+      connection_id: z.string(),
+      label: z.string().nullable(),
+      manifest_name: z.string(),
+      from_version: z.string(),
+      to_version: z.string(),
+      consent_lines: z.array(z.string()),
+    }),
+  ),
+});
+
+const pendingUpgradesRoute = createRoute({
+  operationId: "listConnectionUpgradesPendingConsent",
+  method: "get",
+  path: "/upgrades/pending",
+  tags: ["Connections"],
+  summary: "List connections held back because moving them would grant more",
+  description:
+    "Connections whose newest registered manifest version reaches further than the one they were installed against. The automatic pass moves everything that takes the same or less and leaves these, so this is the list that needs a person. `consent_lines` says what each move would newly allow, in the same words the install consent screen uses. Approve one with `POST /connections/{id}/upgrade/approve`.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: PendingConsentSchema } },
+      description: "Connections awaiting a decision.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized.",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller is not an admin.",
+    },
+  },
+});
+
+const ApproveUpgradeSchema = z.object({
+  to_version: z
+    .string()
+    .min(1)
+    .describe(
+      "The version the caller was shown. The approval applies to that version and no other: a newer one registered since is refused rather than silently approved.",
+    ),
+});
+
+const approveUpgradeRoute = createRoute({
+  operationId: "approveConnectionUpgrade",
+  method: "post",
+  path: "/{id}/upgrade/approve",
+  tags: ["Connections"],
+  summary: "Approve a move that would grant a connection more than it has",
+  description:
+    "The decision `POST /connections/{id}/upgrade` refuses to make on its own. `to_version` names the version the caller was shown, and the move is refused with 409 if that is no longer the candidate, so an approval cannot carry over to a widening nobody read. Everything else about the move is identical to the ordinary upgrade, including keeping the cursor state and revoking runtime credentials.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: ConnectionIdParam,
+    body: {
+      content: { "application/json": { schema: ApproveUpgradeSchema } },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            connection_id: z.string(),
+            from: z.object({
+              manifest_name: z.string(),
+              manifest_version: z.string(),
+            }),
+            to: z.object({
+              manifest_name: z.string(),
+              manifest_version: z.string(),
+            }),
+            integration_ref: z.string(),
+            revoked_credential_ids: z.array(z.string()),
+            activity_id: z.string(),
+          }),
+        },
+      },
+      description: "The connection now resolves the newer manifest.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
+      description:
+        "A malformed body, or a connection that is not an integration, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized.",
+    },
+    403: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
+      },
+      description: "Caller is not an admin.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
+      description: "Connection not found.",
+    },
+    409: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
+      },
+      description:
+        "The candidate version is not the one the caller approved, the connection is already on the newest version, the move no longer widens, or it would strand this connection's stored user mapping.",
     },
   },
 });
@@ -368,11 +515,14 @@ const upgradeRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
         },
       },
       description:
-        "Not an integration connection, revoked, already current, or its settings do not satisfy the newer manifest.",
+        "Not an integration connection, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
     },
     401: {
       content: {
@@ -396,6 +546,13 @@ const upgradeRoute = createRoute({
         },
       },
       description: "Connection not found.",
+    },
+    409: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
+      },
+      description:
+        "The move would strand this connection's stored user mapping, because the newer version does not support mappings.",
     },
   },
 });
@@ -1098,6 +1255,104 @@ export function connectionRoutes(
     }
   });
 
+  // `/upgrades/pending` cannot be read as a connection id: the only route
+  // it could shadow is `GET /{id}/upgrade`, and their second segments
+  // differ. Registration order does not enter into it, which is worth
+  // saying because it looks like it should.
+  r.openapi(pendingUpgradesRoute, async (c) => {
+    const apiKey = requireSpaceAdmin(c);
+    const pending = await listPendingConsent(
+      storage,
+      apiKey.space_id ?? undefined,
+    );
+    return c.json({ pending }, 200);
+  });
+
+  r.openapi(approveUpgradeRoute, async (c) => {
+    const apiKey = requireSpaceAdmin(c);
+    const { id } = c.req.valid("param");
+    const { to_version } = c.req.valid("json");
+    const spaceId = apiKey.space_id ?? undefined;
+
+    // Approve what was read, not whatever is newest now. Between the list
+    // and this call a further version can register, and carrying the
+    // approval onto it would grant something nobody was shown: the whole
+    // point of the gate.
+    let preview;
+    try {
+      preview = await previewUpgrade(storage, {
+        spaceId,
+        connectionId: id,
+      });
+    } catch (err) {
+      throw mapUpgradeError(err);
+    }
+    if (preview.candidate === null) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Connection ${id} already resolves the newest registered version of ${preview.current.manifest_name}`,
+      );
+    }
+    // `previewUpgrade` sets the candidate and its row together, so this is
+    // not reachable. Refusing rather than falling back to an unpinned call
+    // is the point: the fallback for "I could not pin" has to be no move,
+    // not a move onto whatever is newest with consent attached.
+    const candidateRef = preview.candidate_integration_ref;
+    if (candidateRef === null) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `The candidate version for connection ${id} could not be resolved to a catalog entry, so there is nothing to approve.`,
+      );
+    }
+    if (preview.candidate.manifest_version !== to_version) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `The candidate is now ${preview.candidate.manifest_version}, not the ${to_version} this approval names. Read what it would newly allow and approve that version instead.`,
+        {
+          approved_version: to_version,
+          candidate_version: preview.candidate.manifest_version,
+        },
+      );
+    }
+    if (preview.delta?.widens !== true) {
+      // Nothing to approve. Refusing rather than quietly upgrading keeps
+      // this route's meaning single: it is the one that carries consent,
+      // and a move needing none belongs on the ordinary upgrade route
+      // where the automatic pass will take it anyway.
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Moving ${preview.current.manifest_name} to ${to_version} grants no more than this connection already has, so it needs no approval. Use POST /connections/${id}/upgrade.`,
+      );
+    }
+
+    let result;
+    try {
+      result = await performUpgrade(storage, {
+        apiKeyId: apiKey.id,
+        spaceId,
+        connectionId: id,
+        clientIp: c.var.clientIp,
+        // The pinned row, not the newest. Checking the version above and
+        // then letting the pipeline resolve the candidate again would
+        // leave the whole race open: it re-previews inside a lock it may
+        // wait on, so a version registered in between is what would
+        // actually be applied, carrying a consent nobody gave it.
+        targetIntegrationItemId: candidateRef,
+        // The one place this is set. A space admin has seen the lines
+        // above and named the version they apply to.
+        consentedToWidening: true,
+      });
+    } catch (err) {
+      throw mapUpgradeError(err);
+    }
+    const upgraded = await storage.items.get(id, spaceId);
+    if (upgraded) {
+      const metadata = await storage.metadata.get(upgraded.id);
+      await publish({ type: "updated", item: upgraded, metadata, spaceId });
+    }
+    return c.json(result, 200);
+  });
+
   r.openapi(upgradeRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
@@ -1138,10 +1393,22 @@ export function connectionRoutes(
 function mapUpgradeError(err: unknown): unknown {
   if (!(err instanceof UpgradeError)) return err;
   if (err.code === "connection_not_found") {
-    return new MarfaError(ErrorCode.NOT_FOUND, err.message);
+    // `connection_not_found`, not the generic `not_found`: every other
+    // route on this surface answers the specific code, and the three
+    // upgrade routes declared it while emitting the generic one.
+    return new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, err.message);
   }
   if (err.code === "consent_required") {
     return new MarfaError(ErrorCode.FORBIDDEN, err.message, {
+      upgrade_error_code: err.code,
+      ...(err.detail ?? {}),
+    });
+  }
+  if (err.code === "mapping_would_be_stranded") {
+    // A conflict rather than a refusal to authorize: the caller is allowed
+    // to do this, and the connection is in a state that has to change
+    // first.
+    return new MarfaError(ErrorCode.CONFLICT, err.message, {
       upgrade_error_code: err.code,
       ...(err.detail ?? {}),
     });

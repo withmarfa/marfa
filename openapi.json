@@ -19854,6 +19854,46 @@
               }
             }
           },
+          "400": {
+            "description": "The connection carries no integration reference, or the manifest it resolves no longer validates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error",
+                            "missing_required_field"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized.",
             "content": {
@@ -20064,7 +20104,7 @@
             }
           },
           "400": {
-            "description": "Not an integration connection, revoked, already current, or its settings do not satisfy the newer manifest.",
+            "description": "Not an integration connection, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
             "content": {
               "application/json": {
                 "schema": {
@@ -20076,7 +20116,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "validation_error"
+                            "validation_error",
+                            "missing_required_field"
                           ]
                         },
                         "message": {
@@ -20194,6 +20235,502 @@
                           "type": "string",
                           "enum": [
                             "connection_not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The move would strand this connection's stored user mapping, because the newer version does not support mappings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "conflict"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/upgrades/pending": {
+      "get": {
+        "operationId": "listConnectionUpgradesPendingConsent",
+        "tags": [
+          "Connections"
+        ],
+        "summary": "List connections held back because moving them would grant more",
+        "description": "Connections whose newest registered manifest version reaches further than the one they were installed against. The automatic pass moves everything that takes the same or less and leaves these, so this is the list that needs a person. `consent_lines` says what each move would newly allow, in the same words the install consent screen uses. Approve one with `POST /connections/{id}/upgrade/approve`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections awaiting a decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pending": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "connection_id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "manifest_name": {
+                            "type": "string"
+                          },
+                          "from_version": {
+                            "type": "string"
+                          },
+                          "to_version": {
+                            "type": "string"
+                          },
+                          "consent_lines": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "connection_id",
+                          "label",
+                          "manifest_name",
+                          "from_version",
+                          "to_version",
+                          "consent_lines"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "pending"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/{id}/upgrade/approve": {
+      "post": {
+        "operationId": "approveConnectionUpgrade",
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Approve a move that would grant a connection more than it has",
+        "description": "The decision `POST /connections/{id}/upgrade` refuses to make on its own. `to_version` names the version the caller was shown, and the move is refused with 409 if that is no longer the candidate, so an approval cannot carry over to a widening nobody read. Everything else about the move is identical to the ordinary upgrade, including keeping the cursor state and revoking runtime credentials.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Id of the connection to uninstall."
+            },
+            "required": true,
+            "description": "Id of the connection to uninstall.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "to_version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The version the caller was shown. The approval applies to that version and no other: a newer one registered since is refused rather than silently approved."
+                  }
+                },
+                "required": [
+                  "to_version"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection now resolves the newer manifest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connection_id": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "object",
+                      "properties": {
+                        "manifest_name": {
+                          "type": "string"
+                        },
+                        "manifest_version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "manifest_name",
+                        "manifest_version"
+                      ]
+                    },
+                    "to": {
+                      "type": "object",
+                      "properties": {
+                        "manifest_name": {
+                          "type": "string"
+                        },
+                        "manifest_version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "manifest_name",
+                        "manifest_version"
+                      ]
+                    },
+                    "integration_ref": {
+                      "type": "string"
+                    },
+                    "revoked_credential_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "activity_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "connection_id",
+                    "from",
+                    "to",
+                    "integration_ref",
+                    "revoked_credential_ids",
+                    "activity_id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed body, or a connection that is not an integration, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error",
+                            "missing_required_field"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Connection not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "connection_not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The candidate version is not the one the caller approved, the connection is already on the newest version, the move no longer widens, or it would strand this connection's stored user mapping.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "conflict"
                           ]
                         },
                         "message": {
