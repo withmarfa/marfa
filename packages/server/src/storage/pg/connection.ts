@@ -212,11 +212,25 @@ export async function createConnection(
   const sessionModeUrl = directConnectionString || connectionString;
   const sessionClient = postgres(sessionModeUrl, {
     // Sized against what reserves from it: one slot per concurrent
-    // stream plus one per in-flight `withJobLock` tick (job ticks are
-    // short; the process-lifetime holder lives on `jobHolderClient`,
-    // never here). This stays small — the endpoints it can point at have
-    // tight connection ceilings — and a reservation that cannot be
-    // served times out rather than queueing forever.
+    // stream plus one per in-flight `withJobLock` tick. The
+    // process-lifetime holder is not among them; it lives on
+    // `jobHolderClient`, never here. This stays small, because the
+    // endpoints it can point at have tight connection ceilings, and a
+    // reservation that cannot be served times out rather than queueing
+    // forever.
+    //
+    // Job ticks are mostly short and one of them is not: a connection
+    // dispatch holds its slot for the whole of its dispatch, which is
+    // tens of seconds rather than milliseconds. A deployment sizing this
+    // against tick count alone is sizing against the wrong number, so
+    // count concurrent dispatch as a stream.
+    //
+    // Note what this pool's size does not explain. A reservation can be
+    // destroyed rather than queued when a connection closes, and then it
+    // is never granted however free the pool is. `reserve-timeout.ts`
+    // carries the mechanism and the second ask that answers it. Raising
+    // `max` does nothing for that one, and it reaches every client here,
+    // including the single-connection one below.
     max: Math.min(options?.maxPoolSize ?? 10, 5),
     connection: { application_name: `${appName}:session` },
     // Same reasoning as the app pool. This one matters more per socket:

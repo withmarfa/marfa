@@ -52,7 +52,7 @@ export function createPgConsentLockBackend(
   const reserveTimeoutMs = options?.reserveTimeoutMs ?? RESERVE_TIMEOUT_MS;
   return async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
     const advisoryKey = `marfa:consent:${key}`;
-    const reserved = await reserveWithTimeout(
+    const { connection: reserved } = await reserveWithTimeout(
       dedicatedClient,
       reserveTimeoutMs,
     );

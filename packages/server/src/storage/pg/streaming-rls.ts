@@ -131,8 +131,11 @@ export async function acquireStreamRls(
   options?: { reserveTimeoutMs?: number },
 ): Promise<StreamRlsContext> {
   const timeoutMs = options?.reserveTimeoutMs ?? STREAM_RESERVE_TIMEOUT_MS;
-  const reserved = await reserveWithTimeout(client, timeoutMs);
-  if (reserved === null) throw new StreamPoolExhaustedError(timeoutMs);
+  const { connection: reserved, waitedMs } = await reserveWithTimeout(
+    client,
+    timeoutMs,
+  );
+  if (reserved === null) throw new StreamPoolExhaustedError(waitedMs);
   try {
     // Session-level (`false` = not LOCAL) — persists for the reserved
     // connection's lifetime, including across nested storage transactions.
