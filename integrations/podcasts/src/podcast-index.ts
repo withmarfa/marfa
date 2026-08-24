@@ -22,7 +22,7 @@
  * network, so it is written and tested. The response shapes cannot be
  * observed without a secret this deployment does not hold, and writing
  * interfaces from documentation is guessing with type annotations on. The
- * previous integration in this programme produced a list of seven upstream
+ * previous integration in this program produced a list of seven upstream
  * behaviors that contradicted the vendor's own documentation; every one
  * would have been baked in as a wrong assumption had it been written ahead
  * of contact. A stub with an honest comment carries more information than

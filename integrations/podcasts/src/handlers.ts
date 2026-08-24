@@ -6,7 +6,7 @@
  *
  * Three properties are load-bearing and each cost something to get right.
  *
- * **A feed that has not changed costs nothing.** Podcast feeds do not
+ * **A feed that has not changed costs one conditional request and one lookup.** Podcast feeds do not
  * paginate: one document carries every episode, and for a long-running
  * daily show that is close to eighteen megabytes. Re-reading thirty of
  * those every hour to discover that nothing happened would be most of the
@@ -14,7 +14,7 @@
  * request, so the steady state is a few hundred bytes of headers.
  *
  * **Progress is written after every batch, not at the end.** The previous
- * integration in this programme lost a whole backfill to the opposite
+ * integration in this program lost a whole backfill to the opposite
  * choice: the cursor was written once after the loop, so every sweep that
  * ran out of time discarded everything it had done, and the import
  * reported itself complete having stored a quarter of the library. A tick
@@ -31,7 +31,7 @@ import {
   type CreateItemInput,
   type HandlerResult,
 } from "@withmarfa/runtime-sdk";
-import { resolveWriteFamily } from "@withmarfa/shared";
+import { MAX_FILTER_INPUT_LENGTH, resolveWriteFamily } from "@withmarfa/shared";
 import {
   DEFAULT_WRITE_FAMILY,
   EPISODE_BATCH_SIZE,
@@ -112,6 +112,33 @@ interface FeedCursor {
    * drained on the next tick.
    */
   pending_joins: string[];
+  /**
+   * When this feed last reported that its checkpoint and the space disagree.
+   *
+   * Cleared when an episode lands and when the feed is retired, so a
+   * recurrence after a real change reports again rather than being
+   * suppressed forever. A show write or a repaired join does not clear it:
+   * neither changes whether the episodes exist.
+   *
+   * Removing a feed and adding it back is not a reset. Retirement only
+   * happens on a tick that observes the address gone, so doing both inside
+   * the hour clears nothing.
+   */
+  stale_checkpoint_reported_at: string | null;
+  /**
+   * When this feed last reported that the check itself could not run.
+   *
+   * Separate from the marker above on purpose. Sharing one meant a single
+   * transient lookup failure suppressed the finding for the life of the
+   * cursor, and on a feed that is genuinely stuck nothing ever clears it,
+   * because the thing that clears it is an episode landing.
+   *
+   * Cleared by the next lookup that succeeds, in memory, and persisted with
+   * whatever the sweep writes afterwards. A sweep that returns early enough
+   * to write nothing at all, which means a feed that is also failing to
+   * fetch or parse, keeps the stored marker until one gets further.
+   */
+  checkpoint_lookup_failed_at: string | null;
   /** Set when the address leaves the configuration. State is kept, not deleted. */
   retired_at: string | null;
   last_success_at: string | null;
@@ -132,6 +159,8 @@ function defaultFeedCursor(feedUrl: string): FeedCursor {
     failed_since_watermark: 0,
     retried_after_failure: false,
     pending_joins: [],
+    stale_checkpoint_reported_at: null,
+    checkpoint_lookup_failed_at: null,
     retired_at: null,
     last_success_at: null,
   };
@@ -398,6 +427,15 @@ export function createScheduleHandler(
     const startedAt = new Date(message.scheduled_for_ms).toISOString();
 
     if (configured.length === 0) {
+      // Retire what was there before dropping the index. Returning early
+      // left every cursor un-retired and orphaned from an index that no
+      // longer named it, so removing every feed and adding them back gave
+      // a full ring with its report marker intact and the detector silent.
+      // That is the most natural way somebody tries to reset a connection.
+      const previous =
+        ((await ctx.cursor.read(INDEX_CURSOR_KEY)) as IndexCursor | null)
+          ?.feed_keys ?? [];
+      await retireFeeds(ctx, previous, new Set(), startedAt);
       await ctx.cursor.write(INDEX_CURSOR_KEY, {
         feed_keys: [],
         next_feed_index: 0,
@@ -438,20 +476,9 @@ export function createScheduleHandler(
 
     // A feed that left the configuration is retired, not deleted. Deleting
     // its state means re-adding the address replays the entire back
-    // catalogue, which against a production write path is hours of work to
+    // catalog, which against a production write path is hours of work to
     // arrive back where it started.
-    for (const staleKey of index.feed_keys) {
-      if (activeKeys.has(staleKey)) continue;
-      const stale = (await ctx.cursor.read(staleKey)) as FeedCursor | null;
-      if (stale !== null && stale.retired_at === null) {
-        await ctx.cursor.write(staleKey, { ...stale, retired_at: startedAt });
-        await ctx.activity.emit({
-          severity: "info",
-          summary: "Podcasts: feed removed from the subscription, state kept",
-          detail: { feed_url: stale.feed_url },
-        });
-      }
-    }
+    await retireFeeds(ctx, index.feed_keys, activeKeys, startedAt);
 
     const start = index.next_feed_index % keyed.length;
     const order = [...keyed.slice(start), ...keyed.slice(0, start)];
@@ -537,6 +564,213 @@ interface SweepOutcome {
   skipped: number;
 }
 
+/**
+ * Retire the cursors whose feeds left the configuration.
+ *
+ * Retired, not deleted: deleting the state means re-adding the address
+ * replays the entire back catalog, which against a production write path
+ * is hours of work to arrive back where it started.
+ *
+ * The report markers go with it. Carrying one across a retirement would
+ * leave the ring full and the detector silent on a feed somebody had just
+ * acted on.
+ *
+ * This is not a reliable way to reset a feed, and the report deliberately
+ * does not suggest it. Retirement only happens on a tick that observes the
+ * address gone, so removing a feed and adding it back inside the hour is
+ * invisible: nothing is retired, nothing is cleared, and the ring is exactly
+ * as it was. The remedy the report names is reinstalling the connection,
+ * which drops the whole runtime extension the cursors live in.
+ */
+async function retireFeeds(
+  ctx: ConnectionContext,
+  known: string[],
+  activeKeys: Set<string>,
+  startedAt: string,
+): Promise<void> {
+  for (const staleKey of known) {
+    if (activeKeys.has(staleKey)) continue;
+    const stale = (await ctx.cursor.read(staleKey)) as FeedCursor | null;
+    if (stale?.retired_at !== null) continue;
+    await ctx.cursor.write(staleKey, {
+      ...stale,
+      retired_at: startedAt,
+      stale_checkpoint_reported_at: null,
+      checkpoint_lookup_failed_at: null,
+    });
+    await ctx.activity.emit({
+      severity: "info",
+      summary: "Podcasts: feed removed from the subscription, state kept",
+      detail: { feed_url: stale.feed_url },
+    });
+  }
+}
+
+/**
+ * Say so when the ring remembers episodes the space does not hold.
+ *
+ * The ring remembers an episode by identity and the sweep skips anything it
+ * remembers, so a ring that is full while the show holds nothing produces a
+ * run that writes nothing and reports success. From outside that is
+ * identical to a feed with nothing new. One connection swept hourly for
+ * three days that way, and the only reason it was noticed is that somebody
+ * compared two instances by hand.
+ *
+ * **Before the conditional request, not after.** A feed that serves an ETag
+ * answers 304 and the sweep returns long before it looks at any episode, so
+ * a check further down would never run for exactly the connections most
+ * likely to be stuck. This needs nothing from the feed: the contradiction is
+ * between the ring and the space.
+ *
+ * **It reports and does not repair.** Clearing the ring would re-offer
+ * everything, which is right when the rows were lost and wrong when they
+ * were deliberately deleted, and nothing here can tell those apart: trashed
+ * rows are purged when their retention expires, at which point deletion and
+ * loss look identical.
+ *
+ * **It looks under both write families.** The ring does not record which
+ * family wrote an entry, and the family is configurable per connection, so
+ * a connection switched from one to the other has its episodes under the
+ * other family's type. Checking only the current one would tell somebody to
+ * reinstall a connection whose rows are sitting right there.
+ *
+ * **It reports once**, until an episode lands or a feed is retired, because
+ * a row every hour saying the same thing is the habit that makes activity
+ * unreadable.
+ *
+ * **What it does not catch**, deliberately, is partial loss. One surviving
+ * episode makes the check quiet, so a show missing three hundred of three
+ * hundred and one is invisible to it. Detecting that means reconciling the
+ * ring against the space entry by entry, which is a different and much more
+ * expensive thing than asking whether anything is there at all.
+ */
+
+async function reportStaleCheckpoint(args: {
+  ctx: ConnectionContext;
+  cursor: FeedCursor;
+  key: string;
+  family: WriteFamily;
+  feedUrl: string;
+}): Promise<void> {
+  const { ctx, cursor, key, family, feedUrl } = args;
+  const scopeKey = cursor.show_scope_key;
+  if (scopeKey === null) return;
+  if (cursor.recent_entry_ids.length === 0) return;
+  if (cursor.stale_checkpoint_reported_at !== null) return;
+
+  const prefix = episodeSourceId(scopeKey, "");
+  const filter = filterForPrefix(prefix);
+  if (filter === null) {
+    await reportOnce(ctx, cursor, key, "checkpoint_lookup_failed_at", {
+      severity: "warning",
+      summary:
+        "Podcasts: cannot check this feed's episodes, its identifier is too long to ask about",
+      detail: { feed_url: feedUrl },
+    });
+    return;
+  }
+
+  // Both families, and every state. The ring does not record which family
+  // wrote an entry and the family is configurable, so a connection that
+  // switched has its episodes under the other type. Somebody who trashed or
+  // archived a show's episodes still has them.
+  //
+  // The connection's own family first, so a healthy connection stops on its
+  // first lookup whichever family it is on, rather than only when it happens
+  // to be the one declared first.
+  const own = FAMILY_DEFINITIONS[family].types.episode;
+  const types = new Set([
+    own,
+    ...Object.values(FAMILY_DEFINITIONS).map((f) => f.types.episode),
+  ]);
+  const states = ["active", "archived", "trashed"] as const;
+  for (const type of types) {
+    for (const state of states) {
+      let page;
+      try {
+        page = await ctx.marfa.listItems({ type, filter, state, limit: 1 });
+      } catch (error) {
+        // Not evidence of anything, and not silent either: a lookup that
+        // keeps failing leaves the only detector for this class switched
+        // off. On its own marker, so one transient failure cannot suppress
+        // the finding for the life of the cursor.
+        await reportOnce(ctx, cursor, key, "checkpoint_lookup_failed_at", {
+          severity: "warning",
+          summary: "Podcasts: could not check whether a feed's episodes exist",
+          detail: { feed_url: feedUrl, reason: stringifyError(error) },
+        });
+        return;
+      }
+      if (page.data.length > 0) {
+        cursor.checkpoint_lookup_failed_at = null;
+        return;
+      }
+    }
+  }
+  cursor.checkpoint_lookup_failed_at = null;
+
+  await reportOnce(ctx, cursor, key, "stale_checkpoint_reported_at", {
+    severity: "action_required",
+    // Precise about what stops: a newly published episode is not in the ring
+    // and imports normally. What will not come back is the back catalog.
+    summary:
+      "Podcasts: this feed's checkpoint remembers episodes the space no longer has, so its back catalog will not be re-imported",
+    detail: {
+      feed_url: feedUrl,
+      show_id: cursor.show_item_id,
+      remembered: cursor.recent_entry_ids.length,
+      remedy: "reinstall the connection to re-import the feed",
+    },
+  });
+}
+
+/**
+ * Emit and mark, at most once per marker until something clears it.
+ *
+ * Two markers rather than one. Sharing a marker between the finding and the
+ * lookup failure meant a single transient error suppressed the finding for
+ * the life of the cursor, and on a feed that is genuinely stuck nothing ever
+ * clears it, because the thing that clears it is an episode landing.
+ *
+ * Emit before marking. A mark that lands without its row would suppress a
+ * report nobody ever saw.
+ */
+async function reportOnce(
+  ctx: ConnectionContext,
+  cursor: FeedCursor,
+  key: string,
+  marker: "stale_checkpoint_reported_at" | "checkpoint_lookup_failed_at",
+  activity: {
+    severity: "warning" | "action_required";
+    summary: string;
+    detail: Record<string, unknown>;
+  },
+): Promise<void> {
+  if (cursor[marker] !== null) return;
+  await ctx.activity.emit(activity);
+  cursor[marker] = new Date().toISOString();
+  await ctx.cursor.write(key, cursor);
+}
+
+/**
+ * The filter expression for a `source_id` prefix, or null when the value
+ * cannot be written as one.
+ *
+ * The grammar quotes strings and recognizes exactly one escape, a backslash
+ * before a double quote, so escaping quotes round-trips every value,
+ * backslashes included. The one shape it cannot express is a value ending in
+ * a backslash, which would consume the closing quote, and that is
+ * unreachable here because the prefix always ends in a colon.
+ *
+ * What is reachable is length. The grammar caps its input, and a declared
+ * show identifier comes from third-party XML, so a long enough one would
+ * throw on every tick forever. Refused here instead.
+ */
+function filterForPrefix(prefix: string): string | null {
+  const expression = `source_id starts_with "${prefix.replace(/"/g, '\\"')}"`;
+  return expression.length > MAX_FILTER_INPUT_LENGTH ? null : expression;
+}
+
 async function sweepFeed(args: {
   ctx: ConnectionContext;
   fetchImpl: typeof fetch;
@@ -562,6 +796,15 @@ async function sweepFeed(args: {
     feed_url: feedUrl,
     retired_at: null,
   };
+
+  try {
+    await reportStaleCheckpoint({ ctx, cursor, key, family, feedUrl });
+  } catch {
+    // This runs before the fetch, before the index that rotates feeds is
+    // advanced. A throw here would leave the same feed at the head of the
+    // rotation and stop every other feed on the connection from ever being
+    // swept, which is a far worse failure than the one it detects.
+  }
 
   // Ask whether anything changed before asking for the document. Every host
   // tested answered a conditional request with an empty body, which is the
@@ -862,6 +1105,9 @@ async function sweepFeed(args: {
       }
 
       out.written += 1;
+      // An episode landing means whatever the checkpoint report saw has
+      // changed, so a later recurrence is a new fact and reports again.
+      cursor.stale_checkpoint_reported_at = null;
       const localId =
         entry.input.source_id?.slice(`ep:${scopeKey}:`.length) ?? "";
       if (localId !== "") {
@@ -890,7 +1136,7 @@ async function sweepFeed(args: {
 
   // The feed drained. The watermark moves only if nothing was refused, or
   // if a pass has already been retried once for the same refusals — held
-  // forever, one bad episode would make every tick re-walk the catalogue.
+  // forever, one bad episode would make every tick re-walk the catalog.
   cursor.backfill_cursor = null;
   cursor.pass_started_at = null;
   cursor.last_success_at = startedAt;
