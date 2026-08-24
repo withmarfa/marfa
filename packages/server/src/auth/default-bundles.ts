@@ -1,10 +1,9 @@
 /**
  * Derivation of the default consent-screen permission bundles from the type
- * registry, replacing the hand-written scope lists that used to live in
- * `config.ts`. Hand lists drift — the coverage test existed because they
- * drift — and they privileged the shipped set structurally: a custom type
- * outside `user.*` could never be offered by any default bundle because no
- * literal written in advance can name it.
+ * registry rather than from hand-written scope lists. Hand lists drift — the
+ * coverage test exists because they drift — and they privilege the shipped
+ * set structurally: a custom type outside `user.*` can never be offered by
+ * any default bundle because no literal written in advance can name it.
  *
  * Three sources feed the derivation:
  *

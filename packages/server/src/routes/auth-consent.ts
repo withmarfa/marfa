@@ -894,9 +894,9 @@ function canonicalizeOAuthQueryParams(
  * than a verifier guessing at what the signer used.
  *
  * Being a re-implementation, it has to move when the plugin's signing
- * scheme moves: the canonicalization below arrived with the plugin's fix
- * for proxy parameter reordering, and until this matched it, every
- * genuinely signed query read as forged. The consent round trip in the
+ * scheme moves: the canonicalization below tracks the plugin's fix for
+ * proxy parameter reordering, and a mismatch makes every genuinely signed
+ * query read as forged. The consent round trip in the
  * route tests is what pins the two together.
  *
  * The plugin re-verifies on its own before minting anything, so this is

@@ -625,13 +625,13 @@ describe("expandBundlesToScopes", () => {
 // ---------------------------------------------------------------------------
 // The two admission checks the auth middleware calls directly.
 //
-// `scopeCovers` had both directions pinned; these two did not, and the gap
-// was measurable rather than theoretical: making either one grant when the
-// permission map is absent left all 494 tests here green and the server's
-// edge, type and scope-enforcement suites green too. The mainline is well
-// covered by those integration suites — making `edgePermissionCovers`
-// return true unconditionally fails eight of them — so what was missing is
-// specifically the deny direction, which is the half a permission check
+// The deny direction on these two is what needs pinning here, and the gap
+// is measurable rather than theoretical: making either one grant when the
+// permission map is absent leaves every test in this file green and the
+// server's edge, type and scope-enforcement suites green too. The mainline
+// is well covered by those integration suites (making `edgePermissionCovers`
+// return true unconditionally fails eight of them), so what these cases add
+// is specifically the deny direction, which is the half a permission check
 // exists for.
 // ---------------------------------------------------------------------------
 
@@ -808,11 +808,11 @@ describe("the global type wildcard stays in its own map", () => {
 // A scope reaches the item-type axis because it was identified as a type
 // scope, never because it was not identified as anything else.
 //
-// The two projections onto that axis used to name the families they skip.
-// That reads the same as the rule on today's union and inverts on tomorrow's:
-// a family nobody adds to the list falls through to "must be an item type",
-// and being treated as one means having the pattern matched against the live
-// type registry, where a `*` anywhere in it reaches every registered type.
+// Naming the families they skip reads the same as the rule on today's union
+// and inverts on tomorrow's: a family nobody adds to the list falls through
+// to "must be an item type", and being treated as one means having the
+// pattern matched against the live type registry, where a `*` anywhere in it
+// reaches every registered type.
 //
 // These cases are written against the union itself rather than against a
 // hand-kept list of families, so a kind that does not exist yet is measured

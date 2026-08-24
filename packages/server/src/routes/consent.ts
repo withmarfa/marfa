@@ -169,14 +169,14 @@ function buildGroups(
 /**
  * Describe a group by what is in it.
  *
- * Each group used to carry its bundle's fixed description, so a request for
- * three scopes and a request for every type rendered identical copy: "Your
- * notes, tasks, bookmarks, files, media, and more." A consent screen's whole
- * job is stating the size of a grant accurately, and the groups are collapsed
- * by default, so that sentence is what most people read and act on. Naming
- * things the app never asked for fails in both directions at once: a cautious
- * person refuses an app that wanted very little, and a trusting one learns
- * the copy does not track the request.
+ * A consent screen's whole job is stating the size of a grant accurately,
+ * and the groups are collapsed by default, so that sentence is what most
+ * people read and act on. A fixed per-bundle description would give a
+ * request for three scopes and a request for every type the same copy, "Your
+ * notes, tasks, bookmarks, files, media, and more," and naming things the app
+ * never asked for fails in both directions at once: a cautious person refuses
+ * an app that wanted very little, and a trusting one learns the copy does not
+ * track the request.
  *
  * A wildcard is the one case where "and more" is honest, because the grant
  * really does extend to types that do not exist yet.
