@@ -530,6 +530,69 @@ export interface BulkActionJob {
 }
 
 // ---------------------------------------------------------------------------
+// Occurrences
+// ---------------------------------------------------------------------------
+
+/**
+ * One event falling inside the window a caller asked for.
+ *
+ * Times are ISO 8601 UTC instants, kept as the strings the server sent.
+ * The clock an event is actually read on belongs to the event, not to the
+ * occurrence: `item.properties.timezone` anchors the start,
+ * `end_timezone` covers an event ending somewhere else, and `all_day`
+ * marks one that occupies calendar dates rather than a span of time.
+ * Parsing these into `Date` here would resolve every one of them against
+ * whatever zone the runtime happens to sit in, so the instant and the
+ * zone are handed back side by side and the caller picks the clock.
+ */
+export interface Occurrence {
+  /** Start instant, ISO 8601 UTC. */
+  starts_at: string;
+  /** End instant, ISO 8601 UTC. Absent when the event carries no end. */
+  ends_at?: string;
+  /** The event to show: the series itself for a computed occurrence, the
+   *  stored item for one an exception replaced. */
+  item: Item;
+  /** Item id of the series this was expanded from. Absent on a single
+   *  event. */
+  series_id?: string;
+  /** Start instant of the occurrence a stored exception replaced. Carried
+   *  by the replacement, which is shown at its own times — those can sit
+   *  outside the window the occurrence it replaced sat in. */
+  replaces?: string;
+}
+
+/** A series the server could not expand. */
+export interface OccurrenceSeriesError {
+  /** Item id of the series. */
+  item_id: string;
+  message: string;
+}
+
+export interface OccurrencesResult {
+  data: Occurrence[];
+  /** The window actually read, normalized to UTC. */
+  window: { from: string; to: string };
+  /**
+   * Series that could not expand — a malformed rule, or one flooding the
+   * window. The rest of the calendar still returns, so a caller ignoring
+   * this renders a calendar with a repeating meeting silently absent
+   * from it.
+   */
+  series_errors?: OccurrenceSeriesError[];
+}
+
+export interface ListOccurrencesOptions {
+  /** Window start, inclusive. A `Date` is sent as its UTC instant. */
+  from: string | Date;
+  /** Window end, exclusive. */
+  to: string | Date;
+  /** Restrict to one event type. Defaults to every event type the
+   *  credential can read. */
+  type?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Secure storage protocol
 // ---------------------------------------------------------------------------
 
@@ -2162,7 +2225,69 @@ export class MarfaClient {
     },
   };
 
+  // ---- Occurrences ----
+
+  /**
+   * The calendar read: which events actually fall inside a stretch of
+   * time. A recurring series is stored as one item carrying its rule, so
+   * `client.items.list` answers "what is on next Tuesday" with the first
+   * occurrence and nothing else. This expands the rules instead, and lets
+   * a stored exception stand in for the occurrence it replaced.
+   */
+  readonly occurrences = {
+    /**
+     * `GET /occurrences`.
+     *
+     * Returns the envelope rather than a bare array, because
+     * `series_errors` is part of the answer: a calendar quietly missing a
+     * weekly meeting is the failure nobody sees. Not paginated, unlike
+     * every other `list` here — the window is the bound, and a window
+     * needing pages is one the server refuses.
+     *
+     * The window is required and capped at both ends, and the caps are
+     * the server's to apply: a span past its limit and a result past its
+     * ceiling are both refused rather than trimmed, arriving as
+     * `ValidationError` carrying the server's own `max_days` /
+     * `max_occurrences` in `details`. Nothing is pre-checked here. A
+     * second copy of those constants would start refusing what the server
+     * would happily serve the day either one moved, and it could only
+     * ever cover the span — the occurrence ceiling depends on the data,
+     * so half the refusals would still need the round trip and a caller
+     * could not tell the two apart.
+     */
+    list: async (
+      options: ListOccurrencesOptions,
+    ): Promise<OccurrencesResult> => {
+      return this.transport.request<OccurrencesResult>("GET", "/occurrences", {
+        query: {
+          from: this.windowBound(options.from, "from"),
+          to: this.windowBound(options.to, "to"),
+          type: options.type,
+        },
+      });
+    },
+  };
+
   // ---- Internal ----
+
+  /**
+   * One end of an occurrences window, as the server wants to read it.
+   *
+   * A `Date` is convenient to pass and lossless to send, being an instant
+   * already. An unparseable one is not: `toISOString()` answers a
+   * `RangeError`, which would be the single refusal from this namespace
+   * that is not a `MarfaError`. A string goes through untouched, leaving
+   * the server the only judge of what it will accept.
+   */
+  private windowBound(value: string | Date, field: string): string {
+    if (typeof value === "string") return value;
+    if (Number.isNaN(value.getTime())) {
+      throw new ValidationError(`${field} is not a usable Date`, {
+        [field]: String(value),
+      });
+    }
+    return value.toISOString();
+  }
 
   private throwRawError(status: number, body: unknown): never {
     const parsed = body as Partial<ErrorResponse> | null;
