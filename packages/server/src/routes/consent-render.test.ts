@@ -29,9 +29,9 @@ import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
  */
 
 const SCOPES: ParsedScope[] = [
-  { typePattern: "core.note", operation: "read" },
-  { typePattern: "core.note", operation: "write" },
-  { typePattern: "core.task", operation: "read" },
+  { kind: "type", typePattern: "core.note", operation: "read" },
+  { kind: "type", typePattern: "core.note", operation: "write" },
+  { kind: "type", typePattern: "core.task", operation: "read" },
 ];
 
 const SIGNED_OAUTH_QUERY =
@@ -183,7 +183,10 @@ describe("renderConsentScreen — soft-tile groups", () => {
   it("lists a wildcard's matched types beneath its toggle, checkbox unchanged", () => {
     const html = renderConsentScreen({
       ...PARAMS,
-      scopes: [...SCOPES, { typePattern: "user.*", operation: "read" }],
+      scopes: [
+        ...SCOPES,
+        { kind: "type", typePattern: "user.*", operation: "read" },
+      ],
       wildcardExpansions: { "user.*": ["Recipes", "Training log"] },
     });
     // Informative line names what the pattern matches today and says the
@@ -212,7 +215,7 @@ describe("renderConsentScreen — soft-tile groups", () => {
   it("omits a group with no scopes (no empty Write tile when only reads)", () => {
     const html = renderConsentScreen({
       ...PARAMS,
-      scopes: [{ typePattern: "core.note", operation: "read" }],
+      scopes: [{ kind: "type", typePattern: "core.note", operation: "read" }],
     });
     expect(html).toContain("Read your content");
     expect(html).not.toContain("Write your content");
@@ -222,10 +225,25 @@ describe("renderConsentScreen — soft-tile groups", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: [
-        { kind: "oidc", typePattern: "openid", oidcScope: "openid" },
-        { kind: "oidc", typePattern: "profile", oidcScope: "profile" },
-        { kind: "oidc", typePattern: "email", oidcScope: "email" },
-      ] as ParsedScope[],
+        {
+          kind: "oidc",
+          typePattern: "openid",
+          operation: "none",
+          oidcScope: "openid",
+        },
+        {
+          kind: "oidc",
+          typePattern: "profile",
+          operation: "none",
+          oidcScope: "profile",
+        },
+        {
+          kind: "oidc",
+          typePattern: "email",
+          operation: "none",
+          oidcScope: "email",
+        },
+      ],
     });
     expect(html).toContain("Your profile");
     expect(html).toContain("<span>Your name</span>");
@@ -367,8 +385,10 @@ describe("renderConsentScreen — error banner", () => {
  * for the app that really does want everything.
  */
 describe("group summaries describe the request", () => {
-  const scope = (typePattern: string, operation: "read" | "write") =>
-    ({ kind: "type", typePattern, operation }) as unknown as ParsedScope;
+  const scope = (
+    typePattern: string,
+    operation: "read" | "write",
+  ): ParsedScope => ({ kind: "type", typePattern, operation });
 
   const summariesOf = (html: string): string[] =>
     [...html.matchAll(/<span class="gdesc">([^<]*)<\/span>/g)].map(

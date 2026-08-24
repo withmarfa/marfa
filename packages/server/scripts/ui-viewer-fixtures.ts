@@ -98,11 +98,11 @@ const RETURN_TO = "/auth/authorize?client_id=marfa-cli&response_type=code";
 // Realistic consent scopes — a read+write+profile spread so the three groups
 // all render.
 const CONSENT_SCOPES: ParsedScope[] = [
-  { typePattern: "core.note", operation: "read" },
-  { typePattern: "core.task", operation: "read" },
-  { typePattern: "core.bookmark", operation: "read" },
-  { typePattern: "core.note", operation: "write" },
-  { typePattern: "core.task", operation: "write" },
+  { kind: "type", typePattern: "core.note", operation: "read" },
+  { kind: "type", typePattern: "core.task", operation: "read" },
+  { kind: "type", typePattern: "core.bookmark", operation: "read" },
+  { kind: "type", typePattern: "core.note", operation: "write" },
+  { kind: "type", typePattern: "core.task", operation: "write" },
   {
     kind: "oidc",
     typePattern: "openid",
@@ -119,8 +119,8 @@ const CONSENT_SCOPES: ParsedScope[] = [
 ];
 
 const DEVICE_SCOPES: ParsedScope[] = [
-  { typePattern: "core.note", operation: "read" },
-  { typePattern: "core.task", operation: "write" },
+  { kind: "type", typePattern: "core.note", operation: "read" },
+  { kind: "type", typePattern: "core.task", operation: "write" },
   {
     kind: "oidc",
     typePattern: "openid",
