@@ -19,9 +19,9 @@ Typed data layer. This monorepo holds eight active workspace packages, fifteen i
 
 **In-tree Integrations (`integrations/`):** fourteen shipping Integrations, each in a `<handle>/<name>` directory mirroring its manifest identifier, plus `_template` (the scaffold every contributor copies), which stays flat and underscore-prefixed so discovery skips it. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
-- **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
-- **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `inbox` (email capture via Cloudflare Email Routing).
-- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream).
+- **Bidirectional** — `google/calendar`, `google/contacts`, `google/tasks`, `todoist/tasks`, `readwise/reader`.
+- **Inbound** — `google/drive`, `google/youtube`, `marfa/podcasts`, `raindrop/bookmarks`, `readwise/highlights`, `marfa/rss-watcher`, `marfa/github-webhooks`, `marfa/inbox` (email capture via Cloudflare Email Routing).
+- **Marfa-side only** — `marfa/task-auto-archive` (reacts to item events, no upstream).
 
 **Where the code has to run is what decides whether something is an Integration.** An Integration is installed into a deployment's integrations directory and dispatched by the runtime. A client's code can only run somewhere else: sync watches a filesystem, so it runs on the machine holding the files. It ships a manifest and no handler, and that manifest ships with the server build rather than being filed here. Sync keeps its Connection, credentials, configuration and observability either way; none of that is what makes something an Integration.
 

@@ -50,6 +50,13 @@ export class DeclarationError extends Error {}
  * the only thing between the declaration and that write. The rest of the
  * shape is settled in the same breath because a name that is not two
  * segments names no directory the build could stage in the first place.
+ *
+ * A leading underscore or dot is refused for the mirror of that reason.
+ * Discovery skips those as scaffolding at either level, so such a name is
+ * one the runtime can never load — yet it would stage into the image and
+ * pass the verification, which deliberately skips nothing. The result is a
+ * catalog quietly one integration short with nothing saying so, which is
+ * the silent shrink this declaration exists to make impossible.
  */
 function assertNameShape(name, lineNo) {
   const segments = name.split("/");
@@ -72,6 +79,14 @@ function assertNameShape(name, lineNo) {
         `line ${String(lineNo)}: "${name}" has a "${segment}" segment. A name ` +
           `is interpolated into the image build's staging paths, so this ` +
           `would resolve somewhere other than the directory it names.`,
+      );
+    }
+    if (segment.startsWith("_") || segment.startsWith(".")) {
+      throw new DeclarationError(
+        `line ${String(lineNo)}: "${name}" has a segment beginning with ` +
+          `"${segment[0]}", which the runtime's discovery skips as ` +
+          `scaffolding. Declaring it would stage an integration into the ` +
+          `image that the runtime then never loads.`,
       );
     }
   }

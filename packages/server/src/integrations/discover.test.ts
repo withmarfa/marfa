@@ -86,6 +86,20 @@ describe("discoverIntegrationDirs", () => {
     ]);
   });
 
+  // The levels are gathered unsorted and the whole list is sorted once, at
+  // the end. That is not the same as sorting each level, and this fixture is
+  // where the two disagree: `-` sorts below `/`, so sorting the joined names
+  // puts `alpha-two/a` first, while sorting handles and then leaves would put
+  // `alpha/z` first. Deterministic whatever order the filesystem hands back,
+  // which the plain alphabetical case above cannot claim.
+  it("sorts the joined names rather than each level", () => {
+    const at = scratch();
+    for (const d of ["alpha/z", "alpha-two/a"]) {
+      mkdirSync(join(at, d), { recursive: true });
+    }
+    expect(discoverIntegrationDirs(at)).toEqual(["alpha-two/a", "alpha/z"]);
+  });
+
   // The collision the flat layout could not express: two publishers each
   // shipping the same leaf name, told apart by the handle rather than by
   // whoever got there first.

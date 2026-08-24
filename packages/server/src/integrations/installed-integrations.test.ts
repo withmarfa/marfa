@@ -179,6 +179,23 @@ describe("the name shape", () => {
     expect(() => parse("acme/..\n")).toThrow(/resolve somewhere other than/);
   });
 
+  // Discovery skips a leading underscore or dot at either level, so a name
+  // carrying one is unloadable. It would still stage into the image and pass
+  // the verification, which skips nothing, leaving the catalog an integration
+  // short with nothing saying so.
+  it("refuses a segment the runtime's discovery would skip", () => {
+    for (const name of [
+      "_acme/thing",
+      ".acme/thing",
+      "acme/_thing",
+      "acme/.thing",
+    ]) {
+      expect(() => parse(`${name}\n`), name).toThrow(DeclarationError);
+    }
+    expect(() => parse("_acme/thing\n")).toThrow(/discovery skips/);
+    expect(() => parse("acme/_thing\n")).toThrow(/never loads/);
+  });
+
   it("still refuses these when the line also carries the marker", () => {
     // The shape is checked after the field arithmetic, so a name that is
     // wrong on a well-formed line is still caught rather than waved past.

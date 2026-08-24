@@ -85,8 +85,8 @@ jobs:
           # The example and ignore files are tracked but nothing reads them: no
           # build, lint, typecheck or test script references them, and .npmrc is
           # generated fresh by this workflow rather than copied from the example.
-          # They are matched at any depth, not just the root, because the twelve
-          # that prompted this all live under integrations/*/*/.
+          # They are matched at any depth, not just the root, because the
+          # fourteen that prompted this all live under integrations/*/*/.
           docs_only='^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|\.github/dependabot\.yml$|[^/]*\.md$|.*/[^/]*\.md$|(.*/)?\.env\.example$|(.*/)?\.gitignore$|(.*/)?\.dockerignore$|(.*/)?\.npmrc\.example$)'
           if [ -z "${changed}" ] || [ -z "$(echo "${changed}" | grep -Ev "${docs_only}" || true)" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"

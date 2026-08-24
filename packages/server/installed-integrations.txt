@@ -16,7 +16,10 @@
 # The two-segment shape is enforced rather than assumed. A name is
 # interpolated straight into the image build's staging paths, so a segment
 # reading `..` would write outside the staging directory; the parser
-# refuses that shape instead of trusting this file to be well formed.
+# refuses that shape instead of trusting this file to be well formed. A
+# segment beginning with `_` or `.` is refused for the mirror of that
+# reason: discovery skips those as scaffolding, so such a name would ship
+# in the image and never load.
 #
 # A name may carry the marker `manifest-only`, which says the integration
 # ships a manifest and no dispatchable entry. The verification holds the

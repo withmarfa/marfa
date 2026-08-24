@@ -304,7 +304,7 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(state.cursors["cursor:main"]).toMatchObject({ run_count: 1 });
   });
 
-  it("rss-watcher — schedule trigger fetches feed via stub and returns ok", async () => {
+  it("marfa/rss-watcher — schedule trigger fetches feed via stub and returns ok", async () => {
     const integration = await loadIntegration("marfa/rss-watcher");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
@@ -347,7 +347,7 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(cursor?.feed_url).toBeDefined();
   });
 
-  it("github-webhooks — webhook trigger with verified delivery returns a HandlerResult", async () => {
+  it("marfa/github-webhooks — webhook trigger with verified delivery returns a HandlerResult", async () => {
     const integration = await loadIntegration("marfa/github-webhooks");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
@@ -396,7 +396,7 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(typeof result.ok).toBe("boolean");
   });
 
-  it("task-auto-archive — schedule trigger walks tasks and returns ok", async () => {
+  it("marfa/task-auto-archive — schedule trigger walks tasks and returns ok", async () => {
     const integration = await loadIntegration("marfa/task-auto-archive");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
@@ -419,7 +419,7 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(typeof result.ok).toBe("boolean");
   });
 
-  it("google-calendar — schedule trigger reaches handler and returns a HandlerResult", async () => {
+  it("google/calendar — schedule trigger reaches handler and returns a HandlerResult", async () => {
     const integration = await loadIntegration("google/calendar");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);

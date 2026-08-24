@@ -165,7 +165,7 @@ Three things route an item back to `google.drive.file`
 `action_required` severity is reserved for whole-run operator-
 actionable failures (proxy 401 / reauth, credential rejection) —
 consistent with neighbor integrations
-(`task-auto-archive`, `rss-watcher`, `google-calendar`).
+(`task-auto-archive`, `rss-watcher`, `google/calendar`).
 
 ### Why a 25 MB per-file ceiling
 
