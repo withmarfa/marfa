@@ -22,6 +22,20 @@
  * a scope set can be offered something new without every client having to
  * re-register.
  *
+ * **`default_on` governs the first offer only.** The re-consent diff's
+ * "Already allowed" section renders from the prior grant and ignores the
+ * flag, because a scope the user granted last time is being shown rather
+ * than offered. Rendering one unticked there would put the choice inside a
+ * collapsed tile the reader never opens, and the decision route reads the
+ * resulting submission as a narrowing, which revokes the client's live
+ * tokens. An untouched Continue would kill a working integration.
+ *
+ * **This screen is one of two, and the other cannot express the flag.** The
+ * device-approval screen confirms a scope list with no per-scope toggle, so
+ * a tick is not available to it. Rather than granting on one click what the
+ * flag exists to withhold, device-flow initiation refuses a scope that only
+ * an off-by-default bundle offers.
+ *
  * Per-type narrowing works because the requested scopes are concrete (see
  * `DEFAULT_PERMISSION_BUNDLES`): the OAuth provider only accepts a consent
  * grant whose scopes are a subset of what was literally requested, so ticking
@@ -115,6 +129,10 @@ interface ScopeGroup {
    * reach for rather than merely leave alone, and it is also what lets an
    * already-registered client be offered something new without every client
    * having to re-register to get it.
+   *
+   * Read only where a scope is being offered. The re-consent diff overrides
+   * it to `true` for scopes the user has already granted, since the question
+   * the flag answers does not arise a second time.
    */
   defaultOn: boolean;
 }
@@ -428,8 +446,29 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   /** Partition a scope set into bundle-derived groups and render the
    *  non-empty ones, in bundle order, inside a soft-tile stack. */
-  const groupedTiles = (scopes: ParsedScope[]): string => {
-    const tiles = buildGroups(scopes, bundles).map(group).join("");
+  const groupedTiles = (
+    scopes: ParsedScope[],
+    /**
+     * Whether these scopes are already granted, which overrides the bundle's
+     * `default_on`.
+     *
+     * `default_on` answers "should this start ticked the first time it is
+     * offered". A scope the user granted on a previous visit is not being
+     * offered, it is being shown, so asking the flag about it is asking the
+     * wrong question and the answer it gives is destructive. The "Already
+     * allowed" tile is collapsed and sits below "New", so an off-by-default
+     * scope rendered unticked there is invisible; an untouched Continue then
+     * submits without it, and the decision route reads a narrowing rather
+     * than a no-op. A narrowing is treated as a promise that the removed
+     * access stops working, so it revokes the client's live tokens. The user
+     * is shown nothing and a working integration dies.
+     */
+    alreadyGranted = false,
+  ): string => {
+    const tiles = buildGroups(scopes, bundles)
+      .map((g) => (alreadyGranted ? { ...g, defaultOn: true } : g))
+      .map(group)
+      .join("");
     return `<div class="t-soft">${tiles}</div>`;
   };
 
@@ -453,7 +492,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         : "";
     const keptSection =
       keptVisible.length > 0
-        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible)}`
+        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
         : "";
     // Removed scopes are being dropped, not re-granted — show their group
     // names as a quiet line, no toggles.

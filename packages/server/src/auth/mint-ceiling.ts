@@ -66,7 +66,15 @@ export const SESSION_CRITICAL_SCOPES: readonly string[] = [
  * asked for.
  */
 export function dcrDefaultScopes(): string[] {
-  return withSessionScopes(expandBundlesToScopes(getPermissionBundles()));
+  // On-by-default bundles only. This is what a registration gets for naming
+  // nothing, and a bundle declaring itself off is precisely one that should
+  // not arrive that way: its whole meaning is that a person ticked it. The
+  // union used to include them, so an off-by-default bundle landed in every
+  // anonymously-registered client's ceiling automatically, which is the
+  // ceiling the device flow then measures a request against. A client that
+  // genuinely wants one names it at registration.
+  const bundles = getPermissionBundles().filter((b) => b.default_on);
+  return withSessionScopes(expandBundlesToScopes(bundles));
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   expandBundlesToScopes,
   isCapabilityScope,
@@ -315,6 +315,35 @@ describe("loadPermissionBundles", () => {
     const out = loadPermissionBundles(raw);
     expect(out).toHaveLength(1);
     expect(out[0]?.default_on).toBe(false);
+  });
+
+  it("names the offending entries so an operator can find them", () => {
+    // A rejected override reverts the instance to the shipped bundles, and
+    // the operator's next signal is otherwise a consent screen that does not
+    // offer what they configured, with nothing pointing at the variable.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      loadPermissionBundles(
+        JSON.stringify([
+          {
+            id: "good",
+            label: "",
+            description: "",
+            scopes: [],
+            default_on: true,
+          },
+          { id: "bad-one", label: "", description: "", scopes: [] },
+          { label: "no id", description: "", scopes: [] },
+        ]),
+      );
+      const message = spy.mock.calls.map((c) => String(c[0])).join(" ");
+      expect(message).toContain("bad-one");
+      // The entry with no id is found by position, since it has no name.
+      expect(message).toContain("index 2");
+      expect(message).not.toContain("good");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("refuses the whole override when one entry is missing the field", () => {

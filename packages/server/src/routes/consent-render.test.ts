@@ -595,7 +595,51 @@ describe("renderConsentScreen — default_on", () => {
     const html = render();
     expect(masterChecked(html, "Manage your space")).toBe(false);
     expect(html).toContain('value="core.note:write"');
-    expect(defaultSubmission(html)).not.toContain("core.note:write");
+    // Stated as the whole submission rather than as a `not.toContain`, which
+    // passes on an empty match and so would survive a renderer that emitted
+    // no checkboxes at all.
+    expect(defaultSubmission(html)).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("keeps an already-granted off-by-default scope ticked on re-consent", () => {
+    // `default_on` is the initial-offer default. A scope the user granted
+    // last time is being shown, not offered, so the flag does not apply.
+    //
+    // Rendering it unticked is worse than cosmetic: the tile is collapsed
+    // and sits below "New", so nobody sees the choice, and the decision
+    // route reads the resulting submission as a narrowing. A narrowing is
+    // treated as a promise that the removed access stops working, so it
+    // revokes the client's live tokens. An untouched Continue killed a
+    // working integration.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: REQUESTED,
+      bundles: [ON_BUNDLE, OFF_BUNDLE],
+      priorScopes: ["core.note:read", "core.note:write"],
+    });
+    expect(defaultSubmission(html)).toEqual([
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ]);
+  });
+
+  it("still offers a newly-requested off-by-default scope unticked", () => {
+    // The discriminating half of the case above: forcing every diff section
+    // ticked would pass it and defeat the feature on re-consent.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: REQUESTED,
+      bundles: [ON_BUNDLE, OFF_BUNDLE],
+      priorScopes: ["core.note:read"],
+    });
+    expect(defaultSubmission(html)).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
   });
 
   it("grants nothing from it when the user leaves it alone", () => {

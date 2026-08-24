@@ -707,3 +707,32 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
   }
   return Array.from(out).sort();
 }
+
+/**
+ * Scopes that only an off-by-default bundle offers.
+ *
+ * `default_on: false` means the toggle starts unticked, and the whole of
+ * what it grants is that a person ticked it. A surface with no per-scope
+ * toggle therefore cannot grant one of these at all: there is no tick to
+ * make, so "leaving it alone grants nothing" has nothing to attach to. The
+ * device flow is that surface, and this is what it refuses.
+ *
+ * Claimed by at least one bundle and by no on-by-default one, so a scope
+ * that also appears in a bundle the user gets by default is not withheld,
+ * and a scope no bundle mentions is untouched. Only a bundle can declare
+ * this, so only a bundle can withhold it.
+ */
+export function scopesOfferedOffByDefaultOnly(
+  bundles: readonly PermissionBundle[],
+): Set<string> {
+  const offered = new Set<string>();
+  const onByDefault = new Set<string>();
+  for (const bundle of bundles) {
+    for (const scope of bundle.scopes) {
+      offered.add(scope);
+      if (bundle.default_on) onByDefault.add(scope);
+    }
+  }
+  for (const scope of onByDefault) offered.delete(scope);
+  return offered;
+}
