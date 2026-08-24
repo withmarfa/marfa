@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@withmarfa/integration-template",
+    name: "acme-template",
     include: ["src/**/*.test.ts"],
   },
 });

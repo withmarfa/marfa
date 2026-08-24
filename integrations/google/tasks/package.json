@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-google-tasks",
+  "name": "google-tasks",
   "version": "0.0.1",
   "private": true,
   "type": "module",

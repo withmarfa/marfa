@@ -80,7 +80,21 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # This build runs before the deploy prune below: `pnpm deploy` rewrites
 # the workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
-RUN pnpm --filter "@withmarfa/integration-*" run build
+#
+# Selected by path, not by a name pattern. A package name is now the
+# manifest identifier with the slash flattened, so there is no shared
+# prefix left to match on and nothing should reintroduce one: what makes
+# these the integrations is that they live in `integrations/`, and the
+# selector may as well say so.
+#
+# The dispatch fixture builds in the same command, named in full because it
+# is outside that directory and is not an integration. Same command,
+# because a fixture bundled by a different one proves nothing about how an
+# integration bundles. There is exactly one of it and it is spelled out, so
+# this cannot drift the way a pattern could. When the integrations leave,
+# the first filter goes and this one stays.
+RUN pnpm --filter "./integrations/**" \
+         --filter dispatch-fixture run build
 # The parser's output is captured into a variable rather than expanded
 # inline. `set -e` does not reach a command substitution performed while
 # expanding a `for` word list, and a loop whose body never runs exits 0, so
@@ -109,18 +123,30 @@ RUN set -euf; \
       cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
       echo "staged $name"; \
     done
-# The scaffold is not installed, so it is staged outside the integrations
-# root as the fixture the in-image verification dispatches through. It is
-# built exactly the way a real integration is, which is what makes it a
-# usable proof that the runtime kit resolves to a single copy; a fixture
-# built any other way would prove something else. The runtime stage deletes
-# it once the verification has passed.
+# The dispatch fixture, staged outside the integrations root because it is
+# not something a deployment installed: what is in that root is the
+# declared set, and this is the fixture the in-image verification
+# dispatches through. It is built by the step above, exactly the way a real
+# integration is, which is what makes it a usable proof that the runtime
+# kit resolves to a single copy. The runtime stage deletes it once the
+# verification has passed.
+#
+# `dist` only, and no node_modules beside it, for the same reason the
+# installed entries are staged that way: the bare `@withmarfa/runtime-sdk`
+# and `@withmarfa/shared` specifiers the bundle emits must resolve upward
+# to the server's copies. A fixture carrying its own would satisfy its
+# imports locally and pass while proving nothing.
+#
+# Unconditional. Under the previous arrangement this staged the
+# integrations scaffold, which a deployer could reasonably not have, so a
+# missing tree read as a shape rather than a fault. The fixture ships with
+# the server, so its absence means the build above did not build it, and
+# failing here names that directly instead of surfacing later as a
+# verification that cannot find its fixture.
 RUN set -eu; \
-    mkdir -p /verify-fixtures; \
-    if [ -f integrations/_template/dist/local.js ]; then \
-      mkdir -p /verify-fixtures/_template; \
-      cp -R integrations/_template/dist /verify-fixtures/_template/dist; \
-    fi
+    mkdir -p /verify-fixtures/dispatch-integration; \
+    cp -R packages/server/fixtures/dispatch-integration/dist \
+          /verify-fixtures/dispatch-integration/dist
 # Prune to a self-contained production deploy at /app/out
 # (dist + drizzle + a flattened node_modules; dev-only workspace deps dropped).
 # Last of the pnpm steps deliberately; see the note above the integration build.

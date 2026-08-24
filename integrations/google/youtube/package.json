@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-google-youtube",
+  "name": "google-youtube",
   "version": "0.1.0",
   "private": true,
   "type": "module",

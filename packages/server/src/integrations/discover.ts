@@ -68,10 +68,12 @@ function subdirectories(dir: string): string[] {
       // would have put it in the installable catalog too.
       //
       // The scaffold sits at the handle level, flat and underscored, which
-      // is what keeps it invisible here. Everything that genuinely wants it
-      // names it explicitly — the boot smoke test, the worker-entry smoke
-      // script, the image verification — so none of them depends on
-      // discovery finding it.
+      // is what keeps it invisible here. Nothing depends on it any more
+      // either: the substrate smoke, the worker-entry smoke script and the
+      // image verification all dispatch through the server's own fixture,
+      // which is not under this root at all. The scaffold is the thing an
+      // author copies and nothing else, so this rule is the only thing
+      // standing between it and the catalog.
       .filter((e) => !e.name.startsWith(".") && !e.name.startsWith("_"))
       .map((e) => e.name)
   );

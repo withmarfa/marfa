@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-inbox-email-worker",
+  "name": "marfa-inbox-email-worker",
   "version": "0.0.1",
   "private": true,
   "type": "module",

@@ -75,10 +75,11 @@ export async function loadInTreeRegistrations(options: {
   // the local runtime wanted a smoke shape to boot against. Discovery skips
   // it: a leading underscore means scaffolding.
   //
-  // Nothing that genuinely wants it loses it — the boot smoke test, the
-  // worker-entry smoke script and the image verification all name it
-  // explicitly. What it does mean is that a deployment which already
-  // registered `acme/template` carries a cron row for it, which is why the
+  // Nothing wants it any more: the substrate smoke, the worker-entry smoke
+  // script and the image verification dispatch through the server's own
+  // fixture, which lives outside the integrations root entirely. What the
+  // change did mean is that a deployment which already registered
+  // `acme/template` carries a cron row for it, which is why the
   // supervisor's `start()` reconciles schedules against the registration
   // set rather than only seeding from it.
   const dirs =

@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-podcasts",
+  "name": "marfa-podcasts",
   "version": "0.0.1",
   "private": true,
   "type": "module",

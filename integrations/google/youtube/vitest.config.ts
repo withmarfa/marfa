@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@withmarfa/integration-google-youtube",
+    name: "google-youtube",
     include: ["src/**/*.test.ts"],
   },
 });
