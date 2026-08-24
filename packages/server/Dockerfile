@@ -76,9 +76,9 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # the workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
 RUN pnpm --filter "@withmarfa/integration-*" run build
-RUN set -eu; \
+RUN set -euf; \
     mkdir -p /integrations-staged; \
-    for name in $(sed 's/#.*//' packages/server/installed-integrations.txt); do \
+    for name in $(node packages/server/scripts/read-installed-integrations.mjs packages/server/installed-integrations.txt); do \
       dir="integrations/$name"; \
       if [ ! -d "$dir" ]; then \
         echo "ERROR: $name is declared installed but $dir is not present" >&2; \
@@ -102,7 +102,8 @@ RUN set -eu; \
 # usable proof that the runtime kit resolves to a single copy; a fixture
 # built any other way would prove something else. The runtime stage deletes
 # it once the verification has passed.
-RUN mkdir -p /verify-fixtures; \
+RUN set -eu; \
+    mkdir -p /verify-fixtures; \
     if [ -f integrations/_template/dist/local.js ]; then \
       mkdir -p /verify-fixtures/_template; \
       cp -R integrations/_template/dist /verify-fixtures/_template/dist; \
@@ -132,18 +133,24 @@ ENV MARFA_INTEGRATIONS_ROOT=/app/integrations
 COPY --from=build --chown=node:node /repo/packages/server/installed-integrations.txt ./installed-integrations.txt
 COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
+COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs
 RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \
   # Make /app writable by the non-root user. Hosted uses R2 (BLOB_BACKEND=s3),
   # but the fs blob fallback (and any cwd-relative write) needs a writable dir.
   && mkdir -p data \
   && chown -R node:node /app
 USER node
-# An image carrying integrations other than the ones it declares, or whose
-# entries cannot load, or whose module resolution duplicates the
-# runtime-sdk singleton, fails to build here rather than booting a wrong
-# substrate in production. The dispatch fixture goes out with the same
-# step, so a passing image carries only what it installs.
-RUN node verify-image-integrations.mjs && rm -rf verify-fixtures
+# An image carrying integrations other than the ones it declares, or in a
+# shape it did not declare, or whose entries cannot load, or whose module
+# resolution duplicates the runtime-sdk singleton, fails to build here
+# rather than booting a wrong substrate in production.
+#
+# The dispatch fixture is removed in the same step, so nothing running in
+# the container can mistake it for an installed integration. It is a
+# whiteout rather than an erasure: the bytes still sit in the layer the COPY
+# above created and are visible to anyone reading the image. Nothing about
+# it is secret, so that is a size question rather than a safety one.
+RUN node verify-image-integrations.mjs && rm -rf /app/verify-fixtures
 EXPOSE 8600
 # Liveness probe. /health returns 200 (status ok|degraded); slim has no curl,
 # so use Node's global fetch.

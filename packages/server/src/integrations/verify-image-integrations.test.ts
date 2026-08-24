@@ -8,13 +8,19 @@
  * production, which makes "it runs somewhere I cannot test" the wrong
  * property for it to have.
  *
- * Every path it takes is drivable from outside: the root, the declaration,
- * the worker entry and the dispatch fixture are all env-addressable. These
- * drive the first check, which is the one that replaced the hardcoded count
- * and therefore the one carrying the judgement. The dispatch proof needs a
- * built worker entry and a built integration, so it stays the image
- * build's own assertion; what is pinned here is that it refuses to be
- * skipped when there is something to prove.
+ * Every path it takes is drivable from outside: the integrations root, the
+ * declaration, the worker entry and the dispatch fixture are all
+ * env-addressable.
+ *
+ * **What the dispatch cases here do and do not prove.** They stand in a
+ * fake worker entry that loads the fixture and answers, so they pin the
+ * script's half of the protocol: that it waits for the worker to come up,
+ * hands it the fixture rather than an installed integration, and treats a
+ * not-ok result as a failure. They do not prove module resolution inside a
+ * real image, because a real worker entry and a real built integration are
+ * the two things an image has and a unit test does not. That proof stays
+ * the image build's, and it is the reason the check exists at all; what is
+ * pinned here is that the script would notice.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -35,28 +41,30 @@ afterEach(() => {
   scratchRoot = undefined;
 });
 
+/** How the stand-in worker answers a dispatch. */
+type WorkerBehavior = "ok" | "not-ok" | "silent";
+
 interface Image {
-  /** MARFA_INTEGRATIONS_ROOT for the run. */
   integrationsRoot: string;
-  /** The declaration file for the run. */
   declaration: string;
-  /** Where a dispatch fixture would live, present only when asked for. */
   fixtureRoot: string;
-  /** A file standing in for the built worker entry, so the fixture check
-   *  is what a run reaches rather than the worker-entry check above it. */
   workerEntry: string;
 }
 
 /**
  * A scratch image layout. `installed` are directories under the
  * integrations root; a name suffixed `!manifest` gets a manifest-only
- * entry, and a name suffixed `!empty` gets a directory with nothing built
- * in it at all.
+ * entry, `!empty` gets a directory with nothing built in it, and `!bare`
+ * gets a handler entry that exports no manifest.
+ *
+ * `declared` lines are written verbatim, so a caller can pass a marker or a
+ * malformed line as easily as a name.
  */
 function image(options: {
   declared: string[];
   installed: string[];
   fixture?: boolean;
+  worker?: WorkerBehavior;
 }): Image {
   scratchRoot = mkdtempSync(join(tmpdir(), "marfa-verify-image-"));
   // The staged entries are ESM `.js`, which in a real image resolves
@@ -76,7 +84,9 @@ function image(options: {
     mkdirSync(dist, { recursive: true });
     writeFileSync(
       join(dist, shape === "manifest" ? "manifest.js" : "local.js"),
-      `export const manifest = { name: "acme/${name ?? raw}" };\n`,
+      shape === "bare"
+        ? "export const somethingElse = 1;\n"
+        : `export const manifest = { name: "acme/${name ?? raw}" };\n`,
     );
   }
 
@@ -90,11 +100,34 @@ function image(options: {
   if (options.fixture === true) {
     const dist = join(fixtureRoot, "_template", "dist");
     mkdirSync(dist, { recursive: true });
-    writeFileSync(join(dist, "local.js"), "export const manifest = {};\n");
+    writeFileSync(
+      join(dist, "local.js"),
+      'export const manifest = { name: "acme/template" };\n',
+    );
   }
 
+  // A stand-in for dist/worker-entry.js. It imports whatever handler path
+  // it was given, so a run that hands it the wrong fixture fails here
+  // rather than passing on a path nobody checked.
   const workerEntry = join(scratchRoot, "worker-entry.js");
-  writeFileSync(workerEntry, "// never spawned by these cases\n");
+  const behavior: WorkerBehavior = options.worker ?? "ok";
+  writeFileSync(
+    workerEntry,
+    behavior === "silent"
+      ? "// never reports ready\n"
+      : `import { parentPort, workerData } from "node:worker_threads";
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(workerData.handlerModulePath).href);
+const loaded = typeof mod.manifest === "object";
+parentPort.postMessage({ kind: "ready" });
+parentPort.on("message", () => {
+  parentPort.postMessage({
+    kind: "result",
+    result: ${behavior === "ok" ? "{ ok: loaded }" : '{ ok: false, reason: "no_schedule_handler_registered" }'},
+  });
+});
+`,
+  );
 
   return { integrationsRoot, declaration, fixtureRoot, workerEntry };
 }
@@ -129,20 +162,24 @@ function verify(img: Image, overrides: Record<string, string> = {}): Run {
 }
 
 describe("the in-image integration verification", () => {
-  it("passes when the installed set is exactly the declared set", () => {
+  it("passes an image that installs exactly what it declares", () => {
     const run = verify(
       image({
-        declared: ["alpha", "sync"],
-        installed: ["alpha!manifest", "sync!manifest"],
+        declared: ["alpha", "sync manifest-only"],
+        installed: ["alpha", "sync!manifest"],
+        fixture: true,
       }),
     );
     expect(run.output).toContain("2 declared integrations all installed");
+    expect(run.output).toContain("1 dispatchable");
+    expect(run.output).toContain("all entries import and export manifests");
+    expect(run.output).toContain("PASSED");
     expect(run.code).toBe(0);
   });
 
   it("fails, by name, on a declared integration that is not installed", () => {
     const run = verify(
-      image({ declared: ["alpha", "beta"], installed: ["alpha!manifest"] }),
+      image({ declared: ["alpha", "beta"], installed: ["alpha"] }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("declared but not installed");
@@ -153,10 +190,7 @@ describe("the in-image integration verification", () => {
     // The shape that shipped the scaffold: present in the image, named in
     // nothing, and invisible to a check that only counted.
     const run = verify(
-      image({
-        declared: ["alpha"],
-        installed: ["alpha!manifest", "_template!manifest"],
-      }),
+      image({ declared: ["alpha"], installed: ["alpha", "_template"] }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("installed but not declared");
@@ -168,20 +202,60 @@ describe("the in-image integration verification", () => {
       image({ declared: ["alpha"], installed: ["alpha!empty"] }),
     );
     expect(run.code).toBe(1);
-    expect(run.output).toContain("staged without dist/local.js");
+    expect(run.output).toContain("staged no dist/local.js");
   });
 
-  it("passes an image that installs nothing at all", () => {
+  it("fails when a dispatchable integration built only a manifest", () => {
+    // The one shrink the old count did catch and a bare name list would
+    // not: the directory is still there, so the set looks unchanged, but
+    // one fewer integration can be dispatched to.
+    const run = verify(
+      image({ declared: ["alpha"], installed: ["alpha!manifest"] }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("mark it manifest-only");
+  });
+
+  it("fails when a manifest-only integration built a handler", () => {
+    const run = verify(
+      image({ declared: ["sync manifest-only"], installed: ["sync"] }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("declared manifest-only");
+    expect(run.output).toContain("drop the marker");
+  });
+
+  it("fails when a staged entry exports no manifest", () => {
+    const run = verify(
+      image({
+        declared: ["alpha"],
+        installed: ["alpha!bare"],
+        fixture: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("exports no usable manifest");
+  });
+
+  it("passes an image that declares it installs nothing", () => {
     // The shape a deployment installing its own integrations starts from.
     // An empty COPY leaves no directory behind, so a missing root has to
     // read as an empty set rather than as a fault, the way the runtime's
     // own discovery already reads it.
-    const img = image({ declared: [], installed: [] });
+    const img = image({ declared: ["none"], installed: [] });
     const run = verify(img, {
       MARFA_INTEGRATIONS_ROOT: join(img.integrationsRoot, "absent"),
     });
     expect(run.output).toContain("0 declared integrations all installed");
     expect(run.code).toBe(0);
+  });
+
+  it("refuses a declaration that names nothing and does not say so", () => {
+    // An empty file is what a bad merge leaves behind. Only the word makes
+    // it an intention.
+    const run = verify(image({ declared: [], installed: [] }));
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("lost its body");
   });
 
   it("still fails on a missing root when something was declared", () => {
@@ -200,8 +274,25 @@ describe("the in-image integration verification", () => {
     expect(run.output).toContain("dispatch fixture is missing");
   });
 
+  it("fails when the dispatch comes back not-ok", () => {
+    // The module-resolution failure this check exists for reports exactly
+    // this way: the handler registers into one registry and the dispatch
+    // reads another.
+    const run = verify(
+      image({
+        declared: ["alpha"],
+        installed: ["alpha"],
+        fixture: true,
+        worker: "not-ok",
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("dispatch returned not-ok");
+    expect(run.output).toContain("duplicate copy");
+  });
+
   it("fails when the declaration is not there to read", () => {
-    const img = image({ declared: [], installed: [] });
+    const img = image({ declared: ["alpha"], installed: ["alpha"] });
     const run = verify(img, {
       MARFA_INSTALLED_INTEGRATIONS: join(img.integrationsRoot, "no-such.txt"),
     });

@@ -1,14 +1,22 @@
 # What this image installs into MARFA_INTEGRATIONS_ROOT.
 #
 # The image build stages exactly these and nothing else, and the in-image
-# verification asserts that exactly these arrived. Removing one is an edit
-# here, which is a decision somebody makes on purpose, rather than a
-# directory quietly shrinking and the image getting smaller with it.
+# verification asserts that exactly these arrived, in the shape declared.
+# Removing one is an edit here, which is a decision somebody makes on
+# purpose, rather than a directory quietly shrinking and the image getting
+# smaller with it.
 #
 # One name per line. Blank lines are ignored and everything from a # to the
 # end of a line is a comment. A name is a directory under integrations/
 # today; when integrations are ordinary published packages this becomes the
 # install list and a name gains a package specifier beside it.
+#
+# A name may carry the marker `manifest-only`, which says the integration
+# ships a manifest and no dispatchable entry. The verification holds the
+# declaration to that: a plain name must have built a handler entry, and a
+# manifest-only name must not have. Without the marker an integration could
+# lose its handler and still verify, which was the one kind of shrink the
+# old count did catch.
 #
 # A name here with no matching directory fails the build, and a directory
 # with no name here is not shipped. src/integrations/installed-integrations
@@ -21,10 +29,11 @@
 # the fixture the verification dispatches through, and the image drops it
 # once that has passed.
 #
-# An empty list is a valid deployment: the build stages nothing, the image
-# ships an empty integrations root, and the substrate boots with no
-# registrations. That is the shape a deployment installing its own
-# integrations starts from.
+# Installing nothing is a real deployment shape, and it is spelled with a
+# line reading `none` rather than by an empty file. An empty file is what a
+# bad merge leaves behind, and an image that ships an empty integrations
+# root boots a substrate with no registrations and says nothing about it, so
+# the two cases must not look alike.
 
 github-webhooks
 google-calendar
@@ -41,8 +50,8 @@ rss-watcher
 task-auto-archive
 todoist
 
-# sync ships a manifest and no dispatchable entry: its agent runs outside
-# the server process. The catalog still needs a current manifest for it,
-# because the catalog describes what is installable, which is a larger set
-# than what dispatches.
-sync
+# sync's agent runs outside the server process, so it ships a manifest and
+# nothing to dispatch into. The catalog still needs a current manifest for
+# it, because the catalog describes what is installable, which is a larger
+# set than what dispatches.
+sync manifest-only

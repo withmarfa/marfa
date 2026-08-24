@@ -13,7 +13,7 @@
  * So this replaces the array and nothing else. Every subdirectory is a
  * candidate; the loaders that call this already refuse anything without a
  * built entry or with an invalid manifest, and they say so when they do.
- * Discovery deliberately does not repeat that judgement — a directory that
+ * Discovery deliberately does not repeat that judgment — a directory that
  * looks wrong is the loaders' business, and duplicating the rule here is
  * how the two would come to disagree.
  *
@@ -48,7 +48,7 @@ export function discoverIntegrationDirs(integrationsRoot: string): string[] {
       // integration. Dot-directories are tooling — `.turbo`, an editor's
       // scratch space, a partially-extracted download. The underscore is
       // the convention `_template` already announces itself with, and
-      // honouring it is what stops the scaffold shipping.
+      // honoring it is what stops the scaffold shipping.
       //
       // That is a live fix rather than tidiness. The old hand-maintained
       // table left `_template` out of the catalog while the runtime loader

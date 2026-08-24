@@ -46,7 +46,7 @@ function installIntegration(
 }
 
 /** The smallest manifest the validator accepts, so a failure here is the
- *  loader's judgement rather than a fixture that was never going to pass. */
+ *  loader's judgment rather than a fixture that was never going to pass. */
 function manifestFor(name: string): Record<string, unknown> {
   return {
     manifest_schema_version: "2.0.0",

@@ -1,29 +1,36 @@
 /**
- * In-image verification that the packaged server can actually run its
- * integrations. Executed as a RUN step in packages/server/Dockerfile, so
- * an image that would boot the local substrate with a broken or empty
- * integration set fails to build instead of failing in production.
+ * In-image verification that the packaged server can actually run the
+ * integrations it says it installed. Executed as a RUN step in
+ * packages/server/Dockerfile, so an image that would boot the local
+ * substrate with the wrong integration set fails to build instead of
+ * failing in production.
  *
- * Plain Node, ESM, node: builtins only. It runs inside the runtime image,
- * where there is no tsx and no monorepo; everything it needs must resolve
- * from the image's own filesystem.
+ * An image that installs nothing is a legitimate deployment and passes
+ * here. What stops that being an accident is the declaration itself, which
+ * refuses to read as empty unless it says `none` in so many words.
+ *
+ * Plain Node, ESM, node: builtins only, and one sibling module. It runs
+ * inside the runtime image, where there is no tsx and no monorepo;
+ * everything it needs must resolve from the image's own filesystem.
  *
  * Three checks, in order:
  *
- *   1. The installed set is the declared set. installed-integrations.txt
- *      says what this image installs; the integrations root must hold
- *      exactly those, no more and no fewer, and each must carry either
- *      dist/local.js (a dispatchable integration) or dist/manifest.js (a
- *      manifest-only entry the catalog reconcile reads and the runtime
- *      never dispatches, such as sync).
+ *   1. The installed set is the declared set, in the declared shape.
+ *      installed-integrations.txt says what this image installs; the
+ *      integrations root must hold exactly those, no more and no fewer. A
+ *      plain name must carry dist/local.js, a dispatchable entry. A name
+ *      marked manifest-only must carry dist/manifest.js and must not carry
+ *      a handler entry, which is the shape of an integration whose code
+ *      runs somewhere else and whose manifest the catalog still needs.
  *
  *      This replaced a hardcoded minimum count. The count existed because
  *      nothing else could say whether the image was complete, and it had
  *      the two faults of every such number: it passed a build that had
  *      quietly gained an integration, and it needed raising by hand every
- *      time the set grew. A declaration answers the same question without
- *      either, and removing an integration stays what it should be, an
- *      edit somebody made on purpose.
+ *      time the set grew. What the count did catch, and a bare name list
+ *      would not, is an integration losing its handler and shrinking the
+ *      dispatchable set without changing the count of directories. The
+ *      marker is what keeps that caught.
  *
  *   2. Main-process import. The server's loader imports each entry on
  *      boot to read its manifest; this repeats that read and fails on a
@@ -43,11 +50,12 @@
  *      dispatchable has nothing to prove and skips this; anything else
  *      needs the fixture and fails without it.
  */
-import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
+import { readInstalledIntegrations } from "./read-installed-integrations.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INTEGRATIONS_ROOT =
@@ -78,19 +86,16 @@ function info(msg) {
 // what the runtime's own discovery does with it. An image that declares
 // nothing and installs nothing is coherent; an image that declares
 // something and has no root is caught below, by name.
-let declaredText;
+let declaration;
 try {
-  declaredText = readFileSync(DECLARATION, "utf8");
+  declaration = readInstalledIntegrations(DECLARATION);
 } catch (err) {
-  fail(
-    `cannot read the integration declaration at ${DECLARATION}: ${String(err)}`,
-  );
+  fail(String(err.message ?? err));
 }
-const declared = declaredText
-  .split("\n")
-  .map((line) => line.replace(/#.*$/, "").trim())
-  .filter((line) => line.length > 0)
-  .sort();
+const declared = declaration.map((entry) => entry.name);
+const manifestOnlyByName = new Map(
+  declaration.map((entry) => [entry.name, entry.manifestOnly]),
+);
 
 const installed = existsSync(INTEGRATIONS_ROOT)
   ? readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
@@ -118,17 +123,40 @@ const entries = [];
 const manifestOnly = [];
 for (const name of declared) {
   const localJs = resolve(INTEGRATIONS_ROOT, name, "dist", "local.js");
-  if (existsSync(localJs)) {
-    entries.push({ name, localJs });
-    continue;
-  }
-  // Manifest-only is a deliberate shape, not a broken build: the catalog
-  // reconcile reads it and the runtime loader skips it.
-  if (existsSync(resolve(INTEGRATIONS_ROOT, name, "dist", "manifest.js"))) {
+  const manifestJs = resolve(INTEGRATIONS_ROOT, name, "dist", "manifest.js");
+  const wantsManifestOnly = manifestOnlyByName.get(name) === true;
+
+  if (wantsManifestOnly) {
+    // Manifest-only is a deliberate shape, not a broken build: the catalog
+    // reconcile reads it and the runtime loader skips it. Declaring it is
+    // what makes the runtime's skip an intention rather than an accident,
+    // so an entry that turns up dispatchable is as wrong as one that does
+    // not turn up at all.
+    if (existsSync(localJs)) {
+      fail(
+        `${name} is declared manifest-only but staged a dispatchable ` +
+          `dist/local.js. Either it grew a handler, in which case drop the ` +
+          `marker, or the wrong tree was staged.`,
+      );
+    }
+    if (!existsSync(manifestJs)) {
+      fail(`${name} is declared manifest-only but staged no dist/manifest.js`);
+    }
     manifestOnly.push(name);
     continue;
   }
-  fail(`${name} is staged without dist/local.js or dist/manifest.js`);
+
+  if (!existsSync(localJs)) {
+    fail(
+      `${name} is declared dispatchable but staged no dist/local.js` +
+        (existsSync(manifestJs)
+          ? `. It built a manifest and no handler, which is the shape that ` +
+            `used to shrink the image silently; mark it manifest-only if ` +
+            `that is now what it is.`
+          : ""),
+    );
+  }
+  entries.push({ name, localJs });
 }
 info(
   `${String(declared.length)} declared integrations all installed: ` +
