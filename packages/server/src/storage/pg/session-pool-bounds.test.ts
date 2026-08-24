@@ -76,20 +76,63 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
     await ctx.release();
   });
 
-  it("a timed-out reservation does not leak the slot it gave up waiting for", async () => {
+  it("timed-out reservations do not leak the slots they gave up waiting for", async () => {
     const holder = await tiny.reserve();
     const attempt = acquireStreamRls(tiny, "bounds-space", {
       reserveTimeoutMs: 100,
     });
     await expect(attempt).rejects.toBeInstanceOf(StreamPoolExhaustedError);
-    // Free the slot AFTER the timeout: the abandoned reservation is granted
-    // and must release itself, or this second acquire would hang.
+    // Free the slot AFTER the timeouts. Both abandoned reservations, one
+    // per ask, are granted in turn and must release themselves, or this
+    // second acquire would hang behind whichever still held one.
     holder.release();
     const ctx = await acquireStreamRls(tiny, "bounds-space", {
       reserveTimeoutMs: 2_000,
     });
     await ctx.release();
   });
+
+  it("the long-lived holder gives up rather than waiting forever", async () => {
+    // The election loop that drives this has no timer of its own: it calls,
+    // waits, and retries when it gets nothing. An unbounded reserve here
+    // therefore does not delay an election, it ends them, and the only
+    // symptom is that the reactive bridge quietly stops draining with no
+    // takeover when the elected process dies.
+    const jobHolder = postgres(databaseUrl, { max: 1 });
+    try {
+      // No reserve timeout argument: it feeds the ordinary job lock, and
+      // the holder carries its own constant.
+      const store = new PgCoordinationStore(
+        tiny,
+        drizzle(tiny) as never,
+        tiny,
+        jobHolder,
+      );
+      // Nothing else can reserve from a one-connection client that is
+      // already fully reserved, which is what a destroyed reservation
+      // leaves behind from the caller's point of view.
+      const held = await jobHolder.reserve();
+      try {
+        const started = Date.now();
+        const result = await store.withLongLivedJobLock("bounds-holder", () =>
+          Promise.resolve("held"),
+        );
+        expect(result).toBeUndefined();
+        // Bounded, and comfortably inside the election's own retry period.
+        expect(Date.now() - started).toBeLessThan(20_000);
+      } finally {
+        held.release();
+      }
+      // And it elects normally once the client is free again.
+      expect(
+        await store.withLongLivedJobLock("bounds-holder", () =>
+          Promise.resolve("held"),
+        ),
+      ).toBe("held");
+    } finally {
+      await (jobHolder as unknown as { end: () => Promise<void> }).end();
+    }
+  }, 30_000);
 
   it("the long-lived holder takes nothing from the shared pool", async () => {
     const jobHolder = postgres(databaseUrl, { max: 1 });

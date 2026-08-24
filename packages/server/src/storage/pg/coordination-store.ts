@@ -6,15 +6,28 @@ import { log } from "../../middleware/logger.js";
 
 /**
  * How long a job tick waits for a session-pool slot before skipping.
+ * `reserveWithTimeout` spends it across two asks rather than one, so this
+ * is the whole budget and not a per-attempt one.
+ *
  * The pool is shared with streams, so exhaustion is a real state, and a
  * background tick queued behind it indefinitely is worse than a missed
  * tick: every caller of `withJobLock` already treats `undefined` as
- * "not this time". Generous on purpose — a loaded machine can hold every
- * slot for whole seconds at a time, and a background tick that skips on
- * an ordinary spike trades a real run for nothing. Request-path callers
- * pass their own tighter budget per call.
+ * "not this time". Generous on purpose, because a loaded machine can hold
+ * every slot for whole seconds at a time and a tick that skips on an
+ * ordinary spike trades a real run for nothing. Request-path callers pass
+ * their own tighter budget per call.
  */
 const JOB_LOCK_RESERVE_TIMEOUT_MS = 15_000;
+
+/**
+ * How long the process-lifetime holder waits for its own connection.
+ *
+ * Comfortably under the election's own retry cadence, so a lost
+ * reservation costs one round rather than stalling the loop, and
+ * comfortably above anything a single-connection client should take to
+ * answer when it is genuinely free.
+ */
+const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
 
 /**
  * Postgres-backed coordination via advisory locks.
@@ -130,19 +143,49 @@ export class PgCoordinationStore implements CoordinationStore {
   /**
    * The permanent holder's variant. Reserves from the dedicated
    * single-connection client, so the one lock held for the process
-   * lifetime never subtracts a slot from the pool streams and job
-   * ticks share — the drainer once quietly took a fifth of it. No
-   * reservation timeout: nothing else reserves from that client, so a
-   * wait here means the same process is already holding it, which the
-   * try-lock below answers honestly.
+   * lifetime never subtracts a slot from the pool streams and job ticks
+   * share; the drainer once quietly took a fifth of it.
+   *
+   * **Bounded, because an unbounded wait here parks the election.** This
+   * used to reserve with no timeout, on the reasoning that nothing else
+   * reserves from that client so a wait could only mean this process was
+   * already holding it. `reserve-timeout.ts` records the other way a
+   * reservation waits forever: it can be destroyed by any connection
+   * close, never resolving and never rejecting. That client carries the
+   * same idle timeout as the shared pool and the election retries on the
+   * same period, so a loser meets the race on exactly the cadence that
+   * produces it, and the caller is an unconditional loop with no timer of
+   * its own. It would have stopped re-electing, silently, and a winner's
+   * death would have left no takeover: the failure the retry loop exists
+   * to prevent.
+   *
+   * `undefined` here means the same thing it means for a lost election, so
+   * a caller needs nothing new: it retries on its own cadence and says so.
    */
   async withLongLivedJobLock<T>(
     name: string,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
     const key = `marfa:${name}`;
-    const conn = await this.jobHolderClient.reserve();
-    return this.runUnderTryLock(conn, key, fn);
+    const { connection, waitedMs, attempts } = await reserveWithTimeout(
+      this.jobHolderClient,
+      HOLDER_RESERVE_TIMEOUT_MS,
+    );
+    if (connection === null) {
+      // Said out loud, because the caller cannot. An election loop reads
+      // `undefined` as a lost election and reports it as one, so without
+      // this line a holder that never reserves looks identical to a holder
+      // that keeps losing, and the difference is whether anyone is running
+      // the job at all.
+      log("warn", "long-lived job lock skipped: no connection reserved", {
+        job: name,
+        waited_ms: waitedMs,
+        attempts,
+        budget_ms: HOLDER_RESERVE_TIMEOUT_MS,
+      });
+      return undefined;
+    }
+    return this.runUnderTryLock(connection, key, fn);
   }
 
   private async tryLockOn<T>(
@@ -153,19 +196,40 @@ export class PgCoordinationStore implements CoordinationStore {
   ): Promise<T | undefined> {
     const key = `marfa:${name}`;
     const timeoutMs = reserveTimeoutMs ?? this.reserveTimeoutMs;
-    const conn = await reserveWithTimeout(client, timeoutMs);
-    if (conn === null) {
-      // The pool is exhausted — most plausibly by concurrent streams.
-      // A skipped tick retries on its own timer; the proxy-refresh
-      // caller falls back to its in-process single-flight. Waiting in
-      // the queue instead would add this caller to the pileup.
-      log("warn", "job lock skipped: session pool exhausted", {
+    const { connection, waitedMs, attempts } = await reserveWithTimeout(
+      client,
+      timeoutMs,
+    );
+    if (connection === null) {
+      // The message says what was measured and stops there. It used to
+      // name a cause, "session pool exhausted", that nothing here
+      // establishes: two asks can both be lost to closes against a pool
+      // with free slots, so neither exhaustion nor the race can be read
+      // off this branch. A skipped tick retries on its own timer; the
+      // proxy-refresh caller falls back to its in-process single-flight.
+      log("warn", "job lock skipped: no connection reserved", {
         job: name,
-        waited_ms: timeoutMs,
+        waited_ms: waitedMs,
+        attempts,
+        budget_ms: timeoutMs,
       });
       return undefined;
     }
-    return this.runUnderTryLock(conn, key, fn);
+    if (attempts > 1) {
+      // The recovery, which the skip line cannot carry: without it the
+      // only symptom of a lost first ask is a tick running late.
+      //
+      // The branch means the probe expired, not that the reservation was
+      // destroyed. `waited_ms` leans one way or the other rather than
+      // settling it: a wait barely over the probe fits the race in
+      // `reserve-timeout.ts`, and it fits a pool that freed a slot just
+      // after the probe gave up equally well.
+      log("info", "job lock reserved on the second ask", {
+        job: name,
+        waited_ms: waitedMs,
+      });
+    }
+    return this.runUnderTryLock(connection, key, fn);
   }
 
   private async runUnderTryLock<T>(
