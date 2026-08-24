@@ -1,5 +1,11 @@
 # Podcasts
 
+**This file is moving.** It goes with the integrations into their own
+repository, and it hasn't yet been reviewed against decisions made since
+it was written. Treat it as a record of how things worked here rather than
+as current guidance, and use the move to review, correct, and tighten it
+rather than carry it over unchanged.
+
 Scheduled poll of podcast RSS feeds. One connection holds many subscriptions; each tick takes a few in rotation and writes a show and its episodes, joined by `in-collection` edges — which the show is a valid target for because `marfa.podcast.show` declares the `container` role.
 
 Read-only. A feed is a document a publisher serves, so there is nothing to write back to: no item-event trigger.
