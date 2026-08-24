@@ -121,6 +121,37 @@ jobs:
           pnpm pack
           npm publish withmarfa-runtime-sdk-*.tgz --access=public
 
+      # The harness an integration tests its handlers against, in memory,
+      # without booting a server. Published for the same reason as the kit
+      # above and one step further: an integration outside this repository
+      # cannot reach a workspace reference, and one that cannot run its own
+      # tests is not something a third party can be asked to maintain.
+      #
+      # After the kit deliberately, because it depends on it and `pnpm pack`
+      # resolves that workspace reference to a concrete version at pack time.
+      # Packing it before the kit's version exists on the registry produces a
+      # tarball nobody can install.
+      - name: Check @withmarfa/runtime-test publish status
+        id: check_runtime_test
+        working-directory: packages/runtime-test
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          published_versions=$(npm view @withmarfa/runtime-test versions --json 2>/dev/null || echo '[]')
+          if echo "$published_versions" | grep -q "\"$local_version\""; then
+            echo "@withmarfa/runtime-test@$local_version is already published — skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@withmarfa/runtime-test@$local_version is new — will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish @withmarfa/runtime-test
+        if: steps.check_runtime_test.outputs.should_publish == 'true'
+        working-directory: packages/runtime-test
+        run: |
+          pnpm pack
+          npm publish withmarfa-runtime-test-*.tgz --access=public
+
       - name: Check @withmarfa/webhooks publish status
         id: check_webhooks
         working-directory: packages/webhooks

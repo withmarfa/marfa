@@ -1,7 +1,7 @@
 {
   "name": "@withmarfa/runtime-test",
   "version": "1.0.0",
-  "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "In-memory mocks of the runtime's dispatch primitives (per-connection storage, the queue) plus a createTestHarness helper, so Connections integrations can unit-test their handlers without booting the server.",
   "exports": {
@@ -13,6 +13,10 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
