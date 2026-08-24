@@ -401,8 +401,7 @@ export function resolveTypePermission(
 export function resolveExtensionPermission(
   namespace: string,
   permissions:
-    | Record<string, import("./types.js").ExtensionPermission>
-    | undefined,
+    Record<string, import("./types.js").ExtensionPermission> | undefined,
   keyLabel: string,
 ): import("./types.js").ExtensionPermission | "none" {
   if (permissions) {
@@ -425,8 +424,7 @@ export function resolveExtensionPermission(
 export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,
   permissions:
-    | Record<string, import("./types.js").ExtensionPermission>
-    | undefined,
+    Record<string, import("./types.js").ExtensionPermission> | undefined,
   keyLabel: string,
   isAdmin: boolean,
 ): Record<string, Record<string, unknown>> {

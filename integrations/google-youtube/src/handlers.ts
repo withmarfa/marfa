@@ -113,8 +113,7 @@ async function resolveConnectionConfig(
   try {
     const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
-      | { configuration?: Record<string, unknown> }
-      | undefined;
+      { configuration?: Record<string, unknown> } | undefined;
     const cfg = props?.configuration ?? {};
     // One declared family, so resolution always answers it; going through
     // `resolveWriteFamily` keeps the manifest the single statement of what

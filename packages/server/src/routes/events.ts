@@ -404,8 +404,7 @@ export function eventRoutes(
 
                       const replayWireType = wireEventName(
                         event.event_type as
-                          | ItemEventWithId["type"]
-                          | EdgeEventWithId["type"],
+                          ItemEventWithId["type"] | EdgeEventWithId["type"],
                       );
                       send(
                         `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${event.payload}\n\n`,

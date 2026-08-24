@@ -60,11 +60,7 @@ interface SyncConnectionPointer {
 
 export interface SyncMigrationReport {
   status:
-    | "migrated"
-    | "already_migrated"
-    | "no_sync_json"
-    | "missing_key"
-    | "failed";
+    "migrated" | "already_migrated" | "no_sync_json" | "missing_key" | "failed";
   /** When status === "migrated", populated with the IDs that were
    *  written to the sentinel file. */
   pointer?: SyncConnectionPointer;

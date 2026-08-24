@@ -9,8 +9,7 @@ import { rowToVersion } from "./helpers.js";
 
 /** The base Drizzle handle or a transaction handle from `db.transaction`. */
 type TxOrDb =
-  | DrizzleDb
-  | Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
+  DrizzleDb | Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 export class SqliteVersionStore implements VersionStore {
   constructor(private db: DrizzleDb) {}

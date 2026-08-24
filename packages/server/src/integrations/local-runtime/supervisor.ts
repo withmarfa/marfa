@@ -54,7 +54,7 @@ import type {
   WorkerDispatchResponse,
 } from "./types.js";
 import { fanOutSchedule } from "./walker.js";
-import type { PgBoss } from "pg-boss";
+import type { Job, JobWithMetadata, PgBoss } from "pg-boss";
 
 export const QUEUE_NAME = "marfa.integrations.local";
 const SCHEDULE_PREFIX = "marfa.integrations.local.schedule.";
@@ -458,10 +458,20 @@ export function createSupervisor(
       const batchSize = config.workerBatchSize ?? 4;
       // `includeMetadata` carries `retryCount`, which the throw-retry rule
       // needs to tell a first delivery from a redelivery.
-      await boss.work<SchedulerEnvelope>(
+      //
+      // No explicit type argument on either `work` call below, and that is
+      // load-bearing rather than style. pg-boss used to carry a dedicated
+      // overload for `includeMetadata: true`; 12.21 folded it into one that
+      // resolves the handler's job type from the options object instead.
+      // Naming a single type argument stops inference for the rest, so the
+      // options type falls back to its default, the handler is typed
+      // without metadata, and `retryCount` reads as missing while still
+      // being delivered. The payload type comes from the handler's own
+      // annotation, which lets both infer.
+      await boss.work(
         QUEUE_NAME,
         { batchSize, pollingIntervalSeconds: 2, includeMetadata: true },
-        async (jobs) => {
+        async (jobs: JobWithMetadata<SchedulerEnvelope>[]) => {
           for (const job of jobs) {
             await dispatchForQueue(job.data, job.retryCount);
           }
@@ -469,10 +479,10 @@ export function createSupervisor(
       );
       // Jobs that exhaust their retries land on the dead-letter queue carrying
       // their original payload; record the terminal failure for the operator.
-      await boss.work<SchedulerEnvelope>(
+      await boss.work(
         DEAD_LETTER_QUEUE,
         { batchSize: 1, pollingIntervalSeconds: 5 },
-        async (jobs) => {
+        async (jobs: Job<SchedulerEnvelope>[]) => {
           for (const job of jobs) {
             await recordTerminalFailure(
               job.data.message,

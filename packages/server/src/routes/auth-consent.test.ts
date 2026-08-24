@@ -1301,8 +1301,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     });
     expect(items.data.length).toBe(1);
     const projectedScopes = items.data[0]?.properties.scopes as
-      | string[]
-      | undefined;
+      string[] | undefined;
     expect(projectedScopes).toEqual(["openid", "core.note:read"]);
     expect(projectedScopes).not.toContain("core.note:write");
   });

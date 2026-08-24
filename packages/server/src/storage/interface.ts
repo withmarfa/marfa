@@ -2227,11 +2227,7 @@ export interface BetterAuthStorageAdapter {
 // ---------------------------------------------------------------------------
 
 export type BulkActionJobStatus =
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "queued" | "in_progress" | "completed" | "failed" | "cancelled";
 
 /** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
  *  envelope (`BulkActionJob` in `@withmarfa/sdk/client`) is a strict subset

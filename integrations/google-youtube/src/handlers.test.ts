@@ -627,8 +627,7 @@ describe("google-youtube handleSchedule", () => {
     );
     expect(summary?.properties?.severity).toBe("info");
     const detail = summary?.properties?.detail as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(detail?.edges_created).toBe(0);
     expect(detail?.edges_refused).toBe(0);
   });
@@ -656,8 +655,7 @@ describe("google-youtube handleSchedule", () => {
     );
     expect(refusalRows.length).toBeGreaterThan(0);
     const detail = refusalRows[0]?.properties?.detail as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect((detail?.error as string | undefined) ?? "").toContain(
       "one-to-many",
     );
@@ -669,8 +667,7 @@ describe("google-youtube handleSchedule", () => {
     );
     expect(summary?.properties?.severity).toBe("warning");
     const summaryDetail = summary?.properties?.detail as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     expect(Number(summaryDetail?.edges_refused)).toBeGreaterThan(0);
   });
 

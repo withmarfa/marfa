@@ -480,8 +480,7 @@ export function integrationRoutes(
       ) {
         const issues = (
           err.details as
-            | { issues?: { key: string; message: string }[] }
-            | undefined
+            { issues?: { key: string; message: string }[] } | undefined
         )?.issues;
         const message = issues?.length
           ? issues.map((i) => i.message).join(". ")

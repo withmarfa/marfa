@@ -94,9 +94,7 @@ export interface UninstallResult {
 export class UninstallError extends Error {
   constructor(
     public readonly code:
-      | "connection_not_found"
-      | "wrong_connection_kind"
-      | "already_revoked",
+      "connection_not_found" | "wrong_connection_kind" | "already_revoked",
     message: string,
   ) {
     super(message);
@@ -261,8 +259,7 @@ async function performUninstallLocked(
   // Step 8: emit system.activity row.
   // -------------------------------------------------------------------
   const integrationRef = connection.properties.integration_ref as
-    | string
-    | undefined;
+    string | undefined;
   const activity = await storage.items.create(
     {
       type: "system.activity",

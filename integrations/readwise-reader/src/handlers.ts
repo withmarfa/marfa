@@ -266,8 +266,7 @@ export async function contentHashForDocument(
 // ---------------------------------------------------------------------------
 
 type ConfigResolution =
-  | { ok: true; config: ReaderConfig }
-  | { ok: false; error: unknown };
+  { ok: true; config: ReaderConfig } | { ok: false; error: unknown };
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -279,8 +278,7 @@ async function resolveConnectionConfig(
     return { ok: false, error: err };
   }
   const props = connection?.properties as
-    | { configuration?: Record<string, unknown> }
-    | undefined;
+    { configuration?: Record<string, unknown> } | undefined;
   const cfg = props?.configuration ?? {};
   return {
     ok: true,

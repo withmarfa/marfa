@@ -31,12 +31,7 @@ export type FieldType =
  * dedicated `FieldType`; they survive normalization as `format`.
  */
 export type FieldFormat =
-  | "url"
-  | "email"
-  | "datetime"
-  | "date"
-  | "bcp47"
-  | "iso3166";
+  "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166";
 
 export interface FieldDefinition {
   type: FieldType;
@@ -181,10 +176,7 @@ export interface TypeSchema {
  * - many-to-many: no uniqueness constraint beyond exact (source, target, type) duplicates.
  */
 export type EdgeCardinality =
-  | "one-to-one"
-  | "one-to-many"
-  | "many-to-one"
-  | "many-to-many";
+  "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
 
 /**
  * What happens to the edge and related items when one of the endpoint items

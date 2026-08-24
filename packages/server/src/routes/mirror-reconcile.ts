@@ -9,10 +9,7 @@
  */
 
 export type ReconcileFieldState =
-  | "same"
-  | "diverged"
-  | "only_yours"
-  | "only_mirror";
+  "same" | "diverged" | "only_yours" | "only_mirror";
 
 export interface ReconcileField {
   key: string;

@@ -125,12 +125,19 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
         await repairSchedules(boss, [job], 120);
         await repairSchedules(boss, [job], 120);
         await repairSchedules(boss, [job], 120);
+        // A time series since 12.24, ordered newest first, so the latest
+        // snapshot is the head. It holds one element unless the boss is
+        // configured to persist them, which it is not here; reading the
+        // tail would work today and silently become the oldest snapshot in
+        // the retention window the moment somebody turns that on.
         const stats = await boss.getQueueStats(queueNameFor(job.name));
+        const latest = stats.at(0);
+        expect(latest).toBeDefined();
         // One live job no matter how many times the chain is re-seeded:
         // the stately policy is the dedupe, not caller discipline.
         // Asserted on queued + active, not totalCount, which also counts
         // completed rows retained for later inspection.
-        expect(stats.queuedCount + stats.activeCount).toBe(1);
+        expect((latest?.queuedCount ?? 0) + (latest?.activeCount ?? 0)).toBe(1);
       } finally {
         await boss.stop({ graceful: false, timeout: 5_000 });
       }

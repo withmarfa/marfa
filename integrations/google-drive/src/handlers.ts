@@ -141,8 +141,7 @@ async function resolveConnectionConfig(
   try {
     const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
-      | { configuration?: Record<string, unknown> }
-      | undefined;
+      { configuration?: Record<string, unknown> } | undefined;
     const cfg = props?.configuration ?? {};
     // The manifest's declared families decide the type: a configured
     // `write_family` names one, and an unconfigured connection gets the

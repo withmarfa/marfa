@@ -33,8 +33,7 @@ export interface RawRequestOptions {
   body?: unknown;
   rawBody?: ArrayBuffer | Uint8Array | string | FormData | Blob;
   query?:
-    | Record<string, string | number | boolean | string[] | undefined>
-    | object;
+    Record<string, string | number | boolean | string[] | undefined> | object;
   headers?: Record<string, string>;
   /** Per-call timeout override (ms). Falls back to transport default. */
   timeoutMs?: number;
@@ -352,8 +351,7 @@ export class HttpTransport {
   private buildUrl(
     path: string,
     query?:
-      | Record<string, string | number | boolean | string[] | undefined>
-      | object,
+      Record<string, string | number | boolean | string[] | undefined> | object,
   ): string {
     const url = `${this.baseUrl}${path}`;
     if (!query) return url;
