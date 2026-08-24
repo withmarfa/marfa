@@ -163,6 +163,57 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     };
   }
 
+  async widenClientScopes(
+    clientId: string,
+    expectedScopes: readonly string[],
+    scopes: readonly string[],
+  ): Promise<boolean> {
+    // Read to compare, then re-state the value read in the UPDATE's own
+    // WHERE, which is what makes this a compare-and-swap rather than a
+    // check followed by a hope. `setConsentScopes` below does the same, and
+    // for the same reason: two authorize requests for one client can be in
+    // flight together, and a registration update can land between the read
+    // and the write. Comparing in application code alone loses that race
+    // silently, last write winning.
+    const rows = await this.db
+      .select({ id: auth_oauth_client.id, scopes: auth_oauth_client.scopes })
+      .from(auth_oauth_client)
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return false;
+    const raw = row.scopes;
+    if (raw === null) return false;
+    const parsed = safeJsonParse<unknown>(
+      raw,
+      null,
+      "auth_oauth_client.scopes",
+    );
+    const held = Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : null;
+    if (held === null) return false;
+    // Ordered, not a set compare: the caller passes the exact array it read
+    // and appends to, so anything else is a row that has moved.
+    if (
+      held.length !== expectedScopes.length ||
+      held.some((s, i) => s !== expectedScopes[i])
+    ) {
+      return false;
+    }
+    const updated = await this.db
+      .update(auth_oauth_client)
+      .set({ scopes: JSON.stringify([...scopes]), updatedAt: new Date() })
+      .where(
+        and(
+          eq(auth_oauth_client.id, row.id),
+          eq(auth_oauth_client.scopes, raw),
+        ),
+      )
+      .returning({ id: auth_oauth_client.id });
+    return updated.length > 0;
+  }
+
   async updateClientLogoutConfig(
     clientId: string,
     postLogoutRedirectUris: readonly string[],

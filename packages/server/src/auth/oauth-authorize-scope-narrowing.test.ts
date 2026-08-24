@@ -57,6 +57,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
+import { buildDefaultPermissionBundles } from "./default-bundles.js";
 
 // Each test signs a user up and in (two password hashes) before it drives a
 // full authorize round trip. That is real work to fit inside the default
@@ -78,6 +79,18 @@ const CALLBACK = "http://localhost:0/callback";
 /** A scope literal for a type this build has genuinely never carried, so
  *  the case cannot quietly stop being tested when the registry changes. */
 const RETIRED_SCOPE = "core.media.tv_episode:read";
+
+/** What the metadata document advertises to every client, which is what a
+ *  stale ceiling catches up to. Narrower than {@link buildAllowedScopes},
+ *  which also carries the wildcards no bundle offers. */
+const bundleScopes = new Set(
+  buildDefaultPermissionBundles().flatMap((bundle) => bundle.scopes),
+);
+
+/** A wildcard is requestable and deliberately not in any bundle, which is
+ *  what makes it the control: the ceiling still governs it after the
+ *  catch-up, so the catch-up is not just "the ceiling stopped mattering". */
+const NON_BUNDLE_SCOPE = "core.*:read";
 
 async function betterAuthSchema(c: TestContext) {
   return c.storage.betterAuthDialect === "pg"
@@ -489,6 +502,153 @@ describe("authorize scope narrowing", () => {
       .split(" ")
       .filter(Boolean);
     expect(carried.sort()).toEqual(["core.note:read", "openid"]);
+  });
+
+  // The defect this file was written against was a client dead-ending. This
+  // is the one underneath it: a client that reaches consent perfectly well
+  // and is simply never granted the newer half of what it asked for.
+  //
+  // Six scopes went missing from a real client that way, all of them types
+  // registered after it had. Nothing reported it, the consent screen went on
+  // offering them, and no grant on either environment held any of the six.
+  it("grants a client a bundle scope for a type registered after it was", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-aged-out@example.com");
+
+    // The production shape: a ceiling frozen before the type landed.
+    expect(bundleScopes.has("core.task:read")).toBe(true);
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { verifier, challenge } = pkcePair();
+    const res = await beginAuthorize(
+      ctx,
+      clientId,
+      "openid core.note:read core.task:read",
+      cookie,
+      challenge,
+    );
+    const { outcome, signedQuery } = classifyAuthorize(res);
+    expect(outcome).toBe("consent");
+
+    // The user approves everything they were offered, so whatever the token
+    // carries is what the server was willing to grant.
+    const code = await acceptConsent(ctx, cookie, signedQuery ?? "", [
+      "openid",
+      "core.note:read",
+      "core.task:read",
+    ]);
+    const tokenRes = await request(ctx.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        client_id: clientId,
+        code_verifier: verifier,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(tokenRes.status).toBe(200);
+    const body = (await tokenRes.json()) as { scope?: string };
+    expect((body.scope ?? "").split(" ").filter(Boolean).sort()).toEqual([
+      "core.note:read",
+      "core.task:read",
+      "openid",
+    ]);
+
+    // And the ceiling itself moved, so the next authorize does not have to
+    // rediscover it. Read back through the store rather than assumed.
+    expect(await storedCeiling(ctx, clientId)).toContain("core.task:read");
+  });
+
+  // The catch-up grows the ceiling by what was asked for, not to the whole
+  // bundle union. The difference is load-bearing: the ceiling is also what a
+  // client gets when it omits `scope`, so a wholesale widening would turn
+  // every no-scope authorize into a request for everything.
+  it("widens by what was requested rather than to the whole bundle set", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-minimal@example.com");
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { challenge } = pkcePair();
+    await beginAuthorize(
+      ctx,
+      clientId,
+      "openid core.note:read core.task:read",
+      cookie,
+      challenge,
+    );
+
+    const after = await storedCeiling(ctx, clientId);
+    expect(after).toEqual(["openid", "core.note:read", "core.task:read"]);
+    // Emphatically not the whole bundle set, which is far larger.
+    expect(after?.length).toBeLessThan(bundleScopes.size);
+  });
+
+  // The control. If the catch-up admitted anything requestable it would not
+  // be a catch-up, it would be the ceiling quietly ceasing to exist.
+  it("leaves the ceiling governing a scope no bundle advertises", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-wildcard@example.com");
+
+    expect(buildAllowedScopes()).toContain(NON_BUNDLE_SCOPE);
+    expect(bundleScopes.has(NON_BUNDLE_SCOPE)).toBe(false);
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { challenge } = pkcePair();
+    const res = await beginAuthorize(
+      ctx,
+      clientId,
+      `openid core.note:read ${NON_BUNDLE_SCOPE}`,
+      cookie,
+      challenge,
+    );
+
+    // Narrowed, not dead-ended, exactly as before: the wildcard costs the
+    // requester the wildcard.
+    expect(classifyAuthorize(res).outcome).toBe("consent");
+    expect(await storedCeiling(ctx, clientId)).toEqual([
+      "openid",
+      "core.note:read",
+    ]);
+  });
+
+  // An empty ceiling is a deliberate statement that this client may have
+  // nothing, and the catch-up must not read it as "not configured yet".
+  it("does not fill in an empty ceiling", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-empty-ceiling@example.com");
+    const clientId = await seedClient(ctx, []);
+
+    const { challenge } = pkcePair();
+    await beginAuthorize(
+      ctx,
+      clientId,
+      "openid core.task:read",
+      cookie,
+      challenge,
+    );
+
+    expect(await storedCeiling(ctx, clientId)).toEqual([]);
+  });
+
+  // A null ceiling already tracks the live allowlist, so writing one would
+  // be replacing a set that follows the registry with a snapshot that does
+  // not — the exact defect, introduced by its own repair.
+  it("does not write a ceiling onto a client that has none", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-null-ceiling@example.com");
+    const clientId = await seedClient(ctx);
+
+    const { challenge } = pkcePair();
+    await beginAuthorize(
+      ctx,
+      clientId,
+      "openid core.task:read",
+      cookie,
+      challenge,
+    );
+
+    expect(await storedCeiling(ctx, clientId)).toBeNull();
   });
 
   it("a client with no stored ceiling tracks the live allowlist", async () => {

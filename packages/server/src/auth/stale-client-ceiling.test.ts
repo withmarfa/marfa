@@ -17,6 +17,12 @@
  *
  * So this seeds the data condition and drives the real flow through to a
  * code landing on the client's redirect URI. Nothing shorter reproduces it.
+ *
+ * **The bar moved once, and the file kept its name.** Narrowing stopped the
+ * dead end but still handed back a grant missing everything the ceiling had
+ * not heard of, which is the same rot one step later. The ceiling now
+ * catches up to the bundle scopes a request names, so the assertion here is
+ * the whole default-on set rather than its intersection with the stale row.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -182,13 +188,26 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
       scope?: string;
     };
     expect(body.access_token).toBeTruthy();
-    // The grant is exactly the intersection — asserted as a set rather than
-    // as "more than nothing". A non-empty check passes just as happily when
-    // 3 of 61 requested scopes survive for the wrong reason, which is not the
-    // property being claimed.
+    // **Nothing is stranded**, which is what this file is named for and is
+    // stronger than what it used to assert.
+    //
+    // It expected exactly the intersection with the stale ceiling, three
+    // scopes of the sixty-odd requested. That was the best the narrowing
+    // could do on its own: a code reached the redirect URI, so the client no
+    // longer dead-ended, but the newer half of the default-on bundle was
+    // silently absent from the grant. Six scopes went missing from a real
+    // client that way and nothing reported it.
+    //
+    // The ceiling now catches up to the bundle scopes a request names, so
+    // the whole default-on set survives. Asserted as a set rather than as
+    // "more than the intersection", because a partial survival is exactly
+    // the defect and would pass a weaker check.
     expect((body.scope ?? "").split(" ").filter(Boolean).sort()).toEqual(
-      [...stale].sort(),
+      [...requested].sort(),
     );
+    // And the seeded staleness was real, so this is not passing because the
+    // fixture stopped being stale.
+    expect(stale.length).toBeLessThan(requested.length);
   });
 
   it("a client with no ceiling keeps the whole default-on set", async () => {
