@@ -10,7 +10,10 @@
  * as something git would resolve loosely.
  */
 import { describe, it, expect } from "vitest";
-import { resolve, dirname } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 // Plain Node ESM, so a workflow step can run it with no build. The sibling
 // declaration file is what lets this import it without casting.
@@ -22,6 +25,7 @@ import {
 
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const REF_PATH = resolve(SERVER_ROOT, "integrations-ref.txt");
+const SCRIPT = resolve(SERVER_ROOT, "scripts/read-integrations-ref.mjs");
 
 const parse = (text: string) => parseIntegrationsRef(text);
 const SHA = "1405b9c1413e27f271eaccbe48e5a20ed9e6b7b0";
@@ -77,5 +81,58 @@ describe("the ref parser", () => {
     expect(() => readIntegrationsRef(resolve(SERVER_ROOT, "no-such"))).toThrow(
       RefError,
     );
+  });
+});
+
+/**
+ * The command-line contract, which is the half the workflows depend on.
+ *
+ * A parser that throws is not the same thing as a build that fails. The
+ * workflow step captures this script's stdout into a variable under
+ * `set -e`, so what has to hold is that a bad file exits non-zero AND
+ * prints no commit: the exit code fails the step, and the empty stdout is
+ * why nothing downstream could quietly carry on if it did not. Asserting
+ * the throw alone would leave the step free to swallow it.
+ */
+describe("running it as the workflows do", () => {
+  function run(refPath: string): { status: number | null; stdout: string } {
+    const r = spawnSync(process.execPath, [SCRIPT, refPath], {
+      encoding: "utf8",
+    });
+    return { status: r.status, stdout: r.stdout.trim() };
+  }
+
+  function withRefFile<T>(body: string, fn: (path: string) => T): T {
+    const dir = mkdtempSync(join(tmpdir(), "marfa-ref-"));
+    try {
+      const path = join(dir, "integrations-ref.txt");
+      writeFileSync(path, body);
+      return fn(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("prints the commit and exits 0 on the committed file", () => {
+    const { status, stdout } = run(REF_PATH);
+    expect(status).toBe(0);
+    expect(stdout).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it.each([
+    ["a file naming nothing", "# only comments\n"],
+    ["a branch", "main\n"],
+    ["an abbreviated SHA", "1405b9c\n"],
+    ["two commits", `${SHA}\n${SHA}\n`],
+  ])("exits non-zero and prints no commit for %s", (_label, body) => {
+    const { status, stdout } = withRefFile(body, run);
+    expect(status).not.toBe(0);
+    expect(stdout).toBe("");
+  });
+
+  it("exits non-zero when the file is not there at all", () => {
+    const { status, stdout } = run(resolve(SERVER_ROOT, "no-such-ref.txt"));
+    expect(status).not.toBe(0);
+    expect(stdout).toBe("");
   });
 });

@@ -70,8 +70,17 @@ jobs:
         # Checkout given an empty ref for another repository takes that
         # repository's default branch and still succeeds, so a reader that
         # returned nothing would build green from an unpinned tree.
+        #
+        # Captured into a variable rather than expanded inside the `echo`,
+        # for the reason the Dockerfile's staging loop gives about the same
+        # parser family: a command substitution that fails while expanding
+        # an argument does not fail the command it was expanding, so the
+        # inline form writes an empty `ref` and exits 0 — the parser
+        # correct, and unreachable.
         run: |
-          echo "ref=$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          ref="$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: withmarfa/integrations
