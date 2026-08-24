@@ -29,6 +29,10 @@ export type {
   CreateWithAttachmentsResult,
   SpaceApiKeySummary,
   SecureStorage,
+  Occurrence,
+  OccurrenceSeriesError,
+  OccurrencesResult,
+  ListOccurrencesOptions,
 } from "./client.js";
 
 // Pagination

@@ -4,7 +4,7 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 
 ## Layout
 
-- `src/client.ts` — the `MarfaClient` class. Each API surface lives in a nested object: `client.items`, `client.metadata`, `client.edges`, `client.blobs`, `client.types`, `client.keys`, `client.webhooks`, `client.connections`, `client.spaces`, `client.admin`, `client.auth`, `client.profile`. Wire types come from `@withmarfa/shared`; the SDK adds ergonomic input/output types where convenient.
+- `src/client.ts` — the `MarfaClient` class. Each API surface lives in a nested object: `client.items`, `client.metadata`, `client.edges`, `client.blobs`, `client.types`, `client.keys`, `client.webhooks`, `client.connections`, `client.spaces`, `client.admin`, `client.auth`, `client.events`, `client.profile`, `client.occurrences`. Wire types come from `@withmarfa/shared`; the SDK adds ergonomic input/output types where convenient.
 - `src/transport.ts` — `HttpTransport` wrapping `fetch` with auth, timeout, and JSON encoding/decoding. Tests inject a custom `fetch` to drive an in-process Hono app.
 - `src/conflict.ts` — auto-merge / manual / callback conflict resolution for `client.items.update` (`auto` is the default; auto strategy resolves non-conflicting fields, surfaces real conflicts via `keep_both_copies` sibling items per the schema's merge_policy).
 - `src/pagination.ts` — `paginate` (stream a cursor-paginated endpoint) and `collect` (drain one into an array, up to a ceiling the caller names). The `listAll*` methods on the client are one-line wrappers over `paginate`; nothing else re-implements the walk.
@@ -15,7 +15,7 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 ## Surface design
 
 - **Wire types are re-exported from `@withmarfa/shared`.** Don't redefine `Item`, `ApiKey`, etc. The SDK adds `ListFilters`, `SearchFilters`, `BulkInput`, `UpdateOptions`, `ConflictStrategy` — input/output sugar that doesn't belong on the server's wire shape.
-- **Methods return the unwrapped resource.** The server returns `{ item: Item, metadata: Metadata }`; the SDK returns `Item` from `client.items.get`. List methods return `PaginatedResult<T>`.
+- **Methods return the unwrapped resource.** The server returns `{ item: Item, metadata: Metadata }`; the SDK returns `Item` from `client.items.get`. List methods return `PaginatedResult<T>`. `client.occurrences.list` is the exception on both counts: it is not paginated, and it returns the whole envelope because `series_errors` reports the series that failed to expand, which unwrapping would discard.
 - **Errors throw, not return.** Every method either resolves with the success type or throws a typed `MarfaError` subclass.
 - **Idempotency-key support is opt-in.** Methods that accept it take an `idempotency_key` option; the transport sets the header.
 
