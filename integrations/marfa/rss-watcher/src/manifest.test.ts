@@ -3,7 +3,7 @@
  * Zod schema in @withmarfa/shared. Belt-and-braces — TypeScript catches
  * shape drift at compile time, the runtime parse catches enum drift
  * and refinement drift the type system can't see (e.g. a manifest name
- * that fails the publisher-namespaced grammar refinement).
+ * that fails the namespace-and-name grammar refinement).
  */
 import { describe, it, expect } from "vitest";
 import { IntegrationManifestSchema } from "@withmarfa/shared";

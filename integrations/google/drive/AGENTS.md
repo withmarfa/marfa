@@ -6,16 +6,16 @@ it was written. Treat it as a record of how things worked here rather than
 as current guidance, and use the move to review, correct, and tighten it
 rather than carry it over unchanged.
 
-Inbound-only Google Drive (v3 API) integration. Fourth instance of
-the `google.*` publisher family. Two ingest modes: `metadata`
-(default — file metadata only) and `all-files` (bytes ingested into
-the Marfa blob store and stamped as `blob_ref` on `core.file` items).
+Inbound-only Google Drive (v3 API) integration, in the `google`
+namespace. Two ingest modes: `metadata` (default — file metadata only)
+and `all-files` (bytes ingested into the Marfa blob store and stamped
+as `blob_ref` on `core.file` items).
 `glob:<pattern>` is declared but still falls through to `metadata`
 semantics pending a separate follow-on.
 
 ## Identity
 
-- Manifest name: **`google/drive`** (publisher `google`).
+- Manifest name: **`google/drive`** — namespace `google`, name `drive`.
 - Target types: `core.file` AND `google.drive.file`.
 - **Direction:** `inbound` only in v1. Outbound writes to Drive
   (uploads, MIME conversions, folder picking, conflict handling) are

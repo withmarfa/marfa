@@ -97,7 +97,7 @@ export interface InstallInput {
   /**
    * Optional id of a pre-existing `system.credential` to reference from
    * the new connection. Multiple integrations of the same upstream
-   * (e.g. `google.calendar` + `google.tasks`) share one credential row
+   * (e.g. `google/calendar` + `google/tasks`) share one credential row
    * instead of duplicating per-integration.
    *
    * Two credential kinds are accepted:
@@ -140,7 +140,7 @@ export interface InstallInput {
    * Motivating case: `upstream_base_url_override` so a connection
    * sharing the shared google.* OAuth credential can point at a
    * per-host upstream (e.g. `people.googleapis.com` for
-   * `google.contacts`). Without this seam, the override has to be
+   * `google/contacts`). Without this seam, the override has to be
    * patched onto the connection after install but before the OAuth
    * dance — fragile.
    *

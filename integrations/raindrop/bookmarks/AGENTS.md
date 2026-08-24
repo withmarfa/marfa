@@ -13,7 +13,8 @@ token-credential install seam. Raindrop's REST API accepts
 
 ## Identity
 
-- Manifest name: **`raindrop/bookmarks`** (publisher `raindrop`).
+- Manifest name: **`raindrop/bookmarks`** — namespace `raindrop`, name
+  `bookmarks`.
 - Target types: `raindrop.raindrop` + `raindrop.collection`.
 - Direction: `read` — inbound only.
 

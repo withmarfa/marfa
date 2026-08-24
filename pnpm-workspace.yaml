@@ -1,13 +1,14 @@
 packages:
   - "packages/*"
-  # An integration directory is `<handle>/<name>`, mirroring the manifest
+  # An integration directory is `<namespace>/<name>`, mirroring the manifest
   # identifier, so the glob spans both levels.
   - "integrations/*/*"
-  # The scaffold is deliberately not `<handle>/<name>`. It stays flat and
+  # The scaffold is deliberately not `<namespace>/<name>`. It stays flat and
   # underscore-prefixed so the runtime's discovery skips it, which also puts
   # it outside the glob above — hence the explicit entry. Without it the
-  # scaffold silently leaves the workspace and stops building, and the first
-  # thing to notice would be the image verification losing its fixture.
+  # scaffold silently leaves the workspace, so `pnpm build` and
+  # `pnpm typecheck` stop covering the thing every contributor copies and
+  # nothing goes red to say so.
   - "integrations/_template"
   # The marfa/inbox integration ships an adjacent Cloudflare Email
   # Worker (`integrations/marfa/inbox/email-worker`) as a nested

@@ -1,12 +1,12 @@
 {
   "id": "system.integration",
   "label": "Integration",
-  "description": "A registered Integration release — the persisted form of an Integration manifest. One item per (publisher.name, version) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. Installed at runtime via POST /integrations (platform credential gated). system.connection.integration references the item id via integration_ref.",
+  "description": "A registered Integration release — the persisted form of an Integration manifest. One item per (`manifest_name`, `manifest_version`) pair: subsequent releases of the same Integration land as sibling items, not in-place updates, so a Connection installed against v1.0 keeps pointing at the manifest it was installed with even after v1.1 lands. The `manifest` field carries the full validated IntegrationManifest blob the install pipeline persists; `manifest_name`, `manifest_version`, `publisher`, and `direction` are denormalized onto the item for cheap query/list. Installed at runtime via POST /integrations (platform credential gated). system.connection.integration references the item id via integration_ref.",
   "version": 2,
   "fields": {
     "manifest_name": {
       "type": "string",
-      "description": "Publisher-namespaced manifest name, e.g. `acme.calendar-sync`. Together with `manifest_version` identifies a unique installable release."
+      "description": "The Integration's identifier, `<namespace>/<name>`, e.g. `acme/calendar-sync`. The namespace is the data the Integration owns rather than whoever wrote it, and an Integration may declare types under that namespace and nowhere else. Together with `manifest_version` identifies a unique installable release."
     },
     "manifest_version": {
       "type": "string",
@@ -14,7 +14,7 @@
     },
     "publisher": {
       "type": "string",
-      "description": "Human-readable publisher name (e.g. `Acme Inc.`). Carried over from manifest.publisher for list-view display."
+      "description": "Handle of whoever wrote the Integration and is accountable for it, e.g. `acme`. A different question from the namespace in `manifest_name`, and often a different answer. Carried over from manifest.publisher for list-view display."
     },
     "summary": {
       "type": "string",

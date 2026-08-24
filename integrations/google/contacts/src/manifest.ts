@@ -1,12 +1,12 @@
 /**
  * Manifest for the Google Contacts bidirectional integration
- * (`google.contacts`).
+ * (`google/contacts`).
  *
- * Third instance of the `google.*` publisher family — sibling to
- * `google.calendar` and `google.tasks`. Same publisher namespace;
- * same OAuth provider credential (reused via `credential_ref` at
- * install time so the stored Web-client config and encrypted secret
- * are shared across every google.* integration).
+ * Sibling to `google/calendar` and `google/tasks` in the `google`
+ * namespace, sharing their OAuth provider credential (reused via
+ * `credential_ref` at install time so the stored Web-client config and
+ * encrypted secret are shared across every integration in the
+ * namespace).
  *
  * People API quirks worth knowing upfront:
  *
@@ -125,7 +125,7 @@ export const INTEGRATION_NAME = GOOGLE_CONTACTS_MANIFEST.name;
  * `https://people.googleapis.com`, not `https://www.googleapis.com`,
  * so the `system.credential` this connection references via
  * `credential_ref` MUST have `upstream_base_url = "https://people.googleapis.com"`
- * — distinct from the shared google.calendar / google.tasks credential
+ * — distinct from the shared google/calendar and google/tasks credential
  * (which uses `https://www.googleapis.com`). Mint a separate
  * People-scoped credential at install time. See `CLAUDE.md` for the
  * substrate-gap rationale + the follow-on plan for per-host overrides
@@ -182,7 +182,7 @@ export const UPDATE_PERSON_FIELDS = [
  *
  * Consumed by:
  *   - The OAuth provider credential's `oauth_default_scope` (reused
- *     from google.calendar / google.tasks via `credential_ref`).
+ *     from google/calendar or google/tasks via `credential_ref`).
  *   - The install flow's call to `POST /connections/:id/oauth/start`
  *     which passes `scope: GOOGLE_CONTACTS_OAUTH_SCOPES_STRING`.
  */

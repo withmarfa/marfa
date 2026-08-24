@@ -88,7 +88,7 @@ async function loadBuiltEntry(path: string): Promise<LoadedIntegration> {
   return { manifest: mod.manifest, registerHandlers: mod.registerHandlers };
 }
 
-/** `dir` is the integration's `<handle>/<name>` directory. */
+/** `dir` is the integration's `<namespace>/<name>` directory. */
 function loadIntegration(dir: string): Promise<LoadedIntegration> {
   return loadBuiltEntry(
     resolve(MONOREPO_ROOT, "integrations", dir, "dist", "local.js"),

@@ -10,7 +10,7 @@
  * the image — not because the loader could not load it, but because
  * nothing would name it.
  *
- * So this replaces the array and nothing else. Every `<handle>/<name>`
+ * So this replaces the array and nothing else. Every `<namespace>/<name>`
  * directory is a candidate; the loaders that call this already refuse
  * anything without a built entry or with an invalid manifest, and they say
  * so when they do. Discovery deliberately does not repeat that judgment —
@@ -19,7 +19,7 @@
  *
  * The two levels mirror the manifest identifier, so a directory states
  * which integration it holds rather than merely being habitually named
- * after it. It is also what lets two publishers each ship a "podcasts"
+ * after it. It is also what lets two namespaces each hold a "podcasts"
  * without colliding, which a flat directory cannot express.
  *
  * Sorted, so a boot log and a catalog reconcile read the same way twice
@@ -36,7 +36,7 @@ import { readdirSync } from "node:fs";
  * and for the same reason. At the root, the server runs in configurations
  * that carry no integrations at all — a SQLite deployment, a test harness
  * pointed at a scratch directory — and in those the honest answer is that
- * there are none, not that the deployment is broken. At a handle, the
+ * there are none, not that the deployment is broken. At a namespace, the
  * directory was there a moment earlier when the root was read, so its
  * absence now is a concurrent removal rather than a fault, and the answer
  * is the same. Anything else that goes wrong reading a directory is a real
@@ -67,36 +67,40 @@ function subdirectories(dir: string): string[] {
       // schedule queue on staging. Reading the directory without this rule
       // would have put it in the installable catalog too.
       //
-      // The scaffold sits at the handle level, flat and underscored, which
-      // is what keeps it invisible here. Nothing depends on it any more
-      // either: the substrate smoke, the worker-entry smoke script and the
-      // image verification all dispatch through the server's own fixture,
-      // which is not under this root at all. The scaffold is the thing an
-      // author copies and nothing else, so this rule is the only thing
-      // standing between it and the catalog.
+      // The scaffold sits at the namespace level, flat and underscored,
+      // which is what keeps it invisible here. Nothing dispatches through it
+      // any more: the substrate smoke, the worker-entry smoke script and the
+      // image verification all use the server's own fixture, which is not
+      // under this root at all.
+      //
+      // Invisible to discovery is not unreferenced, though. The image build
+      // compiles everything under `integrations/` by path, the scaffold
+      // included, so a scaffold that stops compiling takes the image build
+      // and `main` down with it. What this rule buys is that the thing an
+      // author copies never reaches the catalog.
       .filter((e) => !e.name.startsWith(".") && !e.name.startsWith("_"))
       .map((e) => e.name)
   );
 }
 
 /**
- * The `<handle>/<name>` integration directories under `integrationsRoot`,
+ * The `<namespace>/<name>` integration directories under `integrationsRoot`,
  * sorted.
  *
- * A handle holding no integration directory contributes nothing, whether
+ * A namespace holding no integration directory contributes nothing, whether
  * it is empty, holds only loose files, or holds only scaffolding. That is
- * the same non-judgment the rest of this file makes: an empty handle is
- * not evidence of a fault, and a handle holding files rather than
+ * the same non-judgment the rest of this file makes: an empty namespace is
+ * not evidence of a fault, and a namespace holding files rather than
  * directories names no candidate for a loader to reject.
  */
 export function discoverIntegrationDirs(integrationsRoot: string): string[] {
   const names: string[] = [];
-  for (const handle of subdirectories(integrationsRoot)) {
-    for (const leaf of subdirectories(join(integrationsRoot, handle))) {
+  for (const namespace of subdirectories(integrationsRoot)) {
+    for (const leaf of subdirectories(join(integrationsRoot, namespace))) {
       // Joined with a literal slash rather than the platform separator:
       // this is the manifest's identifier, which reads the same on every
       // platform, and callers resolve it back into a path.
-      names.push(`${handle}/${leaf}`);
+      names.push(`${namespace}/${leaf}`);
     }
   }
   return names.sort();

@@ -6,9 +6,9 @@ it was written. Treat it as a record of how things worked here rather than
 as current guidance, and use the move to review, correct, and tighten it
 rather than carry it over unchanged.
 
-Inbound-only YouTube sync via the YouTube Data API v3. Fourth
-instance of the `google.*` publisher family — sibling to
-`google/calendar`, `google/tasks`, and `google/contacts`.
+Inbound-only YouTube sync via the YouTube Data API v3. In the `google`
+namespace, sibling to `google/calendar`, `google/tasks`,
+`google/contacts` and `google/drive`.
 
 Schedule-only — YouTube Data API has no push-notification surface for
 the liked-videos / subscriptions / playlists collections this
@@ -17,7 +17,8 @@ quota ceiling.
 
 ## Identity
 
-- Manifest name: **`google/youtube`** (publisher `google`).
+- Manifest name: **`google/youtube`** — namespace `google`, name
+  `youtube`.
 - Target types: `google.youtube.video`, `google.youtube.playlist`,
   `google.youtube.channel`. Default written type for videos is
   `google.youtube.video` — when a future ticket adds a `core.media`

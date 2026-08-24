@@ -2,13 +2,14 @@
 
 **This file is moving.** It goes with the integrations into their own repository, and it hasn't yet been reviewed against decisions made since it was written. Treat it as a record of how things worked here rather than as current guidance, and use the move to review, correct, and tighten it rather than carry it over unchanged.
 
-Per-integration packages implementing the manifest contract from `@withmarfa/shared/integration-manifest.ts`. Each `<handle>/<name>` directory is a self-contained npm workspace, nested so the directory mirrors the manifest identifier; the runtime substrate loads them through the patterns below.
+Per-integration packages implementing the manifest contract from `@withmarfa/shared/integration-manifest.ts`. Each `<namespace>/<name>` directory is a self-contained npm workspace, nested so the directory mirrors the manifest identifier; the runtime substrate loads them through the patterns below.
 
 ## Manifest contract
 
 - **Every integration ships `src/manifest.ts`** exporting an `IntegrationManifest`. Sibling `src/manifest.test.ts` parses it through `IntegrationManifestSchema` so drift is caught at build time, not first install.
 - **Schema source of truth** lives in `packages/shared/src/integration-manifest.ts`; valid fields are documented there in narrative comments.
-- **`name` is `<handle>/<name>`** — dots name data, the slash names an installable, so an integration can never be mistaken for a type. Integrations from one upstream share a handle (`google/calendar`, `google/tasks`) and so reuse one OAuth credential. The platform's own live under `marfa/`. **The directory is the same two levels**, so the identifier is stated by the tree rather than merely habitual, and two publishers can each ship a `podcasts` without colliding.
+- **`name` is `<namespace>/<name>`** — dots name data, the slash names an installable, so an integration can never be mistaken for a type. Integrations reading one upstream share a namespace (`google/calendar`, `google/tasks`) and so reuse one OAuth credential. The platform's own live under `marfa/`. **The directory is the same two levels**, so the identifier is stated by the tree rather than merely habitual, and two namespaces can each hold a `podcasts` without colliding.
+- **The namespace is the data the integration owns, not who wrote it.** It is what lets `google/calendar` declare types under `google.*` and nowhere else, and a reserved root is off limits to every manifest whatever its namespace. Who wrote the code and is accountable for it is the manifest's separate `publisher` field. Marfa writes every integration in this tree, and none of them is written by the service its namespace names.
 
 ## Handler shape
 
@@ -94,7 +95,7 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 
 ## In-tree integrations
 
-**The server does not read this list, and it does not read any list.** It reads the directory: every `<handle>/<name>` directory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, at either level, which is why `_template` sits flat where a handle would go and never ships.
+**The server does not read this list, and it does not read any list.** It reads the directory: every `<namespace>/<name>` directory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, at either level, which is why `_template` sits flat where a namespace would go and never ships.
 
 So this is documentation rather than a source of truth, kept because the one-line descriptions are the part a directory scan cannot produce. **It is checked against the directory**, so a new integration nobody wrote a line for fails the suite, and so does a bullet for something that no longer exists.
 

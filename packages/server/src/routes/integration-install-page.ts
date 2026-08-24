@@ -44,8 +44,8 @@ interface ConsentParams {
    * set the form renders a hidden `credential_ref` input so the POST
    * carries it through to the install pipeline. The Marfa side
    * appends `?credential_ref=…` when an existing OAuth provider
-   * credential should be reused (e.g. installing `google.tasks` onto
-   * an account that already authorized `google.calendar`). When
+   * credential should be reused (e.g. installing `google/tasks` onto
+   * an account that already authorized `google/calendar`). When
    * absent the form omits the field and the install pipeline behaves
    * as today (per-Connection credential, no reuse).
    *

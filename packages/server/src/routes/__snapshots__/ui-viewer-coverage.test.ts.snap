@@ -3608,16 +3608,16 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Install withmarfa.rss-watcher</title>
+  <title>Install marfa/rss-watcher</title>
   <link rel="stylesheet" href="/auth/static/auth.css">
 </head>
 <body>
-  <main class="card" aria-label="Install withmarfa.rss-watcher">
+  <main class="card" aria-label="Install marfa/rss-watcher">
     
     <div class="apphead">
-      <span class="logo" aria-hidden="true">W</span>
+      <span class="logo" aria-hidden="true">M</span>
       <div>
-        <div class="row__title">withmarfa.rss-watcher</div>
+        <div class="row__title">marfa/rss-watcher</div>
         <div class="row__meta">Marfa integration</div>
       </div>
     </div>
@@ -3650,7 +3650,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       
       <label class="field" style="margin-top:16px">
         <span class="field__label">Connection label</span>
-        <input type="text" name="label" value="withmarfa.rss-watcher 1.0.0">
+        <input type="text" name="label" value="marfa/rss-watcher 1.0.0">
       </label>
       <p class="lsec" style="margin-top:16px">Configuration</p><label class="field"><span class="field-name">feed_url *</span><span class="field-desc">The Atom or RSS feed to poll.</span><input type="text" name="config_feed_url" value="" required></label>
       <div class="actions">
@@ -3670,16 +3670,16 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Install withmarfa.rss-watcher</title>
+  <title>Install marfa/rss-watcher</title>
   <link rel="stylesheet" href="/auth/static/auth.css">
 </head>
 <body>
-  <main class="card" aria-label="Install withmarfa.rss-watcher">
+  <main class="card" aria-label="Install marfa/rss-watcher">
     
     <div class="apphead">
-      <span class="logo" aria-hidden="true">W</span>
+      <span class="logo" aria-hidden="true">M</span>
       <div>
-        <div class="row__title">withmarfa.rss-watcher</div>
+        <div class="row__title">marfa/rss-watcher</div>
         <div class="row__meta">Marfa integration</div>
       </div>
     </div>
@@ -3712,7 +3712,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       
       <label class="field" style="margin-top:16px">
         <span class="field__label">Connection label</span>
-        <input type="text" name="label" value="withmarfa.rss-watcher 1.0.0">
+        <input type="text" name="label" value="marfa/rss-watcher 1.0.0">
       </label>
       <p class="lsec" style="margin-top:16px">Configuration</p><label class="field"><span class="field-name">feed_url *</span><span class="field-desc">The Atom or RSS feed to poll.</span><input type="text" name="config_feed_url" value="" required></label>
       <div class="actions">

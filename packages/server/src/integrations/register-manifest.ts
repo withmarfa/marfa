@@ -64,16 +64,20 @@ export async function findCatalogRow(
  * Validate and register the type schemas a manifest brings with it.
  *
  * Ownership is enforced here rather than trusted: a manifest may declare
- * types under its own publisher handle and nowhere else, and never under a
+ * types under its own namespace and nowhere else, and never under a
  * reserved root, because the platform's own vocabulary is seeded rather
  * than registered. A package that could smuggle a type in through its
  * manifest would walk straight around the registration ownership rule.
+ *
+ * The namespace is the identifier's first segment, not the `publisher`
+ * field. The two answer different questions and routinely differ, so
+ * reading the gate off `publisher` would check the wrong string.
  */
 function validateDeclaredTypes(
   manifest: IntegrationManifest,
   spaceId: string | undefined,
 ): TypeSchema[] {
-  const handle = manifest.name.split("/")[0] ?? "";
+  const namespace = manifest.name.split("/")[0] ?? "";
   const declaredTypes: TypeSchema[] = [];
   for (const raw of manifest.type_schemas ?? []) {
     const validated = validateTypeSchema(raw, spaceId);
@@ -91,10 +95,10 @@ function validateDeclaredTypes(
         `Reserved namespace: "${root}.*" is platform-shipped, so a manifest cannot declare "${validated.data.id}". Reserved-root types are seeded, never registered.`,
       );
     }
-    if (root !== handle) {
+    if (root !== namespace) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `Publisher namespace: ${manifest.name} may declare types under "${handle}.*" only; "${validated.data.id}" is outside it`,
+        `Integration namespace: ${manifest.name} may declare types under "${namespace}.*" only; "${validated.data.id}" is outside it`,
       );
     }
     declaredTypes.push(validated.data);

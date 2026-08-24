@@ -11,8 +11,8 @@ install seam with a non-default `auth_scheme`.
 
 ## Identity
 
-- Manifest name: **`readwise/reader`** (publisher `readwise`,
-  identifier `reader`).
+- Manifest name: **`readwise/reader`** — namespace `readwise`, name
+  `reader`.
 - Target type: `readwise.document`, and only that. The bridge filters
   item events to the manifest's target types; the handler keeps its own
   type check as the defensive layer.
@@ -27,7 +27,7 @@ different rate buckets, and the only documented bridge between them is
 `external_id` on a v2 book, which is set only for books that came from
 Reader in the first place.
 
-They share a publisher and can share one `api_token` credential, since
+They share a namespace and can share one `api_token` credential, since
 both live under `readwise.io`. Nothing else is shared, and neither can
 be derived from the other.
 

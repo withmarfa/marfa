@@ -1,10 +1,10 @@
 /**
- * Manifest for the Readwise Reader integration (`readwise.reader`).
+ * Manifest for the Readwise Reader integration (`readwise/reader`).
  *
  * Reader is a separate product from Readwise Highlights and speaks a
  * separate API (`/api/v3/`, documents) from the `/api/v2/export/`
- * surface the `readwise.highlights` integration polls. They share a
- * publisher and can share one credential, because both live under
+ * surface the `readwise/highlights` integration polls. They share a
+ * namespace and can share one credential, because both live under
  * `readwise.io`, but nothing else — different objects, different rate
  * buckets, different direction.
  *

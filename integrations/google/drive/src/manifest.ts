@@ -1,10 +1,10 @@
 /**
- * Manifest for the Google Drive integration (`google.drive`).
+ * Manifest for the Google Drive integration (`google/drive`).
  *
- * Fourth instance of the `google.*` publisher family. INBOUND-only
- * in v1 — outbound writes to Drive (file uploads, MIME conversions,
- * folder picking, conflict handling) are a separate follow-on
- * ticket. The manifest's `direction: "inbound"` reflects that;
+ * In the `google` namespace. INBOUND-only in v1 — outbound writes to
+ * Drive (file uploads, MIME conversions, folder picking, conflict
+ * handling) are a separate follow-on. The manifest's
+ * `direction: "inbound"` reflects that;
  * flipping to `"both"` is the follow-on's first change.
  *
  * Drive v3 specifics:

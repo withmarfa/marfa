@@ -927,7 +927,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
         render: () =>
           renderInstallConsentScreen({
             integrationId: "01999a3f-0000-4ec1-b378-000000000002",
-            manifestName: "withmarfa.rss-watcher",
+            manifestName: "marfa/rss-watcher",
             manifestVersion: "1.0.0",
             publisher: "Marfa",
             summary: "Polls a feed and lands new entries as bookmarks.",
@@ -950,7 +950,7 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
         render: () =>
           renderInstallConsentScreen({
             integrationId: "01999a3f-0000-4ec1-b378-000000000002",
-            manifestName: "withmarfa.rss-watcher",
+            manifestName: "marfa/rss-watcher",
             manifestVersion: "1.0.0",
             publisher: "Marfa",
             summary: "Polls a feed and lands new entries as bookmarks.",

@@ -53,7 +53,7 @@ function documentedDirs(): string[] {
  * Every integration named in the root AGENTS.md's direction bullets.
  *
  * The bullets only, not the paragraph introducing them: that backticks
- * `integrations/`, `<handle>/<name>` and `_template`, none of which is an
+ * `integrations/`, `<namespace>/<name>` and `_template`, none of which is an
  * integration, and two of which carry a slash.
  */
 function rootAgentsNames(): string[] {

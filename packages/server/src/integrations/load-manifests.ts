@@ -33,9 +33,9 @@ import { validateManifest } from "./validate-manifest.js";
 import { discoverIntegrationDirs } from "./discover.js";
 
 export interface InTreeManifest {
-  /** Manifest `name`, `<handle>/<name>`. */
+  /** Manifest `name`, `<namespace>/<name>`. */
   name: string;
-  /** Directory under `integrations/`, which is `<handle>/<name>` and so
+  /** Directory under `integrations/`, which is `<namespace>/<name>` and so
    *  the same string as `name`. Kept distinct because a deployment can
    *  install into a directory that disagrees, and the skip reasons have to
    *  name the directory that was read rather than the manifest it claimed. */

@@ -1,11 +1,10 @@
 /**
  * Manifest for the Google YouTube inbound integration
- * (`google.youtube`).
+ * (`google/youtube`).
  *
- * Fourth instance of the `google.*` publisher family — sibling to
- * `google.calendar`, `google.tasks`, and `google.contacts`. Same
- * publisher namespace, same OAuth provider credential (reused via
- * `credential_ref` at install time).
+ * Sibling to `google/calendar`, `google/tasks` and `google/contacts`
+ * in the `google` namespace, sharing their OAuth provider credential
+ * (reused via `credential_ref` at install time).
  *
  * Consumer surface only (v1): liked videos, subscriptions, and
  * user-created playlists. Inbound-only (`direction: "read"`); the
@@ -104,7 +103,7 @@ export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   bidirectional_handling: {
     // Inbound-only — echo / lag windows aren't meaningfully exercised,
     // but the schema requires them. Minimal values match the
-    // raindrop.bookmarks pattern (another inbound-only integration).
+    // raindrop/bookmarks pattern (another inbound-only integration).
     echo_ttl_seconds: 1,
     lag_window_seconds: 1,
     tombstone_mapping: "ignore",
@@ -126,7 +125,7 @@ export const INTEGRATION_NAME = GOOGLE_YOUTUBE_MANIFEST.name;
 /**
  * YouTube Data API v3 base path — relative under the connection's
  * `upstream_base_url` (`https://www.googleapis.com`, shared with the
- * other google.* integrations).
+ * other integrations in the `google` namespace).
  */
 export const YOUTUBE_API_BASE = "/youtube/v3";
 

@@ -1,12 +1,11 @@
 /**
  * Manifest for the Google Tasks bidirectional integration
- * (`google.tasks`).
+ * (`google/tasks`).
  *
- * Second instance of the `google.*` publisher family — sibling to
- * `google.calendar`. Same publisher namespace; same OAuth provider
- * credential (reused via `credential_ref` at install time so the
- * stored Web-client config and encrypted secret are shared across
- * every google.* integration).
+ * Sibling to `google/calendar` in the `google` namespace, and shares
+ * its OAuth provider credential (reused via `credential_ref` at
+ * install time so the stored Web-client config and encrypted secret
+ * are shared across every integration in the namespace).
  *
  * Substrate proof point. Tasks is the simplest Google productivity API:
  *
@@ -132,9 +131,9 @@ export const TASKS_API_BASE = "/tasks/v1";
  * Consumed by:
  *   - The OAuth provider credential (`oauth_default_scope` on the
  *     `system.credential` of kind `oauth_token`) reused via
- *     `credential_ref` from the google.calendar install. The shared
- *     credential's default scope is a union of every google.*
- *     integration's recommended scopes.
+ *     `credential_ref` from the google/calendar install. The shared
+ *     credential's default scope is the union of the recommended
+ *     scopes of every integration in the `google` namespace.
  *   - The install flow's call to `POST /connections/:id/oauth/start`
  *     which passes `scope: GOOGLE_TASKS_OAUTH_SCOPES_STRING` to the
  *     authorize URL.

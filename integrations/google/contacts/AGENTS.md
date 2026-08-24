@@ -6,14 +6,15 @@ it was written. Treat it as a record of how things worked here rather than
 as current guidance, and use the move to review, correct, and tighten it
 rather than carry it over unchanged.
 
-Bidirectional sync between Google Contacts (People API) and Marfa.
-Third instance of the `google.*` publisher family. Schedule-only on
-the inbound side because the People API does not publish a
-`channels.watch` surface for the `connections` collection.
+Bidirectional sync between Google Contacts (People API) and Marfa. In
+the `google` namespace. Schedule-only on the inbound side because the
+People API does not publish a `channels.watch` surface for the
+`connections` collection.
 
 ## Identity
 
-- Manifest name: **`google/contacts`** (publisher `google`).
+- Manifest name: **`google/contacts`** — namespace `google`, name
+  `contacts`.
 - Target types: `core.entity.person` AND `google.contacts.contact`.
   Default written type is `google.contacts.contact` (upstream
   fidelity); install-time configuration can switch to

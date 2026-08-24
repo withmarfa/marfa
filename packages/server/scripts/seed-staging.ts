@@ -10,7 +10,7 @@
  * It registers via `POST /integrations` (platform-credential gated), and
  * takes the same union the boot reconcile does, from two places:
  *
- *   - **Integrations**, imported from `integrations/<handle>/<name>/src/manifest.ts`.
+ *   - **Integrations**, imported from `integrations/<namespace>/<name>/src/manifest.ts`.
  *     Source, which is the point of running this by hand.
  *   - **Client manifests**, from `src/integrations/client-manifests.ts`.
  *     A client is not installed into any directory, so there is no

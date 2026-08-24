@@ -83,7 +83,7 @@ const InstallRequestSchema = z.object({
   /** Optional id of an existing `system.credential` (kind `oauth_token`)
    *  to reference instead of provisioning a fresh provider credential.
    *  Lets multiple integrations of the same upstream (e.g.
-   *  `google.calendar` + `google.tasks`) share one OAuth client config.
+   *  `google/calendar` + `google/tasks`) share one OAuth client config.
    *  Create such credentials via `POST /credentials/oauth-provider`. */
   credential_ref: z.string().optional(),
   /** Optional seed for the new connection's `properties.configuration`

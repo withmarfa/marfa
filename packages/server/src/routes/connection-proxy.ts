@@ -207,8 +207,8 @@ async function readCredentialConfig(
  *
  * Per-connection rather than per-credential so multiple integrations
  * sharing one OAuth credential can target different upstream hosts. The
- * canonical case: google.contacts uses `https://people.googleapis.com`
- * while google.calendar / drive / tasks share the same Google OAuth
+ * canonical case: google/contacts uses `https://people.googleapis.com`
+ * while google/calendar, google/drive and google/tasks share the same Google OAuth
  * credential with `https://www.googleapis.com`. Per-connection is the
  * right scope because the override is part of the install-time decision,
  * not the credential's identity.
