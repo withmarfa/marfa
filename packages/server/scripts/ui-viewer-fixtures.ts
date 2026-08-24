@@ -511,6 +511,22 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 granted_at: "2026-04-11T08:00:00.000Z",
                 last_used_at: null,
               },
+              {
+                id: "grant-3",
+                client_name: "Standup Bot",
+                client_id: "standup-client",
+                scopes: ["openid", "profile", "email"],
+                granted_at: "2026-06-02T08:00:00.000Z",
+                last_used_at: "2026-06-19T07:45:00.000Z",
+              },
+              {
+                id: "grant-4",
+                client_name: "Archived Importer",
+                client_id: "importer-client",
+                scopes: [],
+                granted_at: "2026-01-14T08:00:00.000Z",
+                last_used_at: null,
+              },
             ],
             sessions: [
               {
@@ -619,7 +635,19 @@ const AUTH_SCREENS: GalleryScreen[] = [
             ],
             newKey: "marfa_k1_examplekeyvaluethatisshownonce0000",
             newKeyLabel: "Personal laptop",
-            newKeyAccess: "read and write your notes and tasks",
+            newKeyAccess: "read and write your content",
+          }),
+      },
+      {
+        id: "reveal-no-content",
+        label: "New key reveal, no content",
+        render: () =>
+          renderKeysPage({
+            email: "jonah@example.com",
+            keys: [],
+            newKey: "marfa_k1_examplekeyvaluethatisshownonce0001",
+            newKeyLabel: "Type registrar",
+            newKeyAccess: "reach none of your content",
           }),
       },
       {

@@ -347,3 +347,185 @@ describe("self-serve keys can fill their own space", () => {
     expect(minted?.role).toBe("member");
   });
 });
+
+/**
+ * What the console form mints on the edge axis is decided by what the owner
+ * picked, and picking is done in permissions rather than in characters.
+ *
+ * The form's own submissions are content permissions and a full-access
+ * switch, but the handler accepts any valid permission the request carries,
+ * and it decided the key's edge reach by asking whether some literal ended in
+ * `:write`. `metadata.types:write` ends that way and registers a type;
+ * `edge.parent-of:write` ends that way and names one relation. Neither says
+ * the owner asked for write across the space's whole edge graph, and both
+ * produced a key holding exactly that.
+ */
+describe("a self-serve key's edge reach follows the permissions picked", () => {
+  async function ownerCookie(tc: TestContext, email: string): Promise<string> {
+    await request(tc.app, "POST", "/auth/sign-up/email", {
+      body: { email, password: "correct horse battery", name: "Owner" },
+      headers: { origin: ORIGIN },
+    });
+    await markEmailVerified(tc.storage, email);
+    const cookie = await signIn(tc, email, "correct horse battery");
+    expect(cookie).toBeTruthy();
+    return cookie ?? "";
+  }
+
+  async function mint(
+    tc: TestContext,
+    cookie: string,
+    label: string,
+    scopes: string[],
+  ): Promise<Record<string, string> | undefined> {
+    const res = await request(tc.app, "POST", "/auth/keys", {
+      form: { label, scopes },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(200);
+    const minted = (await tc.storage.keys.list()).find(
+      (k) => k.label === label,
+    );
+    expect(minted).toBeTruthy();
+    return minted?.edge_permissions;
+  }
+
+  it("does not read a metadata permission as a content write", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "metadata-scope@example.com");
+
+    // Read-only on notes, plus the ability to register a type. Nothing here
+    // asks to change anything, and the key held write on every edge type in
+    // the space, including the ones the space registers later.
+    const edges = await mint(ctx, cookie, "type registrar", [
+      "core.note:read",
+      "metadata.types:write",
+    ]);
+    expect(edges).toEqual({ "*": "read" });
+  });
+
+  it("keeps an edge permission to the relation it names", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "one-edge@example.com");
+
+    const edges = await mint(ctx, cookie, "one relation", [
+      "edge.parent-of:write",
+    ]);
+    expect(edges).toEqual({ "parent-of": "write" });
+  });
+
+  // The wildcard and a named relation both survive only when the named one is
+  // the wider of the two, and that branch has to be exercised from both
+  // sides. `edgePermissionCovers` resolves an exact edge type ahead of any
+  // pattern, so a `parent-of` entry dropped here would leave the wildcard
+  // deciding it, and a `parent-of` entry kept at the wrong level would deny
+  // writes on the single relation the owner actually named.
+  it("keeps a named relation that outranks the mirrored wildcard", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "named-beats-mirror@example.com");
+
+    const edges = await mint(ctx, cookie, "reader plus one relation", [
+      "core.note:read",
+      "edge.parent-of:write",
+    ]);
+    expect(edges).toEqual({ "*": "read", "parent-of": "write" });
+  });
+
+  it("keeps a named relation that outranks a named wildcard", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "named-beats-named@example.com");
+
+    const edges = await mint(ctx, cookie, "edge reader plus one writer", [
+      "edge.*:read",
+      "edge.parent-of:write",
+    ]);
+    expect(edges).toEqual({ "*": "read", "parent-of": "write" });
+  });
+
+  it("grants nothing on the edge axis when nothing was picked", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "no-content@example.com");
+
+    const edges = await mint(ctx, cookie, "registrar only", [
+      "metadata.types:write",
+    ]);
+    expect(edges).toEqual({});
+  });
+
+  // The other half, and the reason the wildcard is here at all: a key scoped
+  // to content the owner can change has to be able to build the relations
+  // between it, including relation types the space registers later.
+  it("still mirrors a content write across every edge type", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "content-write@example.com");
+
+    const edges = await mint(ctx, cookie, "seeder", ["core.note:write"]);
+    expect(edges).toEqual({ "*": "write" });
+  });
+
+  it("mirrors a content read as edge read, not edge write", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "content-read@example.com");
+
+    const edges = await mint(ctx, cookie, "reader", ["core.note:read"]);
+    expect(edges).toEqual({ "*": "read" });
+  });
+
+  // The reveal page names what the key can do, and the fallback said "can
+  // access your content" for a key whose content permissions are empty.
+  it("tells the owner when a minted key reaches none of their content", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "no-content-copy@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/keys", {
+      form: { label: "registrar", scopes: ["metadata.types:write"] },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("reach none of your content");
+    expect(html).not.toContain("access your content");
+  });
+
+  it("gives full access the whole edge graph", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const cookie = await ownerCookie(ctx, "full-edges@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/keys", {
+      form: { label: "migration", full_access: "on" },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(200);
+    const minted = (await ctx.storage.keys.list()).find(
+      (k) => k.label === "migration",
+    );
+    expect(minted?.edge_permissions).toEqual({ "*": "write" });
+  });
+});

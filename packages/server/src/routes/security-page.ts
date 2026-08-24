@@ -20,6 +20,7 @@
  * Uses the shared auth-page layout, wide variant.
  */
 
+import { parseScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
 
@@ -82,14 +83,65 @@ function formatDate(iso: string): string {
   return `${String(d.getUTCDate())} ${month} ${String(d.getUTCFullYear())}`;
 }
 
-/** Plain-English summary of what a grant's scopes let an app do, so the
- *  user never sees raw scope literals like `core.*:read`. */
+/** The widest thing this page says about an app, and what a permission family
+ *  this build cannot classify falls back to. */
+const READ_AND_WRITE_SUMMARY = "Can read and write your data";
+
+/**
+ * Plain-English summary of what a grant lets an app do, so the person
+ * deciding whether to revoke it never has to read a permission literal.
+ *
+ * Asked of the parser, not of the characters. A substring test reads
+ * `metadata.types:write` and `edge.parent-of:write` as the same permission
+ * while they say different things, sees nothing at all in a literal it does
+ * not recognize, and this one line is most of what a person acts on.
+ *
+ * Two things resist classification, and they are answered in opposite
+ * directions because they are opposite situations. A literal the parser
+ * refuses is enforced as nothing, since every projection onto the permission
+ * maps drops it, so the narrow reading is not a guess but the fact. A family
+ * this build has never heard of may authorize a great deal, and there is
+ * nothing to base a narrow claim on, so it reads as the widest. Overstating
+ * an app's reach costs a revoke nobody needed; understating it loses the
+ * decision this page exists for.
+ */
 function scopeSummary(scopes: readonly string[]): string {
-  const hasWrite = scopes.some((s) => s.includes(":write"));
-  const hasRead = scopes.some((s) => s.includes(":read"));
-  if (hasWrite) return "Can read and write your data";
-  if (hasRead) return "Can read your data";
-  return "Limited access";
+  let readsSomething = false;
+  let identifiesYou = false;
+
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    // Contributes nothing, because it grants nothing: the auth middleware
+    // builds every permission map through the same parser and drops what it
+    // cannot read. Reporting the widest here would flip a whole page of
+    // grants to "read and write" the day the pattern grammar tightens, for
+    // permissions that by then enforce as nothing.
+    if (!parsed) continue;
+    switch (parsed.kind) {
+      case "type":
+      case "edge":
+      case "metadata":
+        if (parsed.operation === "write") return READ_AND_WRITE_SUMMARY;
+        readsSomething = true;
+        break;
+      case "oidc":
+        identifiesYou = true;
+        break;
+      default: {
+        // Compile-time exhaustiveness check. A family added to the grammar
+        // decides here what it lets an app do, and reads as the widest until
+        // somebody does. Unlike the unparseable literal above, this one may
+        // carry real authority.
+        const _exhaustive: never = parsed.kind;
+        void _exhaustive;
+        return READ_AND_WRITE_SUMMARY;
+      }
+    }
+  }
+
+  if (readsSomething) return "Can read your data";
+  if (identifiesYou) return "Can see who you are, nothing else";
+  return "No access to your data";
 }
 
 /** Trim a UA string to a hint. Real device parsing is a yak-shave;
