@@ -43,10 +43,10 @@
     "@withmarfa/server": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "@tanstack/db": "^0.8.0"
+    "@tanstack/db": "^0.8.2"
   },
   "peerDependencies": {
-    "@tanstack/db": "^0.8.0"
+    "@tanstack/db": "^0.8.2"
   },
   "peerDependenciesMeta": {
     "@tanstack/db": {
