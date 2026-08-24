@@ -921,9 +921,9 @@ async function main() {
         );
       }
       // The shared pg-boss instance always exists on this branch: it is
-      // constructed for every Postgres deployment above (with the
-      // direct-endpoint and bounded-pool handling that used to live
-      // here), and this block is unreachable on SQLite.
+      // constructed for every Postgres deployment above (direct-endpoint
+      // and bounded-pool handling included), and this block is unreachable
+      // on SQLite.
       if (!boss) {
         throw new Error(
           "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",

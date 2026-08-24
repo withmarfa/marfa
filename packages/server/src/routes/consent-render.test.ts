@@ -385,11 +385,11 @@ describe("renderConsentScreen — error banner", () => {
 /**
  * A group's summary describes what is in that group.
  *
- * Every group used to render its bundle's fixed description, so a request
- * for three scopes and a request for every type produced identical copy:
- * "Your notes, tasks, bookmarks, files, media, and more." The groups are
- * collapsed by default, so that sentence is what most people read and act
- * on, and it named things the app had never asked for.
+ * The groups are collapsed by default, so that sentence is what most people
+ * read and act on. A fixed per-bundle description would give a request for
+ * three scopes and a request for every type the same copy, "Your notes,
+ * tasks, bookmarks, files, media, and more," naming things the app never
+ * asked for.
  *
  * The failure is symmetric, which is why it matters: a cautious person
  * refuses an app that wanted very little, and a trusting one learns the copy
@@ -440,8 +440,8 @@ describe("group summaries describe the request", () => {
     const joined = summaries.join(" ");
     expect(joined).toContain("Notes");
     expect(joined).toContain("Tasks");
-    // The exact things the old fixed copy promised and this request did not
-    // ask for.
+    // The exact things a fixed per-bundle description would name and this
+    // request does not ask for.
     expect(joined).not.toContain("Bookmarks");
     expect(joined).not.toContain("Files");
   });

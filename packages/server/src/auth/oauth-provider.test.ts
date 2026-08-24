@@ -100,10 +100,10 @@ describe("buildAllowedScopes", () => {
 describe("a bundle is not a way around the scope grammar", () => {
   // Every other literal in the allowlist is assembled here from a registry
   // key, so it is well-formed by construction. Bundle scopes are the one
-  // input that is not: the operator override parses arbitrary JSON, and this
-  // loop used to add whatever it found. A literal admitted that way is
-  // requestable, survives the authorize narrowing, and lands in a token as a
-  // grant no permission map will ever carry and no route will ever check.
+  // input that is not: the operator override parses arbitrary JSON. A
+  // malformed literal admitted from it would be requestable, survive the
+  // authorize narrowing, and land in a token as a grant no permission map
+  // will ever carry and no route will ever check.
   const bundleOf = (scopes: string[]) => [
     {
       id: "operator",

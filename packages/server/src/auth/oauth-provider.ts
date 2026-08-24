@@ -908,8 +908,8 @@ async function narrowAuthorizeScopes(
         }
       } catch (err) {
         // A failed catch-up is not a failed authorize. The narrowing below
-        // still runs against the ceiling as it stands, which is what
-        // happened before this existed.
+        // still runs against the ceiling as it stands, which is the ordinary
+        // path when there is nothing to catch up.
         log("warn", "oauth authorize: could not widen a stale ceiling", {
           client_id: clientId,
           error: err,

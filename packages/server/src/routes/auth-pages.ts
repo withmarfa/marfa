@@ -627,9 +627,9 @@ export function authRoutes(
     //     @better-auth/oauth-provider plugin's `loginPage` config
     //     redirects unauthenticated users at `/auth/oauth2/authorize`
     //     here by appending the verified-query parameters directly
-    //     onto `/auth/sign-in`. Before this fix the params were dropped
-    //     on form submit (no hidden `return_to` field carried them
-    //     forward) and the user landed on `/` after credential check.
+    //     onto `/auth/sign-in`. Nothing carries params in that shape
+    //     through a form submit, so without a hidden `return_to` field
+    //     the user lands on `/` after the credential check.
     //     Detect that shape and synthesize `return_to=/auth/authorize?<full original query>`
     //     so the existing form-round-trip path takes over for password,
     //     magic-link, and passkey.
@@ -972,8 +972,8 @@ export function authRoutes(
 
     // Federated providers are registered as social providers and signed
     // in through the core POST /auth/sign-in/social, taking
-    // { provider, callbackURL }. The generic-oauth plugin's own
-    // /auth/sign-in/oauth2 endpoint no longer exists. Successful
+    // { provider, callbackURL }. The generic-oauth plugin has no
+    // /auth/sign-in/oauth2 endpoint of its own. Successful
     // response returns { url, redirect: true } pointing at the
     // provider's authorize URL.
     const upstream = new Request(new URL("/auth/sign-in/social", c.req.url), {

@@ -458,10 +458,10 @@ describe("GET /auth/authorize (consent page)", () => {
   });
 
   it("offers a space's own handle namespace through the custom bundle, never a sibling's", async () => {
-    // The regression this pins: the bundle derivation used to read the
-    // space-less custom-types bucket, which hosted-mode registrations
-    // never land in — so a space's registered types could not reach the
-    // custom tile at all, and the coverage collapsed back to `user.*`.
+    // Hosted-mode registrations never land in the space-less custom-types
+    // bucket, so a derivation reading that bucket leaves a space's
+    // registered types out of the custom tile entirely and the coverage
+    // collapses back to `user.*`.
     // The registration goes through the real hosted path (`POST /types`
     // under the caller's claimed handle), and the sibling space's
     // registration proves the derivation never crosses the space fence.
