@@ -23,18 +23,25 @@
  * store used to have — so the guard rests on the database's behavior
  * rather than on a comment. The rest exercise the store itself.
  *
- * Opt-in. Ordinary CI has no PgBouncer, so the suite skips unless both
- * URLs are present. To run it, put a PgBouncer in `pool_mode =
- * transaction` in front of a Postgres instance and point the two
- * variables at the pooled and unpooled endpoints of the same database:
+ * `scripts/test-pg.sh` supplies the fixture, so `pnpm test:pg` runs this
+ * suite and so does the Postgres CI job. It boots a `pool_mode =
+ * transaction` PgBouncer beside the throwaway Postgres and exports the
+ * pooled and unpooled endpoints of the same database:
  *
- *   MARFA_TEST_PGBOUNCER_URL=postgres://…@pooler-host:6432/db
- *   MARFA_TEST_PGBOUNCER_DIRECT_URL=postgres://…@pg-host:5432/db
+ *   MARFA_TEST_PGBOUNCER_URL=postgres://…@localhost:PORT/db
+ *   MARFA_TEST_PGBOUNCER_DIRECT_URL=postgres://…@localhost:PORT/db
  *
- * Set `default_pool_size = 1`. The premise case needs the two clients to
- * share a backend, and with a larger pool they get one each — a session-
- * scoped lock then excludes correctly and the case fails, reporting a
- * pooler-safe database rather than a misconfigured fixture.
+ * The suite still skips when either is absent, which is what a hand-run
+ * against some other database gets.
+ *
+ * `default_pool_size = 1` is deliberate: the premise case needs the two
+ * clients to share a backend, and one server connection is the only way to
+ * guarantee it. A larger pool does not reliably break these cases, because
+ * PgBouncer reuses server connections last-in-first-out by default
+ * (`server_round_robin = 0`) and at this concurrency both clients land on
+ * the same backend anyway. Measured: at `default_pool_size = 20` all ten
+ * still pass. That is worse than failing, because the property would then
+ * hold by luck rather than by construction.
  *
  * The pooled client's other pooler hazard — named prepared statements
  * executing on a backend that never saw the PREPARE — is deliberately NOT
