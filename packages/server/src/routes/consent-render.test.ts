@@ -514,5 +514,158 @@ describe("capability labels", () => {
     for (const literal of CAPABILITY_SCOPES) {
       expect(CAPABILITY_SHORT[literal]).not.toContain(",");
     }
+// `default_on`
+//
+// The field is declared on `PermissionBundle` and, until this, nothing read
+// it: every checkbox was hard-coded checked, so an off-by-default bundle was
+// inexpressible however it was declared. These cases are written against the
+// form's own submission rather than against attribute strings, because what
+// matters is not that a `checked` is absent but that an untouched form grants
+// nothing from the bundle.
+// ---------------------------------------------------------------------------
+
+/** The scope literals an untouched form submits: every `name="scopes"` input
+ *  the renderer marked checked, hidden mechanisms included. */
+function defaultSubmission(html: string): string[] {
+  const out: string[] = [];
+  for (const tag of html.match(/<input[^>]*name="scopes"[^>]*>/g) ?? []) {
+    if (!/\schecked(\s|>)/.test(tag)) continue;
+    const value = /value="([^"]*)"/.exec(tag)?.[1];
+    if (value !== undefined) out.push(value);
+  }
+  return out.sort();
+}
+
+/** The scope literals offered inside one named group, whatever their state:
+ *  what the user submits if they tick that group and touch nothing else. */
+function offeredIn(html: string, label: string): string[] {
+  const out: string[] = [];
+  for (const block of html.match(/<details class="grp">[\s\S]*?<\/details>/g) ??
+    []) {
+    if (!block.includes(`<span class="glabel">${label}</span>`)) continue;
+    const body = /<div class="gsub">([\s\S]*)<\/div>/.exec(block)?.[1] ?? "";
+    for (const tag of body.match(/<input[^>]*name="scopes"[^>]*>/g) ?? []) {
+      const value = /value="([^"]*)"/.exec(tag)?.[1];
+      if (value !== undefined) out.push(value);
+    }
+  }
+  return out.sort();
+}
+
+/** Whether a named group's master toggle starts ticked. */
+function masterChecked(html: string, label: string): boolean | undefined {
+  for (const block of html.match(/<details class="grp">[\s\S]*?<\/details>/g) ??
+    []) {
+    if (!block.includes(`<span class="glabel">${label}</span>`)) continue;
+    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(block)?.[1] ?? "";
+    const master = /<input[^>]*type="checkbox"[^>]*>/.exec(summary)?.[0] ?? "";
+    return /\schecked(\s|>)/.test(master);
+  }
+  return undefined;
+}
+
+describe("renderConsentScreen — default_on", () => {
+  const ON_BUNDLE = {
+    id: "read",
+    label: "Read your content",
+    description: "",
+    scopes: ["core.note:read", "core.task:read"],
+    default_on: true,
+  };
+  const OFF_BUNDLE = {
+    id: "manage",
+    label: "Manage your space",
+    description: "",
+    scopes: ["core.note:write"],
+    default_on: false,
+  };
+  const REQUESTED: ParsedScope[] = [
+    { kind: "type", typePattern: "core.note", operation: "read" },
+    { kind: "type", typePattern: "core.task", operation: "read" },
+    { kind: "type", typePattern: "core.note", operation: "write" },
+  ];
+  const render = (): string =>
+    renderConsentScreen({
+      ...PARAMS,
+      scopes: REQUESTED,
+      bundles: [ON_BUNDLE, OFF_BUNDLE],
+    });
+
+  it("renders an off-by-default bundle unticked, rows and master alike", () => {
+    const html = render();
+    expect(masterChecked(html, "Manage your space")).toBe(false);
+    expect(html).toContain('value="core.note:write"');
+    expect(defaultSubmission(html)).not.toContain("core.note:write");
+  });
+
+  it("grants nothing from it when the user leaves it alone", () => {
+    // The whole property, stated as the form states it: an untouched submit
+    // carries the on-by-default bundle's scopes and none of the off one's.
+    expect(defaultSubmission(render())).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("grants exactly its scopes when the user ticks it", () => {
+    // Ticking a group submits the literals its rows carry, so the property
+    // the renderer owns is that those rows are exactly the bundle's scopes:
+    // no neighbor's literal rides along, and none of its own is missing.
+    expect(offeredIn(render(), "Manage your space")).toEqual([
+      "core.note:write",
+    ]);
+    expect(offeredIn(render(), "Read your content")).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("leaves an on-by-default bundle ticked", () => {
+    // The discriminating half: a renderer that unticked everything would
+    // pass all three cases above.
+    const html = render();
+    expect(masterChecked(html, "Read your content")).toBe(true);
+  });
+
+  it("keeps the hidden mechanisms on whatever a bundle says", () => {
+    // `openid` and `offline_access` are submitted by hidden fields a person
+    // cannot see, so they cannot be said to have declined one. A bundle that
+    // means to withhold a mechanism stops requesting it.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        {
+          kind: "oidc",
+          typePattern: "openid",
+          operation: "none",
+          oidcScope: "openid",
+        },
+      ],
+      bundles: [
+        {
+          id: "profile",
+          label: "Your profile",
+          description: "",
+          scopes: ["openid"],
+          default_on: false,
+        },
+      ],
+    });
+    expect(defaultSubmission(html)).toEqual(["openid"]);
+  });
+
+  it("ticks a scope no bundle claims", () => {
+    // `default_on` is a property of a bundle. A scope an app named that no
+    // bundle describes lands in a fallback bucket, where there is no
+    // declaration to honor and unticking would be a policy this screen
+    // invented.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        { kind: "type", typePattern: "core.bookmark", operation: "read" },
+      ],
+      bundles: [OFF_BUNDLE],
+    });
+    expect(defaultSubmission(html)).toEqual(["core.bookmark:read"]);
   });
 });

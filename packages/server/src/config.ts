@@ -558,6 +558,22 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] =
  * `PermissionBundle`). Falls back to {@link DEFAULT_PERMISSION_BUNDLES} on
  * absent, non-array, or malformed input — a bad override must never strand
  * the consent screen with zero bundles.
+ *
+ * **A missing `default_on` is an error, not a default.** The field is
+ * required on `PermissionBundle` and the predicate below did not check it,
+ * so an override omitting it produced an object the type system believed
+ * carried a boolean and that actually carried `undefined`. That cost
+ * nothing while the renderer ignored the field. Now that it reads it, the
+ * same omission renders every toggle unticked and grants nothing, from a
+ * typo, with no error anywhere.
+ *
+ * Neither implicit reading is better than refusing. Defaulting to `true`
+ * makes a required field optional in practice and turns an operator who
+ * meant `false` and misspelled the key into an on-by-default grant, which
+ * is the wrong direction to fail on a permission question. Defaulting to
+ * `false` fails in the safe direction and silently, producing a consent
+ * screen that looks broken and a grant that reaches nothing. Refusing the
+ * override says so, keeps the type honest, and leaves a working screen up.
  */
 export function loadPermissionBundles(
   raw: string | undefined,
@@ -576,11 +592,13 @@ export function loadPermissionBundles(
         typeof b === "object" &&
         b !== null &&
         typeof (b as PermissionBundle).id === "string" &&
-        Array.isArray((b as PermissionBundle).scopes),
+        Array.isArray((b as PermissionBundle).scopes) &&
+        typeof (b as PermissionBundle).default_on === "boolean",
     );
     if (!valid) {
       console.warn(
-        "MARFA_PERMISSION_BUNDLES has malformed entries; using defaults.",
+        "MARFA_PERMISSION_BUNDLES has malformed entries; using defaults. " +
+          "Each entry needs a string id, a scopes array, and a boolean default_on.",
       );
       return DEFAULT_PERMISSION_BUNDLES;
     }

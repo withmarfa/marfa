@@ -9,10 +9,18 @@
  * profile". Every group is collapsed by default; expanding one reveals a
  * per-type toggle (Notes, Tasks, Calendar, …). Each toggle is a real
  * `name="scopes"` checkbox carrying the concrete scope literal, so the no-JS
- * path still submits the full ticked set and the issued token narrows to
+ * path still submits the ticked set and the issued token narrows to
  * exactly what the user keeps on. A group's master toggle drives its members
  * (JS enhancement); members reflect back onto the master (indeterminate when
  * partially ticked).
+ *
+ * A group starts ticked or unticked according to its bundle's `default_on`.
+ * An off-by-default bundle renders offered but not granted: leaving it alone
+ * grants nothing from it, and ticking it is the act that grants exactly its
+ * scopes. That is what makes a bundle expressible whose contents a person
+ * should have to reach for, and it is also how an app already registered for
+ * a scope set can be offered something new without every client having to
+ * re-register.
  *
  * Per-type narrowing works because the requested scopes are concrete (see
  * `DEFAULT_PERMISSION_BUNDLES`): the OAuth provider only accepts a consent
@@ -97,6 +105,18 @@ interface ScopeGroup {
   label: string;
   desc: string;
   scopes: ParsedScope[];
+  /**
+   * Whether the group's toggles start ticked, from the owning bundle's
+   * `default_on`.
+   *
+   * The screen used to hard-code every checkbox as checked, which made an
+   * off-by-default bundle inexpressible however it was declared. That is the
+   * shape a bundle needs when it carries something a person should have to
+   * reach for rather than merely leave alone, and it is also what lets an
+   * already-registered client be offered something new without every client
+   * having to re-register to get it.
+   */
+  defaultOn: boolean;
 }
 
 /**
@@ -123,17 +143,24 @@ function buildGroups(
       label: bundle.label,
       desc: bundle.description,
       scopes: [],
+      defaultOn: bundle.default_on,
     });
   }
+  // The fallback buckets stay ticked. They hold what an app named explicitly
+  // and no bundle claims, so there is no declaration to honor: `default_on`
+  // is a property of a bundle, and unticking a scope no bundle describes
+  // would be this screen inventing a policy rather than rendering one.
   const otherRead: ScopeGroup = {
     label: "Other read access",
     desc: "Additional things this app asked to read.",
     scopes: [],
+    defaultOn: true,
   };
   const otherWrite: ScopeGroup = {
     label: "Other write access",
     desc: "Additional things this app asked to change.",
     scopes: [],
+    defaultOn: true,
   };
   // A capability needs a bucket of its own, and the reason is the heading
   // rather than the tidiness. The read/write split is decided on
@@ -336,6 +363,12 @@ export function renderConsentScreen(params: ConsentParams): string {
   // `openid` and `offline_access` are OAuth mechanisms (identity base +
   // refresh token), not data permissions — they ride along as always-on
   // hidden fields rather than per-type toggles.
+  //
+  // `default_on` deliberately does not reach them. A hidden field a person
+  // cannot see is not something they can be said to have declined, so
+  // rendering one unticked would drop a mechanism silently rather than
+  // offer a choice. A bundle that means to withhold one has to stop
+  // requesting it.
   const isHidden = (s: ParsedScope): boolean =>
     s.kind === "oidc" &&
     (s.oidcScope === "openid" || s.oidcScope === "offline_access");
@@ -351,7 +384,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   /** A single per-type toggle row. A wildcard row lists the types the
    *  pattern matches today, since the grant itself names no types. */
-  const subRow = (scope: ParsedScope): string => {
+  const subRow = (scope: ParsedScope, defaultOn: boolean): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
     const label = escapeHtml(labelFor(scope, params.descriptions));
     const matched =
@@ -362,21 +395,30 @@ export function renderConsentScreen(params: ConsentParams): string {
       matched && matched.length > 0
         ? `<span class="rmeta" style="display:block">${escapeHtml(`Today this covers ${matched.join(", ")}, plus any you add later`)}</span>`
         : "";
-    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
+    // The per-type checkbox is what the form submits, so this attribute is
+    // the whole of what `default_on: false` means: the literal is offered,
+    // and ticking it is the grant.
+    const checked = defaultOn ? " checked" : "";
+    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`;
   };
 
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
     if (g.scopes.length === 0) return "";
-    const rows = g.scopes.map(subRow).join("");
+    const rows = g.scopes.map((s) => subRow(s, g.defaultOn)).join("");
+    // The master carries no `name`, so it submits nothing and is purely the
+    // control that drives its members. It still starts in the group's state,
+    // or an off-by-default group would open showing a ticked master over
+    // unticked rows.
+    const masterChecked = g.defaultOn ? " checked" : "";
     return `<details class="grp">
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">${escapeHtml(g.label)}</span>${CHEVRON}</span>
           <span class="gdesc">${escapeHtml(g.desc)}</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox"${masterChecked} aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub">${rows}</div>
     </details>`;
