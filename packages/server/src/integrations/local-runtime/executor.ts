@@ -27,8 +27,8 @@ import type {
 } from "./types.js";
 
 /**
- * Default resource caps per worker thread. Tuned for the in-tree
- * integrations (RSS poller, Calendar diff, GitHub webhook handler) —
+ * Default resource caps per worker thread. Tuned for the integrations
+ * Marfa ships (RSS poller, Calendar diff, GitHub webhook handler) —
  * none of which need more than a few hundred kilobytes of working set.
  * Operators can raise these per-deployment if a heavier handler lands.
  */

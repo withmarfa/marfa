@@ -1,29 +1,19 @@
 /**
- * Register every manifest this build ships against a Marfa server.
+ * Register the client manifests this build ships against a Marfa server.
  *
- * Mostly historical now: the server reconciles its own catalog at boot
- * (`integrations/catalog-reconcile.ts`), so a deployed instance registers
- * every shipped manifest version without anyone running anything. This
- * script remains useful against an instance you are not deploying to, and
- * for registering a manifest from source rather than from built output.
+ * A deployed instance needs none of this: the server reconciles its own
+ * catalog at boot (`integrations/catalog-reconcile.ts`). The script is for
+ * an instance you are not deploying to.
  *
- * It registers via `POST /integrations` (platform-credential gated), and
- * takes the same union the boot reconcile does, from two places:
+ * It registers via `POST /integrations` (platform-credential gated), from
+ * `src/integrations/client-manifests.ts`. An installed integration is not
+ * here: its manifest lives in withmarfa/integrations, and an instance gets
+ * it from the image it runs.
  *
- *   - **Integrations**, imported from `integrations/<namespace>/<name>/src/manifest.ts`.
- *     Source, which is the point of running this by hand.
- *   - **Client manifests**, from `src/integrations/client-manifests.ts`.
- *     A client is not installed into any directory, so there is no
- *     directory to read it from; it arrives as a workspace dependency.
- *
- * **The two halves are not equally fresh, and it matters here.** The
- * integration half is read from `.ts` and is whatever the tree says. The
- * client half resolves through the package's `exports` to its built
- * output, so a stale or missing `dist` under the manifest's own package
- * seeds a stale manifest, and the instance then carries a catalog row
- * nobody can correct without a version bump. Run `pnpm build` first. Reading the client half from
- * source instead would mean hardcoding a path per client, which is the
- * enumeration this file already stopped keeping.
+ * A client manifest resolves through its package's `exports` to built
+ * output, so a stale or missing `dist` seeds a stale manifest and the
+ * instance then carries a catalog row nobody can correct without a version
+ * bump. Run `pnpm build` first.
  *
  * Usage (from the monorepo root):
  *   MARFA_API_URL=https://your-instance \
@@ -34,24 +24,11 @@
  * safe: a manifest already registered at the same (name, version) returns
  * 409 and is reported as "exists", not an error.
  */
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { discoverIntegrationDirs } from "../src/integrations/discover.js";
 import { CLIENT_MANIFESTS } from "../src/integrations/client-manifests.js";
 
 interface Manifest {
   name: string;
   version: string;
-}
-
-function isManifest(v: unknown): v is Manifest {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    "manifest_schema_version" in v &&
-    "name" in v &&
-    "version" in v
-  );
 }
 
 async function main(): Promise<void> {
@@ -65,51 +42,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const integrationsRoot = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "../../../integrations",
-  );
-
-  // Read from the directory, like the server's own two loaders. This was a
-  // hand-written list, then a read of a hand-written table, and both were
-  // the same enumeration a new integration gets added to in one place and
-  // not the other. `_template` and anything else without a manifest export
-  // is skipped with a warning rather than failing the run, which is what
-  // makes reading the directory safe here.
-  const dirs = discoverIntegrationDirs(integrationsRoot);
-
   let registered = 0;
   let existed = 0;
   let failed = 0;
 
-  const candidates: Manifest[] = [];
-
-  for (const dir of dirs) {
-    const manifestPath = resolve(integrationsRoot, dir, "src/manifest.ts");
-    let manifest: Manifest | undefined;
-    try {
-      const mod = (await import(pathToFileURL(manifestPath).href)) as Record<
-        string,
-        unknown
-      >;
-      manifest = Object.values(mod).find(isManifest);
-    } catch (err) {
-      console.warn(`skip ${dir}: cannot import manifest (${String(err)})`);
-      continue;
-    }
-    if (!manifest) {
-      console.warn(`skip ${dir}: no manifest export found`);
-      continue;
-    }
-    candidates.push(manifest);
-  }
-
-  // The half no directory read can reach. Without it this registers
-  // fourteen of fifteen while its whole purpose is filling a catalog by
-  // hand, which is the same defect in a quieter place.
-  for (const client of CLIENT_MANIFESTS) {
-    candidates.push(client.manifest);
-  }
+  const candidates: Manifest[] = CLIENT_MANIFESTS.map((c) => c.manifest);
 
   for (const manifest of candidates) {
     const res = await fetch(`${apiUrl}/integrations`, {

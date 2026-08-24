@@ -20,11 +20,9 @@ import {
   hashManifestDeclaration,
   type ManifestLock,
 } from "./manifest-lock.js";
-import { loadInTreeManifests } from "./load-manifests.js";
 import { CLIENT_MANIFESTS } from "./client-manifests.js";
 
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const INTEGRATIONS_ROOT = resolve(SERVER_ROOT, "../../integrations");
 const LOCK_PATH = resolve(SERVER_ROOT, "manifest-lock.json");
 
 function manifest(
@@ -147,66 +145,32 @@ describe("compareToLock", () => {
   });
 });
 
+/**
+ * The lock covers the client manifests and nothing else.
+ *
+ * An installed integration's manifest arrives from withmarfa/integrations
+ * at whatever commit the image pinned, so this build cannot read one and
+ * has nothing to hold to a lock. A client's ships with the build, is
+ * exposed to exactly the defect the lock exists for — content moving while
+ * the version stands still — and is reachable from a constant, so it needs
+ * no directory and nothing here is conditional.
+ */
 describe("the shipped manifests against the committed lock", () => {
   it("has a lock file", () => {
     expect(existsSync(LOCK_PATH)).toBe(true);
   });
 
-  it("matches, or names exactly what to do about it", async () => {
-    const { manifests } = await loadInTreeManifests({
-      integrationsRoot: INTEGRATIONS_ROOT,
-    });
-    // Gated on the discovered half alone. Nothing built means `pnpm build`
-    // has not run in this tree, and the check cannot say anything either
-    // way; the client manifests ship with the build and so are present even
-    // then, which would turn an unbuilt tree into fourteen bogus
-    // `missing_from_build` violations.
-    if (manifests.length === 0) return;
-
+  it("matches, or names exactly what to do about it", () => {
     const committed = JSON.parse(
       readFileSync(LOCK_PATH, "utf8"),
     ) as ManifestLock;
+    // An empty list compares clean against an empty lock, which is the
+    // silence this whole file exists against.
+    expect(CLIENT_MANIFESTS.length).toBeGreaterThan(0);
     const violations = compareToLock(
-      buildManifestLock([...manifests, ...CLIENT_MANIFESTS]),
+      buildManifestLock(CLIENT_MANIFESTS),
       committed,
     );
     expect(violations.map(describeViolation)).toEqual([]);
-  });
-
-  it("carries every client manifest", () => {
-    // The lock's whole job is catching a manifest whose content moved
-    // without its version. A client manifest reaches the catalog by a
-    // different route and is exposed to exactly the same defect, so a lock
-    // built from the directory alone would guard fourteen of fifteen.
-    //
-    // Deliberately unguarded. The sibling above returns early on an unbuilt
-    // tree because it has nothing to compare; this one needs only a file on
-    // disk and a constant, and guarding it on discovery would make the one
-    // check whose whole subject is the half discovery cannot see pass
-    // having asserted nothing.
-    const committed = JSON.parse(
-      readFileSync(LOCK_PATH, "utf8"),
-    ) as ManifestLock;
-    // A loop over an empty list asserts nothing, which is the same silence
-    // in a smaller place.
-    expect(CLIENT_MANIFESTS.length).toBeGreaterThan(0);
-    for (const client of CLIENT_MANIFESTS) {
-      expect(Object.keys(committed)).toContain(client.manifest.name);
-    }
-  });
-
-  it("could not have got them from the directory", async () => {
-    // The other half of the claim, and the half that does need a built
-    // tree: what discovery yields on its own has no client in it, so the
-    // entries above can only have come from the build.
-    const { manifests } = await loadInTreeManifests({
-      integrationsRoot: INTEGRATIONS_ROOT,
-    });
-    if (manifests.length === 0) return;
-
-    const discoveredOnly = buildManifestLock(manifests);
-    for (const client of CLIENT_MANIFESTS) {
-      expect(Object.keys(discoveredOnly)).not.toContain(client.manifest.name);
-    }
   });
 });

@@ -32,29 +32,12 @@ import {
 } from "./connection-configure.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { GOOGLE_CALENDAR_MANIFEST } from "./fixtures/google-calendar-manifest.js";
 
 let ctx: TestContext;
 
-/**
- * The real shipped google-calendar manifest, loaded at runtime. A
- * computed specifier because the file sits outside this package's
- * rootDir, which `tsc` refuses on a static import; Vitest resolves and
- * transforms it fine. A fixture shaped by hand drifted from the
- * integration once, and the behavior these tests protect keyed on
- * details the copy no longer had.
- */
-let GOOGLE_CALENDAR_MANIFEST: Record<string, unknown>;
-
 beforeAll(async () => {
   ctx = await createTestContext();
-  const manifestPath = new URL(
-    "../../../../integrations/google/calendar/src/manifest.ts",
-    import.meta.url,
-  ).href;
-  const manifestModule = (await import(manifestPath)) as {
-    GOOGLE_CALENDAR_MANIFEST: Record<string, unknown>;
-  };
-  GOOGLE_CALENDAR_MANIFEST = manifestModule.GOOGLE_CALENDAR_MANIFEST;
 });
 
 afterAll(async () => {
@@ -251,10 +234,10 @@ async function seedGoogleCalendarConnection(
         manifest_version: "0.1.0",
         publisher: "google",
         direction: "both",
-        // The real shipped manifest, not a lookalike: a fixture shaped by
-        // hand drifted from the integration once, and the behavior these
-        // tests protect keyed on details the copy no longer had. The name
-        // override exists for the cases that need a non-calendar identity.
+        // The manifest as the integration declares it, not a shape
+        // invented here: what these tests protect keys on its details.
+        // The name override exists for the cases that need a
+        // non-calendar identity.
         manifest: {
           ...GOOGLE_CALENDAR_MANIFEST,
           ...(opts.manifestName !== undefined && { name: opts.manifestName }),

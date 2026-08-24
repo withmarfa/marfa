@@ -14,32 +14,19 @@ export default [
             "vitest.config.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
-            // An integration directory is `<handle>/<name>`, so these
-            // span both levels. The scaffold stays flat and
-            // underscore-prefixed, so it needs its own pair.
-            "integrations/*/*/tsup.config.ts",
-            "integrations/*/*/vitest.config.ts",
-            "integrations/_template/tsup.config.ts",
-            "integrations/_template/vitest.config.ts",
-            // The marfa/inbox integration ships a nested
-            // Cloudflare Email Worker as its own workspace package
-            // (`integrations/marfa/inbox/email-worker/`). Its
-            // vitest.config.ts also falls through to the default
-            // project.
-            "integrations/*/*/email-worker/vitest.config.ts",
             // The server's dispatch fixture is a nested workspace
-            // package too, and its tsup config falls through for the
-            // same reason. No vitest config: the fixture is driven by
-            // the image verification and the worker-entry smoke, both
-            // of which need it built, and neither is vitest.
+            // package, so its tsup config falls through as well. No
+            // vitest config: the fixture is driven by the image
+            // verification and the worker-entry smoke, both of which
+            // need it built, and neither is vitest.
             "packages/server/fixtures/*/tsup.config.ts",
           ],
           // Default is 8. Every workspace package contributes a
           // tsup.config and a vitest.config that fall through to the
           // default project, so the real number grows by two with each
-          // new package or integration — and crossing the cap fails
-          // lint from files nobody touched, naming the config rather
-          // than the addition that pushed it over.
+          // new package — and crossing the cap fails lint from files
+          // nobody touched, naming the config rather than the addition
+          // that pushed it over.
           //
           // Set well above the current count so an ordinary addition
           // does not trip it. When it is genuinely reached, raise it

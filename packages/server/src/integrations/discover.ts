@@ -57,27 +57,13 @@ function subdirectories(dir: string): string[] {
       // integration, and the rule holds at both levels because either one
       // can carry it. Dot-directories are tooling — `.turbo`, an editor's
       // scratch space, a partially-extracted download. The underscore is
-      // the convention `_template` already announces itself with, and
-      // honoring it is what stops the scaffold shipping.
+      // what a scaffold announces itself with, and honoring it is what
+      // keeps one out of the installable catalog if a deployment ever
+      // unpacks one into this root.
       //
-      // That is a live fix rather than tidiness. The old hand-maintained
-      // table left `_template` out of the catalog while the runtime loader
-      // prepended it by hand, so the scaffold was already registered as a
-      // dispatchable integration on every deployment and carries its own
-      // schedule queue on staging. Reading the directory without this rule
-      // would have put it in the installable catalog too.
-      //
-      // The scaffold sits at the namespace level, flat and underscored,
-      // which is what keeps it invisible here. Nothing dispatches through it
-      // any more: the substrate smoke, the worker-entry smoke script and the
-      // image verification all use the server's own fixture, which is not
-      // under this root at all.
-      //
-      // Invisible to discovery is not unreferenced, though. The image build
-      // compiles everything under `integrations/` by path, the scaffold
-      // included, so a scaffold that stops compiling takes the image build
-      // and `main` down with it. What this rule buys is that the thing an
-      // author copies never reaches the catalog.
+      // `installed-integrations.txt` refuses a declared name carrying
+      // either prefix for the mirror of this reason: such a name would
+      // stage into the image and never load.
       .filter((e) => !e.name.startsWith(".") && !e.name.startsWith("_"))
       .map((e) => e.name)
   );

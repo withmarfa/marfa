@@ -9,9 +9,9 @@
 # One name per line. Blank lines are ignored and everything from a # to the
 # end of a line is a comment. A name is `<namespace>/<name>`, the manifest
 # identifier, and it is also the directory the integration lives in under
-# integrations/ today; when integrations are ordinary published packages
-# this becomes the install list and a name gains a package specifier
-# beside it.
+# withmarfa/integrations' `packages/`. When integrations are ordinary
+# published packages this becomes the install list and a name gains a
+# package specifier beside it.
 #
 # The two-segment shape is enforced rather than assumed. A name is
 # interpolated straight into the image build's staging paths, so a segment
@@ -36,15 +36,13 @@
 # integration that quietly lost its handler. So the marker protects the
 # fourteen names that do not carry it.
 #
-# A name here with no matching directory fails the build, and a directory
-# with no name here is not shipped. The suite holds the two in agreement,
-# so an integration nobody declared fails in seconds rather than during a
-# build.
+# A name here with no matching package in the pinned checkout fails the
+# build, and a package with no name here is not shipped. Nothing outside
+# withmarfa/integrations can see what that repository holds, so the build
+# is where the two are held in agreement.
 #
-# The scaffold under integrations/_template is deliberately absent, and its
-# flat, underscore-prefixed directory is not the `<namespace>/<name>` shape a
-# name here has. It is a starting point for authors rather than an
-# integration, and the runtime's discovery skips it for the same reason.
+# The scaffold there is absent deliberately. It is a starting point for
+# authors rather than an integration, and nothing installs it.
 #
 # The fixture the verification dispatches through is absent for a different
 # reason: it is the server's own, staged outside this root entirely and

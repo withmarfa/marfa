@@ -1,62 +1,6 @@
 {
-  "google/calendar": {
-    "version": "0.3.0",
-    "hash": "147a447ba69b73d543da34171fecf5e61dbcd9f2b7fe5fa09d57c04027f4e139"
-  },
-  "google/contacts": {
-    "version": "0.3.0",
-    "hash": "a3ed247ed214d3016872f6726a1f0913271a1155e9225e21570bf9d635965dc3"
-  },
-  "google/drive": {
-    "version": "0.3.0",
-    "hash": "bfdc0be944a7db77ac03b2be540733dc660e1344fa1ff6c3a5a852acc08bfad2"
-  },
-  "google/tasks": {
-    "version": "0.3.0",
-    "hash": "0fa23eb0e5e05ca4fc19c75abbb5e90a567574ec87ad65ba387b5b96bf2d27a5"
-  },
-  "google/youtube": {
-    "version": "0.3.0",
-    "hash": "0092d9f5e335382119e76787fd9397dac5ea6ece49daae94db21a4b2b793b28f"
-  },
-  "marfa/github-webhooks": {
-    "version": "0.2.0",
-    "hash": "c320886f1afed0ded82b291756688479e6652801b347d59db0576372b3b6f6a0"
-  },
-  "marfa/inbox": {
-    "version": "0.3.0",
-    "hash": "9b3894007bb190134aebf90c5ba82aaf0ec74d88e0b5dca4b853cea50bab1c62"
-  },
-  "marfa/podcasts": {
-    "version": "0.3.0",
-    "hash": "2b316e5724194f092317e5d7ca73714c115b81d59fc75f2fd95fcec77e821ba9"
-  },
-  "marfa/rss-watcher": {
-    "version": "0.4.0",
-    "hash": "d3beb2ba1806f2a976727a73da3e0b9dc559cbab9dc7d1274761138714dd04c6"
-  },
   "marfa/sync": {
     "version": "0.2.0",
     "hash": "835532827927b0bd85bfd06eea0a5a8784af87a15f260ac74b4ba936ce4f2e9e"
-  },
-  "marfa/task-auto-archive": {
-    "version": "0.2.0",
-    "hash": "4cc6c0ca3651c0ccdf065186ba2378f6c7915bf28ba703e6428f249009c32743"
-  },
-  "raindrop/bookmarks": {
-    "version": "0.2.0",
-    "hash": "a5edbed6dc6b1685390472f99e12d2680b5221b94677428f591c5c0bd72e3b16"
-  },
-  "readwise/highlights": {
-    "version": "0.2.0",
-    "hash": "5d01b2e3cfac1ff8b2a797a037ae5f497505bae1be2cb90c962295c3d965d3f0"
-  },
-  "readwise/reader": {
-    "version": "0.2.0",
-    "hash": "105df53a153796bd988551e7a902b1a41ab2be039490f38c1c1cbb59b6dec2c7"
-  },
-  "todoist/tasks": {
-    "version": "0.2.0",
-    "hash": "ecb3f67d19d5dd54d4190c215c58787dff475c51e79162c29e1dd92fe0719fc8"
   }
 }
