@@ -9,10 +9,32 @@
  * profile". Every group is collapsed by default; expanding one reveals a
  * per-type toggle (Notes, Tasks, Calendar, …). Each toggle is a real
  * `name="scopes"` checkbox carrying the concrete scope literal, so the no-JS
- * path still submits the full ticked set and the issued token narrows to
+ * path still submits the ticked set and the issued token narrows to
  * exactly what the user keeps on. A group's master toggle drives its members
  * (JS enhancement); members reflect back onto the master (indeterminate when
  * partially ticked).
+ *
+ * A group starts ticked or unticked according to its bundle's `default_on`.
+ * An off-by-default bundle renders offered but not granted: leaving it alone
+ * grants nothing from it, and ticking it is the act that grants exactly its
+ * scopes. That is what makes a bundle expressible whose contents a person
+ * should have to reach for, and it is also how an app already registered for
+ * a scope set can be offered something new without every client having to
+ * re-register.
+ *
+ * **`default_on` governs the first offer only.** The re-consent diff's
+ * "Already allowed" section renders from the prior grant and ignores the
+ * flag, because a scope the user granted last time is being shown rather
+ * than offered. Rendering one unticked there would put the choice inside a
+ * collapsed tile the reader never opens, and the decision route reads the
+ * resulting submission as a narrowing, which revokes the client's live
+ * tokens. An untouched Continue would kill a working integration.
+ *
+ * **This screen is one of two, and the other cannot express the flag.** The
+ * device-approval screen confirms a scope list with no per-scope toggle, so
+ * a tick is not available to it. Rather than granting on one click what the
+ * flag exists to withhold, device-flow initiation refuses a scope that only
+ * an off-by-default bundle offers.
  *
  * Per-type narrowing works because the requested scopes are concrete (see
  * `DEFAULT_PERMISSION_BUNDLES`): the OAuth provider only accepts a consent
@@ -34,6 +56,7 @@
  */
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
+import { HIDDEN_MECHANISM_SCOPES } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityLabel } from "./capability-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
@@ -97,6 +120,20 @@ interface ScopeGroup {
   label: string;
   desc: string;
   scopes: ParsedScope[];
+  /**
+   * Whether the group's toggles start ticked, from the owning bundle's
+   * `default_on`.
+   *
+   * An off-by-default bundle is the shape a bundle needs when it carries
+   * something a person should have to reach for rather than merely leave
+   * alone, and it is also what lets an already-registered client be offered
+   * something new without every client having to re-register to get it.
+   *
+   * Read only where a scope is being offered. The re-consent diff overrides
+   * it to `true` for scopes the user has already granted, since the question
+   * the flag answers does not arise a second time.
+   */
+  defaultOn: boolean;
 }
 
 /**
@@ -111,7 +148,25 @@ function buildGroups(
   scopes: ParsedScope[],
   bundles: PermissionBundle[],
 ): ScopeGroup[] {
+  // A scope may appear in more than one bundle, and the two readers of that
+  // overlap have to resolve it the same way or the same configuration means
+  // different things on different surfaces.
+  //
+  // `scopesOfferedOffByDefaultOnly` withholds a scope only when NO
+  // on-by-default bundle offers it, so first-bundle-wins on its own would
+  // render a scope in one on- and one off-by-default bundle unticked here,
+  // if the off one happened to be listed first, while the device flow reads
+  // the same pair as on-by-default and grants it in one click. An ordinary
+  // operator config mistake reaches this, so the tie-break is explicit: an
+  // on-by-default bundle claims a scope ahead of an off-by-default one, and
+  // first-listed breaks the tie within each half.
   const literalToBundle = new Map<string, PermissionBundle>();
+  for (const bundle of bundles) {
+    if (!bundle.default_on) continue;
+    for (const literal of bundle.scopes) {
+      if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
+    }
+  }
   for (const bundle of bundles) {
     for (const literal of bundle.scopes) {
       if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
@@ -123,17 +178,24 @@ function buildGroups(
       label: bundle.label,
       desc: bundle.description,
       scopes: [],
+      defaultOn: bundle.default_on,
     });
   }
+  // The fallback buckets stay ticked. They hold what an app named explicitly
+  // and no bundle claims, so there is no declaration to honor: `default_on`
+  // is a property of a bundle, and unticking a scope no bundle describes
+  // would be this screen inventing a policy rather than rendering one.
   const otherRead: ScopeGroup = {
     label: "Other read access",
     desc: "Additional things this app asked to read.",
     scopes: [],
+    defaultOn: true,
   };
   const otherWrite: ScopeGroup = {
     label: "Other write access",
     desc: "Additional things this app asked to change.",
     scopes: [],
+    defaultOn: true,
   };
   // A capability needs a bucket of its own, and the reason is the heading
   // rather than the tidiness. The read/write split is decided on
@@ -142,10 +204,20 @@ function buildGroups(
   // register webhooks or revoke keys was filed under "Additional things this
   // app asked to read". A heading that states the opposite of what the
   // toggle does is worse than no heading.
+  //
+  // Unticked, and this is the one bucket where that is right. The other two
+  // start ticked because a scope the app asked for and no bundle claimed is
+  // still ordinary access to content, and unticking it by default would have
+  // this screen invent a policy. A capability is the opposite case: it is
+  // authority the platform would otherwise let a token inherit from a role
+  // without anybody naming it, and the whole reason it became a scope is so
+  // somebody has to say yes. Arriving pre-ticked would grant it by silence,
+  // which is what it exists to stop.
   const otherCapability: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
     scopes: [],
+    defaultOn: false,
   };
   for (const scope of scopes) {
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
@@ -336,9 +408,16 @@ export function renderConsentScreen(params: ConsentParams): string {
   // `openid` and `offline_access` are OAuth mechanisms (identity base +
   // refresh token), not data permissions — they ride along as always-on
   // hidden fields rather than per-type toggles.
+  //
+  // `default_on` deliberately does not reach them. A hidden field a person
+  // cannot see is not something they can be said to have declined, so
+  // rendering one unticked would drop a mechanism silently rather than
+  // offer a choice. A bundle that means to withhold one has to stop
+  // requesting it.
   const isHidden = (s: ParsedScope): boolean =>
     s.kind === "oidc" &&
-    (s.oidcScope === "openid" || s.oidcScope === "offline_access");
+    s.oidcScope !== undefined &&
+    HIDDEN_MECHANISM_SCOPES.includes(s.oidcScope);
 
   const hiddenFields = (scopes: ParsedScope[]): string =>
     scopes
@@ -351,7 +430,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   /** A single per-type toggle row. A wildcard row lists the types the
    *  pattern matches today, since the grant itself names no types. */
-  const subRow = (scope: ParsedScope): string => {
+  const subRow = (scope: ParsedScope, defaultOn: boolean): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
     const label = escapeHtml(labelFor(scope, params.descriptions));
     const matched =
@@ -362,21 +441,30 @@ export function renderConsentScreen(params: ConsentParams): string {
       matched && matched.length > 0
         ? `<span class="rmeta" style="display:block">${escapeHtml(`Today this covers ${matched.join(", ")}, plus any you add later`)}</span>`
         : "";
-    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}" checked><span class="tk" aria-hidden="true"></span></label></div>`;
+    // The per-type checkbox is what the form submits, so this attribute is
+    // the whole of what `default_on: false` means: the literal is offered,
+    // and ticking it is the grant.
+    const checked = defaultOn ? " checked" : "";
+    return `<div class="subrow"><span>${label}${detail}</span><label class="sw"><input type="checkbox" name="scopes" value="${literal}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`;
   };
 
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
     if (g.scopes.length === 0) return "";
-    const rows = g.scopes.map(subRow).join("");
+    const rows = g.scopes.map((s) => subRow(s, g.defaultOn)).join("");
+    // The master carries no `name`, so it submits nothing and is purely the
+    // control that drives its members. It still starts in the group's state,
+    // or an off-by-default group would open showing a ticked master over
+    // unticked rows.
+    const masterChecked = g.defaultOn ? " checked" : "";
     return `<details class="grp">
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">${escapeHtml(g.label)}</span>${CHEVRON}</span>
           <span class="gdesc">${escapeHtml(g.desc)}</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox"${masterChecked} aria-label="${escapeHtml(g.label)}"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub">${rows}</div>
     </details>`;
@@ -386,8 +474,29 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   /** Partition a scope set into bundle-derived groups and render the
    *  non-empty ones, in bundle order, inside a soft-tile stack. */
-  const groupedTiles = (scopes: ParsedScope[]): string => {
-    const tiles = buildGroups(scopes, bundles).map(group).join("");
+  const groupedTiles = (
+    scopes: ParsedScope[],
+    /**
+     * Whether these scopes are already granted, which overrides the bundle's
+     * `default_on`.
+     *
+     * `default_on` answers "should this start ticked the first time it is
+     * offered". A scope the user granted on a previous visit is not being
+     * offered, it is being shown, so asking the flag about it is asking the
+     * wrong question and the answer it gives is destructive. The "Already
+     * allowed" tile is collapsed and sits below "New", so an off-by-default
+     * scope rendered unticked there is invisible; an untouched Continue then
+     * submits without it, and the decision route reads a narrowing rather
+     * than a no-op. A narrowing is treated as a promise that the removed
+     * access stops working, so it revokes the client's live tokens. The user
+     * is shown nothing and a working integration dies.
+     */
+    alreadyGranted = false,
+  ): string => {
+    const tiles = buildGroups(scopes, bundles)
+      .map((g) => (alreadyGranted ? { ...g, defaultOn: true } : g))
+      .map(group)
+      .join("");
     return `<div class="t-soft">${tiles}</div>`;
   };
 
@@ -411,7 +520,7 @@ export function renderConsentScreen(params: ConsentParams): string {
         : "";
     const keptSection =
       keptVisible.length > 0
-        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible)}`
+        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
         : "";
     // Removed scopes are being dropped, not re-granted — show their group
     // names as a quiet line, no toggles.

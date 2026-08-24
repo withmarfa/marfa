@@ -89,7 +89,10 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { getPermissionBundles } from "../config.js";
+import {
+  getPermissionBundles,
+  hasUsablePermissionBundleOverride,
+} from "../config.js";
 import {
   buildDefaultPermissionBundles,
   resolveRuntimeCustomNamespaces,
@@ -1505,7 +1508,13 @@ export async function resolveConsentBundles(
   storage: Storage,
   authUserId: string,
 ): Promise<PermissionBundle[]> {
-  if (process.env.MARFA_PERMISSION_BUNDLES) return getPermissionBundles();
+  // Validity, not presence. A rejected override has already fallen back to
+  // the shipped bundles, so treating it as authoritative here skips the
+  // per-space derivation too and the consent screen loses the space's own
+  // handle namespaces on top of losing the override. Same distinction boot
+  // draws for the instance-wide fold; one bad environment variable should
+  // cost one thing.
+  if (hasUsablePermissionBundleOverride()) return getPermissionBundles();
   if (!storage.users) return getPermissionBundles();
   const row = await storage.users.getByAuthUserId(authUserId);
   const spaceId = row?.space_id;

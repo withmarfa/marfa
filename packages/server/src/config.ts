@@ -541,8 +541,10 @@ export function parseOtelHeaders(
 /**
  * The default consent-screen permission bundles, derived from the type
  * registry at module load. Each scope renders as one plain-language
- * per-type toggle (all pre-ticked); the issued token carries exactly the
- * scopes the user keeps ticked, enforced through the usual permission maps.
+ * per-type toggle; the issued token carries exactly the scopes the user
+ * keeps ticked, enforced through the usual permission maps. Every bundle
+ * here declares `default_on: true`, so all of them arrive pre-ticked, and
+ * that is a property of these five rather than of the renderer.
  *
  * The derivation, its family rules, and the rationale each rule carries
  * live in `auth/default-bundles.ts`. Deployments whose spaces registered
@@ -558,6 +560,18 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] =
  * `PermissionBundle`). Falls back to {@link DEFAULT_PERMISSION_BUNDLES} on
  * absent, non-array, or malformed input — a bad override must never strand
  * the consent screen with zero bundles.
+ *
+ * **A missing `default_on` is an error, not a default.** The field is
+ * required on `PermissionBundle`, and an override is JSON the type system
+ * never checks.
+ *
+ * Neither implicit reading is better than refusing. Defaulting to `true`
+ * makes a required field optional in practice and turns an operator who
+ * meant `false` and misspelled the key into an on-by-default grant, which
+ * is the wrong direction to fail on a permission question. Defaulting to
+ * `false` fails in the safe direction and silently, producing a consent
+ * screen that looks broken and a grant that reaches nothing. Refusing the
+ * override says so, keeps the type honest, and leaves a working screen up.
  */
 export function loadPermissionBundles(
   raw: string | undefined,
@@ -571,20 +585,41 @@ export function loadPermissionBundles(
       );
       return DEFAULT_PERMISSION_BUNDLES;
     }
-    const valid = parsed.every(
-      (b): b is PermissionBundle =>
-        typeof b === "object" &&
-        b !== null &&
-        typeof (b as PermissionBundle).id === "string" &&
-        Array.isArray((b as PermissionBundle).scopes),
-    );
-    if (!valid) {
-      console.warn(
-        "MARFA_PERMISSION_BUNDLES has malformed entries; using defaults.",
+    const isValidBundle = (b: unknown): b is PermissionBundle =>
+      typeof b === "object" &&
+      b !== null &&
+      typeof (b as PermissionBundle).id === "string" &&
+      Array.isArray((b as PermissionBundle).scopes) &&
+      typeof (b as PermissionBundle).default_on === "boolean";
+    // Names the entry an operator has to go and fix: its id when it has one,
+    // its position when it does not, since a missing id is one of the ways an
+    // entry lands here.
+    const nameOf = (b: unknown, i: number): string => {
+      const id: unknown = (b as { id?: unknown } | null)?.id;
+      return typeof id === "string" && id.length > 0
+        ? id
+        : `index ${String(i)}`;
+    };
+    const rejected: string[] = [];
+    const bundles: PermissionBundle[] = [];
+    parsed.forEach((b: unknown, i: number) => {
+      if (isValidBundle(b)) bundles.push(b);
+      else rejected.push(nameOf(b, i));
+    });
+    if (rejected.length > 0) {
+      // Loud, and it names them. A rejected override silently reverts the
+      // instance to the shipped bundles, and the operator's next signal is a
+      // consent screen that does not offer what they configured — with
+      // nothing on it pointing at the environment variable. Naming the
+      // entries turns that into a one-line fix.
+      console.error(
+        `MARFA_PERMISSION_BUNDLES rejected; using defaults. ` +
+          `Each entry needs a string id, a scopes array, and a boolean default_on. ` +
+          `Offending entries: ${rejected.join(", ")}.`,
       );
       return DEFAULT_PERMISSION_BUNDLES;
     }
-    return parsed;
+    return bundles;
   } catch (err) {
     console.warn(
       `Failed to parse MARFA_PERMISSION_BUNDLES (${String(err)}); using defaults.`,
@@ -612,6 +647,22 @@ export function setActivePermissionBundles(
   bundles: PermissionBundle[] | null,
 ): void {
   activePermissionBundles = bundles;
+}
+
+/**
+ * Whether the operator override is both set and usable.
+ *
+ * Boot skips folding the runtime custom-type namespaces in when an override
+ * is present, because the override outranks the derivation. Presence and
+ * validity are different questions, and only the second one should suppress
+ * the derivation: a rejected override falls back to the shipped defaults, so
+ * keying on presence alone would drop the handle namespaces a space's own
+ * custom types need on top of dropping the override.
+ */
+export function hasUsablePermissionBundleOverride(): boolean {
+  const raw = process.env.MARFA_PERMISSION_BUNDLES;
+  if (!raw) return false;
+  return loadPermissionBundles(raw) !== DEFAULT_PERMISSION_BUNDLES;
 }
 
 /** Resolve the active permission bundles. */

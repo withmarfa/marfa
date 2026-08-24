@@ -2,7 +2,11 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { loadConfig, setActivePermissionBundles } from "./config.js";
+import {
+  loadConfig,
+  setActivePermissionBundles,
+  hasUsablePermissionBundleOverride,
+} from "./config.js";
 import {
   buildDefaultPermissionBundles,
   resolveAllRuntimeCustomNamespaces,
@@ -983,8 +987,12 @@ async function main() {
   // through the default consent set rather than only `user.*`. The
   // space-less bucket read here is the whole story in keys mode; hosted
   // consent screens re-derive per space at render time (auth-consent.ts).
-  // The operator override outranks the derivation and skips it entirely.
-  if (!process.env.MARFA_PERMISSION_BUNDLES) {
+  // A *usable* override outranks the derivation and skips it entirely. An
+  // override that failed validation does not: it has already fallen back to
+  // the shipped bundles, and skipping here as well would drop the handle
+  // namespaces too, so one bad environment variable would cost two things
+  // rather than one.
+  if (!hasUsablePermissionBundleOverride()) {
     const bundles = buildDefaultPermissionBundles(
       await resolveRuntimeCustomNamespaces(storage),
     );

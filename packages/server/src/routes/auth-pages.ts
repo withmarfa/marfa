@@ -15,6 +15,7 @@ import {
   canGrantRole,
   GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
+  scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -25,6 +26,7 @@ import {
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type {
   MarfaAuth,
@@ -2204,6 +2206,9 @@ export function authRoutes(
     // turns a two-line fix at the client into a token that quietly does not
     // do what the client was built for.
     const clientCeiling = client.scopes;
+    const offByDefaultOnly = scopesOfferedOffByDefaultOnly(
+      getPermissionBundles(),
+    );
     for (const requested of requestedScopes) {
       if (!allowedScopes.has(requested)) {
         throw new MarfaError(
@@ -2215,6 +2220,34 @@ export function authRoutes(
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
           `Scope not registered for this client: ${requested}`,
+        );
+      }
+      // A third ceiling, and the one this surface cannot express.
+      //
+      // This check is load-bearing rather than belt-and-braces. The stored
+      // client ceiling above does NOT exclude off-by-default bundles: the
+      // stale-ceiling widening adds the unfiltered bundle union, before a
+      // session is resolved, so a client can legitimately arrive here with
+      // one of these scopes registered. This refusal is what stops it.
+      //
+      // The device approval screen confirms a scope list; it has no
+      // per-scope toggle, and its own copy says the rows are confirmed
+      // rather than editable. An off-by-default bundle grants only by being
+      // ticked, so on a screen with no tick there is nothing for "leaving it
+      // alone grants nothing" to mean, and approving would hand over in one
+      // click exactly what the flag exists to withhold.
+      //
+      // Refused rather than dropped, matching the two checks above and for
+      // the same reason: the response goes back to the machine that made the
+      // request, and a device code silently issued for less than was asked
+      // for becomes a token that quietly does not do the job. Refused at
+      // initiation rather than at approval so the stored row never carries
+      // the scope, which keeps the screen, the grant, the audit row and the
+      // issued token reading the same set.
+      if (offByDefaultOnly.has(requested)) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCOPE,
+          `Scope needs an explicit approval this flow cannot offer: ${requested}`,
         );
       }
     }

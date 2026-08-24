@@ -14,6 +14,7 @@ import {
   CAPABILITY_ROOT,
   CAPABILITY_SCOPES,
   hasCapability,
+  scopesOfferedOffByDefaultOnly,
 } from "./scopes.js";
 import type { ParsedScope, PermissionBundle } from "./scopes.js";
 import {
@@ -892,5 +893,56 @@ describe("only type scopes reach the item-type axis", () => {
       expect(parsed).not.toBeNull();
       expect(isTypeScope(parsed!)).toBe(kind === "type");
     }
+  });
+});
+
+describe("scopesOfferedOffByDefaultOnly", () => {
+  const bundle = (
+    id: string,
+    default_on: boolean,
+    scopes: string[],
+  ): PermissionBundle => ({
+    id,
+    label: id,
+    description: "",
+    scopes,
+    default_on,
+  });
+
+  it("withholds a scope only an off-by-default bundle offers", () => {
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("read", true, ["core.note:read"]),
+      bundle("manage", false, ["core.task:write"]),
+    ]);
+    expect([...out]).toEqual(["core.task:write"]);
+  });
+
+  it("does not withhold a scope an on-by-default bundle also offers", () => {
+    // The overlap case, and the one the consent screen has to agree with:
+    // any on-by-default bundle claiming a scope makes it on-by-default. A
+    // renderer resolving the same overlap first-bundle-wins would show this
+    // unticked while the device flow granted it in one click.
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("manage", false, ["core.task:write"]),
+      bundle("read", true, ["core.task:write"]),
+    ]);
+    expect(out.size).toBe(0);
+  });
+
+  it("never withholds a hidden mechanism", () => {
+    // `offline_access` is what a client names to get a refresh token, and
+    // every SDK device flow requests it. Withholding it would refuse them
+    // all at initiation over an operator's bundle layout.
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("odd", false, ["openid", "offline_access", "core.task:write"]),
+    ]);
+    expect([...out]).toEqual(["core.task:write"]);
+  });
+
+  it("ignores a scope no bundle mentions", () => {
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("manage", false, ["core.task:write"]),
+    ]);
+    expect(out.has("core.bookmark:read")).toBe(false);
   });
 });

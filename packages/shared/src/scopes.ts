@@ -707,3 +707,54 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
   }
   return Array.from(out).sort();
 }
+
+/**
+ * Scopes that only an off-by-default bundle offers.
+ *
+ * `default_on: false` means the toggle starts unticked, and the whole of
+ * what it grants is that a person ticked it. A surface with no per-scope
+ * toggle therefore cannot grant one of these at all: there is no tick to
+ * make, so "leaving it alone grants nothing" has nothing to attach to. The
+ * device flow is that surface, and this is what it refuses.
+ *
+ * Claimed by at least one bundle and by no on-by-default one, so a scope
+ * that also appears in a bundle the user gets by default is not withheld,
+ * and a scope no bundle mentions is untouched. Only a bundle can declare
+ * this, so only a bundle can withhold it.
+ */
+export function scopesOfferedOffByDefaultOnly(
+  bundles: readonly PermissionBundle[],
+): Set<string> {
+  const offered = new Set<string>();
+  const onByDefault = new Set<string>();
+  for (const bundle of bundles) {
+    for (const scope of bundle.scopes) {
+      offered.add(scope);
+      if (bundle.default_on) onByDefault.add(scope);
+    }
+  }
+  for (const scope of onByDefault) offered.delete(scope);
+  // The hidden mechanisms are exempt, matching the consent screen, which
+  // submits them without a visible toggle for the same reason: a person
+  // cannot decline a control they cannot see, so `default_on` never governed
+  // them on either surface.
+  //
+  // Without this the exemption asymmetry is not cosmetic. `offline_access`
+  // is what a client names to get a refresh token, every SDK device flow
+  // requests it, and an operator who put it in an off-by-default bundle
+  // would have every one of them refused outright at initiation. A bundle
+  // withholds a mechanism by not requesting it.
+  for (const mechanism of HIDDEN_MECHANISM_SCOPES) offered.delete(mechanism);
+  return offered;
+}
+
+/**
+ * OAuth mechanisms rather than data permissions: `openid` is the identity
+ * base a sign-out needs and `offline_access` is the refresh token a client
+ * needs to keep working. Both ride along without a visible toggle, so no
+ * per-scope consent decision applies to either.
+ */
+export const HIDDEN_MECHANISM_SCOPES: readonly OidcScope[] = [
+  "openid",
+  "offline_access",
+];
