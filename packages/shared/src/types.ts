@@ -49,6 +49,48 @@ export const MARFA_ROLES: readonly MarfaRole[] = [
 ] as const;
 
 /**
+ * Whether a value is one of the roles this build recognizes.
+ *
+ * Exists because a role read back from storage is a bare string, and every
+ * gate that consumes one compares it against a literal. A value outside the
+ * union therefore matches no branch and is not refused anywhere, it simply
+ * fails every comparison, which reads as "not an admin" in one place and,
+ * where the comparison runs through `ROLE_RANK`, as `undefined < 2` and so
+ * "not below space_admin" in another. One stale value produced both, in
+ * opposite directions, and neither said anything.
+ *
+ * Keyed off `MARFA_ROLES` rather than a repeated union literal so adding a
+ * role cannot leave this behind.
+ */
+export function isMarfaRole(value: unknown): value is MarfaRole {
+  return (
+    typeof value === "string" &&
+    (MARFA_ROLES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Narrows an untrusted role to the union, falling back rather than throwing.
+ *
+ * Deliberately does not translate historical values forward. A rename is
+ * finished by the migration that realigns the stored rows; a translation
+ * table in live code would keep a retired word working indefinitely and
+ * hide the fact that a database was never migrated.
+ *
+ * Falls back because the callers are row projections. A parse that threw
+ * would take out every list query touching one bad row, turning a single
+ * mis-migrated record into an outage. Callers that can report the value
+ * should do so, see `storage/stored-role.ts` in the server, which pairs
+ * this with a log line so a fallback is visible rather than silent.
+ */
+export function parseMarfaRole(
+  value: unknown,
+  fallback: MarfaRole = "member",
+): MarfaRole {
+  return isMarfaRole(value) ? value : fallback;
+}
+
+/**
  * Authority ranking of the roles. Higher outranks lower.
  *
  * The ordering was always implicit in the prose above and in the order

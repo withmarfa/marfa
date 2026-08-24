@@ -98,11 +98,19 @@ describe.skipIf(!isPg || !adminUrl)(
           ),
           "utf8",
         );
-        const roleUpdate = migration
+        // Every role update the file contains, not just the one table this
+        // test used to name. The old filter read `UPDATE "api_keys" SET role`
+        // and so could only ever see half the work: the same migration also
+        // renames `users`, whose stored role it did not realign, and this
+        // assertion was blind to that by construction. Collecting them all
+        // means a migration that grows a second table is replayed here
+        // rather than silently skipped. The `users` backfill itself landed
+        // separately, in 0093, with its own test.
+        const roleUpdates = migration
           .split("\n")
-          .find((line) => line.startsWith('UPDATE "api_keys" SET role'));
-        expect(roleUpdate).toBeDefined();
-        await sql.unsafe(roleUpdate!);
+          .filter((line) => /^UPDATE "\w+" SET "?role"?/.test(line.trim()));
+        expect(roleUpdates.length).toBeGreaterThan(0);
+        for (const statement of roleUpdates) await sql.unsafe(statement);
 
         const roles = await sql<{ id: string; role: string }[]>`
           SELECT id, role FROM api_keys WHERE id IN ('key_old', 'key_new') ORDER BY id

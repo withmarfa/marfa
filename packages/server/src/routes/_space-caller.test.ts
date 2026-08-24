@@ -89,6 +89,24 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
     });
   });
 
+  it("refuses a role outside the union instead of admitting it", async () => {
+    // The fail-open direction, and the one worth a test of its own. This
+    // gate compares ranks rather than literals, so an unrecognized role
+    // makes the lookup `undefined`, and `undefined < 2` is false, the
+    // comparison admits precisely what it means to refuse. Every account
+    // holder on both deployments carried such a value for a full rename
+    // cycle.
+    //
+    // The store narrows on read, so a real caller cannot arrive in this
+    // shape any more. This asserts the gate does not depend on that: the
+    // fake here builds a `User` directly, exactly as a future caller
+    // assembled some other way would.
+    const stale = fakeUser({ role: "tenant_admin" as "space_admin" });
+    await expect(resolve(stale)).rejects.toMatchObject({
+      code: ErrorCode.FORBIDDEN,
+    });
+  });
+
   it("admits a space admin", async () => {
     const caller = await resolve(fakeUser({ role: "space_admin" }));
     expect(caller).toMatchObject({
