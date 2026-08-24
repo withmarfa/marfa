@@ -713,3 +713,35 @@ describe("renderConsentScreen — default_on", () => {
     expect(defaultSubmission(html)).toEqual(["core.bookmark:read"]);
   });
 });
+
+describe("renderConsentScreen — a scope in two bundles", () => {
+  it("ticks it when any on-by-default bundle offers it", () => {
+    // The two readers of a bundle overlap have to agree. This renderer used
+    // first-bundle-wins and `scopesOfferedOffByDefaultOnly` uses
+    // any-on-by-default-wins, so with the off bundle listed first the same
+    // configuration rendered the scope unticked here while the device flow
+    // treated it as on-by-default and granted it on one approval. The
+    // stricter surface was the one with the toggle, which is backwards.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [{ kind: "type", typePattern: "core.note", operation: "write" }],
+      bundles: [
+        {
+          id: "manage",
+          label: "Manage your space",
+          description: "",
+          scopes: ["core.note:write"],
+          default_on: false,
+        },
+        {
+          id: "write",
+          label: "Write your content",
+          description: "",
+          scopes: ["core.note:write"],
+          default_on: true,
+        },
+      ],
+    });
+    expect(defaultSubmission(html)).toEqual(["core.note:write"]);
+  });
+});

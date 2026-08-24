@@ -56,6 +56,7 @@
  */
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
+import { HIDDEN_MECHANISM_SCOPES } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityLabel } from "./capability-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
@@ -149,7 +150,26 @@ function buildGroups(
   scopes: ParsedScope[],
   bundles: PermissionBundle[],
 ): ScopeGroup[] {
+  // A scope may appear in more than one bundle, and the two readers of that
+  // overlap have to resolve it the same way or the same configuration means
+  // different things on different surfaces.
+  //
+  // First-bundle-wins on its own disagreed with `scopesOfferedOffByDefaultOnly`,
+  // which withholds a scope only when NO on-by-default bundle offers it. A
+  // scope in one on- and one off-by-default bundle therefore rendered
+  // unticked here, if the off one happened to be listed first, while the
+  // device flow read the same pair as on-by-default and granted it in one
+  // click. The stricter surface was the one with the toggle. An ordinary
+  // operator config mistake reaches this, so the tie-break is explicit: an
+  // on-by-default bundle claims a scope ahead of an off-by-default one, and
+  // first-listed breaks the tie within each half.
   const literalToBundle = new Map<string, PermissionBundle>();
+  for (const bundle of bundles) {
+    if (!bundle.default_on) continue;
+    for (const literal of bundle.scopes) {
+      if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
+    }
+  }
   for (const bundle of bundles) {
     for (const literal of bundle.scopes) {
       if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
@@ -389,7 +409,8 @@ export function renderConsentScreen(params: ConsentParams): string {
   // requesting it.
   const isHidden = (s: ParsedScope): boolean =>
     s.kind === "oidc" &&
-    (s.oidcScope === "openid" || s.oidcScope === "offline_access");
+    s.oidcScope !== undefined &&
+    HIDDEN_MECHANISM_SCOPES.includes(s.oidcScope);
 
   const hiddenFields = (scopes: ParsedScope[]): string =>
     scopes

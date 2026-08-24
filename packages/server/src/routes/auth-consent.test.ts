@@ -1547,4 +1547,87 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
       setActivePermissionBundles(null);
     }
   });
+
+  it("does not drop an already-granted scope when the user returns", () => {
+    // The revocation half, and the consequence this change leads with.
+    //
+    // On a second visit the diff's "Already allowed" tile is collapsed and
+    // sits below "New", so an off-by-default scope rendered unticked there
+    // is a choice nobody sees. The decision route reads the resulting
+    // submission as a narrowing, and a narrowing is treated as a promise
+    // that the removed access stops working, so it revokes the client's live
+    // tokens. An untouched Continue killed a working integration, and a
+    // capability granted once would evaporate at the next re-consent.
+    //
+    // First consent ticks the off bundle by hand; the return visit touches
+    // nothing. The grant has to survive it.
+    return (async () => {
+      ctx = await createTestContext({ authAllowSignup: true });
+      setActivePermissionBundles(BUNDLES);
+      try {
+        const clientId = await seedClient(ctx);
+        const cookie = await signInUser(ctx, "reconsent@example.com");
+        const requested = "openid core.note:read core.task:write";
+
+        const firstQuery = await buildSignedOauthQuery(clientId, requested);
+        const first = await request(
+          ctx.app,
+          "POST",
+          "/auth/authorize/decision",
+          {
+            form: {
+              accept: "true",
+              oauth_query: firstQuery,
+              // The user reaches for the off-by-default bundle and ticks it.
+              scopes: ["openid", "core.note:read", "core.task:write"],
+            },
+            headers: { cookie, origin: ORIGIN },
+          },
+        );
+        expect(first.status).toBe(302);
+
+        // Second visit, asking for one more thing. A request the prior grant
+        // already covers is approved silently with no screen, so widening is
+        // what renders the diff — and it is the ordinary case: the app wants
+        // something new and the old grant rides along in "Already allowed".
+        const widened = `${requested} core.bookmark:read`;
+        const secondQuery = await buildSignedOauthQuery(clientId, widened);
+        const page = await request(
+          ctx.app,
+          "GET",
+          `/auth/authorize?${secondQuery}`,
+          { headers: { cookie, origin: ORIGIN } },
+        );
+        expect(page.status).toBe(200);
+        const submitted = untouchedSubmission(await page.text());
+        expect(submitted).toContain("core.task:write");
+
+        const second = await request(
+          ctx.app,
+          "POST",
+          "/auth/authorize/decision",
+          {
+            form: {
+              accept: "true",
+              oauth_query: secondQuery,
+              scopes: submitted,
+            },
+            headers: { cookie, origin: ORIGIN },
+          },
+        );
+        expect(second.status).toBe(302);
+
+        const items = await ctx.storage.items.list({
+          type: "system.connection",
+          state: "active",
+        });
+        expect(items.data.length).toBe(1);
+        const granted = items.data[0]!.properties.scopes as string[];
+        expect(granted).toContain("core.note:read");
+        expect(granted).toContain("core.task:write");
+      } finally {
+        setActivePermissionBundles(null);
+      }
+    })();
+  });
 });

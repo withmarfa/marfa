@@ -734,5 +734,27 @@ export function scopesOfferedOffByDefaultOnly(
     }
   }
   for (const scope of onByDefault) offered.delete(scope);
+  // The hidden mechanisms are exempt, matching the consent screen, which
+  // submits them without a visible toggle for the same reason: a person
+  // cannot decline a control they cannot see, so `default_on` never governed
+  // them on either surface.
+  //
+  // Without this the exemption asymmetry is not cosmetic. `offline_access`
+  // is what a client names to get a refresh token, every SDK device flow
+  // requests it, and an operator who put it in an off-by-default bundle
+  // would have every one of them refused outright at initiation. A bundle
+  // withholds a mechanism by not requesting it.
+  for (const mechanism of HIDDEN_MECHANISM_SCOPES) offered.delete(mechanism);
   return offered;
 }
+
+/**
+ * OAuth mechanisms rather than data permissions: `openid` is the identity
+ * base a sign-out needs and `offline_access` is the refresh token a client
+ * needs to keep working. Both ride along without a visible toggle, so no
+ * per-scope consent decision applies to either.
+ */
+export const HIDDEN_MECHANISM_SCOPES: readonly OidcScope[] = [
+  "openid",
+  "offline_access",
+];

@@ -2224,6 +2224,12 @@ export function authRoutes(
       }
       // A third ceiling, and the one this surface cannot express.
       //
+      // This check is load-bearing rather than belt-and-braces. The stored
+      // client ceiling above does NOT exclude off-by-default bundles: the
+      // stale-ceiling widening adds the unfiltered bundle union, before a
+      // session is resolved, so a client can legitimately arrive here with
+      // one of these scopes registered. This refusal is what stops it.
+      //
       // The device approval screen confirms a scope list; it has no
       // per-scope toggle, and its own copy says the rows are confirmed
       // rather than editable. An off-by-default bundle grants only by being

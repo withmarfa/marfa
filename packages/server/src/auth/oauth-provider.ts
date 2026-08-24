@@ -540,14 +540,27 @@ export function buildOauthProjectionPlugin(opts: {
   // document publishes. The distinction is what lets a stored ceiling stop
   // freezing without becoming no ceiling at all — see `narrowAuthorizeScopes`.
   //
-  // Filtered through the grammar for the same reason `buildAllowedScopes`
-  // filters, and it is the same raw configuration reaching a second reader.
-  // A malformed literal was never grantable here, since `liveScopes` is
-  // tested first and no longer carries one, but this set is what a stale
-  // ceiling is widened by, so an unchecked literal would be written into a
-  // client registration row and audit-logged as a scope. A row naming a
-  // scope that cannot exist is a false record rather than a live grant, and
-  // the cheaper of the two to prevent.
+  // Filtered by the grammar, deliberately not by `default_on`, and the two
+  // halves are easy to mistake for each other.
+  //
+  // The grammar filter is here because this is the same raw configuration a
+  // second reader already checks, and this set is what a stale client ceiling
+  // is widened by. An unchecked literal would be written into a registration
+  // row and audit-logged as a scope, which is a false record rather than a
+  // live grant, and the cheaper of the two to prevent.
+  //
+  // Off-by-default bundles are included on purpose. The widening runs before
+  // the plugin resolves a session, so one unauthenticated authorize request
+  // can add an off-by-default bundle's scopes to a stored registration — and
+  // that is the point, because letting an already-registered client reach a
+  // scope it was never registered for, without re-registering, is the case an
+  // off-by-default bundle exists to serve. Narrowing here would defeat it.
+  //
+  // What keeps that safe is not this line. A ceiling is permission to ask, and
+  // both surfaces that answer refuse on their own: the consent screen renders
+  // the bundle unticked, and device-flow initiation refuses the scope
+  // outright. Do not delete either on the grounds that the ceiling looks
+  // narrow, because it is not.
   const bundleScopes = new Set(
     getPermissionBundles()
       .flatMap((bundle) => bundle.scopes)
