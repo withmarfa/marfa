@@ -453,10 +453,12 @@ async function applyUpgrade(
     input.connectionId,
     input.spaceId,
   );
+  // Affected rows, not attempts. A credential the supersede path retired
+  // between the list and the revoke is not one this upgrade retired, and
+  // the count rides onto the activity row an operator reads.
   const revokedCredentialIds: string[] = [];
   for (const cred of credentials) {
-    await storage.keys.revoke(cred.id);
-    revokedCredentialIds.push(cred.id);
+    if (await storage.keys.revoke(cred.id)) revokedCredentialIds.push(cred.id);
   }
 
   const activity = await storage.items.create(

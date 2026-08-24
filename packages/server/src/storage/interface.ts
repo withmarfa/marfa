@@ -612,18 +612,24 @@ export interface KeyStore {
    */
   listForSpace(spaceId: string): Promise<ApiKey[]>;
   /**
-   * Active (non-revoked) keys whose `connection_id` matches. The
-   * uninstall pipeline uses this to locate the runtime credential bound
-   * to a connection before revoking it. Space-scoped when supplied —
-   * single-space self-hosted deployments pass `undefined` to read keys
-   * with no space binding. Indexed on the `connection_id` column.
+   * Active (non-revoked) keys whose `connection_id` matches. The uninstall
+   * and upgrade pipelines use this to locate the runtime credentials bound
+   * to a connection before revoking them. Narrows to `spaceId` when one is
+   * supplied and to nothing at all when it is not, the same reading of an
+   * absent space every other fence here takes — see
+   * `storage/space-condition.ts`. Indexed on the `connection_id` column.
    */
   listByConnectionId(connectionId: string, spaceId?: string): Promise<ApiKey[]>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
   update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
-  revoke(id: string): Promise<void>;
+  /**
+   * Stamp `revoked_at`. Returns whether this call was the one that revoked
+   * the key: a key already revoked answers `false`, so a caller listing the
+   * credentials it retired lists the ones it actually retired.
+   */
+  revoke(id: string): Promise<boolean>;
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**
@@ -858,7 +864,12 @@ export interface InboundWebhookStore {
     connectionId: string,
     spaceId?: string,
   ): Promise<InboundWebhookRow[]>;
-  setDisabled(id: string, disabled: boolean): Promise<void>;
+  /**
+   * Flip the subscription's `disabled` flag. Returns whether the flag
+   * actually moved, so a caller counting what it disabled counts rows it
+   * changed rather than rows it looked at.
+   */
+  setDisabled(id: string, disabled: boolean): Promise<boolean>;
 }
 
 export interface InboundWebhookEventStore {
@@ -939,8 +950,12 @@ export interface ConnectionOAuthTokenStore {
     spaceId?: string,
   ): Promise<ConnectionOAuthTokenRow | null>;
 
-  /** Hard-delete the row for a connection (used on revocation). */
-  delete(connectionId: string): Promise<void>;
+  /**
+   * Hard-delete the row for a connection (used on revocation). Space-scoped
+   * when supplied. Returns whether a row was actually deleted, so the
+   * uninstall pipeline reports what it removed rather than what it meant to.
+   */
+  delete(connectionId: string, spaceId?: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

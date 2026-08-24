@@ -1,4 +1,5 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
+import { spaceCondition } from "../space-condition.js";
 import type { InboundWebhookRow, InboundWebhookStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { inboundWebhooks } from "./schema.js";
@@ -54,10 +55,10 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
   }
 
   async get(id: string, spaceId?: string): Promise<InboundWebhookRow | null> {
-    const conditions = [eq(inboundWebhooks.id, id)];
-    if (spaceId !== undefined) {
-      conditions.push(eq(inboundWebhooks.space_id, spaceId));
-    }
+    const conditions = [
+      eq(inboundWebhooks.id, id),
+      spaceCondition(inboundWebhooks.space_id, spaceId),
+    ];
     const [row] = await this.db
       .select()
       .from(inboundWebhooks)
@@ -77,10 +78,10 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
     connectionId: string,
     spaceId?: string,
   ): Promise<InboundWebhookRow[]> {
-    const conditions = [eq(inboundWebhooks.connection_id, connectionId)];
-    if (spaceId !== undefined) {
-      conditions.push(eq(inboundWebhooks.space_id, spaceId));
-    }
+    const conditions = [
+      eq(inboundWebhooks.connection_id, connectionId),
+      spaceCondition(inboundWebhooks.space_id, spaceId),
+    ];
     const rows = await this.db
       .select()
       .from(inboundWebhooks)
@@ -88,10 +89,15 @@ export class PgInboundWebhookStore implements InboundWebhookStore {
     return rows.map(rowToInboundWebhook);
   }
 
-  async setDisabled(id: string, disabled: boolean): Promise<void> {
-    await this.db
+  async setDisabled(id: string, disabled: boolean): Promise<boolean> {
+    const target = disabled ? 1 : 0;
+    const result = await this.db
       .update(inboundWebhooks)
-      .set({ disabled: disabled ? 1 : 0, updated_at: new Date().toISOString() })
-      .where(eq(inboundWebhooks.id, id));
+      .set({ disabled: target, updated_at: new Date().toISOString() })
+      .where(
+        and(eq(inboundWebhooks.id, id), ne(inboundWebhooks.disabled, target)),
+      )
+      .returning({ id: inboundWebhooks.id });
+    return result.length > 0;
   }
 }

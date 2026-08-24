@@ -76,6 +76,41 @@ export default [
     },
   },
   {
+    // The space fence has one spelling, and it is `space-condition.ts`.
+    //
+    // Written inline it was written differently in each store, and the
+    // stores then disagreed about what an absent space means: most read
+    // it as "every space", one key-store method read it as "the rows
+    // with no space". A platform admin uninstalling a space's connection
+    // resolved the connection under the first reading and looked for its
+    // credentials under the second, so the revocation list came back
+    // empty every time while the pipeline reported success. Nothing about
+    // either spelling looks wrong on its own, which is why this is a lint
+    // rule rather than a comment.
+    //
+    // Scoped to the stores the connection pipelines read. The rest of the
+    // storage layer spells the fence inline too and is a separate,
+    // larger change; adding a file here is the way to bring one in.
+    files: [
+      "packages/server/src/storage/{pg,sqlite}/item-store.ts",
+      "packages/server/src/storage/{pg,sqlite}/key-store.ts",
+      "packages/server/src/storage/{pg,sqlite}/connection-oauth-token-store.ts",
+      "packages/server/src/storage/{pg,sqlite}/connection-leased-token-store.ts",
+      "packages/server/src/storage/{pg,sqlite}/inbound-webhook-store.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.name=/^(eq|ne|isNull|isNotNull)$/] > MemberExpression[property.name='space_id']",
+          message:
+            "Build the space fence with spaceCondition / spaceBucketCondition / spaceOrPlatformCondition from storage/space-condition.js. Spelling it inline is how the stores came to disagree about what an absent space means.",
+        },
+      ],
+    },
+  },
+  {
     ignores: [
       "**/dist/",
       "**/coverage/",

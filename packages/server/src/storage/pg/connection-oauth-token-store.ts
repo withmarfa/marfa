@@ -1,4 +1,5 @@
 import { eq, and } from "drizzle-orm";
+import { spaceCondition } from "../space-condition.js";
 import { randomUUID } from "node:crypto";
 import type {
   ConnectionOAuthTokenRow,
@@ -84,10 +85,10 @@ export class PgConnectionOAuthTokenStore implements ConnectionOAuthTokenStore {
     connectionId: string,
     spaceId?: string,
   ): Promise<ConnectionOAuthTokenRow | null> {
-    const conditions = [eq(connectionOauthTokens.connection_id, connectionId)];
-    if (spaceId !== undefined) {
-      conditions.push(eq(connectionOauthTokens.space_id, spaceId));
-    }
+    const conditions = [
+      eq(connectionOauthTokens.connection_id, connectionId),
+      spaceCondition(connectionOauthTokens.space_id, spaceId),
+    ];
     const [row] = await this.db
       .select()
       .from(connectionOauthTokens)
@@ -95,9 +96,16 @@ export class PgConnectionOAuthTokenStore implements ConnectionOAuthTokenStore {
     return row ? rowToToken(row) : null;
   }
 
-  async delete(connectionId: string): Promise<void> {
-    await this.db
+  async delete(connectionId: string, spaceId?: string): Promise<boolean> {
+    const result = await this.db
       .delete(connectionOauthTokens)
-      .where(eq(connectionOauthTokens.connection_id, connectionId));
+      .where(
+        and(
+          eq(connectionOauthTokens.connection_id, connectionId),
+          spaceCondition(connectionOauthTokens.space_id, spaceId),
+        ),
+      )
+      .returning({ id: connectionOauthTokens.id });
+    return result.length > 0;
   }
 }

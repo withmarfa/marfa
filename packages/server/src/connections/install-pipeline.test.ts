@@ -721,3 +721,93 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     expect(props.credential_ref).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// What the rollback leaves behind.
+//
+// The three cases above assert the *order* the compensations run in against
+// stubbed storage, which is worth having and is not the property that
+// matters to anyone looking at a connection afterwards. A rollback that ran
+// every step in the right order and left the row reading active would pass
+// all three, and did: `properties.status` stayed `active` and
+// `runtime_status` stayed `healthy` while `state` said `revoked`, and every
+// operator surface reads the properties. So this asserts the state, on real
+// storage, after a failure the pipeline can genuinely produce.
+// ---------------------------------------------------------------------------
+
+describe("performInstall — the state a rolled-back install leaves", () => {
+  let hosted: TestContext;
+
+  beforeAll(async () => {
+    hosted = await createTestContext({ authMode: "hosted" });
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  it("leaves no connection reading as active after the mint refuses", async () => {
+    // A real failure, not an injected one: a hosted deployment refuses to
+    // mint a runtime credential for a connection with no space, because a
+    // space-less credential is the platform tier rather than a narrow one.
+    // Step 1 has committed by then, so the compensation is what decides
+    // what the space admin sees.
+    const adminKey = await hosted.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+    const integration = await hosted.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: `acme.rollback-${stamp}`,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          manifest: manifest(),
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+
+    const before = await hosted.storage.items.list({
+      type: "system.connection",
+      limit: 200,
+    });
+
+    await expect(
+      performInstall(hosted.storage, "test-salt", {
+        apiKeyId: adminKey.id,
+        spaceId: undefined,
+        authMode: "hosted",
+        integrationItemId: integration.id,
+        manifest: { ...manifest(), name: `acme.rollback-${stamp}` },
+        label: `rollback state ${stamp}`,
+      }),
+    ).rejects.toThrow(/has no space/);
+
+    // The pipeline throws before it can return an id, so the connection is
+    // found by what appeared rather than by what was reported — which is
+    // the position anyone cleaning up after this is in.
+    const after = await hosted.storage.items.list({
+      type: "system.connection",
+      limit: 200,
+    });
+    const seen = new Set(before.data.map((i) => i.id));
+    const stranded = after.data.filter((i) => !seen.has(i.id));
+    expect(stranded).toHaveLength(1);
+
+    const connection = await hosted.storage.items.getIncludingTrashed(
+      stranded[0]!.id,
+      undefined,
+    );
+    // All three together. Each one on its own has been the thing that was
+    // right while the row as a whole still read as live.
+    expect(connection?.state).toBe("revoked");
+    expect(connection?.properties.status).toBe("revoked");
+    expect(connection?.properties.runtime_status).toBe("revoked");
+  });
+});

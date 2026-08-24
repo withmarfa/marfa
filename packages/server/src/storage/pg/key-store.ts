@@ -1,4 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
+import { spaceBucketCondition, spaceCondition } from "../space-condition.js";
 import {
   and,
   count,
@@ -95,9 +96,7 @@ export class PgKeyStore implements KeyStore {
       .from(apiKeys)
       .where(
         and(
-          spaceId === undefined
-            ? isNull(apiKeys.space_id)
-            : eq(apiKeys.space_id, spaceId),
+          spaceBucketCondition(apiKeys.space_id, spaceId),
           eq(apiKeys.source, input.source),
           isNull(apiKeys.revoked_at),
         ),
@@ -158,9 +157,7 @@ export class PgKeyStore implements KeyStore {
       .from(apiKeys)
       .where(
         and(
-          spaceId === undefined
-            ? isNull(apiKeys.space_id)
-            : eq(apiKeys.space_id, spaceId),
+          spaceBucketCondition(apiKeys.space_id, spaceId),
           eq(apiKeys.source, input.source),
           isNull(apiKeys.revoked_at),
         ),
@@ -227,7 +224,12 @@ export class PgKeyStore implements KeyStore {
     const rows = await this.db
       .select()
       .from(apiKeys)
-      .where(and(eq(apiKeys.space_id, spaceId), isNull(apiKeys.revoked_at)));
+      .where(
+        and(
+          spaceCondition(apiKeys.space_id, spaceId),
+          isNull(apiKeys.revoked_at),
+        ),
+      );
     return rows.map(mapRow);
   }
 
@@ -249,9 +251,7 @@ export class PgKeyStore implements KeyStore {
       .where(
         and(
           eq(apiKeys.connection_id, connectionId),
-          spaceId === undefined
-            ? isNull(apiKeys.space_id)
-            : eq(apiKeys.space_id, spaceId),
+          spaceCondition(apiKeys.space_id, spaceId),
           isNull(apiKeys.revoked_at),
         ),
       );
@@ -322,11 +322,13 @@ export class PgKeyStore implements KeyStore {
     };
   }
 
-  async revoke(id: string): Promise<void> {
-    await this.db
+  async revoke(id: string): Promise<boolean> {
+    const result = await this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
-      .where(eq(apiKeys.id, id));
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+      .returning({ id: apiKeys.id });
+    return result.length > 0;
   }
 
   /**

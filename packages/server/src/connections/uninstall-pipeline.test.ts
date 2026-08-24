@@ -7,6 +7,7 @@
  * transition, activity emission, audit log).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
@@ -483,5 +484,208 @@ describe("performUninstall — the upstream credential", () => {
       (row?.details as { upstream_credential?: unknown } | undefined)
         ?.upstream_credential,
     ).toEqual({ status: "purged", credential_id: credentialId });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hosted mode — the only mode either live environment runs, and the one the
+// cases above cannot reach.
+//
+// Everything before this point installs with `spaceId: undefined` in `keys`
+// mode, where nothing carries a `space_id` at all. The space fence therefore
+// never narrows anything, and a defect in what an absent space means is
+// invisible: every row matches either reading of it.
+// ---------------------------------------------------------------------------
+
+describe("performUninstall — hosted mode", () => {
+  let hosted: TestContext;
+
+  beforeAll(async () => {
+    hosted = await createTestContext({ authMode: "hosted" });
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  async function installIntoSpace(): Promise<{
+    apiKeyId: string;
+    spaceId: string;
+    connectionId: string;
+    credentialId: string;
+  }> {
+    const adminKey = await hosted.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const space = await hosted.storage.spaces!.create(
+      `uninstall-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // The catalog row carries no space: `system.integration` is registered
+    // by a platform credential and read through the widening, exactly as it
+    // is on a live deployment.
+    const integration = await hosted.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: `acme.hosted-${stamp}`,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          manifest: manifest(),
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+
+    const result = await performInstall(hosted.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      spaceId: space.id,
+      authMode: "hosted",
+      integrationItemId: integration.id,
+      manifest: { ...manifest(), name: `acme.hosted-${stamp}` },
+      label: `hosted uninstall test ${stamp}`,
+    });
+
+    return {
+      apiKeyId: adminKey.id,
+      spaceId: space.id,
+      connectionId: result.connection_id,
+      credentialId: result.credential_id,
+    };
+  }
+
+  it("revokes the runtime credential on a space-scoped uninstall", async () => {
+    const installed = await installIntoSpace();
+
+    const result = await performUninstall(hosted.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: installed.spaceId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
+    expect(
+      (await hosted.storage.keys.listForSpace(installed.spaceId)).find(
+        (k) => k.id === installed.credentialId,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("revokes the runtime credential when a platform admin uninstalls a space's connection", async () => {
+    // The mismatch: a platform admin holds no `space_id`, so the route
+    // computes `spaceId: undefined` and the pipeline resolves the
+    // connection unfenced. Every credential the connection owns carries
+    // the connection's space, so a fence that reads an absent space as
+    // "the rows with no space" matches none of them — not sometimes,
+    // every time — and the uninstall reports an empty revocation list
+    // beside an HTTP 200 while the credential stays live.
+    const installed = await installIntoSpace();
+
+    const result = await performUninstall(hosted.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: undefined,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
+
+    // And the credential is genuinely gone, not merely reported. A list
+    // scoped to the space is the read every operator surface makes.
+    const survivors = await hosted.storage.keys.listForSpace(installed.spaceId);
+    expect(
+      survivors.find((k) => k.id === installed.credentialId),
+    ).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What the result says happened is what happened.
+// ---------------------------------------------------------------------------
+
+describe("performUninstall — affected rows, not attempts", () => {
+  it("counts only the inbound subscriptions this uninstall disabled", async () => {
+    const installed = await installFresh();
+
+    const alreadyOff = randomUUID();
+    const stillOn = randomUUID();
+    for (const id of [alreadyOff, stillOn]) {
+      await ctx.storage.inboundWebhooks.create({
+        id,
+        connection_id: installed.connectionId,
+        secret_encrypted: "a|b|c",
+        verification_method: "hmac-sha256",
+        events: ["thing.happened"],
+      });
+    }
+    // Disabled before the uninstall started, by whatever turned it off.
+    // Walking the subscriptions and counting the walk reported two.
+    expect(
+      await ctx.storage.inboundWebhooks.setDisabled(alreadyOff, true),
+    ).toBe(true);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: undefined,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.inbound_webhooks_disabled).toBe(1);
+    expect((await ctx.storage.inboundWebhooks.getAny(stillOn))?.disabled).toBe(
+      true,
+    );
+  });
+
+  it("reports the oauth-token deletion from the delete rather than from a prior read", async () => {
+    const withToken = await installFresh();
+    await ctx.storage.connectionOauthTokens.upsert({
+      connection_id: withToken.connectionId,
+      access_token_encrypted: "a|b|c",
+      refresh_token_encrypted: null,
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      scopes: ["read"],
+    });
+
+    const deleted = await performUninstall(ctx.storage, {
+      apiKeyId: withToken.apiKeyId,
+      spaceId: undefined,
+      connectionId: withToken.connectionId,
+    });
+    expect(deleted.oauth_tokens_deleted).toBe(true);
+    expect(
+      await ctx.storage.connectionOauthTokens.get(
+        withToken.connectionId,
+        undefined,
+      ),
+    ).toBeNull();
+
+    const withoutToken = await installFresh();
+    const untouched = await performUninstall(ctx.storage, {
+      apiKeyId: withoutToken.apiKeyId,
+      spaceId: undefined,
+      connectionId: withoutToken.connectionId,
+    });
+    expect(untouched.oauth_tokens_deleted).toBe(false);
+  });
+
+  it("does not claim a credential something else revoked first", async () => {
+    // The supersede path retires a connection's older credentials on every
+    // mint and holds no lock this pipeline waits on, so a credential can go
+    // between the list and the revoke. Listing it anyway would put an id in
+    // the audit row under an action that did not happen.
+    const installed = await installFresh();
+    expect(await ctx.storage.keys.revoke(installed.credentialId)).toBe(true);
+
+    const result = await performUninstall(ctx.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: undefined,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([]);
   });
 });

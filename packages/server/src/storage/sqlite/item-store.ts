@@ -10,10 +10,14 @@ import {
   asc,
   sql,
   inArray,
-  isNull,
   getTableColumns,
   type SQL,
 } from "drizzle-orm";
+import {
+  spaceBucketCondition,
+  spaceCondition,
+  spaceOrPlatformCondition,
+} from "../space-condition.js";
 import {
   generateId,
   isValidId,
@@ -164,18 +168,15 @@ export class SqliteItemStore implements ItemStore {
     spaceId?: string,
     includePlatformScoped?: boolean,
   ) {
-    if (!spaceId) return eq(items.id, id);
-    if (includePlatformScoped) {
-      // Catalog widening — see `ItemGetOptions.includePlatformScoped`.
-      // Only the public `get` path threads `true` here; every other
-      // caller (update, delete, transition, ...) leaves the equality
-      // fence in place.
-      return and(
-        eq(items.id, id),
-        or(eq(items.space_id, spaceId), isNull(items.space_id)),
-      );
-    }
-    return and(eq(items.id, id), eq(items.space_id, spaceId));
+    // Catalog widening — see `ItemGetOptions.includePlatformScoped`.
+    // Only the public `get` path threads `true` here; every other caller
+    // (update, delete, transition, ...) leaves the equality fence in place.
+    return and(
+      eq(items.id, id),
+      includePlatformScoped
+        ? spaceOrPlatformCondition(items.space_id, spaceId)
+        : spaceCondition(items.space_id, spaceId),
+    );
   }
 
   async create(input: CreateItemInput, spaceId?: string): Promise<Item> {
@@ -230,7 +231,7 @@ export class SqliteItemStore implements ItemStore {
         const dedupConditions = [
           eq(items.source, input.source),
           eq(items.source_id, input.source_id),
-          spaceId ? eq(items.space_id, spaceId) : isNull(items.space_id),
+          spaceBucketCondition(items.space_id, spaceId),
         ];
         const existing = await tx
           .select({ id: items.id })
@@ -369,8 +370,8 @@ export class SqliteItemStore implements ItemStore {
     const conditions = [
       eq(items.source, source),
       eq(items.source_id, sourceId),
+      spaceCondition(items.space_id, spaceId),
     ];
-    if (spaceId) conditions.push(eq(items.space_id, spaceId));
     const row = await this.db
       .select(itemColumns)
       .from(items)
@@ -388,9 +389,10 @@ export class SqliteItemStore implements ItemStore {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
     const unique = Array.from(new Set(ids));
-    const where = spaceId
-      ? and(inArray(items.id, unique), eq(items.space_id, spaceId))
-      : inArray(items.id, unique);
+    const where = and(
+      inArray(items.id, unique),
+      spaceCondition(items.space_id, spaceId),
+    );
     const rows = await this.db
       .select(itemColumns)
       .from(items)
@@ -424,21 +426,14 @@ export class SqliteItemStore implements ItemStore {
 
     const conditions = [];
 
-    if (filters.spaceId) {
-      // Opt-in widening for catalog list endpoints — see
-      // `ItemFilters.includePlatformScoped` for why platform-scoped
-      // (space_id IS NULL) rows surface to space callers in this
-      // narrow case. Default keeps the strict equality fence.
-      if (filters.includePlatformScoped) {
-        const spaceClause = or(
-          eq(items.space_id, filters.spaceId),
-          isNull(items.space_id),
-        );
-        if (spaceClause) conditions.push(spaceClause);
-      } else {
-        conditions.push(eq(items.space_id, filters.spaceId));
-      }
-    }
+    // Opt-in widening for catalog list endpoints — see
+    // `ItemFilters.includePlatformScoped` for why platform-scoped
+    // (space_id IS NULL) rows surface to space callers in this narrow
+    // case. Default keeps the strict equality fence.
+    const spaceClause = filters.includePlatformScoped
+      ? spaceOrPlatformCondition(items.space_id, filters.spaceId)
+      : spaceCondition(items.space_id, filters.spaceId);
+    if (spaceClause) conditions.push(spaceClause);
 
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
@@ -895,8 +890,10 @@ export class SqliteItemStore implements ItemStore {
   async bulkPurge(ids: string[], spaceId?: string): Promise<number> {
     if (ids.length === 0) return 0;
     const unique = Array.from(new Set(ids));
-    const conditions = [inArray(items.id, unique)];
-    if (spaceId) conditions.push(eq(items.space_id, spaceId));
+    const conditions = [
+      inArray(items.id, unique),
+      spaceCondition(items.space_id, spaceId),
+    ];
     const scopedWhere = and(...conditions);
 
     return await this.db.transaction(async (tx) => {
@@ -923,16 +920,10 @@ export class SqliteItemStore implements ItemStore {
     const baseConditions = [
       eq(items.state, "trashed"),
       lt(items.updated_at, beforeDate),
+      // Three states, not two: a named space, the space-less bucket
+      // (`null`), or every space at once (`undefined`).
+      spaceCondition(items.space_id, spaceId),
     ];
-    // spaceId === null filters to rows where space_id IS NULL
-    // (single-space self-host items + any rows with no space scope).
-    // Empty string is NOT a sentinel here — items.space_id is nullable,
-    // not empty-string-defaulted like blobs.space_id.
-    if (spaceId === null) {
-      baseConditions.push(isNull(items.space_id));
-    } else if (spaceId !== undefined) {
-      baseConditions.push(eq(items.space_id, spaceId));
-    }
     const where = and(...baseConditions);
 
     return await this.db.transaction(async (tx) => {
@@ -969,12 +960,8 @@ export class SqliteItemStore implements ItemStore {
     const baseConditions = [
       eq(items.type, "system.activity"),
       lt(items.created_at, beforeDate),
+      spaceCondition(items.space_id, spaceId),
     ];
-    if (spaceId === null) {
-      baseConditions.push(isNull(items.space_id));
-    } else if (spaceId !== undefined) {
-      baseConditions.push(eq(items.space_id, spaceId));
-    }
     const where = and(...baseConditions);
 
     return await this.db.transaction(async (tx) => {
@@ -1063,10 +1050,7 @@ export class SqliteItemStore implements ItemStore {
     allowedTypes?: string[],
     sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>> {
-    const conditions = [];
-    if (spaceId) {
-      conditions.push(eq(items.space_id, spaceId));
-    }
+    const conditions = [spaceCondition(items.space_id, spaceId)];
     const typeClause = allowedTypesCondition(allowedTypes);
     if (typeClause) conditions.push(typeClause);
     // Counts have to agree with the listing they summarize, so the read
