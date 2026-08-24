@@ -90,6 +90,21 @@ updates:
       # esbuild advisories that do matter, including any that reach a
       # version we can actually move.
       - dependency-name: "esbuild"
+      # TypeScript majors, because `typescript-eslint` declares
+      # `typescript: >=4.8.4 <6.1.0`. Taking TypeScript 7 trades the compiler
+      # upgrade for losing lint entirely, which is the wrong way round.
+      #
+      # Grouping does not cover this. A major nothing can accept sits in the
+      # major group and takes every other major down with it, so the block
+      # belongs where the update is proposed rather than being rediscovered
+      # on each pull request. Minor and patch releases of the current major
+      # still flow.
+      #
+      # Lift it when `npm view typescript-eslint peerDependencies` shows a
+      # range admitting 7.x, and only once lint passes on the new compiler.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
