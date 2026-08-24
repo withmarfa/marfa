@@ -127,6 +127,9 @@ export default [
       // a parse error, because a generated bundle is in no tsconfig project —
       // so an unrelated deploy running in parallel breaks the lint gate.
       "**/.wrangler/",
+      // Another repository's checkout, staged into the server image. It is
+      // linted where it lives, and it is in no tsconfig project here.
+      "integrations-src/",
       "packages/*/scripts/*.mjs",
       // The scheduled health check runs standalone on a CI runner with no
       // install step, so it is plain ESM outside every tsconfig project and

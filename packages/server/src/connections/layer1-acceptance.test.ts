@@ -135,9 +135,9 @@ describe("runtime substrate acceptance", () => {
     });
 
     // 4. Drive a handler-equivalent flow: read cursor → write cursor →
-    //    emit activity. This is exactly what _template's handleSchedule
-    //    does, with the in-memory storage shim from runtime-test
-    //    standing in for the per-Connection DO storage.
+    //    emit activity, which is what a scheduled handler does, with the
+    //    in-memory storage shim from runtime-test standing in for the
+    //    per-Connection DO storage.
     const localStorage = createInMemoryStorage();
     const cursor = createCursorStore(localStorage);
     const activity = createActivitySink(client, connectionId);

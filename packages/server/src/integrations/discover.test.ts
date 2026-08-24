@@ -146,14 +146,13 @@ describe("discoverIntegrationDirs", () => {
     expect(discoverIntegrationDirs(at)).toEqual([]);
   });
 
-  // The scaffold shipped as a dispatchable integration on every deployment
-  // under the old arrangement, because the runtime loader prepended it by
-  // hand. Reading the directory naively would have promoted it further, into
-  // the installable catalog. It sits at the handle level, so that is the
-  // level that has to hold the rule.
-  it("skips scaffolding at the handle level, which is what keeps _template out", () => {
+  // A scaffold unpacked into a deployment's integrations root sits at the
+  // handle level, so that is the level that has to hold the rule. Reading
+  // the directory without it would put the scaffold in the installable
+  // catalog.
+  it("skips scaffolding at the handle level", () => {
     const at = scratch();
-    for (const d of ["_template/src", ".turbo/cache", "marfa/podcasts"]) {
+    for (const d of ["_scaffold/src", ".turbo/cache", "marfa/podcasts"]) {
       mkdirSync(join(at, d), { recursive: true });
     }
     expect(discoverIntegrationDirs(at)).toEqual(["marfa/podcasts"]);

@@ -181,6 +181,9 @@ COPY --from=build --chown=node:node /app/out ./
 COPY --from=build --chown=node:node /integrations-staged ./integrations
 ENV MARFA_INTEGRATIONS_ROOT=/app/integrations
 COPY --from=build --chown=node:node /repo/packages/server/installed-integrations.txt ./installed-integrations.txt
+# And the commit they were built from, so a running container is traceable
+# to its source rather than only to its own set of names.
+COPY --from=build --chown=node:node /repo/packages/server/integrations-ref.txt ./integrations-ref.txt
 COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
 COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs

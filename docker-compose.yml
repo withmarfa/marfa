@@ -4,8 +4,16 @@
 #      API_KEY_SALT=$(openssl rand -hex 32)
 #      MARFA_AUTH_SECRET=$(openssl rand -hex 32)
 #    (optionally POSTGRES_PASSWORD; defaults to "marfa" for local use).
-# 2. docker compose up --build
-# 3. Mint the first admin key:
+# 2. Fetch the integrations the image installs. They are a separate
+#    repository, and the build stages them from a checkout it expects here:
+#      git clone https://github.com/withmarfa/integrations integrations-src
+#      git -C integrations-src checkout "$(sed -n '/^[0-9a-f]\{40\}$/p' \
+#        packages/server/integrations-ref.txt)"
+#    Skip it and the build stops at the first name it cannot find. To run
+#    with no integrations at all, put `none` in
+#    packages/server/installed-integrations.txt instead.
+# 3. docker compose up --build
+# 4. Mint the first admin key:
 #      marfa bootstrap http://localhost:8600
 #    (or, without the CLI:
 #      curl -X POST http://localhost:8600/keys -H 'content-type: application/json' \

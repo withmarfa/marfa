@@ -4,20 +4,19 @@ updates:
   #
   # This repository is a single pnpm workspace with one lockfile at the root.
   # A job that runs at `/` reads `pnpm-workspace.yaml`, expands the globs in
-  # it, and pulls in every member manifest, so the root already covers all
-  # twenty-five packages. Naming the members separately buys no coverage. It
-  # makes one job walk the same workspace once per directory.
+  # it, and pulls in every member manifest, so the root already covers every
+  # package. Naming the members separately buys no coverage. It makes one job
+  # walk the same workspace once per directory.
   #
-  # An earlier version of this file named five directories and was widened to
-  # six globs on the belief that the other twenty packages were going without
-  # updates. They were not. The grouped pull requests raised under the
-  # five-directory form updated manifests in directories that form never
-  # named, because the root job reaches them through the workspace. Widening
-  # to globs added twenty-four redundant passes and nothing else, and every
-  # run afterwards was killed at Dependabot's time limit, which is fixed on
-  # GitHub's side and cannot be raised. The only lever is how much work the
-  # job has to do, so the fix is to stop doing the same work twenty-five
-  # times.
+  # An earlier version of this file named directories, then globs, on the
+  # belief that members the list did not name were going without updates.
+  # They were not: the root job reaches every member through the workspace,
+  # and the grouped pull requests raised under the narrower form had been
+  # updating manifests in directories that form never named. Widening added
+  # a redundant pass per member and nothing else, and every run afterwards
+  # was killed at Dependabot's time limit, which is fixed on GitHub's side
+  # and cannot be raised. The only lever is how much work the job has to do,
+  # so the fix is to walk the workspace once.
   #
   # The root entry is also the one that cannot go stale: a package added to
   # `pnpm-workspace.yaml` is covered with no change here. Its one gap is an

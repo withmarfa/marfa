@@ -9,8 +9,8 @@
  *     a `LocalRuntimeBundle` carrying the supervisor + bridge + a Hono
  *     sub-app exposing `POST /runtime/webhook/:connection_id`; throws
  *     rather than starting without Postgres.
- *   - `loadInTreeRegistrations` — bootstraps the in-tree integration
- *     registrations from per-integration `local.ts` entries. Called by
+ *   - `loadInTreeRegistrations` — bootstraps the registrations for the
+ *     installed integrations from their `local.ts` entries. Called by
  *     `tryStartLocalIntegrationRuntime` when running inside the server
  *     bundle. Tests build their own `LocalIntegrationRegistration[]`
  *     and call `createSupervisor` directly.
@@ -72,8 +72,8 @@ export interface StartLocalRuntimeOptions {
   /** Public Marfa API URL the in-thread `ConnectionClient` hits.
    *  Defaults to `http://localhost:<config.port>` if unset. */
   apiUrl?: string;
-  /** Production deployments pass the in-tree integration registrations
-   *  built by `loadInTreeRegistrations`. Tests pass hand-crafted ones
+  /** Production deployments pass the registrations built by
+   *  `loadInTreeRegistrations`. Tests pass hand-crafted ones
    *  that exercise the substrate without spawning worker threads. */
   registrations: LocalIntegrationRegistration[];
   /** Boss-side hook. Production sets up a real pg-boss instance; tests

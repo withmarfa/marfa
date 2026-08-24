@@ -92,8 +92,12 @@ jobs:
       # read-only and is consumed here rather than inside the build, so no
       # credential reaches a Docker layer.
       - id: integrations
+        # The parser refuses anything that is not one full commit SHA.
+        # Checkout given an empty ref for another repository takes that
+        # repository's default branch and still succeeds, so a reader that
+        # returned nothing would build green from an unpinned tree.
         run: |
-          echo "ref=$(grep -Ev '^[[:space:]]*(#|$)' packages/server/integrations-ref.txt | head -1)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: withmarfa/integrations
