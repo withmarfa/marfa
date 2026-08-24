@@ -279,6 +279,21 @@ pnpm --filter @withmarfa/server schema-sql:generate
 
 The cost that justified the exclusion also moved: it was billed minutes on hosted runners, and CI runs on a self-hosted pool now. What remains is machine time on a shared box, which the path filters keep off the majority of pull requests.
 
+### The image build
+
+`Server image` (`.github/workflows/image-build.yml`) builds the container image and throws it away. It runs **on merges to `main`** when a path it is gated on changes, and on manual dispatch against any branch.
+
+**Nothing else in the estate builds the image**, so anything the image build does differently used to be invisible until somebody dispatched a deploy, by which point `main` was already the thing that could not ship. A bundler heap ceiling is the one that bit first; the enduring list is the `linux/amd64` target, the install against the committed lockfile, the integration staging step, and the runtime stage's file layout.
+
+- **Trigger paths** — `packages/server/Dockerfile`, any `.dockerignore`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, any `package.json`, any `tsup.config.ts`, `packages/server/scripts/**`, any `integrations/*/src/local.ts`, and the workflow file itself.
+- **Deliberately not every source file.** Roughly a quarter of merges touch that set, so growth in the sources this build is sensitive to meets a build within hours rather than needing its own trigger.
+- **Hosted, not the self-hosted pool.** The pool is arm64 and the image is `linux/amd64`; emulated cross-building is far slower than a native build. Same reason the deploy's `build-push` job is hosted. A green build is about two and a quarter minutes.
+- **The whole image, not `--target build`.** Stopping at the build stage skips the runtime layout and the check that the staged integrations can load. Those are seconds on top. The saving is in dropping `--push`, which also means the job needs no registry credential.
+- **Its own workflow rather than a job in `ci.yml`, and that is load-bearing.** `ci.yml` cancels a superseded run so two Postgres-bearing matrices never contend for one machine. That is right for the matrix and wrong here: a merge landing inside the build window would cancel the previous merge's image build, and `ci.yml`'s path gating derives from `github.event.before`, so the newer run would compute its own diff, find no image path in it, and skip the build entirely. Here the gate is the workflow's own `paths:`, so a push either produces a run or produces nothing, and `cancel-in-progress: false` lets an in-flight build survive a newer push rather than being dropped. These runs cost the hosted allowance rather than the shared pool, so letting them overlap contends with nothing.
+- **A red image build alerts.** The workflow carries its own `notify` job, hosted, like every other notifier here.
+
+**Dispatching it is not free.** Unlike a `ci.yml` dispatch, a `Server image` dispatch always runs the full amd64 build. That is the point of having it — it is how a Dockerfile change gets checked before it merges — but it is billed hosted minutes rather than pool time.
+
 ## Before pushing
 
 Two validation layers:
@@ -303,13 +318,13 @@ CI runs this same script, so the two cannot drift. That is also why the missing-
 
 ### A push costs machine time — verify locally first
 
-Every job runs on the self-hosted pool, so a push costs no hosted minutes. It is not free: that pool shares one machine with whatever else is running on it, and **a whole matrix fires on every push to a pull request**. Several tests here fail on a fixed time budget when the machine is loaded, so a busy box manufactures failures that look like defects. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
+Every job in `ci.yml` runs on the self-hosted pool, so a push to a pull request costs no hosted minutes. (A merge to `main` can also fire `Server image`, which is hosted and billed; see above.) It is not free: that pool shares one machine with whatever else is running on it, and **a whole matrix fires on every push to a pull request**. Several tests here fail on a fixed time budget when the machine is loaded, so a busy box manufactures failures that look like defects. Three rules follow, all of which come down to making the push the last step rather than the iteration mechanism:
 
 - **Run `pnpm test:full` locally before pushing, not the hook.** It covers both dialects against a throwaway container, so it catches essentially everything CI would. The hook is SQLite-only and scoped to changed files; it has already gone green on a commit whose Postgres job failed.
 - **Batch the work.** Several commits in one push cost the same as one. Pushing after each commit multiplies the load by the number of commits for no extra signal.
 - **Never re-run CI to see whether a failure repeats.** Reproduce it locally instead. If a failure genuinely looks environmental, say so with the evidence rather than spending another matrix on the question — re-running until green is how a real defect gets waved through.
 
-`workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the freshness jobs. It is no longer something you owe anyone — those run on the pull request itself.
+A `ci.yml` `workflow_dispatch` is cheap and safe to use: the heavy jobs skip on it deliberately, so a manual run costs only the freshness jobs. It is no longer something you owe anyone — those run on the pull request itself. A `Server image` dispatch is the exception and is not cheap; it always runs the full build.
 
 ### Test infrastructure owns what it creates
 

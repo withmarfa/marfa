@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Marfa server — production container image for Cloudflare Containers.
+# Marfa server production container image.
 #
 # Build context is the MONOREPO ROOT (the server's workspace deps —
 # @withmarfa/shared, @withmarfa/webhooks, @withmarfa/runtime-sdk — are built
@@ -8,10 +8,11 @@
 #
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile .
 #
-# Cloudflare Containers run linux/amd64. CI builds this natively on a hosted
-# amd64 runner (no QEMU). On an arm64 host (e.g. a local Apple-Silicon machine)
-# the same buildx command cross-compiles via emulation — slower, but produces
-# an identical image.
+# The droplets this runs on are linux/amd64. Both the deploy and the CI
+# image-build job build it natively on a hosted amd64 runner, with no QEMU.
+# On an arm64 host, such as a local Apple-Silicon machine, the same buildx
+# command cross-compiles under emulation: slower, and the image is
+# identical.
 #
 # Strategy (validated): full workspace install + build, then `pnpm deploy
 # --legacy --prod` prunes to a self-contained dir carrying only the runtime
@@ -38,9 +39,11 @@ RUN pnpm install --frozen-lockfile
 # old-space size, which is derived from the container's reported memory and
 # lands well below what the server's type surface now needs. It died with
 # ERR_WORKER_OUT_OF_MEMORY the first time three ordinary pull requests
-# landed between two deploys, so the failure arrives as a broken deploy on
-# a green `main` rather than as a red pull request: nothing in CI builds
-# this image. Raise it deliberately here, where the build actually runs.
+# landed between two deploys, when nothing built this image before a deploy
+# did and the failure therefore arrived as a broken deploy on a green
+# `main`. CI builds it on merges now, so the next thing this build does
+# differently is a red `main` rather than a blocked release. Raise the
+# ceiling deliberately here, where the build actually runs.
 RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... build
 # Build every integration's local-runtime entry and stage the dist trees.
 # The image must carry integrations/<name>/dist/local.js: the loader's

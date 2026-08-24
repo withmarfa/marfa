@@ -28,7 +28,9 @@ export default defineConfig({
   // That cost was not free. Adding a sixth entry took the worker past the
   // memory it gets inside the image build, and deploys to both environments
   // failed with ERR_WORKER_OUT_OF_MEMORY having passed every local build and
-  // the whole CI matrix, because none of those build the image.
+  // the whole CI matrix, none of which built the image. The `Server image`
+  // workflow does now, on merges, so the next thing that grows past that
+  // ceiling turns `main` red rather than blocking a release.
   dts: { entry: { lib: "src/lib.ts" } },
   clean: true,
   target: "node20",
