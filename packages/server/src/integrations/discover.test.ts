@@ -81,7 +81,7 @@ describe("discoverIntegrationDirs", () => {
     const at = scratch();
     mkdirSync(join(at, "real"), { recursive: true });
     writeFileSync(join(at, "AGENTS.md"), "# not an integration\n");
-    writeFileSync(join(at, "manifest-lock.json"), "{}\n");
+    writeFileSync(join(at, "CLAUDE.md"), "# nor is this\n");
     expect(discoverIntegrationDirs(at)).toEqual(["real"]);
   });
 

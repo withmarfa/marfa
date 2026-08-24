@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { SYNC_MANIFEST } from "./manifest.js";
 
-describe("Sync Agent manifest", () => {
+describe("the sync client manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
     const result = IntegrationManifestSchema.safeParse(SYNC_MANIFEST);
     if (!result.success) {
@@ -13,7 +13,14 @@ describe("Sync Agent manifest", () => {
     expect(result.success).toBe(true);
   });
 
-  it("declares local runtime and bidirectional direction", () => {
+  it("keeps the name every installed connection resolves against", () => {
+    // A catalog row is keyed on (name, version) and a connection resolves
+    // the row it was installed against, so renaming the package must not
+    // rename the manifest.
+    expect(SYNC_MANIFEST.name).toBe("marfa/sync");
+  });
+
+  it("declares bidirectional direction", () => {
     expect(SYNC_MANIFEST.direction).toBe("both");
   });
 

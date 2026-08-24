@@ -1,6 +1,13 @@
 /**
- * The manifest lock: what each shipped integration declared, and at which
- * version, recorded so a change cannot reach `main` without moving one.
+ * The manifest lock: what each manifest this build ships declared, and at
+ * which version, recorded so a change cannot reach `main` without moving
+ * one.
+ *
+ * It covers everything that reaches the catalog, which is the integrations
+ * discovered under the runtime's directory plus the client manifests the
+ * build ships. The defect below is a property of a catalog
+ * row rather than of a directory, so covering one source and not the other
+ * would leave the quieter half unguarded.
  *
  * The defect this exists for. A catalog row is keyed on
  * `(manifest_name, manifest_version)` and is never rewritten, so a manifest

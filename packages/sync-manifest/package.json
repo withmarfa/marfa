@@ -1,9 +1,12 @@
 {
-  "name": "@withmarfa/integration-sync",
+  "name": "@withmarfa/sync-manifest",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Local-runtime integration for the sync agent. Defines the manifest the agent installs against; the actual execution is the daemon in the withmarfa/sync repo (npm: @withmarfa/sync). The companion server-side migration at packages/server/src/scripts/deprecated/migrate-sync-json-to-connection.ts re-presents an existing ~/.marfa/sync.json as a Connection + Credential pair.",
+  "description": "The manifest the sync client installs against. Sync is a client: it watches a filesystem, so its code runs on the user's machine as the daemon in the withmarfa/sync repo (npm: @withmarfa/sync). Installing it as a connection is how it gets credentials, configuration and observability; this package is the declaration that makes that possible, shipped with the server build rather than installed into an integrations directory.",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/manifest.d.ts",

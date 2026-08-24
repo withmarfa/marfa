@@ -380,22 +380,6 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/sync:
-    dependencies:
-      '@withmarfa/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
-    devDependencies:
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
-
   integrations/task-auto-archive:
     dependencies:
       '@withmarfa/runtime-sdk':
@@ -580,6 +564,9 @@ importers:
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
+      '@withmarfa/sync-manifest':
+        specifier: workspace:*
+        version: link:../sync-manifest
       '@withmarfa/webhooks':
         specifier: workspace:*
         version: link:../webhooks
@@ -650,9 +637,6 @@ importers:
       '@types/tar-stream':
         specifier: ^3.1.4
         version: 3.1.4
-      '@withmarfa/integration-sync':
-        specifier: workspace:*
-        version: link:../../integrations/sync
       '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../runtime-test
@@ -690,6 +674,22 @@ importers:
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
+
+  packages/sync-manifest:
+    dependencies:
+      '@withmarfa/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/types:
     devDependencies:

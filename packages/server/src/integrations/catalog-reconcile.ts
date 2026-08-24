@@ -27,9 +27,19 @@
  * is indistinguishable from one that never ran, which is the failure mode
  * the whole ticket is about.
  */
+import type { IntegrationManifest } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { registerIntegrationManifest } from "./register-manifest.js";
-import type { InTreeManifest } from "./load-manifests.js";
+import { loadInTreeManifests } from "./load-manifests.js";
+import { CLIENT_MANIFESTS } from "./client-manifests.js";
+
+/** Anything the catalog can be asked to carry. Deliberately no more than
+ *  the manifest: a discovered integration knows which directory it came
+ *  from and a client has no directory at all, and the reconcile has
+ *  no business caring either way. */
+export interface CatalogManifest {
+  manifest: IntegrationManifest;
+}
 
 /** One reconcile at a time across a multi-instance deployment. Web and
  *  worker containers boot together and would otherwise both register the
@@ -57,7 +67,7 @@ const EMPTY: CatalogReconcileResult = {
 
 async function reconcileUnlocked(
   storage: Storage,
-  manifests: readonly InTreeManifest[],
+  manifests: readonly CatalogManifest[],
 ): Promise<CatalogReconcileResult> {
   const result: CatalogReconcileResult = {
     registered: [],
@@ -100,7 +110,7 @@ async function reconcileUnlocked(
  */
 export async function reconcileIntegrationCatalog(
   storage: Storage,
-  manifests: readonly InTreeManifest[],
+  manifests: readonly CatalogManifest[],
 ): Promise<CatalogReconcileResult> {
   const held = await storage.coordination.withJobLock(RECONCILE_LOCK, () =>
     reconcileUnlocked(storage, manifests),
@@ -109,6 +119,83 @@ export async function reconcileIntegrationCatalog(
   // lock. That is a skip rather than a failure: the holder is doing the
   // same work.
   return held ?? EMPTY;
+}
+
+export interface ShippedCatalogOutcome {
+  result: CatalogReconcileResult;
+  /** Directories that yielded no usable manifest, with the reason. */
+  skipped: { dirName: string; reason: string }[];
+  /** True when no integrations directory could be resolved. What the build
+   *  ships still reconciled; the discovered half is empty for a reason an
+   *  operator should be told about rather than left to infer. */
+  rootUnresolved: boolean;
+}
+
+/**
+ * Reconcile the catalog against everything this build ships: the
+ * integrations discovered in the runtime's directory, plus the client
+ * manifests the server carries as workspace dependencies.
+ *
+ * **The union is the point.** A deployment installs integrations into a
+ * directory, so discovery is the only honest way to learn what it has. A
+ * client is not installed anywhere, because its code runs on the user's
+ * machine, so the only place its manifest can come from is the build.
+ * Reading one source and not the other drops half the catalog.
+ *
+ * An unresolvable integrations root is a partial answer rather than no
+ * answer, and it is reported as one. The build's own manifests need no
+ * directory, so they reconcile regardless: a deployment that cannot find
+ * its integrations still knows about its own clients.
+ *
+ * **A name arriving from both sources is refused rather than resolved.**
+ * Registration keys on `(name, version)`, so a directory that shipped a
+ * manifest a client already owns would not produce a duplicate row: it
+ * would register whichever the array happened to order first and drop the
+ * other into `alreadyPresent`, and the deployment would run against a
+ * declared surface nobody chose. That is unreachable today, but the union
+ * is permanent structure and a silent winner is the wrong default for it.
+ */
+export async function reconcileShippedCatalog(
+  storage: Storage,
+  options: { integrationsRoot: string | null },
+): Promise<ShippedCatalogOutcome> {
+  const discovered = options.integrationsRoot
+    ? await loadInTreeManifests({ integrationsRoot: options.integrationsRoot })
+    : { manifests: [], skipped: [] };
+
+  const clientNames = new Set(CLIENT_MANIFESTS.map((c) => c.manifest.name));
+  const collided = discovered.manifests.filter((entry) =>
+    clientNames.has(entry.manifest.name),
+  );
+  // Both sides are withheld, not just the loser. Picking one is the thing
+  // being refused, and a deployment told which manifest it is missing and
+  // why can fix it; a deployment silently running the other cannot.
+  const collidedNames = new Set(collided.map((entry) => entry.manifest.name));
+  const registrable = [...discovered.manifests, ...CLIENT_MANIFESTS].filter(
+    (entry) => !collidedNames.has(entry.manifest.name),
+  );
+
+  const result = await reconcileIntegrationCatalog(storage, registrable);
+
+  const collisions = [...collidedNames].map((name) => ({
+    name,
+    version: "",
+    reason:
+      `${name} reached the catalog from the installed integrations ` +
+      `directory and from the manifests this build ships. A client is not ` +
+      `something a deployment installs, so one of the two is wrong; ` +
+      `neither was registered, because registration keys on (name, ` +
+      `version) and picking one would decide it silently.`,
+  }));
+
+  return {
+    // A new object rather than a push: a locked-out reconcile returns a
+    // shared constant, and appending to its array would leak into every
+    // later call in the process.
+    result: { ...result, failed: [...result.failed, ...collisions] },
+    skipped: discovered.skipped,
+    rootUnresolved: options.integrationsRoot === null,
+  };
 }
 
 /** One line an operator can read in the boot log. Deliberately says

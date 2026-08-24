@@ -39,7 +39,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { encryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
-import { SYNC_MANIFEST } from "@withmarfa/integration-sync";
+import { SYNC_MANIFEST } from "@withmarfa/sync-manifest";
 import type { Storage } from "../../storage/interface.js";
 
 interface SyncJsonShape {

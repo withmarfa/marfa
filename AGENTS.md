@@ -1,6 +1,6 @@
 # Marfa
 
-Typed data layer. This monorepo holds seven active workspace packages, sixteen in-tree Integrations, and the DigitalOcean infra directory.
+Typed data layer. This monorepo holds eight active workspace packages, fifteen in-tree Integrations, and the DigitalOcean infra directory.
 
 **Docs MCP convention.** When working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or `marfa docs search "<query>"` from the CLI) before re-deriving from source.
 
@@ -15,12 +15,15 @@ Typed data layer. This monorepo holds seven active workspace packages, sixteen i
 - **@withmarfa/webhooks** — Inbound-webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only, consumed by the server's webhook-receipt route.
 - **@withmarfa/runtime-sdk** — SDK consumed by Integrations. Dispatch engine, per-connection state, connection client, echo suppression, manifest-typed handler scaffolding.
 - **@withmarfa/runtime-test** — Test harness mirroring the runtime-sdk surface (in-memory queue + `consumeBatch` driver), so Integrations can unit-test their handlers without booting the server.
+- **@withmarfa/sync-manifest** — The manifest the sync client installs against. Sync watches a filesystem, so its code runs on the user's machine and there is nothing for a deployment to install; the server imports this manifest and hands it to the boot-time catalog reconcile. Private, and not an Integration for exactly that reason.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fifteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fourteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
 - **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
 - **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `inbox` (email capture via Cloudflare Email Routing).
-- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream), `sync` (the file-sync client installed as a Connection for credentials, configuration, and observability; its items are user-owned and editable, not mirrors — the client itself lives in `withmarfa/sync`).
+- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream).
+
+**Where the code has to run is what decides whether something is an Integration.** An Integration is installed into a deployment's integrations directory and dispatched by the runtime. A client's code can only run somewhere else: sync watches a filesystem, so it runs on the machine holding the files. It ships a manifest and no handler, and that manifest ships with the server build rather than being filed here. Sync keeps its Connection, credentials, configuration and observability either way; none of that is what makes something an Integration.
 
 **Infra (`infra/`):** `digitalocean` — compose files, Caddyfile, env templates, and the deploy shape for the droplet deployments (`deploy-server.yml` targets it).
 
