@@ -86,9 +86,24 @@ jobs:
           exit 1
 
   notify:
-    # Reports this scheduled run's outcome to aic-alerts. Runs hosted rather than
-    # on the self-hosted pool deliberately: when the pool is the thing that broke,
-    # a notifier living on it cannot tell anyone.
+    # Reports this run's outcome to aic-alerts. Runs hosted rather than on the
+    # self-hosted pool deliberately: when the pool is the thing that broke, a
+    # notifier living on it cannot tell anyone.
+    #
+    # A dispatch of `main` reports as well as the schedule, and that is a fix
+    # rather than a convenience. When this guard fails it prints instructions
+    # for repairing the drift, and re-running it is how anybody establishes
+    # the repair worked. Reporting only on the schedule meant the run that
+    # proves the fix could not clear the alert the failure raised, so an alert
+    # outlived its condition by two days with nothing wrong.
+    #
+    # `main` is load-bearing. A dispatch can name any ref, this alert key is
+    # the estate's state for this guard, and a branch's spec is not the
+    # estate's, so reporting a branch outcome under it would be a lie in the
+    # other direction. That is also why the image build's notifier stays on
+    # pushes alone: there a push answers a question about `main` and a
+    # dispatch answers one about a branch somebody is proposing. The two
+    # notifiers look alike and answer different questions.
     #
     # The verdict keys on the drift job's own result, and `cancelled` opens an
     # alert rather than staying silent: the drift job runs on the self-hosted
@@ -98,7 +113,10 @@ jobs:
     # scheduled run resolves, which is cheap against the guard silently going
     # dark.
     needs: [drift]
-    if: always() && github.event_name == 'schedule'
+    if: >-
+      always() && (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     steps:
       - name: Report outcome to aic-alerts
