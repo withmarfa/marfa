@@ -322,7 +322,9 @@ Per-target helpers for narrow runs:
 - **`pnpm test`** — full SQLite suite, single run.
 - **`pnpm test:fresh-sqlite`** / **`pnpm test:pg`** — single-dialect runs.
 
-`test:pg` (and `test:full` through it) boots a throw-away `postgres:17` container per invocation. Container name and port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon).
+`test:pg` (and `test:full` through it) boots a throw-away `postgres:17` container per invocation, plus a transaction-mode PgBouncer in front of it on a private per-run network. Container and network names carry the invoking shell's PID, and both ports are assigned by the kernel and read back, so concurrent runs across worktrees cannot clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon).
+
+**The pooler is not optional decoration.** Ten tests cover the transaction-mode deployment shape, where a session-level `SET ROLE` can strand on a shared backend and poison an unrelated later request. They were gated on an environment variable nothing set, so they had never run anywhere: a suite reporting green while a body of tests inside it never executed. They need two independent clients landing on the **same** backend, which `default_pool_size = 1` produces and a plain Postgres cannot, so there is no cheaper fixture that covers the same ground. It costs about a second to boot and a 16 MB image.
 
 CI runs this same script, so the two cannot drift. That is also why the missing-Docker behavior differs by environment: locally the script skips with a `⊘` message, so a contributor without a daemon is not blocked, while under `CI` it fails, because there the container is the only Postgres and a skip would report green having reached no database.
 

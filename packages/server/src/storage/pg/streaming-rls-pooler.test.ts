@@ -18,18 +18,19 @@
  * `marfa_app`, so Better Auth's session read on a poisoned backend fails with
  * SQLSTATE 42501 and the request 500s.
  *
- * Opt-in. Ordinary CI has no PgBouncer, so the suite skips unless both URLs are
- * present. To run it, put a PgBouncer in `pool_mode = transaction` in front of a
- * Postgres instance and point the two variables at the pooled and unpooled
+ * `scripts/test-pg.sh` supplies the fixture, so `pnpm test:pg` runs this suite
+ * and so does the Postgres CI job. It boots a `pool_mode = transaction`
+ * PgBouncer beside the throwaway Postgres and exports the pooled and unpooled
  * endpoints of the same database:
  *
- *   MARFA_TEST_PGBOUNCER_URL=postgres://…@pooler-host:6432/db
- *   MARFA_TEST_PGBOUNCER_DIRECT_URL=postgres://…@pg-host:5432/db
+ *   MARFA_TEST_PGBOUNCER_URL=postgres://…@localhost:PORT/db
+ *   MARFA_TEST_PGBOUNCER_DIRECT_URL=postgres://…@localhost:PORT/db
  *
- * A small `default_pool_size` makes any leak land on a backend the probe is
- * certain to reach. The connecting role must be able to `CREATE ROLE`, since
- * the fixture below builds the `marfa_app` / ungranted-table pair the real
- * schema has.
+ * The suite still skips when either is absent, which is what a hand-run against
+ * some other database gets. `default_pool_size = 1` there makes any leak land
+ * on a backend the probe is certain to reach. The connecting role must be able
+ * to `CREATE ROLE`, since the fixture below builds the `marfa_app` /
+ * ungranted-table pair the real schema has.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
