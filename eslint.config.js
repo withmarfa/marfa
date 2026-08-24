@@ -131,22 +131,14 @@ export default [
       // linted where it lives, and it is in no tsconfig project here.
       "integrations-src/",
       "packages/*/scripts/*.mjs",
-      // The scheduled health check runs standalone on a CI runner with no
-      // install step, so it is plain ESM outside every tsconfig project and
-      // the type-aware rules have nothing to resolve it against. Same reason
-      // the package scripts above are ignored.
       // Nested worktrees are separate checkouts that run their own lint;
       // descending into them surfaces work in progress from other branches.
       "worktrees/",
       ".claude/worktrees/",
-      // Global scratch folders (per the user's ~/.gitignore_global —
-      // also documented in the user-level CLAUDE.md). These hold
-      // throwaway harnesses, captures, and never-tracked files; they
-      // sit in the repo tree but aren't part of the project's source
-      // set. The `**/` prefix catches them anywhere in the monorepo
-      // (e.g. packages/server/_tmp/), not just the repo root. Without
-      // this ignore, lint trips on any `.ts`/`.mjs` an agent drops
-      // there for local exploration.
+      // Scratch folders: throwaway harnesses, captures and never-tracked
+      // files that sit in the repo tree without being part of its source.
+      // The `**/` prefix catches them at any depth rather than only at the
+      // root, so a stray `.ts` under one does not trip the lint gate.
       "**/_local/**",
       "**/_tmp/**",
       "**/_ignore/**",
