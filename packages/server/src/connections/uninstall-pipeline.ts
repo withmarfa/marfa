@@ -16,8 +16,9 @@
  *   2. Revoke every active runtime credential bound to this connection
  *      (`apiKeys.connection_id`). Idempotent; revoking a row that's
  *      already revoked is a no-op.
- *   3. Delete the `connection_oauth_tokens` row (the upstream OAuth
- *      tokens cached for the proxy).
+ *   3. Delete the `connection_oauth_tokens` row if there is one (the
+ *      upstream OAuth tokens cached for the proxy). Unconditional: the
+ *      delete's own row count is what says whether there was.
  *   4. Revoke every active `connection_leased_tokens` row.
  *   5. Disable every `inbound_webhooks` subscription bound to this
  *      connection so further deliveries are dropped.
@@ -31,12 +32,14 @@
  *   9. Awaited audit-log write.
  *
  * **Every count and id list here is affected rows.** Steps 2, 3 and 5 each
- * used to report what the pipeline set out to do: the credentials it had
- * listed, the token row a prior read had seen, the subscriptions it had
- * walked. Four of the nine steps were reporting intent, so an uninstall
- * that changed nothing was indistinguishable from one that changed
- * everything. Each of those mutations now answers with what it changed,
- * and the pipeline reports the answer.
+ * used to report a read taken before the write rather than the write: the
+ * credentials a list had returned, the token row a prior `get` had seen,
+ * the subscriptions a list had called enabled. Nothing holds a lock across
+ * either half, so each of those was a claim about the moment before the
+ * mutation, and a row that moved in between was reported wrongly in
+ * whichever direction the read happened to be stale. Four of the nine
+ * steps reported intent that way. Each mutation now answers with what it
+ * changed, and the pipeline reports the answer.
  *
  * **Three kinds of credential, reported separately.** Steps 2, 3 and 7
  * remove different things, and the result says which of them happened to

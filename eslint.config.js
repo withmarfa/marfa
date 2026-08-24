@@ -88,16 +88,23 @@ export default [
     // either spelling looks wrong on its own, which is why this is a lint
     // rule rather than a comment.
     //
-    // Scoped to the stores the connection pipelines read. The rest of the
-    // storage layer spells the fence inline too and is a separate,
-    // larger change; adding a file here is the way to bring one in.
-    files: [
-      "packages/server/src/storage/{pg,sqlite}/item-store.ts",
-      "packages/server/src/storage/{pg,sqlite}/key-store.ts",
-      "packages/server/src/storage/{pg,sqlite}/connection-oauth-token-store.ts",
-      "packages/server/src/storage/{pg,sqlite}/connection-leased-token-store.ts",
-      "packages/server/src/storage/{pg,sqlite}/inbound-webhook-store.ts",
-    ],
+    // Every store in both dialects, so a store added tomorrow is covered
+    // by default. An allowlist of the five files the connection pipelines
+    // happen to read would leave a new store outside the rule, which is
+    // the likeliest way the divergence comes back: nobody adding a file
+    // thinks to add it to a lint config. The nineteen stores that still
+    // spell the fence inline — ten on Postgres, nine on SQLite — carry
+    // a file-level disable saying so, and deleting one is how the next
+    // batch gets normalized. None of them disagrees with the meaning the
+    // helper settled on; they are unconverted, not divergent.
+    //
+    // What still slips past, stated because it is cheap to say and
+    // expensive to discover: a fence built inside a `sql` template, a
+    // column destructured out of its table object first, or a table
+    // imported under another name. The rule reads the shape, not the
+    // meaning.
+    files: ["packages/server/src/storage/{pg,sqlite}/*.ts"],
+    ignores: ["packages/server/src/storage/{pg,sqlite}/*.test.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",

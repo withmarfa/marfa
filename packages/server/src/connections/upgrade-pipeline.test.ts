@@ -368,16 +368,19 @@ describe("previewUpgrade", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Hosted mode.
+// A connection that lives in a space.
 //
-// Every case above runs `spaceId: undefined` against a deployment where
-// nothing carries a space, so the credential revocation below — the half of
-// the acceptance that says a runtime credential stops carrying the old
-// manifest's permissions — has never been exercised against a fence that
-// narrows anything.
+// Every case above runs `spaceId: undefined`, where nothing carries a space,
+// so the credential revocation below — the half of the acceptance that says
+// a runtime credential stops carrying the old manifest's permissions — had
+// no coverage at all, against a fence or otherwise.
+//
+// `authMode: "hosted"` matches the deployed shape and nothing here turns on
+// it: no code path this suite reaches reads it. The named space is what
+// makes the fence narrow something.
 // ---------------------------------------------------------------------------
 
-describe("performUpgrade — hosted mode", () => {
+describe("performUpgrade — a connection inside a space", () => {
   let hosted: TestContext;
 
   beforeAll(async () => {
@@ -492,18 +495,37 @@ describe("performUpgrade — hosted mode", () => {
     ).toBeUndefined();
   });
 
-  it("reports no revocation when the credential was already retired", async () => {
-    // The supersede path revokes a connection's older credentials on every
-    // mint, so an upgrade routinely arrives with nothing left to retire.
-    // Reporting one anyway is the same defect in the other direction.
+  it("does not claim a credential revoked after it was listed", async () => {
+    // The supersede path retires a connection's older credentials on every
+    // mint and takes no lock this pipeline waits on. An id reported here
+    // rides onto the activity row an operator reads, so reporting the list
+    // rather than the revoke names a retirement that did not happen.
+    //
+    // Revoking it up front instead would pass against the old shape too:
+    // `listByConnectionId` has always filtered revoked rows, so the
+    // credential would never reach the loop. The window between the list
+    // and the revoke is the only place the two shapes differ.
     const s = await hostedScenario();
-    expect(await hosted.storage.keys.revoke(s.credentialId)).toBe(true);
 
-    const result = await performUpgrade(hosted.storage, {
-      apiKeyId: "key-under-test",
-      spaceId: s.spaceId,
-      connectionId: s.connection.id,
-    });
+    const real = hosted.storage.keys;
+    const keys = Object.create(real) as typeof real;
+    keys.listByConnectionId = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnectionId(connectionId, spaceId);
+      await real.revoke(s.credentialId);
+      return rows;
+    };
+
+    const result = await performUpgrade(
+      { ...hosted.storage, keys },
+      {
+        apiKeyId: "key-under-test",
+        spaceId: s.spaceId,
+        connectionId: s.connection.id,
+      },
+    );
 
     expect(result.revoked_credential_ids).toEqual([]);
   });

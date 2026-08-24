@@ -1,3 +1,10 @@
+/* eslint-disable no-restricted-syntax -- Not yet on the shared space
+ * fence. `storage/space-condition.ts` is the one spelling of it, and
+ * this store predates it; the rule covers every store so a new file is
+ * covered by default, which leaves the existing ones needing a line
+ * that says so. Normalizing one is a change of its own: an absent space
+ * has to be read call site by call site, and reading it wrong is the
+ * defect the helper exists for. Delete this line when you do. */
 /**
  * SQLite account hard-delete cascade.
  *
@@ -183,10 +190,16 @@ export async function sqliteDeleteAccountCascade(
     // written before it is rewritten to the sentinel like any other. Order
     // is what makes this the one row that keeps its details payload.
     //
-    // The propagating writer, because the row has to commit with the
-    // deletion or the deletion has to not commit. `log` runs under a
-    // tracker that catches everything, so it would both escape this
-    // transaction and report success on a hard delete with no record of it.
+    // The propagating writer, because a hard delete nothing recorded must
+    // not report success. `log` cannot reject, so it would answer success
+    // whatever happened; the swallow is the difference between the two
+    // writers, not where the write lands.
+    //
+    // The row is on this transaction, so a rollback takes it with it. That
+    // is the wrapper's doing rather than this file's: the SQLite proxy
+    // intercepts `transaction` and installs the active tx on its ALS, and
+    // the audit store holds the wrapped instance. Postgres has no such
+    // trap and its cascade installs the context by hand.
     await storage.audit.logOrThrow({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",

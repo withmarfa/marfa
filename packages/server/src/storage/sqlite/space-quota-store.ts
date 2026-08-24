@@ -1,3 +1,10 @@
+/* eslint-disable no-restricted-syntax -- Not yet on the shared space
+ * fence. `storage/space-condition.ts` is the one spelling of it, and
+ * this store predates it; the rule covers every store so a new file is
+ * covered by default, which leaves the existing ones needing a line
+ * that says so. Normalizing one is a change of its own: an absent space
+ * has to be read call site by call site, and reading it wrong is the
+ * defect the helper exists for. Delete this line when you do. */
 import { eq, sql } from "drizzle-orm";
 import type { SpaceQuota, QuotaResource } from "@withmarfa/shared";
 import type { SpaceQuotaStore } from "../interface.js";

@@ -1734,11 +1734,18 @@ export interface AuditStore {
    * Write an audit row and propagate a failure to the caller.
    *
    * For the operations where an unaudited success is worse than a loud
-   * failure: an account hard-delete, whose row has to commit with the
-   * deletion inside one transaction, and the connection install and
+   * failure: an account hard-delete, and the connection install and
    * uninstall, which are the two ways a credential's whole authority
    * changes hands. Untracked deliberately — the caller is awaiting it, so
    * there is nothing in flight for shutdown to drain.
+   *
+   * **Propagating is the whole of what this promises.** It is not by
+   * itself a transactional write. Which connection the insert lands on is
+   * decided by the db handle the store was built with and by whatever
+   * request context is installed around the call, neither of which is this
+   * method's to choose. A caller that needs the row to commit or roll back
+   * with its own transaction has to put the store on that transaction; the
+   * account cascade is the one that does, and it says how.
    */
   logOrThrow(entry: AuditLogEntry): Promise<void>;
   list(filters: {

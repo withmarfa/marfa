@@ -127,4 +127,18 @@ describe("the propagating call sites", () => {
     expect(source).toContain("storage.audit.logOrThrow(");
     expect(source).not.toContain("storage.audit.log(");
   });
+
+  it("the pg cascade puts its audit writes on the cascade transaction", async () => {
+    // Propagating is not the same as transactional, and on Postgres the
+    // second one has to be arranged: the audit store holds the wrapped
+    // Drizzle instance and this cascade runs on the unwrapped one, so with
+    // no context installed the row commits on a connection of its own.
+    // `pg/account-cascade-audit-tx.test.ts` proves the mechanism; this
+    // catches the cascade quietly dropping it.
+    const source = await readFile(
+      new URL("../storage/pg/account-cascade.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("pgRequestContext.run({ tx }");
+  });
 });

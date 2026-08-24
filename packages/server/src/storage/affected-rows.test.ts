@@ -95,9 +95,11 @@ describe("inboundWebhooks.setDisabled", () => {
     });
 
     expect(await ctx.storage.inboundWebhooks.setDisabled(id, true)).toBe(true);
-    // Already disabled. Counting this would report a subscription the
-    // uninstall disabled when something else had already done it.
+    // Back on again: the flag moved, so this one counts too. The store
+    // answers "did this call change the row", not "is the row disabled".
     expect(await ctx.storage.inboundWebhooks.setDisabled(id, false)).toBe(true);
+    // Already where it is being put. Counting this would report a
+    // subscription an uninstall disabled when something else had.
     expect(await ctx.storage.inboundWebhooks.setDisabled(id, false)).toBe(
       false,
     );

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
@@ -489,16 +489,23 @@ describe("performUninstall — the upstream credential", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Hosted mode — the only mode either live environment runs, and the one the
-// cases above cannot reach.
+// A connection that lives in a space.
 //
-// Everything before this point installs with `spaceId: undefined` in `keys`
-// mode, where nothing carries a `space_id` at all. The space fence therefore
-// never narrows anything, and a defect in what an absent space means is
-// invisible: every row matches either reading of it.
+// Everything before this point installs with `spaceId: undefined`, where
+// nothing carries a `space_id` at all. The space fence therefore never
+// narrows anything and a defect in what an absent space means is invisible:
+// every row matches either reading of it. Naming a space is what makes the
+// fence load-bearing, and it is the shape both live environments run.
+//
+// The context is `authMode: "hosted"` to match those deployments, but that
+// is not what these cases turn on: hosted only wires the users store, which
+// no pipeline here touches, and the one guard that reads `authMode` passes
+// either way once a space is named. The named space is the discriminating
+// input. (`install-pipeline.test.ts` has the one case where hosted is
+// genuinely the property under test.)
 // ---------------------------------------------------------------------------
 
-describe("performUninstall — hosted mode", () => {
+describe("performUninstall — a connection inside a space", () => {
   let hosted: TestContext;
 
   beforeAll(async () => {
@@ -609,12 +616,19 @@ describe("performUninstall — hosted mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("performUninstall — affected rows, not attempts", () => {
-  it("counts only the inbound subscriptions this uninstall disabled", async () => {
+  it("does not count a subscription disabled after it was listed", async () => {
+    // The pipeline used to walk the subscriptions it had read and count the
+    // ones the read called enabled. Nothing holds a lock over
+    // `inbound_webhooks` across those two steps, so the count was a claim
+    // about the moment before the write. Disabling one inside that window
+    // is the whole difference between reporting the read and reporting the
+    // write, and it is what the first version of this test missed: it
+    // asserted an outcome the old shape produced too.
     const installed = await installFresh();
 
-    const alreadyOff = randomUUID();
+    const racedOff = randomUUID();
     const stillOn = randomUUID();
-    for (const id of [alreadyOff, stillOn]) {
+    for (const id of [racedOff, stillOn]) {
       await ctx.storage.inboundWebhooks.create({
         id,
         connection_id: installed.connectionId,
@@ -623,71 +637,109 @@ describe("performUninstall — affected rows, not attempts", () => {
         events: ["thing.happened"],
       });
     }
-    // Disabled before the uninstall started, by whatever turned it off.
-    // Walking the subscriptions and counting the walk reported two.
-    expect(
-      await ctx.storage.inboundWebhooks.setDisabled(alreadyOff, true),
-    ).toBe(true);
 
-    const result = await performUninstall(ctx.storage, {
-      apiKeyId: installed.apiKeyId,
-      spaceId: undefined,
-      connectionId: installed.connectionId,
-    });
+    const real = ctx.storage.inboundWebhooks;
+    const inboundWebhooks = Object.create(real) as typeof real;
+    inboundWebhooks.listByConnection = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnection(connectionId, spaceId);
+      await real.setDisabled(racedOff, true);
+      return rows;
+    };
+
+    const result = await performUninstall(
+      { ...ctx.storage, inboundWebhooks },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
 
     expect(result.inbound_webhooks_disabled).toBe(1);
-    expect((await ctx.storage.inboundWebhooks.getAny(stillOn))?.disabled).toBe(
-      true,
-    );
+    expect((await real.getAny(stillOn))?.disabled).toBe(true);
+    expect((await real.getAny(racedOff))?.disabled).toBe(true);
   });
 
-  it("reports the oauth-token deletion from the delete rather than from a prior read", async () => {
-    const withToken = await installFresh();
+  it("deletes the oauth-token row even when a read disagrees with the table", async () => {
+    // The pre-read was a second source of truth about the row the delete
+    // was about to touch, and the pipeline believed the read. Any staleness
+    // in it skipped the delete and reported `false`: upstream tokens left
+    // in the database, under a connection reported as uninstalled. There is
+    // no read to be stale now, so a read that lies changes nothing.
+    const installed = await installFresh();
     await ctx.storage.connectionOauthTokens.upsert({
-      connection_id: withToken.connectionId,
+      connection_id: installed.connectionId,
       access_token_encrypted: "a|b|c",
       refresh_token_encrypted: null,
       expires_at: new Date(Date.now() + 600_000).toISOString(),
       scopes: ["read"],
     });
 
-    const deleted = await performUninstall(ctx.storage, {
-      apiKeyId: withToken.apiKeyId,
-      spaceId: undefined,
-      connectionId: withToken.connectionId,
-    });
-    expect(deleted.oauth_tokens_deleted).toBe(true);
-    expect(
-      await ctx.storage.connectionOauthTokens.get(
-        withToken.connectionId,
-        undefined,
-      ),
-    ).toBeNull();
+    const real = ctx.storage.connectionOauthTokens;
+    const connectionOauthTokens = Object.create(real) as typeof real;
+    connectionOauthTokens.get = () => Promise.resolve(null);
 
-    const withoutToken = await installFresh();
-    const untouched = await performUninstall(ctx.storage, {
-      apiKeyId: withoutToken.apiKeyId,
-      spaceId: undefined,
-      connectionId: withoutToken.connectionId,
-    });
-    expect(untouched.oauth_tokens_deleted).toBe(false);
+    const result = await performUninstall(
+      {
+        ...ctx.storage,
+        connectionOauthTokens,
+      },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
+
+    expect(result.oauth_tokens_deleted).toBe(true);
+    expect(await real.get(installed.connectionId, undefined)).toBeNull();
   });
 
-  it("does not claim a credential something else revoked first", async () => {
+  it("does not claim a credential revoked after it was listed", async () => {
     // The supersede path retires a connection's older credentials on every
     // mint and holds no lock this pipeline waits on, so a credential can go
-    // between the list and the revoke. Listing it anyway would put an id in
-    // the audit row under an action that did not happen.
+    // between the list and the revoke. Reporting the list would put an id
+    // in the audit row under an action that did not happen.
     const installed = await installFresh();
-    expect(await ctx.storage.keys.revoke(installed.credentialId)).toBe(true);
+    const { hashApiKey } = await import("../middleware/auth.js");
+    const extra = await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "raced runtime cred",
+        source: `integration-raced:${installed.connectionId}`,
+        role: "member",
+        type_permissions: { "core.note": "read" },
+        connection_id: installed.connectionId,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
+      },
+      hashApiKey(`marfa_k1_raced_${randomUUID()}`, TEST_API_KEY_SALT),
+      undefined,
+    );
 
-    const result = await performUninstall(ctx.storage, {
-      apiKeyId: installed.apiKeyId,
-      spaceId: undefined,
-      connectionId: installed.connectionId,
-    });
+    const real = ctx.storage.keys;
+    const keys = Object.create(real) as typeof real;
+    keys.listByConnectionId = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnectionId(connectionId, spaceId);
+      await real.revoke(extra.id);
+      return rows;
+    };
 
-    expect(result.revoked_credential_ids).toEqual([]);
+    const result = await performUninstall(
+      { ...ctx.storage, keys },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
   });
 });
 
