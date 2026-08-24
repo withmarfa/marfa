@@ -514,6 +514,49 @@ export function createSupervisor(
         });
         await boss.schedule(scheduleName, reg.scheduleCron);
       }
+
+      // Retire schedules for integrations this deployment no longer has.
+      //
+      // Seeding is driven from the registration set and so is the teardown
+      // in `stop()`, which means a removed integration's cron row has only
+      // ever been cleaned up by luck: the outgoing process has to run the
+      // *old* code, still list the integration, and exit gracefully. A hard
+      // container stop, a crash, a worker already down at deploy time, or
+      // the swallowed error in that teardown all leave the row behind.
+      //
+      // A left-behind row is not inert. pg-boss's timekeeper fires crons
+      // from any process that started the boss, including a web-role copy
+      // that registered no workers, so it goes on firing into a queue
+      // nothing will ever work again. `stately` caps that at one pending
+      // job rather than an unbounded backlog, which is what makes it a leak
+      // rather than an outage, but nothing else would ever clear it.
+      //
+      // Not hypothetical, and not only about the scaffold that prompted it:
+      // it recurs every time an integration leaves a deployment, which is
+      // exactly what installing and uninstalling packages makes ordinary.
+      const wanted = new Set(
+        config.registrations
+          .filter((reg) => reg.scheduleCron)
+          .map((reg) => sanitizeQueueName(SCHEDULE_PREFIX + reg.name)),
+      );
+      try {
+        for (const schedule of await boss.getSchedules()) {
+          if (!schedule.name.startsWith(SCHEDULE_PREFIX)) continue;
+          if (wanted.has(schedule.name)) continue;
+          await boss.unschedule(schedule.name);
+          log("info", "retired the schedule of a removed integration", {
+            schedule: schedule.name,
+          });
+        }
+      } catch (err) {
+        // A failed reconcile must not stop a boot. Everything that should
+        // run is already seeded above; what is left is a stale row firing
+        // into an unworked queue, which is the state this exists to improve
+        // on rather than a reason to refuse to start.
+        log("warn", "could not reconcile integration schedules", {
+          error: err,
+        });
+      }
     },
     async stop() {
       if (stopped) return;

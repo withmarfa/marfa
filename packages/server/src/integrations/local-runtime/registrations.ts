@@ -26,8 +26,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { IN_TREE_INTEGRATIONS } from "@withmarfa/shared";
 import { validateManifest } from "../validate-manifest.js";
+import { discoverIntegrationDirs } from "../discover.js";
 import type { LocalIntegrationRegistration } from "./types.js";
 
 interface LocalEntryModule {
@@ -65,16 +65,24 @@ export function resolveLocalEntry(
 export async function loadInTreeRegistrations(options: {
   /** Absolute path to the `integrations/` directory. */
   integrationsRoot: string;
-  /** Per-integration directory names. Defaults to the in-tree set. */
+  /** Per-integration directory names. Defaults to whatever is installed. */
   integrationDirs?: string[];
 }): Promise<LocalIntegrationRegistration[]> {
-  const dirs = options.integrationDirs ?? [
-    // `_template` is the scaffold — not in the registry (no real
-    // manifest), but kept in the loader's default list so the local
-    // runtime can boot a smoke shape against it.
-    "_template",
-    ...IN_TREE_INTEGRATIONS.map((i) => i.dirName),
-  ];
+  // `_template` leaves the default set, and that is the one behaviour
+  // change here rather than a tidy-up. It used to be prepended by hand
+  // because it is not a real integration and so was not in the table, yet
+  // the local runtime wanted a smoke shape to boot against. Discovery skips
+  // it: a leading underscore means scaffolding.
+  //
+  // Nothing that genuinely wants it loses it — the boot smoke test, the
+  // worker-entry smoke script and the image verification all name it
+  // explicitly. What it does mean is that a deployment which already
+  // registered `acme/template` carries a cron row for it, which is why the
+  // supervisor's `start()` reconciles schedules against the registration
+  // set rather than only seeding from it.
+  const dirs =
+    options.integrationDirs ??
+    discoverIntegrationDirs(options.integrationsRoot);
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {
     const entryPath = resolveLocalEntry(options.integrationsRoot, dir);

@@ -90,6 +90,10 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 
 ## In-tree integrations
 
+**The server does not read this list, and it does not read any list.** It reads the directory: every subdirectory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, which is why `_template` appears here and never ships.
+
+So this is documentation rather than a source of truth, kept because the one-line descriptions are the part a directory scan cannot produce. **It is checked against the directory**, so a new integration nobody wrote a line for fails the suite, and so does a bullet for something that no longer exists.
+
 - **`_template`** — scaffold to copy when starting a new integration.
 - **`podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
 - **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
