@@ -147,10 +147,10 @@ describe("discoverIntegrationDirs", () => {
   });
 
   // A scaffold unpacked into a deployment's integrations root sits at the
-  // handle level, so that is the level that has to hold the rule. Reading
-  // the directory without it would put the scaffold in the installable
-  // catalog.
-  it("skips scaffolding at the handle level", () => {
+  // namespace level, so that is the level that has to hold the rule.
+  // Reading the directory without it would put the scaffold in the
+  // installable catalog.
+  it("skips scaffolding at the namespace level", () => {
     const at = scratch();
     for (const d of ["_scaffold/src", ".turbo/cache", "marfa/podcasts"]) {
       mkdirSync(join(at, d), { recursive: true });
@@ -158,8 +158,8 @@ describe("discoverIntegrationDirs", () => {
     expect(discoverIntegrationDirs(at)).toEqual(["marfa/podcasts"]);
   });
 
-  // The same rule at the leaf, because a handle can carry scaffolding of its
-  // own — a template a publisher copies, or a directory an editor left.
+  // The same rule at the leaf, because a namespace can carry scaffolding
+  // of its own — a template someone copies, or a directory an editor left.
   it("skips scaffolding at the leaf level too", () => {
     const at = scratch();
     for (const d of ["marfa/_scaffold", "marfa/.turbo", "marfa/podcasts"]) {

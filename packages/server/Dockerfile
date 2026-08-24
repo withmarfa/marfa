@@ -66,6 +66,10 @@ RUN pnpm --filter dispatch-fixture run build
 # declaration reading `none` is a real deployment shape and needs no
 # integrations at all. A checkout that should be there and is not fails in
 # the staging step below, which names the integration it could not find.
+#
+# The whole workspace, not the declared set. That includes the scaffold and
+# anything else nothing installs, so a package that stops compiling takes
+# this build down whether or not the image ships it.
 RUN set -eu; \
     if [ -d integrations-src ]; then \
       cd integrations-src; \
