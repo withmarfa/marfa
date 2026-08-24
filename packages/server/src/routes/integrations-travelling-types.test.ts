@@ -9,9 +9,11 @@
  * naming the type rather than the manifest that declared it.
  *
  * The ownership half matters more. An integration declaring its own schemas
- * is a package registering types, and a package able to declare outside its
- * own handle would walk straight around the rule that stops one publisher
- * registering into another's namespace.
+ * is a package registering types, and a package able to declare outside the
+ * namespace its identifier names would walk straight around the rule that
+ * stops one package registering into another's namespace. The gate reads
+ * that first segment, not the `publisher` field, which answers a different
+ * question and routinely differs.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
@@ -66,7 +68,7 @@ async function register(body: Record<string, unknown>): Promise<Response> {
 }
 
 describe("a manifest declaring its own type schemas", () => {
-  it("registers a type inside the publisher's own handle", async () => {
+  it("registers a type inside its identifier's namespace", async () => {
     const res = await register(
       manifest({
         name: "acme/travelling",
@@ -89,7 +91,7 @@ describe("a manifest declaring its own type schemas", () => {
     expect(typeRes.status).toBe(200);
   });
 
-  it("refuses a type outside the publisher's handle", async () => {
+  it("refuses a type outside its identifier's namespace", async () => {
     const res = await register(
       manifest({
         name: "acme/outsider",

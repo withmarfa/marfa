@@ -15,6 +15,9 @@ packages/types/integration-manifest-schema.json
 pnpm-lock.yaml
 # Another repository's checkout, staged into the server image. Not source.
 integrations-src/
+# Nested worktrees are separate checkouts that run their own checks.
+worktrees/
+.claude/worktrees/
 # Global scratch folders (per ~/.gitignore_global). Matches the same set
 # eslint.config.js ignores — harnesses, captures, throwaway files that
 # sit in the repo tree but aren't part of source.
