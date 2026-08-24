@@ -31,13 +31,14 @@
  * `supports_user_mappings` going the other way while a mapping is stored.
  * That takes nothing away from the integration, so it is not a widening,
  * but it strands the person: the runtime keeps applying the stored mapping
- * and `PUT /connections/{id}/mapping` stops accepting one, so they can
- * neither edit nor clear the rules still routing their data. Applying that
+ * and `PUT /connections/{id}/mapping` stops accepting one, so the rules
+ * still routing their data cannot be edited. Clearing them does still
+ * work, which is why the pipeline's refusal says to clear the mapping
+ * first rather than saying there is nothing to be done. Applying that
  * silently, on a timer, is the defect class this whole area exists to
  * close.
  */
-import type { IntegrationManifest, Item } from "@withmarfa/shared";
-import { ConnectionMappingSchema } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import type { CoordinationStore } from "../storage/interface.js";
@@ -45,6 +46,8 @@ import {
   previewUpgrade,
   performUpgrade,
   UpgradeError,
+  wouldStrandMapping,
+  manifestOfCatalogRow,
   type UpgradePreview,
 } from "./upgrade-pipeline.js";
 
@@ -70,6 +73,15 @@ export interface ConnectionDrift {
   disposition: DriftDisposition;
   /** Set when `blocked`. */
   blocked_reason?: "mapping_would_be_stranded";
+  /**
+   * What the assessment was made from.
+   *
+   * Carried rather than left to be recomputed. Every caller wanting more
+   * than a count wants exactly this, and a second preview per connection
+   * costs a catalog listing and a sort each. It also keeps what a person
+   * is shown and what the assessment decided on one computation.
+   */
+  preview: UpgradePreview;
 }
 
 export interface DriftSummary {
@@ -85,9 +97,11 @@ export interface DriftSummary {
   blocked: number;
 }
 
-/** Every live integration connection, across spaces. */
+/** Every live integration connection, in one space or across all of
+ *  them when no space is named. */
 async function listLiveIntegrationConnections(
   storage: Storage,
+  spaceId?: string,
 ): Promise<Item[]> {
   const out: Item[] = [];
   let cursor: string | null = null;
@@ -97,6 +111,7 @@ async function listLiveIntegrationConnections(
         type: "system.connection",
         state: "active",
         limit: CONNECTION_SCAN_PAGE,
+        ...(spaceId === undefined ? {} : { spaceId }),
         ...(cursor ? { cursor } : {}),
       });
     for (const connection of page.data) {
@@ -105,37 +120,6 @@ async function listLiveIntegrationConnections(
     cursor = page.cursor;
   } while (cursor);
   return out;
-}
-
-/**
- * Would moving this connection leave a stored mapping it can no longer
- * edit? Only when a mapping is actually stored: an integration dropping
- * the capability it never had exercised takes nothing from anybody.
- */
-function wouldStrandMapping(
-  connection: Item,
-  candidateManifest: IntegrationManifest | undefined,
-): boolean {
-  if (candidateManifest === undefined) return false;
-  if (candidateManifest.supports_user_mappings === true) return false;
-  return ConnectionMappingSchema.safeParse(
-    (connection.properties as { mapping?: unknown }).mapping,
-  ).success;
-}
-
-async function candidateManifestOf(
-  storage: Storage,
-  preview: UpgradePreview,
-  spaceId: string | undefined,
-): Promise<IntegrationManifest | undefined> {
-  if (preview.candidate_integration_ref === null) return undefined;
-  const row = await storage.items.get(
-    preview.candidate_integration_ref,
-    spaceId,
-    { includePlatformScoped: true },
-  );
-  if (row?.type !== "system.integration") return undefined;
-  return (row.properties as { manifest?: IntegrationManifest }).manifest;
 }
 
 /** Where one connection stands against the newest registered version. */
@@ -153,6 +137,7 @@ export async function assessConnection(
     connection_id: connection.id,
     manifest_name: preview.current.manifest_name,
     from_version: preview.current.manifest_version,
+    preview,
   };
 
   if (preview.candidate === null) {
@@ -160,11 +145,16 @@ export async function assessConnection(
   }
   const to_version = preview.candidate.manifest_version;
 
-  if (preview.delta?.widens === true) {
-    return { ...base, to_version, disposition: "awaiting_consent" };
-  }
-
-  const manifest = await candidateManifestOf(storage, preview, spaceId);
+  // Blocked before awaiting-consent, and the order is the point: a move
+  // that both widens and would strand a mapping is not a decision anybody
+  // can make. Offering it for approval would put it on a list that says
+  // reading the lines is all that stands in the way, and the pipeline
+  // refuses it either way.
+  const manifest = await manifestOfCatalogRow(
+    storage,
+    preview.candidate_integration_ref,
+    spaceId,
+  );
   if (wouldStrandMapping(connection, manifest)) {
     return {
       ...base,
@@ -172,6 +162,10 @@ export async function assessConnection(
       disposition: "blocked",
       blocked_reason: "mapping_would_be_stranded",
     };
+  }
+
+  if (preview.delta?.widens === true) {
+    return { ...base, to_version, disposition: "awaiting_consent" };
   }
 
   return { ...base, to_version, disposition: "upgradable" };
@@ -184,12 +178,19 @@ export async function assessConnection(
  * and served exactly one connection at a time, so "how much drift is
  * there" was a question only answerable by iterating by hand, which is how
  * every measurement of it has been taken so far.
+ *
+ * `spaceId` scopes the scan. The instance-wide read is the platform
+ * metrics surface; a space admin sees their own space and needs the same
+ * survey narrowed, not a second implementation of it.
  */
-export async function surveyConnectionDrift(storage: Storage): Promise<{
+export async function surveyConnectionDrift(
+  storage: Storage,
+  spaceId?: string,
+): Promise<{
   summary: DriftSummary;
   connections: ConnectionDrift[];
 }> {
-  const live = await listLiveIntegrationConnections(storage);
+  const live = await listLiveIntegrationConnections(storage, spaceId);
   const connections: ConnectionDrift[] = [];
   for (const connection of live) {
     try {
@@ -359,4 +360,83 @@ export class ConnectionUpgrader {
       });
     }
   }
+}
+
+/** One connection held back because moving it would grant more, with the
+ *  lines a person reads before deciding. */
+export interface PendingConsent {
+  connection_id: string;
+  /** The connection's own label, so a decision names something a person
+   *  recognizes rather than an identifier. */
+  label: string | null;
+  manifest_name: string;
+  from_version: string;
+  to_version: string;
+  consent_lines: string[];
+}
+
+/**
+ * The connections a space admin has to decide about, and what each move
+ * would newly allow.
+ *
+ * The survey already knows which connections are held back; what it does
+ * not carry is the sentences, because the summary it feeds is a count. A
+ * decision needs both, and asking the caller to fetch a preview per
+ * connection turns one screen into as many requests as the list happens to
+ * be long.
+ *
+ * The lines are the survey's own, carried on the drift record, so what a
+ * caller is shown and what the assessment decided come from one
+ * computation rather than two that can disagree.
+ *
+ * The widening check below cannot fail: after the survey's ordering, an
+ * awaiting-consent disposition already means a candidate exists and widens.
+ * Its first half is still load-bearing, because it is what narrows
+ * `candidate` for the version read; the second half narrows nothing and
+ * stays so that a reordering which made it reachable finds a guard rather
+ * than an assumption.
+ *
+ * A connection that cannot be read for its label is dropped with a log
+ * line rather than failing the list. The survey walked it a moment ago,
+ * so this fires when it is trashed or deleted in between, and one
+ * connection hiding every other pending decision is the failure the survey
+ * itself already refuses.
+ */
+export async function listPendingConsent(
+  storage: Storage,
+  spaceId?: string,
+): Promise<PendingConsent[]> {
+  const { connections } = await surveyConnectionDrift(storage, spaceId);
+  const pending: PendingConsent[] = [];
+  for (const drift of connections) {
+    if (drift.disposition !== "awaiting_consent") continue;
+    try {
+      const preview = drift.preview;
+      if (preview.candidate === null || preview.delta?.widens !== true)
+        continue;
+      const connection = await storage.items.get(drift.connection_id, spaceId);
+      // Gone, or not visible in the caller's space. The survey fenced the
+      // scan, so the second is not reachable through this caller; the
+      // first is, because the survey and this read are separate calls with
+      // nothing holding the connection still between them. Dropping the
+      // entry is right either way, and keeps the fence doubled rather than
+      // computed and thrown away.
+      if (connection === null) continue;
+      const label = (connection.properties as { label?: unknown }).label;
+      pending.push({
+        connection_id: drift.connection_id,
+        label: typeof label === "string" ? label : null,
+        manifest_name: preview.current.manifest_name,
+        from_version: preview.current.manifest_version,
+        to_version: preview.candidate.manifest_version,
+        consent_lines: preview.consent_lines,
+      });
+    } catch (err) {
+      log("warn", "Pending-consent list skipped a connection", {
+        connection_id: drift.connection_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return pending;
 }

@@ -137,6 +137,62 @@ describe("performUpgrade", () => {
     expect(result.to.manifest_version).toBe("2.0.0");
   });
 
+  it("applies the pinned version rather than the newest registered one", async () => {
+    // What the approval route depends on. It checks the candidate against
+    // the version a person was shown, then calls this; without the pin the
+    // pipeline re-resolves the newest at apply time, so a version
+    // registered in between is what actually lands, carrying a consent
+    // nobody gave it. The pipeline re-previews inside a lock it may wait
+    // on, so that window is not a matter of microseconds.
+    const s = await scenario({ target_types: ["core.note", "core.bookmark"] });
+    await registerIntegrationManifest(
+      ctx.storage,
+      manifest(s.name, {
+        version: "3.0.0",
+        target_types: ["core.note", "core.bookmark", "core.task"],
+      }),
+      undefined,
+    );
+    const result = await performUpgrade(ctx.storage, {
+      ...caller,
+      connectionId: s.connection.id,
+      targetIntegrationItemId: s.v2.id,
+      consentedToWidening: true,
+    });
+
+    expect(result.to.manifest_version).toBe("2.0.0");
+    expect(result.integration_ref).toBe(s.v2.id);
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.integration_ref).toBe(s.v2.id);
+  });
+
+  it("refuses a pin that is not newer than what the connection resolves", async () => {
+    // The pin exists so an approval lands on the version a person read.
+    // Without a version check it also lets one land on an older version:
+    // something else upgrades the connection while the approval waits on
+    // the lifecycle lock, and the pinned row is now behind. That move
+    // narrows rather than widens, so the consent gate says nothing about
+    // it, and the connection walks backwards with its credentials revoked.
+    const s = await scenario({});
+    await performUpgrade(ctx.storage, {
+      ...caller,
+      connectionId: s.connection.id,
+    });
+    const now = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(now?.properties.integration_ref).toBe(s.v2.id);
+
+    await expect(
+      performUpgrade(ctx.storage, {
+        ...caller,
+        connectionId: s.connection.id,
+        targetIntegrationItemId: s.v1.id,
+      }),
+    ).rejects.toMatchObject({ code: "no_newer_version" });
+
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.integration_ref).toBe(s.v2.id);
+  });
+
   it("treats a narrowing manifest as needing no consent", async () => {
     const name = nextName();
     const v1 = await registerIntegrationManifest(
