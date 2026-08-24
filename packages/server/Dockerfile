@@ -54,7 +54,7 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # declaration reading `none` leaves the filter matching no packages and the
 # loop running no times, and the image ships an empty integrations root.
 #
-# The image must carry integrations/<name>/dist/local.js: the loader's
+# The image must carry integrations/<handle>/<name>/dist/local.js: the loader's
 # default root resolves relative to the monorepo, which does not exist in
 # a packaged image, so without these files the local substrate boots with
 # an empty registration list, silently. Only dist/ is staged, no

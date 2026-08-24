@@ -14,14 +14,19 @@ export default [
             "vitest.config.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
-            "integrations/*/tsup.config.ts",
-            "integrations/*/vitest.config.ts",
+            // An integration directory is `<handle>/<name>`, so these
+            // span both levels. The scaffold stays flat and
+            // underscore-prefixed, so it needs its own pair.
+            "integrations/*/*/tsup.config.ts",
+            "integrations/*/*/vitest.config.ts",
+            "integrations/_template/tsup.config.ts",
+            "integrations/_template/vitest.config.ts",
             // The marfa/inbox integration ships a nested
             // Cloudflare Email Worker as its own workspace package
-            // (`integrations/inbox/email-worker/`). Its
+            // (`integrations/marfa/inbox/email-worker/`). Its
             // vitest.config.ts also falls through to the default
             // project.
-            "integrations/*/email-worker/vitest.config.ts",
+            "integrations/*/*/email-worker/vitest.config.ts",
           ],
           // Default is 8. Every workspace package contributes a
           // tsup.config and a vitest.config that fall through to the

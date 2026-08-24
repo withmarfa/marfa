@@ -15,6 +15,10 @@
  * inside the runtime image where there is no monorepo and no TypeScript.
  * Run it directly and it prints one name per line, which is what the
  * Dockerfile's loop consumes.
+ *
+ * Being the one parser, it is also the one place that settles what a name
+ * may look like, and the loop consuming its output is the reason that is
+ * worth more than tidiness. See `assertNameShape`.
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -37,7 +41,47 @@ const NONE = "none";
 export class DeclarationError extends Error {}
 
 /**
+ * Hold a name to `<handle>/<name>`, the manifest identifier.
+ *
+ * This is a boundary rather than a format preference. The image build
+ * interpolates a name straight into the paths it stages through —
+ * `cp -R "$dir/dist" "/integrations-staged/$name/dist"` — so a `..`
+ * segment would copy outside the staging directory, and this parser is
+ * the only thing between the declaration and that write. The rest of the
+ * shape is settled in the same breath because a name that is not two
+ * segments names no directory the build could stage in the first place.
+ */
+function assertNameShape(name, lineNo) {
+  const segments = name.split("/");
+  if (segments.length !== 2) {
+    throw new DeclarationError(
+      `line ${String(lineNo)}: "${name}" is not a "<handle>/<name>" name; ` +
+        `it has ${String(segments.length)} segments where a name has exactly ` +
+        `two separated by one "/"`,
+    );
+  }
+  for (const segment of segments) {
+    if (segment.length === 0) {
+      throw new DeclarationError(
+        `line ${String(lineNo)}: "${name}" has an empty segment; both halves ` +
+          `of "<handle>/<name>" have to be there`,
+      );
+    }
+    if (segment === "." || segment === "..") {
+      throw new DeclarationError(
+        `line ${String(lineNo)}: "${name}" has a "${segment}" segment. A name ` +
+          `is interpolated into the image build's staging paths, so this ` +
+          `would resolve somewhere other than the directory it names.`,
+      );
+    }
+  }
+}
+
+/**
  * Parse a declaration into `{ name, manifestOnly }` entries, sorted by name.
+ *
+ * Every name is `<handle>/<name>`; see `assertNameShape` for why that is
+ * enforced here rather than trusted.
  *
  * Throws `DeclarationError` on anything ambiguous rather than guessing,
  * because every caller is either building an image or asserting one, and
@@ -91,6 +135,7 @@ export function parseInstalledIntegrations(text) {
         `line ${String(i + 1)}: "${fields[1]}" is not a recognized marker; the only one is "${MANIFEST_ONLY}"`,
       );
     }
+    assertNameShape(name, i + 1);
     if (seen.has(name)) {
       throw new DeclarationError(`"${name}" is declared more than once`);
     }

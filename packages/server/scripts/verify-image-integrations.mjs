@@ -141,12 +141,37 @@ const manifestOnlyByName = new Map(
   declaration.map((entry) => [entry.name, entry.manifestOnly]),
 );
 
-const installed = existsSync(INTEGRATIONS_ROOT)
-  ? readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort()
-  : [];
+// Two levels, because an integration directory is `<handle>/<name>` and
+// that is the name the declaration carries.
+//
+// Everything found is reported, with none of the dot-and-underscore
+// skipping the runtime's own discovery does. The two answer different
+// questions: discovery decides what to load out of a directory an operator
+// can write to, and this decides whether the build staged what it said it
+// would into a directory only the build writes to. Skipping anything here
+// would put a blind spot in the one check whose whole point is not having
+// one — a wrongly staged `_foo/bar` would pass and then be invisible to the
+// runtime as well.
+//
+// A flat leftover surfaces through the same walk rather than needing its
+// own rule: a directory staged at one level has `dist` as its only
+// subdirectory, so it reports as `<name>/dist` and fails as undeclared.
+function installedNames(root) {
+  if (!existsSync(root)) return [];
+  const names = [];
+  for (const handle of readdirSync(root, { withFileTypes: true })) {
+    if (!handle.isDirectory()) continue;
+    const inner = readdirSync(resolve(root, handle.name), {
+      withFileTypes: true,
+    });
+    for (const leaf of inner) {
+      if (leaf.isDirectory()) names.push(`${handle.name}/${leaf.name}`);
+    }
+  }
+  return names.sort();
+}
+
+const installed = installedNames(INTEGRATIONS_ROOT);
 
 const missing = declared.filter((name) => !installed.includes(name));
 if (missing.length > 0) {

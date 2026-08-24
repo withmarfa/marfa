@@ -48,7 +48,7 @@ let GOOGLE_CALENDAR_MANIFEST: Record<string, unknown>;
 beforeAll(async () => {
   ctx = await createTestContext();
   const manifestPath = new URL(
-    "../../../../integrations/google-calendar/src/manifest.ts",
+    "../../../../integrations/google/calendar/src/manifest.ts",
     import.meta.url,
   ).href;
   const manifestModule = (await import(manifestPath)) as {

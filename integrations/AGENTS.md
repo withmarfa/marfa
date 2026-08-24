@@ -2,13 +2,13 @@
 
 **This file is moving.** It goes with the integrations into their own repository, and it hasn't yet been reviewed against decisions made since it was written. Treat it as a record of how things worked here rather than as current guidance, and use the move to review, correct, and tighten it rather than carry it over unchanged.
 
-Per-integration packages implementing the manifest contract from `@withmarfa/shared/integration-manifest.ts`. Each subdirectory is a self-contained npm workspace; the runtime substrate loads them through the patterns below.
+Per-integration packages implementing the manifest contract from `@withmarfa/shared/integration-manifest.ts`. Each `<handle>/<name>` directory is a self-contained npm workspace, nested so the directory mirrors the manifest identifier; the runtime substrate loads them through the patterns below.
 
 ## Manifest contract
 
 - **Every integration ships `src/manifest.ts`** exporting an `IntegrationManifest`. Sibling `src/manifest.test.ts` parses it through `IntegrationManifestSchema` so drift is caught at build time, not first install.
 - **Schema source of truth** lives in `packages/shared/src/integration-manifest.ts`; valid fields are documented there in narrative comments.
-- **`name` is `<handle>/<name>`** — dots name data, the slash names an installable, so an integration can never be mistaken for a type. Integrations from one upstream share a handle (`google/calendar`, `google/tasks`) and so reuse one OAuth credential. The platform's own live under `marfa/`.
+- **`name` is `<handle>/<name>`** — dots name data, the slash names an installable, so an integration can never be mistaken for a type. Integrations from one upstream share a handle (`google/calendar`, `google/tasks`) and so reuse one OAuth credential. The platform's own live under `marfa/`. **The directory is the same two levels**, so the identifier is stated by the tree rather than merely habitual, and two publishers can each ship a `podcasts` without colliding.
 
 ## Handler shape
 
@@ -93,26 +93,26 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 
 ## In-tree integrations
 
-**The server does not read this list, and it does not read any list.** It reads the directory: every subdirectory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, which is why `_template` appears here and never ships.
+**The server does not read this list, and it does not read any list.** It reads the directory: every `<handle>/<name>` directory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, at either level, which is why `_template` sits flat where a handle would go and never ships.
 
 So this is documentation rather than a source of truth, kept because the one-line descriptions are the part a directory scan cannot produce. **It is checked against the directory**, so a new integration nobody wrote a line for fails the suite, and so does a bullet for something that no longer exists.
 
 **What the hosted container image ships is a separate list, and that one is real.** `packages/server/installed-integrations.txt` declares which integrations the image installs into the runtime's directory, so a new integration is added there as well as here, with the marker `manifest-only` if it ships no handler. It changes nothing about how the runtime finds them, which has always been a directory read; it decides what the image puts in that directory. In this repository the two are held equal by the suite, so the declaration cannot yet ship fewer integrations than the tree holds. What it buys today is that the set is stated somewhere a person edits, rather than being whatever the build happened to find.
 
 - **`_template`** — scaffold to copy when starting a new integration.
-- **`podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
-- **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
-- **`github-webhooks`** — inbound webhook on a repo to `core.bookmark`.
-- **`google-calendar`** — bidirectional OAuth sync with the `google/calendar` family.
-- **`google-contacts`** — bidirectional OAuth sync to `google.contacts.contact`.
-- **`google-tasks`** — bidirectional OAuth sync to `google.tasks.task`.
-- **`google-drive`** — inbound OAuth sync to `google.drive.file`.
-- **`google-youtube`** — inbound OAuth sync of channels, playlists and videos.
-- **`todoist`** — bidirectional token sync over Todoist's Sync and REST APIs.
-- **`readwise`** — inbound token sync of highlights and their parent books, over the v2 export API.
-- **`readwise-reader`** — bidirectional token sync of Reader documents, over the separate v3 documents API.
-- **`raindrop`** — inbound token sync of bookmarks and collections.
-- **`inbox`** — email capture via Cloudflare Email Routing.
-- **`task-auto-archive`** — item-event automation on `core.task` items.
+- **`google/calendar`** — bidirectional OAuth sync of events, to `google.calendar.event` or `core.event` depending on the family the connection selects.
+- **`google/contacts`** — bidirectional OAuth sync to `google.contacts.contact`.
+- **`google/drive`** — inbound OAuth sync to `google.drive.file`.
+- **`google/tasks`** — bidirectional OAuth sync to `google.tasks.task`.
+- **`google/youtube`** — inbound OAuth sync of channels, playlists and videos.
+- **`marfa/github-webhooks`** — inbound webhook on a repo to `core.bookmark`.
+- **`marfa/inbox`** — email capture via Cloudflare Email Routing.
+- **`marfa/podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
+- **`marfa/rss-watcher`** — scheduled poll of a feed to `core.bookmark`.
+- **`marfa/task-auto-archive`** — item-event automation on `core.task` items.
+- **`raindrop/bookmarks`** — inbound token sync of bookmarks and collections.
+- **`readwise/highlights`** — inbound token sync of highlights and their parent books, over the v2 export API.
+- **`readwise/reader`** — bidirectional token sync of Reader documents, over the separate v3 documents API.
+- **`todoist/tasks`** — bidirectional token sync over Todoist's Sync and REST APIs.
 
 Per-integration `AGENTS.md` files (where present) carry upstream-specific gotchas: scope choices, dedup quirks, recurrence handling, channel renewal patterns.

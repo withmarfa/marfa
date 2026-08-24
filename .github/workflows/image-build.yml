@@ -59,7 +59,11 @@ on:
       - "**/tsup.config.ts"
       - "packages/server/scripts/**"
       - "packages/server/installed-integrations.txt"
-      - "integrations/*/src/local.ts"
+      - "integrations/*/*/src/local.ts"
+      # The scaffold stays flat, and the image stages it as the fixture
+      # the in-image verification dispatches through, so a change to it
+      # changes the image the same way an integration entry does.
+      - "integrations/_template/src/local.ts"
       - ".github/workflows/image-build.yml"
   # Available against any branch, and the way a change to the Dockerfile or to
   # this file gets checked before it merges. It is not free — see the header.

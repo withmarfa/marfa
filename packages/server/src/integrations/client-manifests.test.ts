@@ -118,7 +118,9 @@ describe("a name that reaches the catalog from both sources", () => {
       // A bare .js under a temp dir is CommonJS to Node, and the loader
       // would record a syntax error rather than the collision under test.
       writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
-      const dist = join(root, "sync", "dist");
+      // `<handle>/<name>`, mirroring the manifest identifier the collision
+      // is about, which is also the only shape discovery reports.
+      const dist = join(root, "marfa", "sync", "dist");
       mkdirSync(dist, { recursive: true });
       // The real manifest, so the entry is one the loader accepts and the
       // collision is the only thing wrong with it.
