@@ -1,11 +1,19 @@
 packages:
   - "packages/*"
-  - "integrations/*"
+  # An integration directory is `<handle>/<name>`, mirroring the manifest
+  # identifier, so the glob spans both levels.
+  - "integrations/*/*"
+  # The scaffold is deliberately not `<handle>/<name>`. It stays flat and
+  # underscore-prefixed so the runtime's discovery skips it, which also puts
+  # it outside the glob above — hence the explicit entry. Without it the
+  # scaffold silently leaves the workspace and stops building, and the first
+  # thing to notice would be the image verification losing its fixture.
+  - "integrations/_template"
   # The marfa/inbox integration ships an adjacent Cloudflare Email
-  # Worker (`integrations/inbox/email-worker`) as a nested
+  # Worker (`integrations/marfa/inbox/email-worker`) as a nested
   # workspace package. Different deployable (CF Email Worker vs
   # per-Integration Worker), distinct dependency set (postal-mime).
-  - "integrations/*/email-worker"
+  - "integrations/*/*/email-worker"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree
 # rebases `main` and picks up new workspace packages (e.g. a fresh

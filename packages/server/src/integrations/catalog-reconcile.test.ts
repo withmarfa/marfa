@@ -55,7 +55,8 @@ function makeManifest(
 function entry(manifest: IntegrationManifest): InTreeManifest {
   return {
     name: manifest.name,
-    dirName: manifest.name.split("/")[1] ?? "x",
+    // The directory mirrors the identifier, so the two are one string.
+    dirName: manifest.name,
     manifest,
   };
 }

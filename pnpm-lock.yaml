@@ -61,21 +61,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.27.7)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/github-webhooks:
+  integrations/google/calendar:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -86,21 +86,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/google-calendar:
+  integrations/google/contacts:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -111,21 +111,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/google-contacts:
+  integrations/google/drive:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -136,21 +136,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/google-drive:
+  integrations/google/tasks:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -161,21 +161,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/google-tasks:
+  integrations/google/youtube:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -186,21 +186,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/google-youtube:
+  integrations/marfa/github-webhooks:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -211,21 +211,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/inbox:
+  integrations/marfa/inbox:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -236,7 +236,7 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/inbox/email-worker:
+  integrations/marfa/inbox/email-worker:
     dependencies:
       postal-mime:
         specifier: ^2.5.1
@@ -255,21 +255,21 @@ importers:
         specifier: ^4.124.0
         version: 4.124.0(@cloudflare/workers-types@4.20260609.1)
 
-  integrations/podcasts:
+  integrations/marfa/podcasts:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -280,21 +280,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/raindrop:
+  integrations/marfa/rss-watcher:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -305,21 +305,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/readwise:
+  integrations/marfa/task-auto-archive:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -330,21 +330,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/readwise-reader:
+  integrations/raindrop/bookmarks:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -355,21 +355,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/rss-watcher:
+  integrations/readwise/highlights:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -380,21 +380,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/task-auto-archive:
+  integrations/readwise/reader:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
@@ -405,21 +405,21 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(vite@8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0))
 
-  integrations/todoist:
+  integrations/todoist/tasks:
     dependencies:
       '@withmarfa/runtime-sdk':
         specifier: workspace:*
-        version: link:../../packages/runtime-sdk
+        version: link:../../../packages/runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1
         version: 4.20260609.1
       '@withmarfa/runtime-test':
         specifier: workspace:*
-        version: link:../../packages/runtime-test
+        version: link:../../../packages/runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.26)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)

@@ -35,7 +35,10 @@ import { discoverIntegrationDirs } from "./discover.js";
 export interface InTreeManifest {
   /** Manifest `name`, `<handle>/<name>`. */
   name: string;
-  /** Directory under `integrations/`. */
+  /** Directory under `integrations/`, which is `<handle>/<name>` and so
+   *  the same string as `name`. Kept distinct because a deployment can
+   *  install into a directory that disagrees, and the skip reasons have to
+   *  name the directory that was read rather than the manifest it claimed. */
   dirName: string;
   manifest: IntegrationManifest;
 }

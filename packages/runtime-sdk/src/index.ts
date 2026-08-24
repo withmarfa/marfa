@@ -1,7 +1,7 @@
 /**
  * `@withmarfa/runtime-sdk` — the surface integrations import.
  *
- * Imported by integration handler modules (`integrations/<name>/src/handlers.ts`)
+ * Imported by integration handler modules (`integrations/<handle>/<name>/src/handlers.ts`)
  * and by the local-runtime supervisor inside `@withmarfa/server`, which
  * drives dispatch through `consumeBatch`'s semantics.
  */

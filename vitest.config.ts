@@ -8,13 +8,18 @@ export default defineConfig({
     // so we glob those specifically — avoids vitest tripping on
     // per-folder docs like `integrations/CLAUDE.md`.
     //
+    // An integration directory is `<handle>/<name>`, so the glob spans
+    // both levels. The scaffold stays flat and underscore-prefixed, which
+    // puts it outside that glob and is why it is named separately.
+    //
     // The marfa/inbox integration ships a sibling Cloudflare Email
-    // Worker at `integrations/inbox/email-worker/` with its
+    // Worker at `integrations/marfa/inbox/email-worker/` with its
     // own vitest.config.ts, the only nested-workspace package today.
     projects: [
       "packages/*",
-      "integrations/*/vitest.config.ts",
-      "integrations/*/email-worker/vitest.config.ts",
+      "integrations/*/*/vitest.config.ts",
+      "integrations/_template/vitest.config.ts",
+      "integrations/*/*/email-worker/vitest.config.ts",
     ],
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template

@@ -4,12 +4,12 @@
  * a built local entry:
  *
  *   - _template
- *   - rss-watcher (schedule + stub fetch)
- *   - github-webhooks (webhook delivery)
- *   - google-calendar (schedule + stub fetch — covers the bootstrap
+ *   - marfa/rss-watcher (schedule + stub fetch)
+ *   - marfa/github-webhooks (webhook delivery)
+ *   - google/calendar (schedule + stub fetch — covers the bootstrap
  *     path; the deep handler logic is tested in the integration's own
  *     handlers.test.ts via the in-memory runtime-test harness)
- *   - task-auto-archive (schedule against the real test Marfa server)
+ *   - marfa/task-auto-archive (schedule against the real test Marfa server)
  *
  * Each smoke loads the integration's compiled `dist/local.js`
  * (produced by `pnpm --filter @withmarfa/integration-<name> build`),
@@ -79,6 +79,8 @@ interface LoadedIntegration {
   registerHandlers: (opts?: unknown) => void;
 }
 
+/** `dir` is the `<handle>/<name>` directory, except for the scaffold,
+ *  which stays flat. */
 async function loadIntegration(dir: string): Promise<LoadedIntegration> {
   const path = resolve(MONOREPO_ROOT, "integrations", dir, "dist", "local.js");
   const mod = (await import(pathToFileURL(path).href)) as {
@@ -302,8 +304,8 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(state.cursors["cursor:main"]).toMatchObject({ run_count: 1 });
   });
 
-  it("rss-watcher — schedule trigger fetches feed via stub and returns ok", async () => {
-    const integration = await loadIntegration("rss-watcher");
+  it("marfa/rss-watcher — schedule trigger fetches feed via stub and returns ok", async () => {
+    const integration = await loadIntegration("marfa/rss-watcher");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
 
@@ -345,8 +347,8 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(cursor?.feed_url).toBeDefined();
   });
 
-  it("github-webhooks — webhook trigger with verified delivery returns a HandlerResult", async () => {
-    const integration = await loadIntegration("github-webhooks");
+  it("marfa/github-webhooks — webhook trigger with verified delivery returns a HandlerResult", async () => {
+    const integration = await loadIntegration("marfa/github-webhooks");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
     const runtime = makeSupervisor(makeRegistration(integration));
@@ -394,8 +396,8 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(typeof result.ok).toBe("boolean");
   });
 
-  it("task-auto-archive — schedule trigger walks tasks and returns ok", async () => {
-    const integration = await loadIntegration("task-auto-archive");
+  it("marfa/task-auto-archive — schedule trigger walks tasks and returns ok", async () => {
+    const integration = await loadIntegration("marfa/task-auto-archive");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
     const runtime = makeSupervisor(makeRegistration(integration));
@@ -417,8 +419,8 @@ describe("in-tree integration smokes against local runtime", () => {
     expect(typeof result.ok).toBe("boolean");
   });
 
-  it("google-calendar — schedule trigger reaches handler and returns a HandlerResult", async () => {
-    const integration = await loadIntegration("google-calendar");
+  it("google/calendar — schedule trigger reaches handler and returns a HandlerResult", async () => {
+    const integration = await loadIntegration("google/calendar");
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
     const runtime = makeSupervisor(makeRegistration(integration));

@@ -7,9 +7,19 @@
 # smaller with it.
 #
 # One name per line. Blank lines are ignored and everything from a # to the
-# end of a line is a comment. A name is a directory under integrations/
-# today; when integrations are ordinary published packages this becomes the
-# install list and a name gains a package specifier beside it.
+# end of a line is a comment. A name is `<handle>/<name>`, the manifest
+# identifier, and it is also the directory the integration lives in under
+# integrations/ today; when integrations are ordinary published packages
+# this becomes the install list and a name gains a package specifier
+# beside it.
+#
+# The two-segment shape is enforced rather than assumed. A name is
+# interpolated straight into the image build's staging paths, so a segment
+# reading `..` would write outside the staging directory; the parser
+# refuses that shape instead of trusting this file to be well formed. A
+# segment beginning with `_` or `.` is refused for the mirror of that
+# reason: discovery skips those as scaffolding, so such a name would ship
+# in the image and never load.
 #
 # A name may carry the marker `manifest-only`, which says the integration
 # ships a manifest and no dispatchable entry. The verification holds the
@@ -31,9 +41,10 @@
 # so an integration nobody declared fails in seconds rather than during a
 # build.
 #
-# The scaffold under integrations/_template is deliberately absent. It is a
-# starting point for authors rather than an integration, and the runtime's
-# discovery skips it for the same reason. The build stages it separately as
+# The scaffold under integrations/_template is deliberately absent, and its
+# flat, underscore-prefixed directory is not the `<handle>/<name>` shape a
+# name here has. It is a starting point for authors rather than an
+# integration, and the runtime's discovery skips it for the same reason. The build stages it separately as
 # the fixture the verification dispatches through, and the image drops it
 # once that has passed.
 #
@@ -43,17 +54,17 @@
 # root boots a substrate with no registrations and says nothing about it, so
 # the two cases must not look alike.
 
-github-webhooks
-google-calendar
-google-contacts
-google-drive
-google-tasks
-google-youtube
-inbox
-podcasts
-raindrop
-readwise
-readwise-reader
-rss-watcher
-task-auto-archive
-todoist
+google/calendar
+google/contacts
+google/drive
+google/tasks
+google/youtube
+marfa/github-webhooks
+marfa/inbox
+marfa/podcasts
+marfa/rss-watcher
+marfa/task-auto-archive
+raindrop/bookmarks
+readwise/highlights
+readwise/reader
+todoist/tasks

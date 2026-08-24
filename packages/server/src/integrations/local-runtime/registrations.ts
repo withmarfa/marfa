@@ -5,7 +5,7 @@
  * `local.ts` entry alongside the existing `worker.ts`. The shape is:
  *
  *   ```ts
- *   // integrations/<name>/src/local.ts
+ *   // integrations/<handle>/<name>/src/local.ts
  *   import { TEMPLATE_MANIFEST } from "./manifest.js";
  *   import { registerHandlers } from "./handlers.js";
  *
@@ -36,7 +36,7 @@ interface LocalEntryModule {
 }
 
 /**
- * Resolve `integrations/<name>/dist/local.js` from a base directory.
+ * Resolve `integrations/<handle>/<name>/dist/local.js` from a base directory.
  * Returns the absolute path when the file exists, or `null` when the
  * integration hasn't shipped a local.ts yet.
  */
@@ -55,7 +55,7 @@ export function resolveLocalEntry(
 
 /**
  * Load every in-tree integration's `local.ts` entry from
- * `integrations/<name>/dist/local.js`. An integration that ships no local
+ * `integrations/<handle>/<name>/dist/local.js`. An integration that ships no local
  * entry is skipped: it declares a surface a connection can install
  * against and nothing for this process to dispatch into, so the catalog
  * carries it and the runtime does not.

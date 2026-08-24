@@ -88,8 +88,9 @@ function clientManifestsSource(clients: string[]): string {
 }
 
 /**
- * A scratch image layout. `installed` are directories under the
- * integrations root; a name suffixed `!manifest` gets a manifest-only
+ * A scratch image layout. `installed` are `<handle>/<name>` directories
+ * under the integrations root; a name suffixed `!manifest` gets a
+ * manifest-only
  * entry, `!empty` gets a directory with nothing built in it, `!bare` gets a
  * handler entry that exports no manifest, and `!bare-manifest` gets a
  * manifest-only entry that exports none.
@@ -133,9 +134,7 @@ function image(options: {
     const bare = shape === "bare" || shape === "bare-manifest";
     writeFileSync(
       join(dist, manifestOnly ? "manifest.js" : "local.js"),
-      bare
-        ? "export const somethingElse = 1;\n"
-        : manifestSource(`acme/${name ?? raw}`),
+      bare ? "export const somethingElse = 1;\n" : manifestSource(name ?? raw),
     );
   }
 
@@ -234,8 +233,8 @@ describe("the in-image integration verification", () => {
   it("passes an image that installs exactly what it declares", () => {
     const run = verify(
       image({
-        declared: ["alpha", "beta manifest-only"],
-        installed: ["alpha", "beta!manifest"],
+        declared: ["acme/alpha", "acme/beta manifest-only"],
+        installed: ["acme/alpha", "acme/beta!manifest"],
         fixture: true,
       }),
     );
@@ -301,27 +300,38 @@ describe("the in-image integration verification", () => {
 
   it("fails, by name, on a declared integration that is not installed", () => {
     const run = verify(
-      image({ declared: ["alpha", "beta"], installed: ["alpha"] }),
+      image({
+        declared: ["acme/alpha", "acme/beta"],
+        installed: ["acme/alpha"],
+      }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("declared but not installed");
-    expect(run.output).toContain("beta");
+    expect(run.output).toContain("acme/beta");
   });
 
   it("fails, by name, on an installed integration nobody declared", () => {
     // The shape that shipped the scaffold: present in the image, named in
     // nothing, and invisible to a check that only counted.
+    //
+    // The scaffold is flat, so it is also the flat-leftover case. Walking
+    // two levels reports it as `_template/dist`, because `dist` is the only
+    // subdirectory a wrongly staged one-level tree has — which is how a
+    // staging step that forgot the handle fails here rather than shipping.
     const run = verify(
-      image({ declared: ["alpha"], installed: ["alpha", "_template"] }),
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha", "_template"],
+      }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("installed but not declared");
-    expect(run.output).toContain("_template");
+    expect(run.output).toContain("_template/dist");
   });
 
   it("fails on a declared integration that built nothing", () => {
     const run = verify(
-      image({ declared: ["alpha"], installed: ["alpha!empty"] }),
+      image({ declared: ["acme/alpha"], installed: ["acme/alpha!empty"] }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("staged no dist/local.js");
@@ -332,7 +342,7 @@ describe("the in-image integration verification", () => {
     // not: the directory is still there, so the set looks unchanged, but
     // one fewer integration can be dispatched to.
     const run = verify(
-      image({ declared: ["alpha"], installed: ["alpha!manifest"] }),
+      image({ declared: ["acme/alpha"], installed: ["acme/alpha!manifest"] }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("mark it manifest-only");
@@ -340,7 +350,10 @@ describe("the in-image integration verification", () => {
 
   it("fails when a manifest-only integration built a handler", () => {
     const run = verify(
-      image({ declared: ["beta manifest-only"], installed: ["beta"] }),
+      image({
+        declared: ["acme/beta manifest-only"],
+        installed: ["acme/beta"],
+      }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("declared manifest-only");
@@ -353,8 +366,8 @@ describe("the in-image integration verification", () => {
     // failure and this is the last place to refuse it.
     const run = verify(
       image({
-        declared: ["beta manifest-only"],
-        installed: ["beta!bare-manifest"],
+        declared: ["acme/beta manifest-only"],
+        installed: ["acme/beta!bare-manifest"],
       }),
     );
     expect(run.code).toBe(1);
@@ -364,8 +377,8 @@ describe("the in-image integration verification", () => {
   it("fails when a staged entry exports no manifest", () => {
     const run = verify(
       image({
-        declared: ["alpha"],
-        installed: ["alpha!bare"],
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!bare"],
         fixture: true,
       }),
     );
@@ -395,17 +408,19 @@ describe("the in-image integration verification", () => {
   });
 
   it("still fails on a missing root when something was declared", () => {
-    const img = image({ declared: ["alpha"], installed: [] });
+    const img = image({ declared: ["acme/alpha"], installed: [] });
     const run = verify(img, {
       MARFA_INTEGRATIONS_ROOT: join(img.integrationsRoot, "absent"),
     });
     expect(run.code).toBe(1);
     expect(run.output).toContain("declared but not installed");
-    expect(run.output).toContain("alpha");
+    expect(run.output).toContain("acme/alpha");
   });
 
   it("refuses to skip the dispatch proof when something dispatches", () => {
-    const run = verify(image({ declared: ["alpha"], installed: ["alpha"] }));
+    const run = verify(
+      image({ declared: ["acme/alpha"], installed: ["acme/alpha"] }),
+    );
     expect(run.code).toBe(1);
     expect(run.output).toContain("dispatch fixture is missing");
   });
@@ -413,8 +428,8 @@ describe("the in-image integration verification", () => {
   it("fails when the worker never comes up", () => {
     const run = verify(
       image({
-        declared: ["alpha"],
-        installed: ["alpha"],
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
         fixture: true,
         worker: "silent",
       }),
@@ -435,8 +450,8 @@ describe("the in-image integration verification", () => {
     // reads another.
     const run = verify(
       image({
-        declared: ["alpha"],
-        installed: ["alpha"],
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
         fixture: true,
         worker: "not-ok",
       }),
@@ -447,7 +462,7 @@ describe("the in-image integration verification", () => {
   });
 
   it("fails when the declaration is not there to read", () => {
-    const img = image({ declared: ["alpha"], installed: ["alpha"] });
+    const img = image({ declared: ["acme/alpha"], installed: ["acme/alpha"] });
     const run = verify(img, {
       MARFA_INSTALLED_INTEGRATIONS: join(img.integrationsRoot, "no-such.txt"),
     });

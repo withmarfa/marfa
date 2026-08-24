@@ -17,11 +17,11 @@ Typed data layer. This monorepo holds eight active workspace packages, fifteen i
 - **@withmarfa/runtime-test** — Test harness mirroring the runtime-sdk surface (in-memory queue + `consumeBatch` driver), so Integrations can unit-test their handlers without booting the server.
 - **@withmarfa/sync-manifest** — The manifest the sync client installs against. Sync watches a filesystem, so its code runs on the user's machine and there is nothing for a deployment to install; the server imports this manifest and hands it to the boot-time catalog reconcile. Private, and not an Integration for exactly that reason.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copies), plus fourteen shipping Integrations. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
+**In-tree Integrations (`integrations/`):** fourteen shipping Integrations, each in a `<handle>/<name>` directory mirroring its manifest identifier, plus `_template` (the scaffold every contributor copies), which stays flat and underscore-prefixed so discovery skips it. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
-- **Bidirectional** — `google-calendar`, `google-contacts`, `google-tasks`, `todoist`, `readwise-reader`.
-- **Inbound** — `google-drive`, `google-youtube`, `podcasts`, `raindrop`, `readwise`, `rss-watcher`, `github-webhooks`, `inbox` (email capture via Cloudflare Email Routing).
-- **Marfa-side only** — `task-auto-archive` (reacts to item events, no upstream).
+- **Bidirectional** — `google/calendar`, `google/contacts`, `google/tasks`, `todoist/tasks`, `readwise/reader`.
+- **Inbound** — `google/drive`, `google/youtube`, `marfa/podcasts`, `raindrop/bookmarks`, `readwise/highlights`, `marfa/rss-watcher`, `marfa/github-webhooks`, `marfa/inbox` (email capture via Cloudflare Email Routing).
+- **Marfa-side only** — `marfa/task-auto-archive` (reacts to item events, no upstream).
 
 **Where the code has to run is what decides whether something is an Integration.** An Integration is installed into a deployment's integrations directory and dispatched by the runtime. A client's code can only run somewhere else: sync watches a filesystem, so it runs on the machine holding the files. It ships a manifest and no handler, and that manifest ships with the server build rather than being filed here. Sync keeps its Connection, credentials, configuration and observability either way; none of that is what makes something an Integration.
 
@@ -302,7 +302,7 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 
 **Nothing else in the estate builds the image**, so anything the image build does differently used to be invisible until somebody dispatched a deploy, by which point `main` was already the thing that could not ship. A bundler heap ceiling is the one that bit first; the enduring list is the `linux/amd64` target, the install against the committed lockfile, the integration staging step, and the runtime stage's file layout.
 
-- **Trigger paths** — `packages/server/Dockerfile`, any `.dockerignore`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, any `package.json`, any `tsup.config.ts`, `packages/server/scripts/**`, `packages/server/installed-integrations.txt`, any `integrations/*/src/local.ts`, and the workflow file itself.
+- **Trigger paths** — `packages/server/Dockerfile`, any `.dockerignore`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, any `package.json`, any `tsup.config.ts`, `packages/server/scripts/**`, `packages/server/installed-integrations.txt`, any `integrations/*/*/src/local.ts`, the scaffold's own `integrations/_template/src/local.ts`, and the workflow file itself.
 - **Deliberately not every source file.** Roughly a quarter of merges touch that set, so growth in the sources this build is sensitive to meets a build within hours rather than needing its own trigger.
 - **Hosted, not the self-hosted pool.** The pool is arm64 and the image is `linux/amd64`; emulated cross-building is far slower than a native build. Same reason the deploy's `build-push` job is hosted. A green build is about two and a quarter minutes.
 - **The whole image, not `--target build`.** Stopping at the build stage skips the runtime layout and the check that the staged integrations can load. Those are seconds on top. The saving is in dropping `--push`, which also means the job needs no registry credential.
