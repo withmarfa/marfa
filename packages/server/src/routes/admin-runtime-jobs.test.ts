@@ -51,6 +51,9 @@ function stubOps(): DeadLetterOps & {
       limits.push(limit);
       return Promise.resolve([sampleJob].slice(0, limit));
     },
+    count() {
+      return Promise.resolve(1);
+    },
     replay(id: string) {
       if (id !== JOB_ID) {
         throw new MarfaError(ErrorCode.NOT_FOUND, `No dispatch job ${id}`);

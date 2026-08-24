@@ -54,6 +54,15 @@ export interface ReplayResult {
 export interface DeadLetterOps {
   list(limit: number): Promise<DeadLetterJob[]>;
   replay(id: string): Promise<ReplayResult>;
+  /**
+   * How many dispatches have given up, and nothing else.
+   *
+   * Separate from `list` because its only caller is `/health`, which is
+   * unauthenticated: a count is the same shape as the connection figures
+   * that endpoint already publishes, and the identifiers `list` returns
+   * are platform-admin data that has no business there.
+   */
+  count(): Promise<number>;
 }
 
 /** The SQL renders timestamps through `to_json`, which always emits ISO
@@ -148,6 +157,19 @@ export function createDeadLetterOps(boss: PgBoss, db: PgDb): DeadLetterOps {
           failed_at: toIso(row.completed_on),
         };
       });
+    },
+
+    async count(): Promise<number> {
+      // Same predicate as `list`, so the two can never disagree about what
+      // a dead letter is. Counted in the database rather than by taking a
+      // length, because `list` is bounded by a limit and a count that
+      // silently stops at ten is worse than no count.
+      const [row] = await db.execute<{ n: string | number }>(
+        sql`SELECT count(*)::int AS n
+            FROM pgboss.job
+            WHERE name = ${QUEUE_NAME} AND state = 'failed'`,
+      );
+      return Number(row?.n ?? 0);
     },
 
     async replay(id: string): Promise<ReplayResult> {

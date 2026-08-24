@@ -309,7 +309,13 @@ export function createApp(
   // closure rather than a value — the handle is resolved per request.
   app.route(
     "/health",
-    healthRoutes(storage, blobBackend, config, () => auth),
+    healthRoutes(
+      storage,
+      blobBackend,
+      config,
+      () => auth,
+      deadLetterOps ? () => deadLetterOps.count() : null,
+    ),
   );
 
   // Local-runtime substrate routes (POST /runtime/webhook/:id). Mounted
