@@ -470,6 +470,11 @@ describe("capability scopes", () => {
     expect(hasCapability(keys, "capability.app_grants")).toBe(false);
     const connections = ["capability.connections"];
     expect(hasCapability(connections, "capability.credentials")).toBe(false);
+    // Installing a connection must not carry the power to spend its live
+    // upstream token against the third-party account behind it.
+    expect(hasCapability(connections, "capability.upstream_access")).toBe(
+      false,
+    );
     // And reading how full a space is must not carry rewriting its policy.
     const usage = ["capability.space_usage"];
     expect(hasCapability(usage, "capability.space_settings")).toBe(false);
@@ -480,7 +485,7 @@ describe("capability scopes", () => {
     // the whole point is that a person grants webhooks without granting
     // credentials. The count is the cheapest statement of that.
     expect(new Set(CAPABILITY_SCOPES).size).toBe(CAPABILITY_SCOPES.length);
-    expect(CAPABILITY_SCOPES.length).toBe(10);
+    expect(CAPABILITY_SCOPES.length).toBe(11);
   });
 
   it("claims its whole namespace, members or nothing", () => {

@@ -77,7 +77,7 @@ export const CAPABILITY_ROOT = "capability";
  * your audit log" — so a person can grant an app the one power it needs.
  * A single "administer everything" toggle is the thing this replaces.
  *
- * Four boundaries in the set are decisions rather than groupings, and each
+ * Six boundaries in the set are decisions rather than groupings, and each
  * exists because the obvious grouping would hand a holder something wider
  * than the name implies.
  *
@@ -87,11 +87,17 @@ export const CAPABILITY_ROOT = "capability";
  *   Folding them together would let an app trusted to rotate a key
  *   enumerate and revoke every other app the space has authorized, which is
  *   the escalation this whole model exists to fence.
- * - **`credentials` is not `connections`.** Configuring a connection, its
- *   upstream mapping included, says nothing about reaching the secret behind
- *   it or minting a leased token that authenticates as it. Credential
- *   issuance is its own authority in both directions: what a connection
- *   holds, and what it hands out.
+ * - **`upstream_access` is not `connections`.** The connection proxy spends a
+ *   connection's live upstream token against the third-party service, so a
+ *   holder reads and writes the person's actual Google or Todoist account
+ *   rather than Marfa's record of it. That is a different order of magnitude
+ *   from installing and removing a connection, and no sentence covering both
+ *   is honest about either.
+ * - **`credentials` is not `connections` either.** Registering and removing
+ *   the upstream client secrets and API tokens a connection is installed
+ *   against is its own authority. Leased tokens are deliberately NOT here:
+ *   one carries no reach of its own beyond the connection that minted it, so
+ *   it is part of operating a connection rather than a credential to hold.
  * - **`schema` is not registration.** Registering a type is already fenced
  *   by `metadata.types:write` and `metadata.edge_types:write`. This covers
  *   only what that grammar does not — changing and removing definitions that
@@ -100,17 +106,39 @@ export const CAPABILITY_ROOT = "capability";
  *   leave a consent screen unable to tell a reader which one it is showing.
  * - **`space_usage` is not `space_settings`.** Reading how much room is left
  *   is what an app doing ordinary work wants; changing a space's enforcement
- *   policy is not. Bundling them would make every app that checks headroom
- *   ask for the power to rewrite policy.
+ *   policy is not, and one of the things that policy sets is how long the
+ *   audit trail survives.
+ * - **Outbound and inbound webhooks are not the same word.** `webhooks`
+ *   covers the subscriptions that send a space's events out. A connection's
+ *   inbound receipt endpoints belong to that connection and sit under
+ *   `connections`.
  *
- * Not everything reached through space-admin authority is a surface. The
- * caller resolver behind the console pages answers which space a request is
- * acting in, and gating it would be gating the question rather than an
- * answer, so no capability covers it and none should.
+ * **Three things a gate must not infer from this set**, recorded here
+ * because each is a boundary that already exists in the routes and would be
+ * lost by wiring a capability check onto the shared authority helper:
+ *
+ * - **Minting an API key stays closed to OAuth callers outright.** The route
+ *   refuses an OAuth bearer before any permission question, because a key is
+ *   a durable credential that is not held to a token's scopes. Without that
+ *   refusal `keys` would be the largest escalation in the set: an app could
+ *   mint itself a permanent unscoped credential and no longer need the grant
+ *   at all. The capability names who may manage keys, never who may escape
+ *   the scope system.
+ * - **`item_purge` is one item.** Bulk purge is platform-only today, and a
+ *   capability held by a space-scoped app must not reach it.
+ * - **The caller resolver is not a surface.** It answers which space a
+ *   request acts in, ahead of the four page pairs that are surfaces, so
+ *   gating it would gate the question rather than an answer.
+ *
+ * One site is deliberately uncovered. Listing a space's edge types is a read
+ * whose item-type sibling is open to any authenticated caller, so the
+ * consistent answer is relaxing that gate rather than inventing an
+ * administrative capability to sit in front of a listing.
  */
 export type CapabilityScope =
   | "capability.webhooks"
   | "capability.connections"
+  | "capability.upstream_access"
   | "capability.credentials"
   | "capability.keys"
   | "capability.app_grants"
@@ -141,8 +169,9 @@ export const CAPABILITY_SCOPES: readonly CapabilityScope[] = [
   "capability.space_settings",
   "capability.audit_read",
   "capability.item_purge",
-  "capability.keys",
+  "capability.upstream_access",
   "capability.credentials",
+  "capability.keys",
   "capability.app_grants",
 ];
 

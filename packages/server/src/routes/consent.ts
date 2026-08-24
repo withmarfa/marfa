@@ -295,15 +295,18 @@ export const OIDC_LABELS: Record<string, string> = {
  */
 export const CAPABILITY_LABELS: Record<CapabilityScope, string> = {
   "capability.webhooks": "Set up webhooks that send your data elsewhere",
-  "capability.connections": "Connect and disconnect other services",
+  "capability.connections":
+    "Connect services, and decide what each one can reach",
+  "capability.upstream_access":
+    "Use your connected accounts directly, with everything they can do",
+  "capability.credentials":
+    "Register and remove the sign-in details your connections use",
   "capability.schema": "Change and remove your type definitions",
   "capability.space_usage": "See how much of your space is used",
   "capability.space_settings": "Change your space settings",
   "capability.audit_read": "Read your security history",
   "capability.item_purge": "Permanently delete things, past the trash",
   "capability.keys": "Create and revoke API keys",
-  "capability.credentials":
-    "Reach the credentials behind your connected services",
   "capability.app_grants": "See and revoke the other apps you have connected",
 };
 
