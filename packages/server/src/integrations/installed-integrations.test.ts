@@ -103,8 +103,25 @@ describe("the declaration parser", () => {
     expect(parse("# nothing installed\nnone\n")).toEqual([]);
   });
 
+  it("refuses an empty deployment declared twice", () => {
+    expect(() => parse("none\nnone\n")).toThrow(/more than once/);
+  });
+
   it("refuses an empty deployment that also names integrations", () => {
     expect(() => parse("none\nalpha\n")).toThrow(/cannot appear beside/);
+  });
+
+  it("reads a file with Windows line endings", () => {
+    // One of the four disagreements that justified collapsing three
+    // parsers into one, so it is worth a case rather than a comment.
+    expect(parse("alpha\r\nsync manifest-only\r\n")).toEqual([
+      { name: "alpha", manifestOnly: false },
+      { name: "sync", manifestOnly: true },
+    ]);
+  });
+
+  it("refuses a marker standing where a name should be", () => {
+    expect(() => parse("manifest-only\n")).toThrow(/cannot be a name/);
   });
 
   it("tolerates a byte-order mark and surrounding whitespace", () => {

@@ -52,7 +52,7 @@ export function parseInstalledIntegrations(text) {
   for (let i = 0; i < lines.length; i++) {
     // Strip a byte-order mark on the first line before anything else looks
     // at it, so a file saved by an editor that adds one parses the same.
-    const raw = (i === 0 ? lines[i].replace(/^﻿/, "") : lines[i])
+    const raw = (i === 0 ? lines[i].replace(/^\uFEFF/, "") : lines[i])
       .replace(/#.*$/, "")
       .trim();
     if (raw.length === 0) continue;
@@ -66,8 +66,19 @@ export function parseInstalledIntegrations(text) {
           `line ${String(i + 1)}: "${NONE}" declares an empty deployment and takes no other field`,
         );
       }
+      if (sawNone) {
+        throw new DeclarationError(`"${NONE}" is declared more than once`);
+      }
       sawNone = true;
       continue;
+    }
+
+    // A marker on its own is a line somebody half-edited, not an
+    // integration that happens to be named after the marker.
+    if (name === MANIFEST_ONLY) {
+      throw new DeclarationError(
+        `line ${String(i + 1)}: "${MANIFEST_ONLY}" is a marker and cannot be a name`,
+      );
     }
 
     if (fields.length > 2) {

@@ -54,8 +54,9 @@ interface Image {
 /**
  * A scratch image layout. `installed` are directories under the
  * integrations root; a name suffixed `!manifest` gets a manifest-only
- * entry, `!empty` gets a directory with nothing built in it, and `!bare`
- * gets a handler entry that exports no manifest.
+ * entry, `!empty` gets a directory with nothing built in it, `!bare` gets a
+ * handler entry that exports no manifest, and `!bare-manifest` gets a
+ * manifest-only entry that exports none.
  *
  * `declared` lines are written verbatim, so a caller can pass a marker or a
  * malformed line as easily as a name.
@@ -82,9 +83,11 @@ function image(options: {
     if (shape === "empty") continue;
     const dist = join(dir, "dist");
     mkdirSync(dist, { recursive: true });
+    const manifestOnly = shape === "manifest" || shape === "bare-manifest";
+    const bare = shape === "bare" || shape === "bare-manifest";
     writeFileSync(
-      join(dist, shape === "manifest" ? "manifest.js" : "local.js"),
-      shape === "bare"
+      join(dist, manifestOnly ? "manifest.js" : "local.js"),
+      bare
         ? "export const somethingElse = 1;\n"
         : `export const manifest = { name: "acme/${name ?? raw}" };\n`,
     );
@@ -116,14 +119,17 @@ function image(options: {
     behavior === "silent"
       ? "// never reports ready\n"
       : `import { parentPort, workerData } from "node:worker_threads";
-import { pathToFileURL } from "node:url";
-const mod = await import(pathToFileURL(workerData.handlerModulePath).href);
+const mod = await import(workerData.handlerModulePath);
 const loaded = typeof mod.manifest === "object";
 parentPort.postMessage({ kind: "ready" });
 parentPort.on("message", () => {
+  // The real WorkerDispatchResponse carries no discriminant. Posting one
+  // with a \`kind\` would let a later tightening of the script's message
+  // filter stay green here and fail in every image.
   parentPort.postMessage({
-    kind: "result",
     result: ${behavior === "ok" ? "{ ok: loaded }" : '{ ok: false, reason: "no_schedule_handler_registered" }'},
+    cursorUpdates: {},
+    cursorDeletes: [],
   });
 });
 `,
@@ -148,6 +154,11 @@ function verify(img: Image, overrides: Record<string, string> = {}): Run {
         MARFA_INSTALLED_INTEGRATIONS: img.declaration,
         MARFA_VERIFY_FIXTURE_ROOT: img.fixtureRoot,
         MARFA_VERIFY_WORKER_ENTRY: img.workerEntry,
+        // The real budgets are ten and fifteen seconds. Nothing here waits
+        // on a real handler, so a case that means to reach a timeout should
+        // reach it now rather than in ten seconds.
+        MARFA_VERIFY_READY_TIMEOUT_MS: "1500",
+        MARFA_VERIFY_DISPATCH_TIMEOUT_MS: "1500",
         ...overrides,
       },
     });
@@ -225,6 +236,20 @@ describe("the in-image integration verification", () => {
     expect(run.output).toContain("drop the marker");
   });
 
+  it("fails when a manifest-only entry exports no manifest", () => {
+    // The catalog reconcile imports these at boot exactly as the runtime
+    // loader imports a handler entry, so an unreadable one is a boot
+    // failure and this is the last place to refuse it.
+    const run = verify(
+      image({
+        declared: ["sync manifest-only"],
+        installed: ["sync!bare-manifest"],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("exports no usable manifest");
+  });
+
   it("fails when a staged entry exports no manifest", () => {
     const run = verify(
       image({
@@ -272,6 +297,19 @@ describe("the in-image integration verification", () => {
     const run = verify(image({ declared: ["alpha"], installed: ["alpha"] }));
     expect(run.code).toBe(1);
     expect(run.output).toContain("dispatch fixture is missing");
+  });
+
+  it("fails when the worker never comes up", () => {
+    const run = verify(
+      image({
+        declared: ["alpha"],
+        installed: ["alpha"],
+        fixture: true,
+        worker: "silent",
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("worker not ready");
   });
 
   it("fails when the dispatch comes back not-ok", () => {

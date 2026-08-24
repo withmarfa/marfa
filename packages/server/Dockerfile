@@ -49,9 +49,9 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # trees. What it installs is declared in installed-integrations.txt rather
 # than being whatever the directory happens to hold, so a declared name
 # that is not there fails the build and a directory nobody declared is not
-# shipped. Nothing in either step needs the directory to exist: with an
-# empty declaration the filter matches no packages, the loop runs no times,
-# and the image ships an empty integrations root.
+# shipped. Nothing in either step needs the directory to exist: a
+# declaration reading `none` leaves the filter matching no packages and the
+# loop running no times, and the image ships an empty integrations root.
 #
 # The image must carry integrations/<name>/dist/local.js: the loader's
 # default root resolves relative to the monorepo, which does not exist in
@@ -76,9 +76,17 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # the workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
 RUN pnpm --filter "@withmarfa/integration-*" run build
+# The parser's output is captured into a variable rather than expanded
+# inline. `set -e` does not reach a command substitution performed while
+# expanding a `for` word list, and a loop whose body never runs exits 0, so
+# the inline form turns every declaration error into a green build stage
+# that staged nothing. The verification later in the build would still
+# catch it, but the first and clearest report of the fault would come from
+# a step that had just claimed to succeed.
 RUN set -euf; \
     mkdir -p /integrations-staged; \
-    for name in $(node packages/server/scripts/read-installed-integrations.mjs packages/server/installed-integrations.txt); do \
+    names="$(node packages/server/scripts/read-installed-integrations.mjs packages/server/installed-integrations.txt)"; \
+    for name in $names; do \
       dir="integrations/$name"; \
       if [ ! -d "$dir" ]; then \
         echo "ERROR: $name is declared installed but $dir is not present" >&2; \

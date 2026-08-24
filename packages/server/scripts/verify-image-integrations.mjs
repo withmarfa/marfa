@@ -70,6 +70,14 @@ const DECLARATION =
 // the deployment installed, and the dispatch fixture is not that.
 const FIXTURE_ROOT =
   process.env.MARFA_VERIFY_FIXTURE_ROOT ?? resolve(HERE, "verify-fixtures");
+// Overridable only so the suite can drive the timeout paths without waiting
+// out the real budgets. An image never sets these.
+const READY_TIMEOUT_MS = Number(
+  process.env.MARFA_VERIFY_READY_TIMEOUT_MS ?? "10000",
+);
+const DISPATCH_TIMEOUT_MS = Number(
+  process.env.MARFA_VERIFY_DISPATCH_TIMEOUT_MS ?? "15000",
+);
 
 function fail(msg) {
   console.error(`[verify-image-integrations] FAIL: ${msg}`);
@@ -142,7 +150,7 @@ for (const name of declared) {
     if (!existsSync(manifestJs)) {
       fail(`${name} is declared manifest-only but staged no dist/manifest.js`);
     }
-    manifestOnly.push(name);
+    manifestOnly.push({ name, entryJs: manifestJs });
     continue;
   }
 
@@ -162,27 +170,49 @@ info(
   `${String(declared.length)} declared integrations all installed: ` +
     `${String(entries.length)} dispatchable` +
     (manifestOnly.length > 0
-      ? `, ${String(manifestOnly.length)} manifest-only (${manifestOnly.join(", ")})`
+      ? `, ${String(manifestOnly.length)} manifest-only (${manifestOnly
+          .map((entry) => entry.name)
+          .join(", ")})`
       : ""),
 );
 
-// Check 2: each entry imports and exports a manifest. Importing also runs
-// each entry's registerHandlers() against this process's registry; that
-// registry is throwaway here, so the overwrites are harmless.
-for (const entry of entries) {
+// Check 2: every staged entry imports and exports a manifest. Both shapes,
+// not only the dispatchable ones: the catalog reconcile imports a
+// manifest-only entry at boot exactly as the runtime loader imports a
+// handler entry, so a truncated one is a boot failure this is the last
+// chance to refuse. Importing also runs each handler entry's
+// registerHandlers() against this process's registry; that registry is
+// throwaway here, so the overwrites are harmless.
+//
+// Duck-typed on the export rather than keyed to a name, because a handler
+// entry exports `manifest` and a manifest-only package exports its own
+// constant. The server's own loader does the same and for the same reason.
+function manifestFrom(mod) {
+  const named = mod.manifest ?? mod.default?.manifest;
+  if (usableManifest(named)) return named;
+  return Object.values(mod).find(usableManifest);
+}
+
+function usableManifest(value) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof value.name === "string"
+  );
+}
+
+for (const entry of [
+  ...entries.map((e) => ({ name: e.name, entryJs: e.localJs })),
+  ...manifestOnly,
+]) {
   let mod;
   try {
-    mod = await import(pathToFileURL(entry.localJs).href);
+    mod = await import(pathToFileURL(entry.entryJs).href);
   } catch (err) {
-    fail(`${entry.name}/dist/local.js failed to import: ${String(err)}`);
+    fail(`${entry.name} failed to import ${entry.entryJs}: ${String(err)}`);
   }
-  const manifest = mod.manifest ?? mod.default?.manifest;
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    typeof manifest.name !== "string"
-  ) {
-    fail(`${entry.name}/dist/local.js exports no usable manifest`);
+  if (!usableManifest(manifestFrom(mod))) {
+    fail(`${entry.name} exports no usable manifest from ${entry.entryJs}`);
   }
 }
 info(`all entries import and export manifests`);
@@ -262,7 +292,13 @@ try {
       });
     }),
     new Promise((_, rej) =>
-      setTimeout(() => rej(new Error("worker not ready within 10s")), 10_000),
+      setTimeout(
+        () =>
+          rej(
+            new Error(`worker not ready within ${String(READY_TIMEOUT_MS)}ms`),
+          ),
+        READY_TIMEOUT_MS,
+      ),
     ),
   ]);
   info(`worker thread loaded the template entry`);
@@ -272,7 +308,15 @@ try {
       if (msg !== null && typeof msg === "object" && msg.kind !== "ready")
         res(msg);
     });
-    setTimeout(() => rej(new Error("dispatch timed out after 15s")), 15_000);
+    setTimeout(
+      () =>
+        rej(
+          new Error(
+            `dispatch timed out after ${String(DISPATCH_TIMEOUT_MS)}ms`,
+          ),
+        ),
+      DISPATCH_TIMEOUT_MS,
+    );
     worker.postMessage({
       apiUrl: `http://127.0.0.1:${String(port)}`,
       credential: {

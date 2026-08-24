@@ -24,7 +24,14 @@ export declare function parseInstalledIntegrations(
   text: string,
 ): InstalledIntegration[];
 
-/** Read and parse a declaration file. */
+/**
+ * Read and parse a declaration file.
+ *
+ * Throws `DeclarationError` for anything the declaration does not say
+ * unambiguously, and for a file that cannot be read at all: both mean the
+ * same thing to every caller, so they get one failure shape rather than
+ * two.
+ */
 export declare function readInstalledIntegrations(
   path: string,
 ): InstalledIntegration[];

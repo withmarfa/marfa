@@ -19,9 +19,9 @@
 # old count did catch.
 #
 # A name here with no matching directory fails the build, and a directory
-# with no name here is not shipped. src/integrations/installed-integrations
-# .test.ts holds the two in agreement in the ordinary suite, so an
-# integration nobody declared fails long before an image build does.
+# with no name here is not shipped. The suite holds the two in agreement,
+# so an integration nobody declared fails in seconds rather than during a
+# build.
 #
 # The scaffold under integrations/_template is deliberately absent. It is a
 # starting point for authors rather than an integration, and the runtime's
