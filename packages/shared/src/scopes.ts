@@ -8,7 +8,7 @@ import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
 
 /**
  * Parsed representation of a scope string. Five shapes today:
- *   - item-type scope:  "core.note:read"     → kind undefined, typePattern="core.note"
+ *   - item-type scope:  "core.note:read"     → kind="type", typePattern="core.note"
  *                       ("*:read" / "*:write" are the global type wildcard)
  *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
@@ -35,15 +35,60 @@ export interface ParsedScope {
   /** "read" / "write" for type / edge / metadata scopes; "none" for OIDC
    *  literals (which have no read/write semantics on Marfa resources). */
   operation: "read" | "write" | "none";
-  /** "edge", "metadata", or "oidc" for the disambiguated families;
-   *  undefined for type scopes. */
-  kind?: "edge" | "metadata" | "oidc";
+  /**
+   * Which family the scope belongs to. Always set, including for the
+   * ordinary item-type scope, which reads as `"type"` rather than as the
+   * absence of a kind.
+   *
+   * An absent discriminant made "not one of the families I recognize" the
+   * same value as "an item-type grant", so every projection that had to tell
+   * them apart was written as a list of kinds to skip. That shape admits
+   * whatever nobody has thought of yet, and on the item-type axis being
+   * admitted means having a pattern matched against the live type registry.
+   */
+  kind: "type" | "edge" | "metadata" | "oidc";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
   subresource?: string;
   /** Present when kind === "oidc"; one of the standard OIDC literals. */
   oidcScope?: OidcScope;
+}
+
+/**
+ * Whether a parsed scope grants on the item-type axis, and so belongs in
+ * `type_permissions`.
+ *
+ * Positive identification, deliberately: the caller admits a scope because
+ * the parser said it is a type scope, never because it failed to be anything
+ * else. Skipping a named list of other kinds reads the same on today's union
+ * and behaves in the opposite direction on tomorrow's, because a family
+ * nobody has added to the list falls through to "must be an item type" and
+ * has its pattern matched against the real registry by `typeMatchesPattern`,
+ * where a `*` anywhere in it reaches every registered type.
+ *
+ * The `never` binding is what keeps that true without anyone rereading this:
+ * adding a member to `ParsedScope["kind"]` stops the package compiling until
+ * the new family is classified here, and every caller inherits the decision
+ * because they all ask this one question.
+ */
+export function isTypeScope(parsed: ParsedScope): boolean {
+  switch (parsed.kind) {
+    case "type":
+      return true;
+    case "edge":
+    case "metadata":
+    case "oidc":
+      return false;
+    default: {
+      // Compile-time exhaustiveness check. The runtime arm refuses too, so a
+      // value built by hand or arriving from a stale build is not admitted
+      // either.
+      const _exhaustive: never = parsed.kind;
+      void _exhaustive;
+      return false;
+    }
+  }
 }
 
 // Splits a type scope into its pattern and verb. The pattern half is only
@@ -120,7 +165,11 @@ export function parseScope(scope: string): ParsedScope | null {
   if (!match) return null;
   const typePattern = match[1] ?? "";
   if (!isValidTypePattern(typePattern)) return null;
-  return { typePattern, operation: match[2] as "read" | "write" };
+  return {
+    typePattern,
+    operation: match[2] as "read" | "write",
+    kind: "type",
+  };
 }
 
 /** Returns true if the scope string is syntactically valid. */
@@ -177,6 +226,9 @@ export function expandWildcardScopes(
 /**
  * Converts a list of granted scopes into the type_permissions map format
  * used by the existing auth middleware. Write implies read.
+ *
+ * Only scopes `isTypeScope` positively identifies get in. Anything else,
+ * including a family this build has never heard of, contributes nothing.
  */
 export function scopesToTypePermissions(
   scopes: string[],
@@ -186,13 +238,7 @@ export function scopesToTypePermissions(
   for (const scope of scopes) {
     const parsed = parseScope(scope);
     if (!parsed) continue;
-
-    if (
-      parsed.kind === "metadata" ||
-      parsed.kind === "edge" ||
-      parsed.kind === "oidc"
-    )
-      continue;
+    if (!isTypeScope(parsed)) continue;
 
     const current = perms[parsed.typePattern];
     if (parsed.operation === "write" || current === undefined) {
@@ -216,22 +262,18 @@ export function scopeCovers(
     const parsed = parseScope(scope);
     if (!parsed) continue;
 
-    // Item-type scopes only, matching the guard `scopesToTypePermissions`
-    // already applies. This is load-bearing rather than tidiness: `edge` and
+    // Item-type scopes only, through the same predicate
+    // `scopesToTypePermissions` asks, so the two can never answer differently
+    // about a scope. This is load-bearing rather than tidiness: `edge` and
     // `metadata` are claimable publisher handles, so `edge.foo` is a
     // registrable item type, and `edge.*:write` is a scope the server both
-    // advertises and issues. Without this guard a pattern match would let an
+    // advertises and issues. Without the guard a pattern match would let an
     // edge grant satisfy an item-type requirement.
     //
     // The exact string comparison this replaced happened to contain that,
     // because `edge.*` never equalled `edge.foo`. A pattern match does not,
     // so the guard has to be explicit.
-    if (
-      parsed.kind === "metadata" ||
-      parsed.kind === "edge" ||
-      parsed.kind === "oidc"
-    )
-      continue;
+    if (!isTypeScope(parsed)) continue;
 
     // `typeMatchesPattern`, not `!==`. The held scope carries a *pattern*
     // (`core.*`, `*`) and the requirement carries a concrete type, so string

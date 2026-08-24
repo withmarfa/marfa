@@ -12,7 +12,9 @@ import {
  * device-grant.test.ts; this file asserts the HTML shape directly.
  */
 
-const SCOPES: ParsedScope[] = [{ typePattern: "core.note", operation: "read" }];
+const SCOPES: ParsedScope[] = [
+  { kind: "type", typePattern: "core.note", operation: "read" },
+];
 
 describe("renderDevicePage", () => {
   it("links to the shared stylesheet and has no inline <style>", () => {
@@ -144,7 +146,7 @@ describe("renderDeviceConsentScreen", () => {
           kind: "oidc",
           oidcScope: "email",
         },
-        { typePattern: "core.note", operation: "read" },
+        { kind: "type", typePattern: "core.note", operation: "read" },
       ],
     });
     expect(html).toContain("Confirm who you are");
@@ -160,8 +162,8 @@ describe("renderDeviceConsentScreen", () => {
       // core.note read + write both resolve to the same human label; the
       // device flow used to render it twice.
       scopes: [
-        { typePattern: "core.note", operation: "read" },
-        { typePattern: "core.note", operation: "write" },
+        { kind: "type", typePattern: "core.note", operation: "read" },
+        { kind: "type", typePattern: "core.note", operation: "write" },
       ],
       descriptions: { "core.note": "Text you created." },
     });

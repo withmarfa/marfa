@@ -10,14 +10,16 @@ import {
   scopeCovers,
   edgePermissionCovers,
   metadataPermissionCovers,
+  isTypeScope,
 } from "./scopes.js";
-import type { PermissionBundle } from "./scopes.js";
+import type { ParsedScope, PermissionBundle } from "./scopes.js";
 
 describe("parseScope", () => {
   it("parses a simple read scope", () => {
     expect(parseScope("core.note:read")).toEqual({
       typePattern: "core.note",
       operation: "read",
+      kind: "type",
     });
   });
 
@@ -25,6 +27,7 @@ describe("parseScope", () => {
     expect(parseScope("core.media.book:write")).toEqual({
       typePattern: "core.media.book",
       operation: "write",
+      kind: "type",
     });
   });
 
@@ -32,6 +35,7 @@ describe("parseScope", () => {
     expect(parseScope("core.media.*:read")).toEqual({
       typePattern: "core.media.*",
       operation: "read",
+      kind: "type",
     });
   });
 
@@ -334,10 +338,12 @@ describe("global type wildcard scope", () => {
     expect(parseScope("*:read")).toEqual({
       typePattern: "*",
       operation: "read",
+      kind: "type",
     });
     expect(parseScope("*:write")).toEqual({
       typePattern: "*",
       operation: "write",
+      kind: "type",
     });
     expect(isValidScope("*:read")).toBe(true);
     expect(isValidScope("*:write")).toBe(true);
@@ -615,5 +621,95 @@ describe("the global type wildcard stays in its own map", () => {
   it("does not project into metadata permissions", () => {
     expect(scopesToMetadataPermissions(["*:write"])).toEqual({});
     expect(scopesToMetadataPermissions(["*:read"])).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A scope reaches the item-type axis because it was identified as a type
+// scope, never because it was not identified as anything else.
+//
+// The two projections onto that axis used to name the families they skip.
+// That reads the same as the rule on today's union and inverts on tomorrow's:
+// a family nobody adds to the list falls through to "must be an item type",
+// and being treated as one means having the pattern matched against the live
+// type registry, where a `*` anywhere in it reaches every registered type.
+//
+// These cases are written against the union itself rather than against a
+// hand-kept list of families, so a kind that does not exist yet is measured
+// by them the day it is added.
+// ---------------------------------------------------------------------------
+
+describe("only type scopes reach the item-type axis", () => {
+  // One literal per family the grammar recognizes, as a total record: adding
+  // a member to `ParsedScope["kind"]` stops this file compiling until the new
+  // family has a literal here and is run through everything below.
+  const LITERAL_BY_KIND: Record<ParsedScope["kind"], string> = {
+    type: "core.note:read",
+    edge: "edge.parent-of:write",
+    metadata: "metadata.types:write",
+    oidc: "openid",
+  };
+
+  const kinds = Object.keys(LITERAL_BY_KIND) as ParsedScope["kind"][];
+
+  for (const kind of kinds) {
+    const literal = LITERAL_BY_KIND[kind];
+    const isType = kind === "type";
+
+    it(`parses ${literal} as kind=${kind}`, () => {
+      // The fixture has to be honest or the two cases below prove nothing.
+      expect(parseScope(literal)?.kind).toBe(kind);
+    });
+
+    it(`${isType ? "admits" : "refuses"} ${literal} in type_permissions`, () => {
+      const admitted = Object.keys(scopesToTypePermissions([literal]));
+      expect(admitted.length > 0).toBe(isType);
+    });
+
+    it(`${isType ? "lets" : "stops"} ${literal} satisfy an item-type requirement`, () => {
+      // The requirement is the scope's own pattern, so a bare
+      // `typeMatchesPattern` would match it. Whether it is refused is then
+      // down to the kind and nothing else, which is the property under test.
+      const pattern = parseScope(literal)?.typePattern ?? "";
+      expect(scopeCovers([literal], pattern, "read")).toBe(isType);
+    });
+
+    it(`the two projections agree about ${kind} scopes`, () => {
+      // One predicate answers for both, so they cannot drift apart the way
+      // two hand-maintained skip lists could.
+      const pattern = parseScope(literal)?.typePattern ?? "";
+      expect(scopeCovers([literal], pattern, "read")).toBe(
+        Object.keys(scopesToTypePermissions([literal])).length > 0,
+      );
+    });
+  }
+
+  it("keeps a wildcard-bearing non-type scope off the registry match", () => {
+    // The shape that makes the exclusion list dangerous rather than untidy:
+    // admitted to `type_permissions`, `edge.*` is a pattern the storage layer
+    // and every permission check resolve against real registered types.
+    expect(scopesToTypePermissions(["edge.*:write"])).toEqual({});
+    expect(scopeCovers(["edge.*:write"], "edge.anything", "write")).toBe(false);
+  });
+
+  it("refuses a kind this build does not know", () => {
+    // The compile-time check cannot see a value that crossed a package
+    // boundary from a build compiled against a wider union, so the runtime
+    // arm has to deny as well. It is the same answer either way: unclassified
+    // is not an item-type grant.
+    const fromANewerBuild = {
+      kind: "future",
+      typePattern: "*",
+      operation: "write",
+    } as unknown as ParsedScope;
+    expect(isTypeScope(fromANewerBuild)).toBe(false);
+  });
+
+  it("classifies every family the parser can emit", () => {
+    for (const kind of kinds) {
+      const parsed = parseScope(LITERAL_BY_KIND[kind]);
+      expect(parsed).not.toBeNull();
+      expect(isTypeScope(parsed!)).toBe(kind === "type");
+    }
   });
 });
