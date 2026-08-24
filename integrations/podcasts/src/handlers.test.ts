@@ -240,6 +240,25 @@ function feedResponse(
   });
 }
 
+/**
+ * The same feed with video enclosures. A video podcast is an ordinary RSS
+ * feed whose enclosures carry a video MIME type, and `itunes:type` says
+ * `episodic` either way, so the enclosure is the only thing that
+ * distinguishes one.
+ */
+function videoFeedXml(episodes: number): string {
+  return feedXml(episodes)
+    .replaceAll(".mp3", ".mp4")
+    .replaceAll('type="audio/mpeg"', 'type="video/mp4"');
+}
+
+/** A show that publishes both, which the core series type calls `mixed`. */
+function mixedFeedXml(): string {
+  return feedXml(2)
+    .replace(".mp3", ".mp4")
+    .replace('type="audio/mpeg"', 'type="video/mp4"');
+}
+
 function feedXml(
   episodes: number,
   guidPrefix = "ep",
@@ -925,6 +944,69 @@ describe("configuration", () => {
     expect(props.media_url).toBe("https://cdn.example/ep-1.mp3");
     expect(props.mime_type).toBe("audio/mpeg");
     expect(props.medium).toBe("podcast");
+    expect(h.created[0]?.properties?.medium).toBe("podcast");
+  });
+
+  it("carries a video enclosure through to the core family's medium", async () => {
+    const h = harness({
+      writeFamily: "core",
+      responses: {
+        "https://feeds.example/show": [feedResponse(videoFeedXml(1))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    const props = h.bulkCalls[0]?.inputs[0]?.properties ?? {};
+    expect(props.medium).toBe("video");
+    expect(props.mime_type).toBe("video/mp4");
+    expect(props.media_url).toBe("https://cdn.example/ep-1.mp4");
+    // The series has to agree with its episodes. Held to "podcast" it said
+    // one thing while every child said another.
+    expect(h.created[0]?.properties?.medium).toBe("video");
+  });
+
+  it("calls a series carrying both kinds mixed rather than the first one seen", async () => {
+    const h = harness({
+      writeFamily: "core",
+      responses: {
+        "https://feeds.example/show": [feedResponse(mixedFeedXml())],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(h.created[0]?.properties?.medium).toBe("mixed");
+  });
+
+  it("gives a series no medium rather than guessing one", async () => {
+    const h = harness({
+      writeFamily: "core",
+      responses: {
+        "https://feeds.example/show": [
+          feedResponse(
+            feedXml(1).replace(
+              /<enclosure[^>]*\/>/,
+              '<enclosure url="https://cdn.example/ep-1.bin" type="application/octet-stream" length="1"/>',
+            ),
+          ),
+        ],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    expect(h.created[0]?.properties).not.toHaveProperty("medium");
+  });
+
+  it("carries a video enclosure through to the default family", async () => {
+    const h = harness({
+      responses: {
+        "https://feeds.example/show": [feedResponse(videoFeedXml(1))],
+      },
+    });
+    await createScheduleHandler({ fetch: h.fetchImpl })(h.ctx, MSG);
+
+    const props = h.bulkCalls[0]?.inputs[0]?.properties ?? {};
+    expect(props.enclosure_type).toBe("video/mp4");
+    expect(props.enclosure_url).toBe("https://cdn.example/ep-1.mp4");
   });
 
   it("writes its own family by default, keeping what core cannot hold", async () => {

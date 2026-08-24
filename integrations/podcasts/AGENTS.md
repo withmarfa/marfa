@@ -15,6 +15,10 @@ Distinct from `rss-watcher`, which turns any feed into `core.bookmark`. That one
 
 Core mode is lossy and the loss is deliberate: the enclosure's MIME type and claimed size, the raw duration string, explicitness, categories and episode type have no home on the core types and are dropped. `media_url` and `mime_type` exist on `core.media.episode` because this integration needed them; before that a core episode had nowhere to put its audio.
 
+**Core's two `medium` fields are read from the enclosure**, not from `itunes:type`, which names an ordering rather than a material: a video feed and its audio sibling both declare `episodic`. An episode's comes from its own enclosure. The series takes `mixed` when the feed carries both kinds, and is written with no medium at all when the enclosures declare nothing usable, which leaves whatever is already stored in place: an upsert merges, so a property the integration does not send is not a property it clears. The default family has no medium field at all, and keeps the enclosure's MIME type verbatim instead.
+
+The series medium is read across the whole document rather than the slice a tick drains, because the show is rewritten on every tick and would otherwise change medium as the drain moved through a long feed.
+
 The families are declared on the manifest itself (`write_families`), so the platform validates centrally that each family's pair appears in `target_types` and the `write_family` chooser derives its options from the declared families (`from_write_families`). The per-manifest pairing test this file used to describe stood in for that schema feature and is retired.
 
 ## The upstream is not an API

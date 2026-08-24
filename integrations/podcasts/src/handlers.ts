@@ -340,6 +340,33 @@ function mediumFor(episode: ParsedEpisode): "podcast" | "video" | null {
   return null;
 }
 
+/**
+ * What the series as a whole is made of, read from the episodes the feed
+ * carries.
+ *
+ * Across the whole document rather than the slice a tick drains, so the
+ * answer does not depend on how far an import has got: the show is
+ * rewritten on every tick and would otherwise change medium as the drain
+ * moved. A feed carrying both kinds is `mixed` rather than whichever came
+ * first, and a feed whose enclosures declare nothing usable gets no medium
+ * rather than a guess.
+ */
+function seriesMediumFor(
+  episodes: ParsedEpisode[],
+): "podcast" | "video" | "mixed" | null {
+  let audio = false;
+  let video = false;
+  for (const episode of episodes) {
+    const medium = mediumFor(episode);
+    if (medium === "video") video = true;
+    else if (medium === "podcast") audio = true;
+  }
+  if (audio && video) return "mixed";
+  if (video) return "video";
+  if (audio) return "podcast";
+  return null;
+}
+
 /** Drop keys with nothing in them, so an absent field is absent rather than null. */
 function defined(props: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -354,7 +381,7 @@ function showProperties(
   feedUrl: string,
   scopeKey: string,
   family: WriteFamily,
-  episodeCount: number,
+  episodes: ParsedEpisode[],
 ): Record<string, unknown> {
   const title = show.title ?? canonicalFeedName(feedUrl);
 
@@ -367,7 +394,7 @@ function showProperties(
       url: show.link,
       image_url: show.image_url,
       language: show.language,
-      medium: "podcast",
+      medium: seriesMediumFor(episodes),
       status: show.complete === true ? "ended" : null,
     });
   }
@@ -389,7 +416,7 @@ function showProperties(
     copyright: show.copyright,
     new_feed_url: show.new_feed_url,
     last_build_date: show.last_build_date,
-    episode_count: episodeCount,
+    episode_count: episodes.length,
   });
 }
 
@@ -1061,7 +1088,7 @@ async function sweepFeed(args: {
       feedUrl,
       scopeKey,
       family,
-      feed.episodes.length,
+      feed.episodes,
     ),
   };
   let showItemId: string;
