@@ -25,8 +25,8 @@
 # ships a manifest and no dispatchable entry. The verification holds the
 # declaration to that: a plain name must have built a handler entry, and a
 # manifest-only name must not have. Without the marker an integration could
-# lose its handler and still verify, which was the one kind of shrink the
-# old count did catch.
+# lose its handler and still verify, which is the one kind of shrink a bare
+# count of names cannot see.
 #
 # Nothing carries the marker today, and it earns its place anyway. What it
 # buys is not the manifest-only case, which currently has no instance; it

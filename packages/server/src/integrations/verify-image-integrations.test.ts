@@ -1,12 +1,11 @@
 /**
  * The in-image verification, exercised outside an image.
  *
- * The script only ever runs as a RUN step in the Dockerfile, so until now
- * the only way to find out that it had stopped objecting to anything was to
- * ship an image it should have refused. Its checks are the last thing
- * between a bad staging step and a substrate that boots empty in
- * production, which makes "it runs somewhere I cannot test" the wrong
- * property for it to have.
+ * The script runs as a RUN step in the Dockerfile, where the only way to
+ * learn it had stopped objecting to anything would be to ship an image it
+ * should have refused. Its checks are the last thing between a bad staging
+ * step and a substrate that boots empty in production, so they are driven
+ * from here too, against a scratch tree.
  *
  * Every path it takes is drivable from outside: the integrations root, the
  * declaration, the worker entry and the dispatch fixture are all
@@ -343,9 +342,9 @@ describe("the in-image integration verification", () => {
   });
 
   it("fails when a dispatchable integration built only a manifest", () => {
-    // The one shrink the old count did catch and a bare name list would
-    // not: the directory is still there, so the set looks unchanged, but
-    // one fewer integration can be dispatched to.
+    // The shrink a bare name list cannot see: the directory is still
+    // there, so the set looks unchanged, but one fewer integration can be
+    // dispatched to.
     const run = verify(
       image({ declared: ["acme/alpha"], installed: ["acme/alpha!manifest"] }),
     );

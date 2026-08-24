@@ -1,8 +1,8 @@
 /**
  * Loader for the integrations this deployment has installed.
  *
- * Each integration that opts into the local substrate ships a
- * `local.ts` entry alongside the existing `worker.ts`. The shape is:
+ * Each integration that opts into the local substrate ships a `local.ts`
+ * entry. The shape is:
  *
  *   ```ts
  *   // <namespace>/<name>/src/local.ts

@@ -7,10 +7,9 @@
  * check is that every declared name is present in the checkout it pinned,
  * which fails the build naming the integration it could not find.
  *
- * The parser is checked here. Three copies of it once existed, one of
- * which claimed in a comment to agree with the others and did not, so the
- * thing worth pinning is that there is now one and that it refuses what it
- * cannot read unambiguously.
+ * The parser is checked here. There is one of it, everything that reads
+ * the declaration goes through it, and what is worth pinning is that it
+ * refuses whatever it cannot read unambiguously.
  */
 import { describe, it, expect } from "vitest";
 import { resolve, dirname } from "node:path";
@@ -91,8 +90,8 @@ describe("the declaration parser", () => {
   });
 
   it("reads a file with Windows line endings", () => {
-    // One of the four disagreements that justified collapsing three
-    // parsers into one, so it is worth a case rather than a comment.
+    // A shell and JavaScript disagree about a CRLF ending, so the one
+    // parser owns the answer and it is worth a case rather than a comment.
     expect(parse("acme/alpha\r\nacme/beta manifest-only\r\n")).toEqual([
       { name: "acme/alpha", manifestOnly: false },
       { name: "acme/beta", manifestOnly: true },

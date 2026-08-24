@@ -14,11 +14,14 @@
  * `(manifest_name, manifest_version)` and is never rewritten, so a manifest
  * whose CONTENT changes while its version stands still can never be
  * registered: it collides with the stale row it was meant to replace, and
- * the catalog keeps answering for a capability the build has. That is not
- * hypothetical. `supports_user_mappings` was added to `marfa/rss-watcher`
- * without a version bump, and the result was a shipped, tested, merged
- * capability that was unreachable on every running instance, with nothing
- * reporting it. The version bump that fixed it had to be its own commit.
+ * the catalog keeps answering for a capability the build has. The change
+ * ships, tests green, merges, and is unreachable on every running instance
+ * with nothing reporting it.
+ *
+ * A client manifest reaches the catalog by a different route and is exposed
+ * to that identically: it is a row keyed the same way. So the guard is
+ * worth having over one manifest, and it is the only manifest this build
+ * can hold to it.
  *
  * The opposite shape is recorded here too, and refused: a version that
  * moves with no content change. It registers a sibling row identical to

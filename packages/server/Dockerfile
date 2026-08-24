@@ -87,7 +87,7 @@ RUN set -eu; \
 # front of every name, and the runtime would find nothing under the names it
 # was told to expect.
 #
-# The image must carry integrations/<namespace>/<name>/dist/local.js under
+# The image must carry `<namespace>/<name>/dist/local.js` under
 # MARFA_INTEGRATIONS_ROOT, or the local substrate boots with an empty
 # registration list, silently. Only dist/ is staged, no per-integration
 # node_modules — each entry bundles its whole dependency graph except

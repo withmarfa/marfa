@@ -1,15 +1,11 @@
 /**
  * The one parser for installed-integrations.txt.
  *
- * There were three: the Dockerfile's staging loop read it with `sed`, the
- * in-image verification read it with its own JavaScript, and the test that
- * holds it to the directory read it with a third copy that claimed in a
- * comment to be the same parse. It was not. A name and a comment on one
- * line, a CRLF ending, a byte-order mark, and an unquoted glob character
- * each meant something different to the shell than to the two JavaScript
- * copies. Every disagreement happened to fail the build rather than ship a
- * wrong image, so the cost was confusion rather than damage, but three
- * parsers for one file is a defect waiting for a fourth.
+ * One, and everything that reads the file goes through it. A name with a
+ * trailing comment, a CRLF ending, a byte-order mark and an unquoted glob
+ * character all mean something different to a shell than to JavaScript, so
+ * a second reader agrees with this one only by attention. Anything that
+ * needs the declaration imports this or runs it.
  *
  * Plain Node, ESM, node: builtins only, because the verification imports it
  * inside the runtime image where there is no monorepo and no TypeScript.
@@ -41,7 +37,7 @@ const NONE = "none";
 export class DeclarationError extends Error {}
 
 /**
- * Hold a name to `<handle>/<name>`, the manifest identifier.
+ * Hold a name to `<namespace>/<name>`, the manifest identifier.
  *
  * This is a boundary rather than a format preference. The image build
  * interpolates a name straight into the paths it stages through —
@@ -62,7 +58,7 @@ function assertNameShape(name, lineNo) {
   const segments = name.split("/");
   if (segments.length !== 2) {
     throw new DeclarationError(
-      `line ${String(lineNo)}: "${name}" is not a "<handle>/<name>" name; ` +
+      `line ${String(lineNo)}: "${name}" is not a "<namespace>/<name>" name; ` +
         `it has ${String(segments.length)} segments where a name has exactly ` +
         `two separated by one "/"`,
     );
@@ -71,7 +67,7 @@ function assertNameShape(name, lineNo) {
     if (segment.length === 0) {
       throw new DeclarationError(
         `line ${String(lineNo)}: "${name}" has an empty segment; both halves ` +
-          `of "<handle>/<name>" have to be there`,
+          `of "<namespace>/<name>" have to be there`,
       );
     }
     if (segment === "." || segment === "..") {
@@ -95,7 +91,7 @@ function assertNameShape(name, lineNo) {
 /**
  * Parse a declaration into `{ name, manifestOnly }` entries, sorted by name.
  *
- * Every name is `<handle>/<name>`; see `assertNameShape` for why that is
+ * Every name is `<namespace>/<name>`; see `assertNameShape` for why that is
  * enforced here rather than trusted.
  *
  * Throws `DeclarationError` on anything ambiguous rather than guessing,

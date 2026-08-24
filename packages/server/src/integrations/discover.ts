@@ -2,16 +2,15 @@
  * Which integrations this deployment has, read from the directory rather
  * than from a list.
  *
- * The runtime has always loaded integrations dynamically: it resolves a
- * built entry point under `MARFA_INTEGRATIONS_ROOT`, imports it, reads the
- * manifest and validates it. The one static part was a hand-maintained
- * array of directory names in the shared package, and it is the reason
- * nothing could be installed into a deployment that did not ship inside
- * the image — not because the loader could not load it, but because
- * nothing would name it.
+ * The runtime loads integrations dynamically: it resolves a built entry
+ * point under `MARFA_INTEGRATIONS_ROOT`, imports it, reads the manifest and
+ * validates it. Which ones it has is the directory's answer rather than a
+ * list's, which is what lets a deployment install one the image never
+ * shipped: a list nothing outside this repository can edit could name no
+ * such integration.
  *
- * So this replaces the array and nothing else. Every `<namespace>/<name>`
- * directory is a candidate; the loaders that call this already refuse
+ * This names candidates and nothing else. Every `<namespace>/<name>`
+ * directory is one; the loaders that call this already refuse
  * anything without a built entry or with an invalid manifest, and they say
  * so when they do. Discovery deliberately does not repeat that judgment —
  * a directory that looks wrong is the loaders' business, and duplicating

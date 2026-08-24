@@ -1,13 +1,11 @@
 /**
- * Discovery, which is the one static thing that stood between a deployment
- * and installing an integration it did not build.
+ * Discovery, which is what lets a deployment install an integration it did
+ * not build.
  *
- * The runtime has always loaded integrations dynamically. What it could not
- * do was name one it had never heard of, because the set came from a
- * hand-maintained array in the shared package. These pin the replacement's
- * two halves: what counts as an integration directory, and that a package
- * dropped into the directory by hand is found on the next boot without
- * anybody editing a list.
+ * The set comes from the directory, not from a list, and these pin the two
+ * halves of that: what counts as an integration directory, and that a
+ * package dropped into the directory by hand is found on the next boot
+ * without anybody editing anything.
  *
  * The directory is `<namespace>/<name>`, mirroring the manifest identifier, so
  * "what counts" is now a question about two levels rather than one and the
@@ -100,10 +98,9 @@ describe("discoverIntegrationDirs", () => {
     expect(discoverIntegrationDirs(at)).toEqual(["alpha-two/a", "alpha/z"]);
   });
 
-  // The collision the flat layout could not express: two publishers each
-  // shipping the same leaf name, told apart by the handle rather than by
-  // whoever got there first.
-  it("keeps two publishers' same-named integrations apart", () => {
+  // Two namespaces can each hold the same leaf name, and the namespace is
+  // what tells them apart rather than whoever got there first.
+  it("keeps two namespaces' same-named integrations apart", () => {
     const at = scratch();
     for (const d of ["acme/podcasts", "marfa/podcasts"]) {
       mkdirSync(join(at, d), { recursive: true });
@@ -179,8 +176,8 @@ describe("discoverIntegrationDirs", () => {
 });
 
 describe("an integration nobody listed", () => {
-  // The whole point of the change: this is a package a deployment installed,
-  // which no array in this repository has ever mentioned.
+  // A package a deployment installed, which nothing in this repository
+  // names.
   it("is discovered and loaded from the directory alone", async () => {
     const at = scratch();
     installIntegration(at, "someone/thing", manifestFor("someone/thing"));

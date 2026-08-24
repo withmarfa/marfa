@@ -8,15 +8,11 @@ updates:
   # package. Naming the members separately buys no coverage. It makes one job
   # walk the same workspace once per directory.
   #
-  # An earlier version of this file named directories, then globs, on the
-  # belief that members the list did not name were going without updates.
-  # They were not: the root job reaches every member through the workspace,
-  # and the grouped pull requests raised under the narrower form had been
-  # updating manifests in directories that form never named. Widening added
-  # a redundant pass per member and nothing else, and every run afterwards
-  # was killed at Dependabot's time limit, which is fixed on GitHub's side
-  # and cannot be raised. The only lever is how much work the job has to do,
-  # so the fix is to walk the workspace once.
+  # Naming members is not a way to widen coverage, and it costs. Each named
+  # directory is another pass over the same workspace, and enough of them
+  # kill the run at Dependabot's time limit, which is fixed on GitHub's side
+  # and cannot be raised. The only lever is how much work the job does, so
+  # it walks the workspace once.
   #
   # The root entry is also the one that cannot go stale: a package added to
   # `pnpm-workspace.yaml` is covered with no change here. Its one gap is an
@@ -26,18 +22,18 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
-    # Two groups rather than one bucket of everything. A single `*` group put
-    # every bump behind one review, majors included, and no such pull request
-    # has ever been merged. Minor and patch updates usually land together on a
-    # green run; majors have to be read one at a time and should not hold the
-    # rest hostage.
+    # Two groups rather than one bucket of everything. A single `*` group
+    # puts every bump behind one review, majors included, and such a pull
+    # request does not get merged. Minor and patch updates usually land
+    # together on a green run; majors have to be read one at a time and
+    # should not hold the rest hostage.
     #
     # Order is load-bearing. A dependency joins the first group it matches, so
     # the minor and patch group has to come first for the major group to
     # receive anything.
     #
     # This split is about mergeability, not about the time limit. It adds one
-    # more pass to the job rather than removing any; the directory reduction
+    # more pass to the job rather than removing any; the single directory
     # above is what pays for it.
     groups:
       npm-minor-and-patch:
@@ -55,8 +51,8 @@ updates:
           - "major"
     # Two groups can hold two pull requests open at once, and the limit counts
     # every open version-update pull request from this entry rather than one
-    # per group. The previous value of one would have let whichever group ran
-    # first starve the other for as long as its pull request stayed open.
+    # per group. A limit of one lets whichever group runs first starve the
+    # other for as long as its pull request stays open.
     open-pull-requests-limit: 5
     labels:
       - "dependencies"

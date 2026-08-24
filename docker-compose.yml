@@ -6,11 +6,14 @@
 #    (optionally POSTGRES_PASSWORD; defaults to "marfa" for local use).
 # 2. Fetch the integrations the image installs. They are a separate
 #    repository, and the build stages them from a checkout it expects here:
-#      git clone https://github.com/withmarfa/integrations integrations-src
-#      git -C integrations-src checkout "$(sed -n '/^[0-9a-f]\{40\}$/p' \
-#        packages/server/integrations-ref.txt)"
-#    Skip it and the build stops at the first name it cannot find. To run
-#    with no integrations at all, put `none` in
+#      ref="$(node packages/server/scripts/read-integrations-ref.mjs \
+#             packages/server/integrations-ref.txt)" &&
+#        git clone https://github.com/withmarfa/integrations integrations-src &&
+#        git -C integrations-src checkout "$ref"
+#    That reader is the only thing that parses the pin, and it refuses
+#    anything that is not one full commit, so a checkout never lands on a
+#    moving branch. Skip the step and the build stops at the first name it
+#    cannot find. To run with no integrations at all, put `none` in
 #    packages/server/installed-integrations.txt instead.
 # 3. docker compose up --build
 # 4. Mint the first admin key:
