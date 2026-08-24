@@ -39,7 +39,7 @@
     "oauth4webapi": "^3.8.7"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.2.0",
     "@withmarfa/server": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
