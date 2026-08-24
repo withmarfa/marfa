@@ -54,7 +54,7 @@ describe("dispatch resolves an integration by exact name", () => {
     expect(runtime.getRegistration("withmarfa.podcasts")).toBeUndefined();
   });
 
-  it("covers a publisher that kept its handle through the rename", () => {
+  it("covers a publisher that kept its namespace through the rename", () => {
     const { registration, runtime } = supervisorWith("readwise/reader");
     expect(runtime.getRegistration("readwise/reader")).toBe(registration);
     expect(runtime.getRegistration("readwise.reader")).toBeUndefined();

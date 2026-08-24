@@ -71,10 +71,9 @@ const CURSOR_KEY = "main";
  * A schema-valid manifest, because the verification's own manifest check
  * imports this entry alongside every staged integration and holds them all
  * to the same three fields the server's catalog loader requires. The
- * publisher is the repository's placeholder handle rather than `marfa`:
- * this identifier never enters a catalog, and one that reads like a real
- * Marfa integration would be the kind of thing somebody later tries to
- * install.
+ * namespace is `acme` rather than `marfa`: this identifier never enters a
+ * catalog, and one that reads like a real Marfa integration would be the
+ * kind of thing somebody later tries to install.
  */
 export const DISPATCH_FIXTURE_MANIFEST = {
   name: "acme/dispatch-fixture",

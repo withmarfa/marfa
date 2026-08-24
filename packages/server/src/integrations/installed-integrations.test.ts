@@ -118,7 +118,7 @@ describe("the declaration parser", () => {
  * outside the staging directory. These are the cases that would get there.
  */
 describe("the name shape", () => {
-  it("refuses a bare name with no handle", () => {
+  it("refuses a bare name with no namespace", () => {
     // The flat layout's shape. It reads as an integration and names no
     // directory, so it would fail the build later and more obscurely.
     expect(() => parse("alpha\n")).toThrow(DeclarationError);

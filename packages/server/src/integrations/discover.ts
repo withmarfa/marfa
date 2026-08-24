@@ -29,7 +29,8 @@ import { join } from "node:path";
 import { readdirSync } from "node:fs";
 
 /**
- * Immediate subdirectories of `dir`, scaffolding skipped, unsorted.
+ * Immediate subdirectories of `dir`, dot- and underscore-prefixed names
+ * skipped, unsorted.
  *
  * A missing directory is an empty list rather than a throw, at both levels
  * and for the same reason. At the root, the server runs in configurations
@@ -52,17 +53,19 @@ function subdirectories(dir: string): string[] {
   return (
     entries
       .filter((e) => e.isDirectory())
-      // A leading dot or underscore means scaffolding rather than an
+      // A leading dot or underscore marks a directory that is not an
       // integration, and the rule holds at both levels because either one
-      // can carry it. Dot-directories are tooling — `.turbo`, an editor's
-      // scratch space, a partially-extracted download. The underscore is
-      // what a scaffold announces itself with, and honoring it is what
-      // keeps one out of the installable catalog if a deployment ever
-      // unpacks one into this root.
+      // can carry such a directory. Dot-directories are tooling —
+      // `.turbo`, an editor's scratch space, a partially-extracted
+      // download. An underscore marks working material by the same
+      // convention.
       //
-      // `installed-integrations.txt` refuses a declared name carrying
-      // either prefix for the mirror of this reason: such a name would
-      // stage into the image and never load.
+      // The scaffold is governed by the declaration rather than by this
+      // rule. `installed-integrations.txt` names what the image stages and
+      // the scaffold is not among them, so its directory name decides
+      // nothing. That file refuses a declared name carrying either prefix
+      // for the mirror of this rule: such a name would stage into the
+      // image and never load.
       .filter((e) => !e.name.startsWith(".") && !e.name.startsWith("_"))
       .map((e) => e.name)
   );

@@ -56,7 +56,7 @@ describe("sanitizeQueueName", () => {
     );
     // Valid names (dots, hyphens, the identifier's slash) pass through
     // unchanged — pg-boss admits `/`, which is why an integration name can
-    // carry its publisher handle into a queue name without translation.
+    // carry its namespace into a queue name without translation.
     expect(
       sanitizeQueueName("marfa.integrations.local.schedule.google/calendar"),
     ).toBe("marfa.integrations.local.schedule.google/calendar");

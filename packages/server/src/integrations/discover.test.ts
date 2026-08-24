@@ -86,10 +86,11 @@ describe("discoverIntegrationDirs", () => {
 
   // The levels are gathered unsorted and the whole list is sorted once, at
   // the end. That is not the same as sorting each level, and this fixture is
-  // where the two disagree: `-` sorts below `/`, so sorting the joined names
-  // puts `alpha-two/a` first, while sorting handles and then leaves would put
-  // `alpha/z` first. Deterministic whatever order the filesystem hands back,
-  // which the plain alphabetical case above cannot claim.
+  // where the two disagree: `-` sorts below `/`, so sorting the joined
+  // names puts `alpha-two/a` first, while sorting namespaces and then
+  // leaves would put `alpha/z` first. Deterministic whatever order the
+  // filesystem hands back, which the plain alphabetical case above cannot
+  // claim.
   it("sorts the joined names rather than each level", () => {
     const at = scratch();
     for (const d of ["alpha/z", "alpha-two/a"]) {
@@ -111,42 +112,42 @@ describe("discoverIntegrationDirs", () => {
     ]);
   });
 
-  it("ignores files beside the handles", () => {
+  it("ignores files beside the namespaces", () => {
     const at = scratch();
     mkdirSync(join(at, "acme", "real"), { recursive: true });
-    writeFileSync(join(at, "AGENTS.md"), "# not a handle\n");
+    writeFileSync(join(at, "AGENTS.md"), "# not a namespace\n");
     writeFileSync(join(at, "CLAUDE.md"), "# nor is this\n");
     expect(discoverIntegrationDirs(at)).toEqual(["acme/real"]);
   });
 
-  // A handle is a directory of integrations, so a file sitting in one names
-  // nothing installable. Discovery drops it rather than reporting it: it
-  // does not judge candidates, and a loose file is not even a candidate.
-  it("ignores files sitting inside a handle", () => {
+  // A namespace is a directory of integrations, so a file sitting in one
+  // names nothing installable. Discovery drops it rather than reporting
+  // it: it does not judge candidates, and a loose file is not even a
+  // candidate.
+  it("ignores files sitting inside a namespace", () => {
     const at = scratch();
     mkdirSync(join(at, "acme", "real"), { recursive: true });
     writeFileSync(join(at, "acme", "README.md"), "# not an integration\n");
     expect(discoverIntegrationDirs(at)).toEqual(["acme/real"]);
   });
 
-  it("answers nothing for a handle holding no integrations", () => {
+  it("answers nothing for a namespace holding no integrations", () => {
     const at = scratch();
     mkdirSync(join(at, "empty"), { recursive: true });
     mkdirSync(join(at, "acme", "real"), { recursive: true });
     expect(discoverIntegrationDirs(at)).toEqual(["acme/real"]);
   });
 
-  it("answers none for a root whose handles are all empty", () => {
+  it("answers none for a root whose namespaces are all empty", () => {
     const at = scratch();
     mkdirSync(join(at, "empty"), { recursive: true });
     mkdirSync(join(at, "also-empty"), { recursive: true });
     expect(discoverIntegrationDirs(at)).toEqual([]);
   });
 
-  // A scaffold unpacked into a deployment's integrations root sits at the
-  // namespace level, so that is the level that has to hold the rule.
-  // Reading the directory without it would put the scaffold in the
-  // installable catalog.
+  // Tooling and working directories turn up at the namespace level, so
+  // that is a level the rule has to hold at. Reading the directory without
+  // it would name `.turbo` as an integration's namespace.
   it("skips scaffolding at the namespace level", () => {
     const at = scratch();
     for (const d of ["_scaffold/src", ".turbo/cache", "marfa/podcasts"]) {

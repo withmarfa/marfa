@@ -135,10 +135,9 @@ export default [
       // install step, so it is plain ESM outside every tsconfig project and
       // the type-aware rules have nothing to resolve it against. Same reason
       // the package scripts above are ignored.
-      // Git worktrees created under .claude/worktrees/<name>/ are
-      // separate checkouts with their own lint runs; the main
-      // checkout's lint must not descend into them or it'll surface
-      // work-in-progress code from other agents/branches.
+      // Nested worktrees are separate checkouts that run their own lint;
+      // descending into them surfaces work in progress from other branches.
+      "worktrees/",
       ".claude/worktrees/",
       // Global scratch folders (per the user's ~/.gitignore_global —
       // also documented in the user-level CLAUDE.md). These hold

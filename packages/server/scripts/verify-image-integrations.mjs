@@ -158,13 +158,13 @@ const manifestOnlyByName = new Map(
 function installedNames(root) {
   if (!existsSync(root)) return [];
   const names = [];
-  for (const handle of readdirSync(root, { withFileTypes: true })) {
-    if (!handle.isDirectory()) continue;
-    const inner = readdirSync(resolve(root, handle.name), {
+  for (const namespace of readdirSync(root, { withFileTypes: true })) {
+    if (!namespace.isDirectory()) continue;
+    const inner = readdirSync(resolve(root, namespace.name), {
       withFileTypes: true,
     });
     for (const leaf of inner) {
-      if (leaf.isDirectory()) names.push(`${handle.name}/${leaf.name}`);
+      if (leaf.isDirectory()) names.push(`${namespace.name}/${leaf.name}`);
     }
   }
   return names.sort();
