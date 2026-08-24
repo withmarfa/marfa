@@ -17,14 +17,14 @@
  * staged. A fixture bundled differently proves something about that other
  * way of bundling.
  *
- * **Why it lives here rather than under `integrations/`.** It tests this
- * repository's image bundling, so it belongs to the server, not to the
- * integration set. It also has to stay invisible to the runtime's own
- * discovery, and sitting outside `MARFA_INTEGRATIONS_ROOT` entirely is a
- * stronger guarantee of that than a directory-name prefix the discovery
- * happens to skip. The image stages it to `/verify-fixtures`, and deletes
- * it once the verification has passed, so nothing running in the container
- * can mistake it for something a deployment installed.
+ * **Why the server owns it.** It tests this repository's image bundling,
+ * so it belongs to the server rather than to the integration set. It also
+ * has to stay invisible to the runtime's own discovery, and sitting
+ * outside `MARFA_INTEGRATIONS_ROOT` entirely is a stronger guarantee of
+ * that than a directory-name prefix the discovery happens to skip. The
+ * image stages it to `/verify-fixtures`, and deletes it once the
+ * verification has passed, so nothing running in the container can
+ * mistake it for something a deployment installed.
  *
  * **What it has to keep doing.** Three callers drive it, and between them
  * they pin every observable below.
@@ -35,7 +35,7 @@
  *     this module and relies on the load-time registration at the bottom;
  *     both assert one schedule dispatch comes back ok, and the smoke also
  *     asserts a cursor delta arrives under `cursor:main`.
- *   - `src/integrations/local-runtime/in-tree-smoke.test.ts`, which drives
+ *   - `src/integrations/local-runtime/substrate-smoke.test.ts`, which drives
  *     the supervisor rather than a worker thread. It calls the exported
  *     `registerHandlers` itself after resetting the registry, and asserts
  *     the persisted cursor carries `run_count`. That is the only reason

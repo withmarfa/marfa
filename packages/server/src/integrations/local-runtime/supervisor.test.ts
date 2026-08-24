@@ -4,7 +4,7 @@
  * Postgres-backed test context using a `directDispatch` registration.
  *
  * The worker_thread boundary is covered separately — `executor.test.ts`
- * for the pool's spawn/error handling, `in-tree-smoke.test.ts` for
+ * for the pool's spawn/error handling, `substrate-smoke.test.ts` for
  * loading a real compiled integration through it. This file focuses on
  * the substrate's other invariants:
  *

@@ -1,31 +1,15 @@
 packages:
   - "packages/*"
-  # An integration directory is `<namespace>/<name>`, mirroring the manifest
-  # identifier, so the glob spans both levels.
-  - "integrations/*/*"
-  # The scaffold is deliberately not `<namespace>/<name>`. It stays flat and
-  # underscore-prefixed so the runtime's discovery skips it, which also puts
-  # it outside the glob above — hence the explicit entry. Without it the
-  # scaffold silently leaves the workspace, so `pnpm build` and
-  # `pnpm typecheck` stop covering the thing every contributor copies and
-  # nothing goes red to say so.
-  - "integrations/_template"
-  # The marfa/inbox integration ships an adjacent Cloudflare Email
-  # Worker (`integrations/marfa/inbox/email-worker`) as a nested
-  # workspace package. Different deployable (CF Email Worker vs
-  # per-Integration Worker), distinct dependency set (postal-mime).
-  - "integrations/*/*/email-worker"
   # The server's dispatch fixture. A package rather than a test file
   # because the property it proves is a bundling one: it has to be built
   # by tsup with the runtime kit externalized, the way a real integration
   # is, or it proves nothing about how a real integration bundles. It sits
-  # under the server because it tests the server's image, and outside
-  # `integrations/` so the runtime's discovery cannot reach it at all.
+  # under the server because it tests the server's image.
   - "packages/server/fixtures/dispatch-integration"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree
 # rebases `main` and picks up new workspace packages (e.g. a fresh
-# `packages/foo` or `integrations/bar`), `pnpm install --frozen-lockfile`
+# `packages/foo`), `pnpm install --frozen-lockfile`
 # is a near-instant no-op because the lockfile hash is unchanged. The
 # per-package `node_modules/.bin/` symlinks for the new packages are
 # never linked, and the first `pnpm run build` fails with

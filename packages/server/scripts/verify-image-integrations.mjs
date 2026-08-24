@@ -23,14 +23,11 @@
  *      a handler entry, which is the shape of an integration whose code
  *      runs somewhere else and whose manifest the catalog still needs.
  *
- *      This replaced a hardcoded minimum count. The count existed because
- *      nothing else could say whether the image was complete, and it had
- *      the two faults of every such number: it passed a build that had
- *      quietly gained an integration, and it needed raising by hand every
- *      time the set grew. What the count did catch, and a bare name list
- *      would not, is an integration losing its handler and shrinking the
- *      dispatchable set without changing the count of directories. The
- *      marker is what keeps that caught.
+ *      A declared set rather than a count: a count passes a build that
+ *      quietly gained an integration and needs raising by hand every time
+ *      the set grows. The marker is what keeps a count's one real catch —
+ *      an integration losing its handler, which shrinks the dispatchable
+ *      set without changing how many directories there are.
  *
  *   2. Main-process import. The server's loader imports each entry on
  *      boot to read its manifest; this repeats that read and fails on a
@@ -143,7 +140,7 @@ const manifestOnlyByName = new Map(
   declaration.map((entry) => [entry.name, entry.manifestOnly]),
 );
 
-// Two levels, because an integration directory is `<handle>/<name>` and
+// Two levels, because an integration directory is `<namespace>/<name>` and
 // that is the name the declaration carries.
 //
 // Everything found is reported, with none of the dot-and-underscore
@@ -221,9 +218,8 @@ for (const name of declared) {
     fail(
       `${name} is declared dispatchable but staged no dist/local.js` +
         (existsSync(manifestJs)
-          ? `. It built a manifest and no handler, which is the shape that ` +
-            `used to shrink the image silently; mark it manifest-only if ` +
-            `that is now what it is.`
+          ? `. It built a manifest and no handler, which shrinks the ` +
+            `image silently; mark it manifest-only if that is what it is.`
           : ""),
     );
   }

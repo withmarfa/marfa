@@ -68,8 +68,6 @@ import {
   type ScheduledJobSpec,
 } from "./scheduled/pg-boss-schedules.js";
 import type { PgBoss } from "pg-boss";
-import { resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   log,
   formatErrorSummary,
@@ -1195,22 +1193,17 @@ function closeServer(server: {
 }
 
 /**
- * Resolve the in-tree `integrations/` directory from the running
- * server bundle. The server compiles to `packages/server/dist/index.js`
- * inside the repo; from there `../../integrations` is the monorepo's
- * integration source tree. When the server runs outside the monorepo
- * (e.g. a packaged Docker image carrying only `dist`), the operator
- * sets `MARFA_INTEGRATIONS_ROOT` explicitly.
+ * Where this deployment's installed integrations are, or null.
+ *
+ * There is no default. Integrations are not part of this repository, so
+ * nothing relative to the running bundle names a directory that would hold
+ * them: the packaged image sets `MARFA_INTEGRATIONS_ROOT` to the tree it
+ * staged, and anything else that has integrations sets it to wherever it
+ * put them. Null is reported rather than swallowed, so a deployment that
+ * expected integrations and reconciled none is told why.
  */
 function resolveIntegrationsRoot(): string | null {
-  const explicit = process.env.MARFA_INTEGRATIONS_ROOT;
-  if (explicit) return explicit;
-  try {
-    const here = fileURLToPath(new URL(".", import.meta.url));
-    return resolvePath(here, "..", "..", "..", "integrations");
-  } catch {
-    return null;
-  }
+  return process.env.MARFA_INTEGRATIONS_ROOT ?? null;
 }
 
 main().catch((err: unknown) => {

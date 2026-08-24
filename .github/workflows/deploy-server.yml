@@ -60,6 +60,34 @@ jobs:
       image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v7
+      # The integrations the image installs. They live in
+      # withmarfa/integrations, and the commit is the one
+      # packages/server/integrations-ref.txt pins. The deploy key is
+      # read-only and is consumed here rather than inside the build, so no
+      # credential reaches a Docker layer.
+      - id: integrations
+        # The parser refuses anything that is not one full commit SHA.
+        # Checkout given an empty ref for another repository takes that
+        # repository's default branch and still succeeds, so a reader that
+        # returned nothing would build green from an unpinned tree.
+        #
+        # Captured into a variable rather than expanded inside the `echo`,
+        # for the reason the Dockerfile's staging loop gives about the same
+        # parser family: a command substitution that fails while expanding
+        # an argument does not fail the command it was expanding, so the
+        # inline form writes an empty `ref` and exits 0 — the parser
+        # correct, and unreachable.
+        run: |
+          set -euo pipefail
+          ref="$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: withmarfa/integrations
+          ref: ${{ steps.integrations.outputs.ref }}
+          ssh-key: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: integrations-src
       - id: meta
         env:
           ENVIRONMENT: ${{ github.event.inputs.environment }}
@@ -80,9 +108,9 @@ jobs:
         # integrations it declares and can run them (see
         # packages/server/Dockerfile), so an image whose staged tree cannot
         # load fails here, before anything is pushed. What it cannot judge
-        # is whether the declaration itself is right: that is held to the
-        # directory by the ordinary suite, which this job does not run. A
-        # ref that never passed CI can therefore be built and pushed.
+        # is whether the declaration names the right set: nothing outside
+        # withmarfa/integrations knows what that repository holds. A ref
+        # that never passed CI can also be built and pushed.
         run: |
           docker buildx build --platform linux/amd64 \
             -f packages/server/Dockerfile \

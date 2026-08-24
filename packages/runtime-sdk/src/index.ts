@@ -1,9 +1,9 @@
 /**
  * `@withmarfa/runtime-sdk` — the surface integrations import.
  *
- * Imported by integration handler modules (`integrations/<namespace>/<name>/src/handlers.ts`)
- * and by the local-runtime supervisor inside `@withmarfa/server`, which
- * drives dispatch through `consumeBatch`'s semantics.
+ * Imported by an integration's handler modules and by the local-runtime
+ * supervisor inside `@withmarfa/server`, which drives dispatch through
+ * `consumeBatch`'s semantics.
  */
 export { ConnectionGoneError } from "./errors.js";
 

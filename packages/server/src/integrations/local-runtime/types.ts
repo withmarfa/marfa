@@ -16,7 +16,7 @@ import type {
 
 /**
  * An integration registered with the local runtime supervisor. Built by
- * the boot phase from the in-tree integration `local.ts` entries:
+ * the boot phase from the installed integrations' `local.ts` entries:
  *
  *   - `dispatch` runs one queue message synchronously. The supervisor
  *     wraps the call with the advisory-lock + cursor-state plumbing.

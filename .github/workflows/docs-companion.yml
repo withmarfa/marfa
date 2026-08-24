@@ -1,11 +1,10 @@
 name: Docs companion check
 
 # Merge gate: when a PR touches a documented surface (API routes, OpenAPI
-# generator, shared wire types, the core type registry, the SDK, or an
-# integration manifest) it must either ship with a companion PR on
-# withmarfa/docs or declare that no docs change is needed. The repo convention
-# in CLAUDE.md is "pair the docs PR with the code PR on documented-surface
-# changes."
+# generator, shared wire types, the core type registry, the SDK, or a
+# manifest) it must either ship with a companion PR on withmarfa/docs or
+# declare that no docs change is needed. The repo convention in CLAUDE.md is
+# "pair the docs PR with the code PR on documented-surface changes."
 #
 # The job posts a single sticky comment explaining how to clear it, and FAILS
 # the check while a surface change has no companion link and no opt-out — so it
@@ -51,7 +50,8 @@ jobs:
             const MARKER = '<!-- docs-companion-check -->';
 
             // Documented surfaces — mirrors the freshness trigger set in
-            // packages/server/CLAUDE.md plus the SDK and integration manifests.
+            // packages/server/CLAUDE.md plus the SDK and the shipped
+            // manifests.
             // No trailing slash on the openapi entry: the generator is a pair
             // of files (`openapi.ts`, `openapi-finalize.ts`), not a directory,
             // so a `openapi/` prefix could never match anything.
@@ -69,11 +69,10 @@ jobs:
             const SURFACE_EXCLUDES = [
               'packages/server/src/routes/auth-static/',
             ];
-            // A manifest is a documented contract wherever it lives: the
-            // integrations carry theirs under `integrations/`, and a client
-            // whose code runs on the user's machine carries its own under
-            // `packages/`. Matching the filename rather than a directory is
-            // what stops the second kind falling out of the check.
+            // A manifest is a documented contract wherever it lives, and a
+            // client's sits outside every prefix above. Matching the
+            // filename rather than a directory is what keeps it in the
+            // check.
             const isManifest = (f) => f.endsWith('/src/manifest.ts');
             const isDocSurface = (f) =>
               !SURFACE_EXCLUDES.some((p) => f.startsWith(p)) &&

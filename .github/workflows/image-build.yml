@@ -43,7 +43,8 @@ on:
     # Everything the image build does that no other job does: the Dockerfile
     # and what it excludes, the install it performs against the committed
     # lockfile, the build scripts and bundler configs it runs, the integration
-    # entries it stages, and the script that verifies the staged result loads.
+    # entries it stages, the commit it takes them from, and the script that
+    # verifies the staged result loads.
     #
     # Deliberately not every source file. The instance that motivated this
     # came from three ordinary pull requests growing the type surface past a
@@ -59,7 +60,7 @@ on:
       - "**/tsup.config.ts"
       - "packages/server/scripts/**"
       - "packages/server/installed-integrations.txt"
-      - "integrations/*/*/src/local.ts"
+      - "packages/server/integrations-ref.txt"
       # The dispatch fixture the in-image verification runs through. The
       # image builds and stages it exactly as it does an integration entry,
       # so a change to it changes the image the same way one does. Broader
@@ -85,6 +86,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # The integrations the image installs. They live in
+      # withmarfa/integrations, and the commit is the one
+      # packages/server/integrations-ref.txt pins. The deploy key is
+      # read-only and is consumed here rather than inside the build, so no
+      # credential reaches a Docker layer.
+      - id: integrations
+        # The parser refuses anything that is not one full commit SHA.
+        # Checkout given an empty ref for another repository takes that
+        # repository's default branch and still succeeds, so a reader that
+        # returned nothing would build green from an unpinned tree.
+        #
+        # Captured into a variable rather than expanded inside the `echo`,
+        # for the reason the Dockerfile's staging loop gives about the same
+        # parser family: a command substitution that fails while expanding
+        # an argument does not fail the command it was expanding, so the
+        # inline form writes an empty `ref` and exits 0 — the parser
+        # correct, and unreachable.
+        run: |
+          set -euo pipefail
+          ref="$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: withmarfa/integrations
+          ref: ${{ steps.integrations.outputs.ref }}
+          ssh-key: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: integrations-src
       - uses: docker/setup-buildx-action@v4
       # The whole image, not `--target build`. Stopping at the build stage
       # skips the runtime stage's file layout and the verification that the

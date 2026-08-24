@@ -1,7 +1,7 @@
 **/node_modules
 **/dist
 **/*.tsbuildinfo
-.git
+**/.git
 .env
 .env.*
 data/

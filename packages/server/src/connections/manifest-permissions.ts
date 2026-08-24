@@ -22,11 +22,11 @@ import type { IntegrationManifest } from "@withmarfa/shared";
  *  Marfa-side level in either direction:
  *
  *    - `read` is an inbound integration: it pulls from upstream and
- *      WRITES the result into Marfa. Every inbound integration in-tree
- *      calls `createItem` on its target types, so mapping `read` to a
- *      read grant would break ingestion outright.
- *    - `write` is outbound, but the one in-tree example (`task-auto-archive`)
- *      transitions Marfa items, which is also a Marfa-side write.
+ *      WRITES the result into Marfa. Every inbound integration calls
+ *      `createItem` on its target types, so mapping `read` to a read
+ *      grant would break ingestion outright.
+ *    - `write` is outbound, but an outbound integration transitions Marfa
+ *      items, which is also a Marfa-side write.
  *
  *  Deriving a level from `direction` therefore encodes a relationship that
  *  does not exist. If a per-integration read-only ceiling is wanted later,

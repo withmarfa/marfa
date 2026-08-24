@@ -172,8 +172,8 @@ export class TrashPurger {
  * sweep when `spaces` is not wired.
  *
  * **This job bounds the rows; it does not decide whether a run deserves
- * one.** That is the integration's call, and the guide in `integrations/`
- * carries the rule. Retention on its own was never going to be enough:
+ * one.** That is the integration's call, and the authoring guide carries
+ * the rule. Retention on its own was never going to be enough:
  * it caps how many rows exist at once, not how many get written, and each
  * one costs a transaction, a quota reservation, an index update and a
  * published event whether it is purged an hour later or a fortnight.

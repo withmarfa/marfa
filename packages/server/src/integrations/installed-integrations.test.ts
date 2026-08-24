@@ -2,28 +2,18 @@
  * The declaration of what the image installs, and the one parser that reads
  * it.
  *
- * The image used to assert its own completeness with a hardcoded minimum
- * count, which had to be raised by hand whenever the set grew and passed
- * silently whenever the set grew without anybody raising it. The
- * declaration answers the same question properly, but only while it agrees
- * with reality, and an image build is a slow and distant place to find out
- * that it does not.
+ * The declaration names integrations that live in withmarfa/integrations,
+ * so nothing here can check it against a tree. What the image build does
+ * check is that every declared name is present in the checkout it pinned,
+ * which fails the build naming the integration it could not find.
  *
- * So it is checked here, in the ordinary suite. Adding an integration and
- * forgetting to declare it fails in seconds rather than on a merge, and
- * removing one stays a deliberate edit rather than a directory quietly
- * getting smaller.
- *
- * The parser is checked here too. Three copies of it once existed, one of
- * which claimed in a comment to agree with the others and did not, so the
- * thing worth pinning is that there is now one and that it refuses what it
- * cannot read unambiguously.
+ * The parser is checked here. There is one of it, everything that reads
+ * the declaration goes through it, and what is worth pinning is that it
+ * refuses whatever it cannot read unambiguously.
  */
 import { describe, it, expect } from "vitest";
-import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverIntegrationDirs } from "./discover.js";
 // The parser is plain Node ESM, because the in-image verification imports
 // it where there is no TypeScript. Its sibling declaration file is what
 // lets this import it without casting past the type checker.
@@ -35,36 +25,14 @@ import {
 
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const DECLARATION = resolve(SERVER_ROOT, "installed-integrations.txt");
-const INTEGRATIONS_ROOT = resolve(SERVER_ROOT, "../../integrations");
 
-const declared = () => readInstalledIntegrations(DECLARATION);
 const parse = (text: string) => parseInstalledIntegrations(text);
 
-describe("the installed-integrations declaration", () => {
-  it("names every integration the directory holds, and nothing else", () => {
-    expect(declared().map((e) => e.name)).toEqual(
-      discoverIntegrationDirs(INTEGRATIONS_ROOT),
-    );
-  });
-
-  it("marks exactly the integrations that ship no handler", () => {
-    // Derived from the tree rather than restated, so an integration that
-    // gains or loses a handler fails here instead of at an image build.
-    //
-    // Both sides are empty today: every integration ships a handler, and
-    // the one manifest-only entry there ever was turned out to be a client
-    // filed in the wrong place. That is a live guard rather than a dormant
-    // one — it is what fails the moment a handler goes missing without the
-    // declaration admitting it.
-    const onDisk = discoverIntegrationDirs(INTEGRATIONS_ROOT).filter(
-      (name) =>
-        !existsSync(resolve(INTEGRATIONS_ROOT, name, "src", "local.ts")),
-    );
-    expect(
-      declared()
-        .filter((e) => e.manifestOnly)
-        .map((e) => e.name),
-    ).toEqual(onDisk);
+describe("the committed declaration", () => {
+  it("parses, and names something", () => {
+    // The file is the image's only input for what to install, and a merge
+    // that mangles it is caught here rather than at a build.
+    expect(readInstalledIntegrations(DECLARATION).length).toBeGreaterThan(0);
   });
 });
 
@@ -122,8 +90,8 @@ describe("the declaration parser", () => {
   });
 
   it("reads a file with Windows line endings", () => {
-    // One of the four disagreements that justified collapsing three
-    // parsers into one, so it is worth a case rather than a comment.
+    // A shell and JavaScript disagree about a CRLF ending, so the one
+    // parser owns the answer and it is worth a case rather than a comment.
     expect(parse("acme/alpha\r\nacme/beta manifest-only\r\n")).toEqual([
       { name: "acme/alpha", manifestOnly: false },
       { name: "acme/beta", manifestOnly: true },

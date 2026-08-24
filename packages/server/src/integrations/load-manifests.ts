@@ -1,5 +1,5 @@
 /**
- * Reading every in-tree integration's manifest from built output.
+ * Reading every installed integration's manifest from built output.
  *
  * Distinct from `local-runtime/registrations.ts`, and the distinction is
  * the point. That loader answers "what can this process dispatch", so it
@@ -35,8 +35,8 @@ import { discoverIntegrationDirs } from "./discover.js";
 export interface InTreeManifest {
   /** Manifest `name`, `<namespace>/<name>`. */
   name: string;
-  /** Directory under `integrations/`, which is `<namespace>/<name>` and so
-   *  the same string as `name`. Kept distinct because a deployment can
+  /** Directory under the integrations root, which is `<namespace>/<name>`
+   *  and so the same string as `name`. Kept distinct because a deployment can
    *  install into a directory that disagrees, and the skip reasons have to
    *  name the directory that was read rather than the manifest it claimed. */
   dirName: string;
@@ -88,7 +88,7 @@ function findManifestExport(mod: Record<string, unknown>): unknown {
 }
 
 export async function loadInTreeManifests(options: {
-  /** Absolute path to the `integrations/` directory. */
+  /** Absolute path to the integrations root. */
   integrationsRoot: string;
   /** Per-integration directory names. Defaults to whatever is installed. */
   integrationDirs?: string[];

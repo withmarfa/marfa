@@ -98,8 +98,8 @@ jobs:
           npm publish withmarfa-sdk-*.tgz --access=public
 
       # The authoring contract for an integration. Published because an
-      # integration that lives outside this repository cannot depend on a
-      # workspace reference, which is what kept every integration in-tree.
+      # integration lives in another repository and cannot depend on a
+      # workspace reference.
       - name: Check @withmarfa/runtime-sdk publish status
         id: check_runtime_sdk
         working-directory: packages/runtime-sdk

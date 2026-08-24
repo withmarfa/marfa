@@ -40,9 +40,9 @@ afterEach(async () => {
 /**
  * `direction` describes flow relative to the UPSTREAM service, not access to
  * Marfa. `read` is an INBOUND integration: it pulls from upstream and writes
- * the result into Marfa. Eight of the fourteen in-tree integrations declare
- * it, and every one of them calls `createItem` on its target types, so the
- * default fixture here is `read` — the case that must keep working.
+ * the result into Marfa. Most integrations declare it, and every one of
+ * them calls `createItem` on its target types, so the default fixture here
+ * is `read` — the case that must keep working.
  */
 function makeManifest(direction: "read" | "write" | "both" = "read") {
   return {

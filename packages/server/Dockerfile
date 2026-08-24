@@ -9,6 +9,12 @@
 #
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile .
 #
+# The integrations are not in this repository. They come from
+# withmarfa/integrations, checked out into `integrations-src/` at the commit
+# `packages/server/integrations-ref.txt` pins. CI does that with a read-only
+# deploy key on the checkout step, so no credential reaches a layer here;
+# building by hand means cloning it there first at that commit.
+#
 # The droplets this runs on are linux/amd64. Both the deploy and the CI
 # image-build job build it natively on a hosted amd64 runner, with no QEMU.
 # On an arm64 host, such as a local Apple-Silicon machine, the same buildx
@@ -46,24 +52,49 @@ RUN pnpm install --frozen-lockfile
 # differently is a red `main` rather than a blocked release. Raise the
 # ceiling deliberately here, where the build actually runs.
 RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... build
-# Build the integration entries this image installs, and stage their dist
-# trees. What it installs is declared in installed-integrations.txt rather
-# than being whatever the directory happens to hold, so a declared name
-# that is not there fails the build and a directory nobody declared is not
-# shipped. Nothing in either step needs the directory to exist: a
-# declaration reading `none` leaves the filter matching no packages and the
-# loop running no times, and the image ships an empty integrations root.
+# The dispatch fixture, which the in-image verification dispatches through.
+# It belongs to this package and is built by tsup with the runtime kit
+# externalized, exactly the way an integration is, or it proves nothing
+# about how an integration bundles.
+RUN pnpm --filter dispatch-fixture run build
+# Build the integration entries this image installs. `integrations-src` is
+# withmarfa/integrations at its pinned commit: its own pnpm workspace with
+# its own lockfile, so it installs and builds on its own rather than joining
+# this one.
 #
-# The image must carry integrations/<namespace>/<name>/dist/local.js: the loader's
-# default root resolves relative to the monorepo, which does not exist in
-# a packaged image, so without these files the local substrate boots with
-# an empty registration list, silently. Only dist/ is staged, no
-# per-integration node_modules — each entry bundles its whole dependency
-# graph except @withmarfa/runtime-sdk and @withmarfa/shared, and those two
-# must resolve upward to the server's copies in /app/node_modules because
-# both carry module-singleton state. Staging node_modules alongside an
-# entry would shadow that resolution and break handler registration
-# invisibly.
+# Guarded on the checkout being there rather than assumed, because a
+# declaration reading `none` is a real deployment shape and needs no
+# integrations at all. A checkout that should be there and is not fails in
+# the staging step below, which names the integration it could not find.
+#
+# The whole workspace, not the declared set. That includes the scaffold and
+# anything else nothing installs, so a package that stops compiling takes
+# this build down whether or not the image ships it.
+RUN set -eu; \
+    if [ -d integrations-src ]; then \
+      cd integrations-src; \
+      pnpm install --frozen-lockfile; \
+      NODE_OPTIONS=--max-old-space-size=6144 pnpm run build; \
+    fi
+# Stage the declared integrations' dist trees. What the image installs is
+# declared in installed-integrations.txt rather than being whatever the
+# checkout happens to hold, so a declared name that is not there fails the
+# build and a package nobody declared is not shipped.
+#
+# Staged from the checkout's `packages/`, where a name is the directory
+# segment for segment: `google/calendar` is `packages/google/calendar`.
+# Staging from the checkout root instead would put a `packages` namespace in
+# front of every name, and the runtime would find nothing under the names it
+# was told to expect.
+#
+# The image must carry `<namespace>/<name>/dist/local.js` under
+# MARFA_INTEGRATIONS_ROOT, or the local substrate boots with an empty
+# registration list, silently. Only dist/ is staged, no per-integration
+# node_modules — each entry bundles its whole dependency graph except
+# @withmarfa/runtime-sdk and @withmarfa/shared, and those two must resolve
+# upward to the server's copies in /app/node_modules because both carry
+# module-singleton state. Staging node_modules alongside an entry would
+# shadow that resolution and break handler registration invisibly.
 #
 # A declared integration without a src/local.ts still ships a manifest, and
 # the catalog reconcile at boot needs it: the catalog describes what is
@@ -74,27 +105,13 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # Nothing a client needs is staged here, deliberately. A client's code runs
 # on the user's machine, so there is nothing for a deployment to install,
 # and its manifest is compiled into the server bundle instead. Staging one
-# into the integrations root as an exception would put it back among the
-# integrations, which is what the split removed.
+# into the integrations root as an exception would file it among the
+# integrations, which it is not.
 #
-# This build runs before the deploy prune below: `pnpm deploy` rewrites
-# the workspace's modules state, and any later `pnpm run` then fails the
+# This runs before the deploy prune below: `pnpm deploy` rewrites the
+# workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
 #
-# Selected by path, not by a name pattern. A package name is now the
-# manifest identifier with the slash flattened, so there is no shared
-# prefix left to match on and nothing should reintroduce one: what makes
-# these the integrations is that they live in `integrations/`, and the
-# selector may as well say so.
-#
-# The dispatch fixture builds in the same command, named in full because it
-# is outside that directory and is not an integration. Same command,
-# because a fixture bundled by a different one proves nothing about how an
-# integration bundles. There is exactly one of it and it is spelled out, so
-# this cannot drift the way a pattern could. When the integrations leave,
-# the first filter goes and this one stays.
-RUN pnpm --filter "./integrations/**" \
-         --filter dispatch-fixture run build
 # The parser's output is captured into a variable rather than expanded
 # inline. `set -e` does not reach a command substitution performed while
 # expanding a `for` word list, and a loop whose body never runs exits 0, so
@@ -106,7 +123,7 @@ RUN set -euf; \
     mkdir -p /integrations-staged; \
     names="$(node packages/server/scripts/read-installed-integrations.mjs packages/server/installed-integrations.txt)"; \
     for name in $names; do \
-      dir="integrations/$name"; \
+      dir="integrations-src/packages/$name"; \
       if [ ! -d "$dir" ]; then \
         echo "ERROR: $name is declared installed but $dir is not present" >&2; \
         exit 1; \
@@ -126,10 +143,10 @@ RUN set -euf; \
 # The dispatch fixture, staged outside the integrations root because it is
 # not something a deployment installed: what is in that root is the
 # declared set, and this is the fixture the in-image verification
-# dispatches through. It is built by the step above, exactly the way a real
-# integration is, which is what makes it a usable proof that the runtime
-# kit resolves to a single copy. The runtime stage deletes it once the
-# verification has passed.
+# dispatches through. Built by its own step in this stage, exactly the way
+# a real integration is, which is what makes it a usable proof that the
+# runtime kit resolves to a single copy. The runtime stage deletes it once
+# the verification has passed.
 #
 # `dist` only, and no node_modules beside it, for the same reason the
 # installed entries are staged that way: the bare `@withmarfa/runtime-sdk`
@@ -137,12 +154,10 @@ RUN set -euf; \
 # to the server's copies. A fixture carrying its own would satisfy its
 # imports locally and pass while proving nothing.
 #
-# Unconditional. Under the previous arrangement this staged the
-# integrations scaffold, which a deployer could reasonably not have, so a
-# missing tree read as a shape rather than a fault. The fixture ships with
-# the server, so its absence means the build above did not build it, and
-# failing here names that directly instead of surfacing later as a
-# verification that cannot find its fixture.
+# Unconditional. The fixture ships with the server, so its absence means
+# the build above did not build it, and failing here names that directly
+# instead of surfacing later as a verification that cannot find its
+# fixture.
 RUN set -eu; \
     mkdir -p /verify-fixtures/dispatch-integration; \
     cp -R packages/server/fixtures/dispatch-integration/dist \
@@ -170,6 +185,9 @@ COPY --from=build --chown=node:node /app/out ./
 COPY --from=build --chown=node:node /integrations-staged ./integrations
 ENV MARFA_INTEGRATIONS_ROOT=/app/integrations
 COPY --from=build --chown=node:node /repo/packages/server/installed-integrations.txt ./installed-integrations.txt
+# And the commit they were built from, so a running container is traceable
+# to its source rather than only to its own set of names.
+COPY --from=build --chown=node:node /repo/packages/server/integrations-ref.txt ./integrations-ref.txt
 COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
 COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs

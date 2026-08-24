@@ -10,7 +10,7 @@
 
 /** One line of the declaration. */
 export interface InstalledIntegration {
-  /** The `<handle>/<name>` identifier, which is also the integration's
+  /** The `<namespace>/<name>` identifier, which is also the integration's
    *  directory under the integrations root. */
   name: string;
   /** Declared as shipping a manifest and no dispatchable handler entry. */

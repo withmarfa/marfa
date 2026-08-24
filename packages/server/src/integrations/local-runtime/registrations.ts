@@ -1,16 +1,16 @@
 /**
- * In-tree integration loader for the local runtime.
+ * Loader for the integrations this deployment has installed.
  *
- * Each integration that opts into the local substrate ships a
- * `local.ts` entry alongside the existing `worker.ts`. The shape is:
+ * Each integration that opts into the local substrate ships a `local.ts`
+ * entry. The shape is:
  *
  *   ```ts
- *   // integrations/<namespace>/<name>/src/local.ts
- *   import { TEMPLATE_MANIFEST } from "./manifest.js";
+ *   // <namespace>/<name>/src/local.ts
+ *   import { MANIFEST } from "./manifest.js";
  *   import { registerHandlers } from "./handlers.js";
  *
  *   registerHandlers();                  // seeds the in-thread registry
- *   export const manifest = TEMPLATE_MANIFEST;
+ *   export const manifest = MANIFEST;
  *   ```
  *
  * The loader takes a list of integration package directories, resolves
@@ -36,7 +36,7 @@ interface LocalEntryModule {
 }
 
 /**
- * Resolve `integrations/<namespace>/<name>/dist/local.js` from a base directory.
+ * Resolve `<namespace>/<name>/dist/local.js` under the integrations root.
  * Returns the absolute path when the file exists, or `null` when the
  * integration hasn't shipped a local.ts yet.
  */
@@ -54,34 +54,25 @@ export function resolveLocalEntry(
 }
 
 /**
- * Load every in-tree integration's `local.ts` entry from
- * `integrations/<namespace>/<name>/dist/local.js`. An integration that ships no local
- * entry is skipped: it declares a surface a connection can install
- * against and nothing for this process to dispatch into, so the catalog
- * carries it and the runtime does not.
+ * Load every installed integration's `local.ts` entry from
+ * `<namespace>/<name>/dist/local.js` under the integrations root. An
+ * integration that ships no local entry is skipped: it declares a surface
+ * a connection can install against and nothing for this process to
+ * dispatch into, so the catalog carries it and the runtime does not.
  *
- * The default integration list mirrors the in-tree set; callers can
- * override for tests or alternate self-host bundles.
+ * The default list is whatever discovery finds; callers can override for
+ * tests or alternate self-host bundles.
  */
 export async function loadInTreeRegistrations(options: {
-  /** Absolute path to the `integrations/` directory. */
+  /** Absolute path to the integrations root. */
   integrationsRoot: string;
   /** Per-integration directory names. Defaults to whatever is installed. */
   integrationDirs?: string[];
 }): Promise<LocalIntegrationRegistration[]> {
-  // `_template` leaves the default set, and that is the one behaviour
-  // change here rather than a tidy-up. It used to be prepended by hand
-  // because it is not a real integration and so was not in the table, yet
-  // the local runtime wanted a smoke shape to boot against. Discovery skips
-  // it: a leading underscore means scaffolding.
-  //
-  // Nothing wants it any more: the substrate smoke, the worker-entry smoke
-  // script and the image verification dispatch through the server's own
-  // fixture, which lives outside the integrations root entirely. What the
-  // change did mean is that a deployment which already registered
-  // `acme/template` carries a cron row for it, which is why the
-  // supervisor's `start()` reconciles schedules against the registration
-  // set rather than only seeding from it.
+  // A deployment that drops an integration keeps whatever cron row it
+  // already registered for it, which is why the supervisor's `start()`
+  // reconciles schedules against the registration set rather than only
+  // seeding from it.
   const dirs =
     options.integrationDirs ??
     discoverIntegrationDirs(options.integrationsRoot);

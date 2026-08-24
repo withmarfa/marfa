@@ -13,6 +13,8 @@ openapi.json
 packages/types/integration-manifest-schema.json
 # Lockfile — owned by pnpm, not Prettier.
 pnpm-lock.yaml
+# Another repository's checkout, staged into the server image. Not source.
+integrations-src/
 # Global scratch folders (per ~/.gitignore_global). Matches the same set
 # eslint.config.js ignores — harnesses, captures, throwaway files that
 # sit in the repo tree but aren't part of source.
