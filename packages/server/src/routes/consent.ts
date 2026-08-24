@@ -207,10 +207,20 @@ function buildGroups(
   // register webhooks or revoke keys was filed under "Additional things this
   // app asked to read". A heading that states the opposite of what the
   // toggle does is worse than no heading.
+  //
+  // Unticked, and this is the one bucket where that is right. The other two
+  // start ticked because a scope the app asked for and no bundle claimed is
+  // still ordinary access to content, and unticking it by default would have
+  // this screen invent a policy. A capability is the opposite case: it is
+  // authority the platform would otherwise let a token inherit from a role
+  // without anybody naming it, and the whole reason it became a scope is so
+  // somebody has to say yes. Arriving pre-ticked would grant it by silence,
+  // which is what it exists to stop.
   const otherCapability: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
     scopes: [],
+    defaultOn: false,
   };
   for (const scope of scopes) {
     const bundle = literalToBundle.get(scopeLiteralFor(scope));

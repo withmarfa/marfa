@@ -514,6 +514,10 @@ describe("capability labels", () => {
     for (const literal of CAPABILITY_SCOPES) {
       expect(CAPABILITY_SHORT[literal]).not.toContain(",");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // `default_on`
 //
 // The field is declared on `PermissionBundle` and, until this, nothing read
