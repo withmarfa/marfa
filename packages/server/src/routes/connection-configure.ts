@@ -1,7 +1,7 @@
 /**
  * Post-install configuration surface for integration connections that
  * carry a `properties.configuration` payload. Today's only consumer is
- * `google.calendar`, but the route is integration-agnostic — it
+ * `google/calendar`, but the route is integration-agnostic — it
  * dispatches the picker UI on the connection's `integration_ref`
  * manifest_name.
  *

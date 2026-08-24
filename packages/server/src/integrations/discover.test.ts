@@ -9,7 +9,7 @@
  * dropped into the directory by hand is found on the next boot without
  * anybody editing a list.
  *
- * The directory is `<handle>/<name>`, mirroring the manifest identifier, so
+ * The directory is `<namespace>/<name>`, mirroring the manifest identifier, so
  * "what counts" is now a question about two levels rather than one and the
  * shapes a half-built tree can take are the interesting cases.
  */
@@ -73,7 +73,7 @@ function manifestFor(name: string): Record<string, unknown> {
 }
 
 describe("discoverIntegrationDirs", () => {
-  it("returns every handle's integrations as <handle>/<name>, sorted", () => {
+  it("returns every namespace's integrations as <namespace>/<name>, sorted", () => {
     const at = scratch();
     for (const d of ["zebra/one", "alpha/two", "alpha/one", "middle/one"]) {
       mkdirSync(join(at, d), { recursive: true });

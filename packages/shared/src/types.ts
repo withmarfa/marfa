@@ -724,7 +724,7 @@ export interface ConnectionInstallInput {
   /** Optional id of an existing `system.credential` (kind `oauth_token` or
    *  `api_token`) to reference instead of provisioning a fresh provider
    *  credential. Lets multiple integrations of the same upstream (e.g.
-   *  `google.calendar` + `google.tasks`) share one credential instead of
+   *  `google/calendar` + `google/tasks`) share one credential instead of
    *  duplicating per-integration. Create such credentials via
    *  `POST /credentials/oauth-provider` or `POST /credentials/api-token`. */
   credential_ref?: string;

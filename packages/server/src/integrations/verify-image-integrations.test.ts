@@ -88,7 +88,7 @@ function clientManifestsSource(clients: string[]): string {
 }
 
 /**
- * A scratch image layout. `installed` are `<handle>/<name>` directories
+ * A scratch image layout. `installed` are `<namespace>/<name>` directories
  * under the integrations root; a name suffixed `!manifest` gets a
  * manifest-only
  * entry, `!empty` gets a directory with nothing built in it, `!bare` gets a

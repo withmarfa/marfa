@@ -6,14 +6,17 @@ it was written. Treat it as a record of how things worked here rather than
 as current guidance, and use the move to review, correct, and tighten it
 rather than carry it over unchanged.
 
-Bidirectional sync between Google Calendar and Marfa. First instance
-of the `google.*` publisher family; Google Tasks, Contacts, Drive
-will follow the same conventions.
+Bidirectional sync between Google Calendar and Marfa. The first
+integration in the `google` namespace; Tasks, Contacts, Drive and
+YouTube follow the same conventions.
 
 ## Identity
 
-- Manifest name: **`google/calendar`** (publisher `google`,
-  identifier `calendar`).
+- Manifest name: **`google/calendar`** — namespace `google`, name
+  `calendar`. The namespace is the data this integration owns, which
+  is what lets it declare `google.*` types. It says nothing about who
+  wrote the integration; `publisher` is the separate field answering
+  that.
 - Target types: `core.event` AND `google.calendar.event`. The
   install pipeline grants the runtime credential write permission
   on both; the user picks at install which is actually written

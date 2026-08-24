@@ -1,5 +1,5 @@
 /**
- * Manifest for the Readwise inbound integration (`readwise.highlights`).
+ * Manifest for the Readwise inbound integration (`readwise/highlights`).
  *
  * Uses Readwise's Export API
  * (`GET /api/v2/export/?updatedAfter=...&pageCursor=...`) as the

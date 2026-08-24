@@ -1,6 +1,6 @@
 /**
  * Manifest for the Raindrop inbound integration
- * (`raindrop.bookmarks`).
+ * (`raindrop/bookmarks`).
  *
  * Uses Raindrop's REST API (`GET /rest/v1/collections`,
  * `GET /rest/v1/collections/childrens`, `GET /rest/v1/raindrops/0`)

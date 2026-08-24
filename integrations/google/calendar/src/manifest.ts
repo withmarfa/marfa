@@ -1,11 +1,12 @@
 /**
  * Manifest for the Google Calendar bidirectional integration
- * (`google.calendar`).
+ * (`google/calendar`).
  *
- * First instance of the `google.*` publisher family — same shape that
- * subsequent Google services (`google.tasks`, `google.contacts`, ...)
- * will follow. The publisher namespace is `google`; the integration
- * identifier is `google.calendar`.
+ * The first integration in the `google` namespace, and the shape the
+ * later Google services (`google/tasks`, `google/contacts`, ...)
+ * follow. The namespace names the data the integration owns, which is
+ * what lets it declare `google.*` types; who wrote it is the separate
+ * `publisher` field.
  *
  * Both inbound (poll Calendar → upsert Marfa items) and outbound
  * (item-event on the target type → push to Calendar via OAuth proxy)

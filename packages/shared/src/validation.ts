@@ -282,7 +282,7 @@ const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
 
 /**
  * Returns true if the value is a syntactically valid integration
- * identifier: `<handle>/<name>`, for example `readwise/reader` or
+ * identifier: `<namespace>/<name>`, for example `readwise/reader` or
  * `marfa/rss-watcher`.
  *
  * **Dots name data; the slash names an installable.** A type identifier is

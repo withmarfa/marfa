@@ -8,7 +8,7 @@ export default defineConfig({
     // so we glob those specifically — avoids vitest tripping on
     // per-folder docs like `integrations/CLAUDE.md`.
     //
-    // An integration directory is `<handle>/<name>`, so the glob spans
+    // An integration directory is `<namespace>/<name>`, so the glob spans
     // both levels. The scaffold stays flat and underscore-prefixed, which
     // puts it outside that glob and is why it is named separately.
     //

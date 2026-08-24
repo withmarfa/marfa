@@ -1,6 +1,6 @@
 # Marfa
 
-Typed data layer. This monorepo holds eight active workspace packages, fifteen in-tree Integrations, and the DigitalOcean infra directory.
+Typed data layer. This monorepo holds eight active workspace packages, fourteen in-tree Integrations, and the DigitalOcean infra directory.
 
 **Docs MCP convention.** When working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or `marfa docs search "<query>"` from the CLI) before re-deriving from source.
 
@@ -17,7 +17,7 @@ Typed data layer. This monorepo holds eight active workspace packages, fifteen i
 - **@withmarfa/runtime-test** — Test harness mirroring the runtime-sdk surface (in-memory queue + `consumeBatch` driver), so Integrations can unit-test their handlers without booting the server.
 - **@withmarfa/sync-manifest** — The manifest the sync client installs against. Sync watches a filesystem, so its code runs on the user's machine and there is nothing for a deployment to install; the server imports this manifest and hands it to the boot-time catalog reconcile. Private, and not an Integration for exactly that reason.
 
-**In-tree Integrations (`integrations/`):** fourteen shipping Integrations, each in a `<handle>/<name>` directory mirroring its manifest identifier, plus `_template` (the scaffold every contributor copies), which stays flat and underscore-prefixed so discovery skips it. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
+**In-tree Integrations (`integrations/`):** fourteen shipping Integrations, each in a `<namespace>/<name>` directory mirroring its manifest identifier, plus `_template` (the scaffold every contributor copies), which stays flat and underscore-prefixed so discovery skips it. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`; the manifest's own `description` is the authoritative summary of what each one does.
 
 - **Bidirectional** — `google/calendar`, `google/contacts`, `google/tasks`, `todoist/tasks`, `readwise/reader`.
 - **Inbound** — `google/drive`, `google/youtube`, `marfa/podcasts`, `raindrop/bookmarks`, `readwise/highlights`, `marfa/rss-watcher`, `marfa/github-webhooks`, `marfa/inbox` (email capture via Cloudflare Email Routing).
@@ -27,7 +27,7 @@ Typed data layer. This monorepo holds eight active workspace packages, fifteen i
 
 **Infra (`infra/`):** `digitalocean` — compose files, Caddyfile, env templates, and the deploy shape for the droplet deployments (`deploy-server.yml` targets it).
 
-`@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/runtime-sdk`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
+`@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/runtime-sdk`, `@withmarfa/runtime-test`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
 
 `@withmarfa/runtime-sdk` publishes after `@withmarfa/shared`, and `@withmarfa/runtime-test` after the kit, and the order is load-bearing: `pnpm pack` resolves a `workspace:*` dependency to a concrete version number, so packing a package before the version it names exists on the registry produces a tarball nobody can install.
 

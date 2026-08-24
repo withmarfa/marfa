@@ -13,10 +13,11 @@ and the proxy stamps it transparently.
 
 ## Identity
 
-- Manifest name: **`todoist/tasks`** (publisher `todoist`, identifier
-  `tasks`). The publisher-namespaced grammar (`<publisher>.<type>`) is
-  enforced by the manifest schema — single-segment names like
-  `todoist` fail validation.
+- Manifest name: **`todoist/tasks`** — namespace `todoist`, name
+  `tasks`. The manifest schema enforces both segments, so a
+  single-segment name like `todoist` fails validation. The namespace
+  is the data this integration owns, which is what lets it declare
+  `todoist.*` types; who wrote it is the separate `publisher` field.
 - Target types: `core.task` AND `todoist.task`. The install pipeline
   grants the runtime credential write permission on both; new inbound
   items land as `todoist.task` by default for upstream fidelity.

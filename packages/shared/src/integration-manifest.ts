@@ -62,9 +62,10 @@ const SemverSchema = z.string().regex(SEMVER_RE, {
 
 /**
  * Manifest `name` follows the integration-identifier grammar,
- * `<handle>/<name>` (e.g. `acme/calendar-sync`): dots name data, the slash
- * names an installable. The dedupe key stays the name, so this is what the
- * catalog is keyed on.
+ * `<namespace>/<name>` (e.g. `acme/calendar-sync`): dots name data, the
+ * slash names an installable. The namespace is the data the integration
+ * owns rather than whoever wrote it, which `publisher` records separately.
+ * The dedupe key stays the name, so this is what the catalog is keyed on.
  *
  * This is deliberately no longer `isValidTypeIdentifier`. The two grammars
  * were the same function while an integration was spelled like a type, and
@@ -80,7 +81,7 @@ const ManifestNameSchema = z
   .string()
   .refine((s) => isValidIntegrationIdentifier(s), {
     message:
-      "manifest name must follow handle-slash-name grammar (e.g. acme/calendar-sync)",
+      "manifest name must follow namespace-slash-name grammar (e.g. acme/calendar-sync)",
   });
 
 const TriggerScheduleSchema = z.object({
@@ -336,11 +337,12 @@ export const IntegrationManifestSchema = z
      * same validator the in-tree codegen and `POST /types` both use, so a
      * schema that travels in a manifest is a schema in every other sense.
      *
-     * Registration is gated on the publisher's handle: an integration may
-     * declare types inside its own namespace and nowhere else. That is not
-     * an optional nicety — without it a third-party package could register
-     * into somebody else's namespace, which is exactly what the ownership
-     * rule at type registration exists to stop.
+     * Registration is gated on the identifier's namespace: an integration
+     * may declare types inside its own namespace and nowhere else, so
+     * `google/calendar` owns `google.*`. That is not an optional nicety —
+     * without it a third-party package could register into somebody else's
+     * namespace, which is exactly what the ownership rule at type
+     * registration exists to stop.
      *
      * A declared schema also counts as resolvable when `target_types` is
      * checked, which is why an integration can name a type nobody has

@@ -26,7 +26,7 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 import { SYNC_MANIFEST } from "@withmarfa/sync-manifest";
 
 export interface ClientManifest {
-  /** Manifest `name`, `<handle>/<name>`. */
+  /** Manifest `name`, `<namespace>/<name>`. */
   name: string;
   manifest: IntegrationManifest;
 }

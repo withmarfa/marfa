@@ -22,7 +22,7 @@
  *
  * The resulting credential id is passed as `credential_ref` on
  * subsequent `POST /connections/install` calls. Multiple integrations
- * sharing an upstream (e.g. `google.calendar` + `google.tasks`) share
+ * sharing an upstream (e.g. `google/calendar` + `google/tasks`) share
  * one credential row.
  *
  * Companion read paths:
