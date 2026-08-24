@@ -1,9 +1,9 @@
 /**
- * In-tree integration smokes against the local-runtime substrate.
- * One smoke per in-tree integration that declares
- * a built local entry:
+ * Smokes against the local-runtime substrate: the server's own dispatch
+ * fixture, then one per in-tree integration that declares a built local
+ * entry.
  *
- *   - _template
+ *   - the dispatch fixture (the minimal shape, owned by this package)
  *   - marfa/rss-watcher (schedule + stub fetch)
  *   - marfa/github-webhooks (webhook delivery)
  *   - google/calendar (schedule + stub fetch — covers the bootstrap
@@ -79,15 +79,36 @@ interface LoadedIntegration {
   registerHandlers: (opts?: unknown) => void;
 }
 
-/** `dir` is the `<handle>/<name>` directory, except for the scaffold,
- *  which stays flat. */
-async function loadIntegration(dir: string): Promise<LoadedIntegration> {
-  const path = resolve(MONOREPO_ROOT, "integrations", dir, "dist", "local.js");
+async function loadBuiltEntry(path: string): Promise<LoadedIntegration> {
   const mod = (await import(pathToFileURL(path).href)) as {
     manifest: LoadedIntegration["manifest"];
     registerHandlers: LoadedIntegration["registerHandlers"];
   };
   return { manifest: mod.manifest, registerHandlers: mod.registerHandlers };
+}
+
+/** `dir` is the integration's `<handle>/<name>` directory. */
+function loadIntegration(dir: string): Promise<LoadedIntegration> {
+  return loadBuiltEntry(
+    resolve(MONOREPO_ROOT, "integrations", dir, "dist", "local.js"),
+  );
+}
+
+/**
+ * The server's dispatch fixture, which is not under `integrations/` and is
+ * deliberately not one: it is the minimal handler shape this package owns
+ * so the substrate has something to dispatch through that does not belong
+ * to the integration set. The scaffold filled this role while it was the
+ * only minimal thing in the tree, which coupled a substrate smoke to a
+ * directory that exists for integration authors.
+ */
+function loadDispatchFixture(): Promise<LoadedIntegration> {
+  return loadBuiltEntry(
+    resolve(
+      MONOREPO_ROOT,
+      "packages/server/fixtures/dispatch-integration/dist/local.js",
+    ),
+  );
 }
 
 function inMemoryCursor(snapshot: Record<string, unknown>): {
@@ -283,8 +304,8 @@ function makeSupervisor(registration: LocalIntegrationRegistration) {
 }
 
 describe("in-tree integration smokes against local runtime", () => {
-  it("_template — schedule trigger writes a cursor and emits activity", async () => {
-    const integration = await loadIntegration("_template");
+  it("the dispatch fixture — schedule trigger writes a cursor and emits activity", async () => {
+    const integration = await loadDispatchFixture();
     const integrationId = await createIntegrationItem(integration);
     const connectionId = await createActiveConnection(integrationId);
     const runtime = makeSupervisor(makeRegistration(integration));

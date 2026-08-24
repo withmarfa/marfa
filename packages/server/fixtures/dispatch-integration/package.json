@@ -1,0 +1,19 @@
+{
+  "name": "@withmarfa/integration-dispatch-fixture",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Not an integration. The fixture the server image dispatches through to prove @withmarfa/runtime-sdk resolves to exactly one copy inside the built image.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@withmarfa/runtime-sdk": "workspace:*",
+    "@withmarfa/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
+  }
+}

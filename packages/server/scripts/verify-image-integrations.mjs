@@ -59,18 +59,20 @@
  *      once the image has been pruned to production dependencies.
  *
  *   4. Worker-thread dispatch. Spawns dist/worker-entry.js with the
- *      scaffold's local.js and runs one schedule dispatch against a stub
- *      HTTP server. This is the module-singleton proof: if
+ *      dispatch fixture's local.js and runs one schedule dispatch against
+ *      a stub HTTP server. This is the module-singleton proof: if
  *      @withmarfa/runtime-sdk resolves to a second copy inside the image,
  *      the handler registers into one registry and dispatch reads
  *      another, and the result comes back not-ok. The request shape
  *      mirrors scripts/smoke-worker-entry.ts; the two must move together.
  *
- *      The scaffold is a build fixture rather than an installed
- *      integration, so it lives outside the integrations root and the
- *      image drops it as soon as this passes. An image installing nothing
- *      dispatchable has nothing to prove and skips this; anything else
- *      needs the fixture and fails without it.
+ *      The fixture is the server's own, built by the image the way a real
+ *      integration is built and staged the way one is staged, which is
+ *      what makes the result say anything about a real integration. It is
+ *      not an installed integration, so it lives outside the integrations
+ *      root and the image drops it as soon as this passes. An image
+ *      installing nothing dispatchable has nothing to prove and skips
+ *      this; anything else needs the fixture and fails without it.
  */
 import { readdirSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -329,7 +331,7 @@ info(
         `parse from the image (${clientNames})`,
 );
 
-// Check 4: worker-thread dispatch through the scaffold fixture.
+// Check 4: worker-thread dispatch through the dispatch fixture.
 if (entries.length === 0) {
   info(
     `nothing dispatchable installed; the dispatch check has nothing to prove`,
@@ -340,16 +342,21 @@ if (entries.length === 0) {
 if (!existsSync(WORKER_ENTRY)) {
   fail(`worker entry does not exist: ${WORKER_ENTRY}`);
 }
-const templateLocal = resolve(FIXTURE_ROOT, "_template", "dist", "local.js");
-if (!existsSync(templateLocal)) {
+const fixtureLocal = resolve(
+  FIXTURE_ROOT,
+  "dispatch-integration",
+  "dist",
+  "local.js",
+);
+if (!existsSync(fixtureLocal)) {
   fail(
-    `the dispatch fixture is missing at ${templateLocal}, so the ` +
+    `the dispatch fixture is missing at ${fixtureLocal}, so the ` +
       `module-resolution proof cannot run against an image that installs ` +
       `${String(entries.length)} dispatchable integrations`,
   );
 }
 
-// Stub for the template handler's activity emit; shape matches what
+// Stub for the fixture handler's activity emit; shape matches what
 // ConnectionClient.createItem unwraps.
 const stub = createServer((req, res) => {
   const chunks = [];
@@ -386,7 +393,7 @@ await new Promise((res) => stub.listen(0, "127.0.0.1", res));
 const port = stub.address().port;
 
 const worker = new Worker(WORKER_ENTRY, {
-  workerData: { handlerModulePath: templateLocal },
+  workerData: { handlerModulePath: fixtureLocal },
 });
 
 let exitCode = 0;
@@ -413,7 +420,7 @@ try {
       ),
     ),
   ]);
-  info(`worker thread loaded the template entry`);
+  info(`worker thread loaded the dispatch fixture`);
 
   const response = await new Promise((res, rej) => {
     worker.on("message", (msg) => {
@@ -438,11 +445,11 @@ try {
       },
       message: {
         kind: "schedule",
-        integration_name: "acme/template",
+        integration_name: "acme/dispatch-fixture",
         connection_id: "verify-image-connection",
         scheduled_for_ms: Date.now(),
       },
-      integrationName: "acme/template",
+      integrationName: "acme/dispatch-fixture",
       echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
       hopBudget: 5,
       cursorSnapshot: {},

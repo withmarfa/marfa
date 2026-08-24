@@ -36,11 +36,15 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(HERE, "..", "..", "..");
-const WORKER_ENTRY = resolve(REPO_ROOT, "packages/server/dist/worker-entry.js");
-const TEMPLATE_LOCAL = resolve(
-  REPO_ROOT,
-  "integrations/_template/dist/local.js",
+// Both paths are the server package's own. The fixture used to be the
+// integrations scaffold, which put half of this script's inputs in a
+// directory that is on its way out of this repository; the property under
+// test is this package's bundling, so the fixture is this package's too.
+const SERVER_ROOT = resolve(HERE, "..");
+const WORKER_ENTRY = resolve(SERVER_ROOT, "dist/worker-entry.js");
+const FIXTURE_LOCAL = resolve(
+  SERVER_ROOT,
+  "fixtures/dispatch-integration/dist/local.js",
 );
 
 function fail(msg: string): never {
@@ -63,14 +67,14 @@ if (!existsSync(WORKER_ENTRY)) {
 }
 info(`dist/worker-entry.js exists`);
 
-if (!existsSync(TEMPLATE_LOCAL)) {
+if (!existsSync(FIXTURE_LOCAL)) {
   fail(
-    `integrations/_template/dist/local.js does not exist. Run \`pnpm build\` first.`,
+    `fixtures/dispatch-integration/dist/local.js does not exist. Run \`pnpm build\` first.`,
   );
 }
-info(`integrations/_template/dist/local.js exists`);
+info(`fixtures/dispatch-integration/dist/local.js exists`);
 
-// Stub HTTP server for the template handler's activity emit. The
+// Stub HTTP server for the fixture handler's activity emit. The
 // handler does `ctx.activity.emit(...)` which posts /items via
 // ConnectionClient.createItem; without a 2xx response back the
 // handler throws and the dispatch result comes back as dispatch_threw,
@@ -134,7 +138,7 @@ info(`stub HTTP server listening on 127.0.0.1:${STUB_PORT}`);
 //   - parent posts a WorkerDispatchRequest
 //   - worker posts a WorkerDispatchResponse back
 const worker = new Worker(WORKER_ENTRY, {
-  workerData: { handlerModulePath: TEMPLATE_LOCAL },
+  workerData: { handlerModulePath: FIXTURE_LOCAL },
 });
 
 const ready = new Promise<void>((res, rej) => {
@@ -178,11 +182,11 @@ try {
     },
     message: {
       kind: "schedule",
-      integration_name: "acme/template",
+      integration_name: "acme/dispatch-fixture",
       connection_id: "smoke-connection-id",
       scheduled_for_ms: Date.now(),
     },
-    integrationName: "acme/template",
+    integrationName: "acme/dispatch-fixture",
     echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
     hopBudget: 5,
     cursorSnapshot: {},
@@ -226,7 +230,7 @@ try {
   }
   info(`dispatch result ok`);
 
-  // Assertion 3 — the template handler writes a cursor under the
+  // Assertion 3 — the fixture handler writes a cursor under the
   // "cursor:main" key (runtime-sdk's createCursorStore prefixes user
   // keys with "cursor:"). Presence proves the in-thread cursor adapter
   // journalled and the delta round-tripped back through the

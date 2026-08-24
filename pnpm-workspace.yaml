@@ -14,6 +14,13 @@ packages:
   # workspace package. Different deployable (CF Email Worker vs
   # per-Integration Worker), distinct dependency set (postal-mime).
   - "integrations/*/*/email-worker"
+  # The server's dispatch fixture. A package rather than a test file
+  # because the property it proves is a bundling one: it has to be built
+  # by tsup with the runtime kit externalized, the way a real integration
+  # is, or it proves nothing about how a real integration bundles. It sits
+  # under the server because it tests the server's image, and outside
+  # `integrations/` so the runtime's discovery cannot reach it at all.
+  - "packages/server/fixtures/dispatch-integration"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree
 # rebases `main` and picks up new workspace packages (e.g. a fresh

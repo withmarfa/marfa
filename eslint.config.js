@@ -27,6 +27,12 @@ export default [
             // vitest.config.ts also falls through to the default
             // project.
             "integrations/*/*/email-worker/vitest.config.ts",
+            // The server's dispatch fixture is a nested workspace
+            // package too, and its tsup config falls through for the
+            // same reason. No vitest config: the fixture is driven by
+            // the image verification and the worker-entry smoke, both
+            // of which need it built, and neither is vitest.
+            "packages/server/fixtures/*/tsup.config.ts",
           ],
           // Default is 8. Every workspace package contributes a
           // tsup.config and a vitest.config that fall through to the

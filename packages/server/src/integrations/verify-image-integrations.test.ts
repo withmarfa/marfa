@@ -146,9 +146,12 @@ function image(options: {
 
   const fixtureRoot = join(scratchRoot, "verify-fixtures");
   if (options.fixture === true) {
-    const dist = join(fixtureRoot, "_template", "dist");
+    const dist = join(fixtureRoot, "dispatch-integration", "dist");
     mkdirSync(dist, { recursive: true });
-    writeFileSync(join(dist, "local.js"), manifestSource("acme/template"));
+    writeFileSync(
+      join(dist, "local.js"),
+      manifestSource("acme/dispatch-fixture"),
+    );
   }
 
   // A stand-in for dist/worker-entry.js. It imports whatever handler path
@@ -311,22 +314,24 @@ describe("the in-image integration verification", () => {
   });
 
   it("fails, by name, on an installed integration nobody declared", () => {
-    // The shape that shipped the scaffold: present in the image, named in
-    // nothing, and invisible to a check that only counted.
+    // The shape that once shipped the scaffold: present in the image, named
+    // in nothing, and invisible to a check that only counted.
     //
-    // The scaffold is flat, so it is also the flat-leftover case. Walking
-    // two levels reports it as `_template/dist`, because `dist` is the only
+    // The dispatch fixture is the live instance of that risk now, and it is
+    // flat, so it is also the flat-leftover case. Walking two levels reports
+    // it as `dispatch-integration/dist`, because `dist` is the only
     // subdirectory a wrongly staged one-level tree has — which is how a
-    // staging step that forgot the handle fails here rather than shipping.
+    // staging step that put the fixture in the integrations root instead of
+    // beside it fails here rather than shipping.
     const run = verify(
       image({
         declared: ["acme/alpha"],
-        installed: ["acme/alpha", "_template"],
+        installed: ["acme/alpha", "dispatch-integration"],
       }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("installed but not declared");
-    expect(run.output).toContain("_template/dist");
+    expect(run.output).toContain("dispatch-integration/dist");
   });
 
   it("fails on a declared integration that built nothing", () => {

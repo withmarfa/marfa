@@ -44,9 +44,13 @@
 # The scaffold under integrations/_template is deliberately absent, and its
 # flat, underscore-prefixed directory is not the `<handle>/<name>` shape a
 # name here has. It is a starting point for authors rather than an
-# integration, and the runtime's discovery skips it for the same reason. The build stages it separately as
-# the fixture the verification dispatches through, and the image drops it
-# once that has passed.
+# integration, and the runtime's discovery skips it for the same reason.
+#
+# The fixture the verification dispatches through is absent for a different
+# reason: it is the server's own, staged outside this root entirely and
+# dropped from the image once the verification has passed. Nothing about it
+# is installable, so naming it here would be a claim the image would then
+# have to make good.
 #
 # Installing nothing is a real deployment shape, and it is spelled with a
 # line reading `none` rather than by an empty file. An empty file is what a
