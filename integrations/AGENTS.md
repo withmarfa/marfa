@@ -83,6 +83,7 @@ To install end-to-end:
 
 Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The runtime loads every integration that ships a built handler entry; there is one runtime, so there is nothing to declare compatibility with. An integration without a handler entry is a client, and its code runs wherever the client runs. Build invariants:
 
+- **The handler entry is `src/local.ts` and the built entry is `dist/local.js`.** Both halves are the convention rather than a preference: the image build pairs them to catch an integration whose source is present and whose output is missing, and the suite reads the source half to decide whether an integration ships a handler at all. Emitting `dist/local.js` from a differently named source satisfies neither reader, and the two then disagree about what the integration is.
 - `tsup.config.ts` emits `dist/local.js`, which the server's supervisor loads at boot.
 - `@cloudflare/workers-types` remains a types-only devDependency: handler code types upstream responses through its generic `json<T>()` fetch typings. Nothing Cloudflare-specific runs; the runtime is Node.
 - `@withmarfa/runtime-sdk` and `@withmarfa/shared` MUST stay external in every bundle that loads integrations alongside them; the handler `REGISTRY` and shared registries are module-singleton state.
@@ -93,6 +94,8 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 **The server does not read this list, and it does not read any list.** It reads the directory: every subdirectory holding a built entry and a valid manifest is an integration, and anything else is skipped with a reason. A directory prefixed with `.` or `_` is scaffolding and is skipped before that, which is why `_template` appears here and never ships.
 
 So this is documentation rather than a source of truth, kept because the one-line descriptions are the part a directory scan cannot produce. **It is checked against the directory**, so a new integration nobody wrote a line for fails the suite, and so does a bullet for something that no longer exists.
+
+**What the hosted container image ships is a separate list, and that one is real.** `packages/server/installed-integrations.txt` declares which integrations the image installs into the runtime's directory, so a new integration is added there as well as here, with the marker `manifest-only` if it ships no handler. It changes nothing about how the runtime finds them, which has always been a directory read; it decides what the image puts in that directory. In this repository the two are held equal by the suite, so the declaration cannot yet ship fewer integrations than the tree holds. What it buys today is that the set is stated somewhere a person edits, rather than being whatever the build happened to find.
 
 - **`_template`** — scaffold to copy when starting a new integration.
 - **`podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.

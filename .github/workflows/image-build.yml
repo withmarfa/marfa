@@ -58,6 +58,7 @@ on:
       - "**/package.json"
       - "**/tsup.config.ts"
       - "packages/server/scripts/**"
+      - "packages/server/installed-integrations.txt"
       - "integrations/*/src/local.ts"
       - ".github/workflows/image-build.yml"
   # Available against any branch, and the way a change to the Dockerfile or to

@@ -45,7 +45,14 @@ RUN pnpm install --frozen-lockfile
 # differently is a red `main` rather than a blocked release. Raise the
 # ceiling deliberately here, where the build actually runs.
 RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... build
-# Build every integration's local-runtime entry and stage the dist trees.
+# Build the integration entries this image installs, and stage their dist
+# trees. What it installs is declared in installed-integrations.txt rather
+# than being whatever the directory happens to hold, so a declared name
+# that is not there fails the build and a directory nobody declared is not
+# shipped. Nothing in either step needs the directory to exist: a
+# declaration reading `none` leaves the filter matching no packages and the
+# loop running no times, and the image ships an empty integrations root.
+#
 # The image must carry integrations/<name>/dist/local.js: the loader's
 # default root resolves relative to the monorepo, which does not exist in
 # a packaged image, so without these files the local substrate boots with
@@ -57,8 +64,8 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # entry would shadow that resolution and break handler registration
 # invisibly.
 #
-# An integration without a src/local.ts still ships a manifest, and the
-# catalog reconcile at boot needs it: the catalog describes what is
+# A declared integration without a src/local.ts still ships a manifest, and
+# the catalog reconcile at boot needs it: the catalog describes what is
 # installable, which is a larger set than what dispatches. The sync
 # integration is the standing case, a client whose agent lives outside
 # the server process. Its dist/ is staged so the catalog can carry a
@@ -69,24 +76,46 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # the workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
 RUN pnpm --filter "@withmarfa/integration-*" run build
-RUN mkdir /integrations-staged && \
-    for dir in integrations/*/; do \
-      name=$(basename "$dir"); \
-      if [ -f "$dir/src/local.ts" ]; then \
-        if [ ! -f "$dir/dist/local.js" ]; then \
-          echo "ERROR: $name has src/local.ts but built no dist/local.js" >&2; \
-          exit 1; \
-        fi; \
-        mkdir -p "/integrations-staged/$name" && \
-        cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
-      elif [ -f "$dir/dist/manifest.js" ]; then \
-        echo "staging $name: manifest only (catalog needs it, runtime skips it)"; \
-        mkdir -p "/integrations-staged/$name" && \
-        cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
-      else \
-        echo "skipping $name: no src/local.ts and no built manifest"; \
+# The parser's output is captured into a variable rather than expanded
+# inline. `set -e` does not reach a command substitution performed while
+# expanding a `for` word list, and a loop whose body never runs exits 0, so
+# the inline form turns every declaration error into a green build stage
+# that staged nothing. The verification later in the build would still
+# catch it, but the first and clearest report of the fault would come from
+# a step that had just claimed to succeed.
+RUN set -euf; \
+    mkdir -p /integrations-staged; \
+    names="$(node packages/server/scripts/read-installed-integrations.mjs packages/server/installed-integrations.txt)"; \
+    for name in $names; do \
+      dir="integrations/$name"; \
+      if [ ! -d "$dir" ]; then \
+        echo "ERROR: $name is declared installed but $dir is not present" >&2; \
+        exit 1; \
       fi; \
+      if [ -f "$dir/src/local.ts" ] && [ ! -f "$dir/dist/local.js" ]; then \
+        echo "ERROR: $name has src/local.ts but built no dist/local.js" >&2; \
+        exit 1; \
+      fi; \
+      if [ ! -f "$dir/dist/local.js" ] && [ ! -f "$dir/dist/manifest.js" ]; then \
+        echo "ERROR: $name built neither dist/local.js nor dist/manifest.js" >&2; \
+        exit 1; \
+      fi; \
+      mkdir -p "/integrations-staged/$name"; \
+      cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
+      echo "staged $name"; \
     done
+# The scaffold is not installed, so it is staged outside the integrations
+# root as the fixture the in-image verification dispatches through. It is
+# built exactly the way a real integration is, which is what makes it a
+# usable proof that the runtime kit resolves to a single copy; a fixture
+# built any other way would prove something else. The runtime stage deletes
+# it once the verification has passed.
+RUN set -eu; \
+    mkdir -p /verify-fixtures; \
+    if [ -f integrations/_template/dist/local.js ]; then \
+      mkdir -p /verify-fixtures/_template; \
+      cp -R integrations/_template/dist /verify-fixtures/_template/dist; \
+    fi
 # Prune to a self-contained production deploy at /app/out
 # (dist + drizzle + a flattened node_modules; dev-only workspace deps dropped).
 # Last of the pnpm steps deliberately; see the note above the integration build.
@@ -103,21 +132,33 @@ ARG VERSION_SHA=dev
 ENV MARFA_VERSION_SHA=${VERSION_SHA}
 WORKDIR /app
 COPY --from=build --chown=node:node /app/out ./
-# In-tree integrations for the local substrate, dist-only trees (see the
-# build-stage note on why node_modules must not ride along).
+# The installed integrations for the local substrate, dist-only trees (see
+# the build-stage note on why node_modules must not ride along), and beside
+# them the declaration of what should be there, so the image carries a
+# record of its own integration set.
 COPY --from=build --chown=node:node /integrations-staged ./integrations
 ENV MARFA_INTEGRATIONS_ROOT=/app/integrations
+COPY --from=build --chown=node:node /repo/packages/server/installed-integrations.txt ./installed-integrations.txt
+COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
+COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs
 RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \
   # Make /app writable by the non-root user. Hosted uses R2 (BLOB_BACKEND=s3),
   # but the fs blob fallback (and any cwd-relative write) needs a writable dir.
   && mkdir -p data \
   && chown -R node:node /app
 USER node
-# An image whose integrations cannot load, or whose module resolution
-# duplicates the runtime-sdk singleton, fails to build here rather than
-# booting an empty substrate in production.
-RUN node verify-image-integrations.mjs
+# An image carrying integrations other than the ones it declares, or in a
+# shape it did not declare, or whose entries cannot load, or whose module
+# resolution duplicates the runtime-sdk singleton, fails to build here
+# rather than booting a wrong substrate in production.
+#
+# The dispatch fixture is removed in the same step, so nothing running in
+# the container can mistake it for an installed integration. It is a
+# whiteout rather than an erasure: the bytes still sit in the layer the COPY
+# above created and are visible to anyone reading the image. Nothing about
+# it is secret, so that is a size question rather than a safety one.
+RUN node verify-image-integrations.mjs && rm -rf /app/verify-fixtures
 EXPOSE 8600
 # Liveness probe. /health returns 200 (status ok|degraded); slim has no curl,
 # so use Node's global fetch.

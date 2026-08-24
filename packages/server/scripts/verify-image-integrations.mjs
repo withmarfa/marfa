@@ -1,40 +1,61 @@
 /**
- * In-image verification that the packaged server can actually run its
- * integrations. Executed as a RUN step in packages/server/Dockerfile, so
- * an image that would boot the local substrate with a broken or empty
- * integration set fails to build instead of failing in production.
+ * In-image verification that the packaged server can actually run the
+ * integrations it says it installed. Executed as a RUN step in
+ * packages/server/Dockerfile, so an image that would boot the local
+ * substrate with the wrong integration set fails to build instead of
+ * failing in production.
  *
- * Plain Node, ESM, node: builtins only. It runs inside the runtime image,
- * where there is no tsx and no monorepo; everything it needs must resolve
- * from the image's own filesystem.
+ * An image that installs nothing is a legitimate deployment and passes
+ * here. What stops that being an accident is the declaration itself, which
+ * refuses to read as empty unless it says `none` in so many words.
+ *
+ * Plain Node, ESM, node: builtins only, and one sibling module. It runs
+ * inside the runtime image, where there is no tsx and no monorepo;
+ * everything it needs must resolve from the image's own filesystem.
  *
  * Three checks, in order:
  *
- *   1. Presence and count. Every directory under the integrations root
- *      must carry either dist/local.js (a dispatchable integration) or
- *      dist/manifest.js (a manifest-only entry the catalog reconcile
- *      reads and the runtime never dispatches, such as sync). There must
- *      be at least MIN_DISPATCHABLE of the former. The count is a
- *      tripwire: removing an integration should be a visible decision
- *      here, not a silent shrink of the image.
+ *   1. The installed set is the declared set, in the declared shape.
+ *      installed-integrations.txt says what this image installs; the
+ *      integrations root must hold exactly those, no more and no fewer. A
+ *      plain name must carry dist/local.js, a dispatchable entry. A name
+ *      marked manifest-only must carry dist/manifest.js and must not carry
+ *      a handler entry, which is the shape of an integration whose code
+ *      runs somewhere else and whose manifest the catalog still needs.
+ *
+ *      This replaced a hardcoded minimum count. The count existed because
+ *      nothing else could say whether the image was complete, and it had
+ *      the two faults of every such number: it passed a build that had
+ *      quietly gained an integration, and it needed raising by hand every
+ *      time the set grew. What the count did catch, and a bare name list
+ *      would not, is an integration losing its handler and shrinking the
+ *      dispatchable set without changing the count of directories. The
+ *      marker is what keeps that caught.
  *
  *   2. Main-process import. The server's loader imports each entry on
  *      boot to read its manifest; this repeats that read and fails on a
  *      missing or shapeless manifest export.
  *
  *   3. Worker-thread dispatch. Spawns dist/worker-entry.js with the
- *      template integration's local.js and runs one schedule dispatch
- *      against a stub HTTP server. This is the module-singleton proof:
- *      if @withmarfa/runtime-sdk resolves to a second copy inside the
- *      image, the handler registers into one registry and dispatch reads
+ *      scaffold's local.js and runs one schedule dispatch against a stub
+ *      HTTP server. This is the module-singleton proof: if
+ *      @withmarfa/runtime-sdk resolves to a second copy inside the image,
+ *      the handler registers into one registry and dispatch reads
  *      another, and the result comes back not-ok. The request shape
  *      mirrors scripts/smoke-worker-entry.ts; the two must move together.
+ *
+ *      The scaffold is a build fixture rather than an installed
+ *      integration, so it lives outside the integrations root and the
+ *      image drops it as soon as this passes. An image installing nothing
+ *      dispatchable has nothing to prove and skips this; anything else
+ *      needs the fixture and fails without it.
  */
 import { readdirSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
+import { readInstalledIntegrations } from "./read-installed-integrations.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INTEGRATIONS_ROOT =
@@ -42,11 +63,29 @@ const INTEGRATIONS_ROOT =
 const WORKER_ENTRY =
   process.env.MARFA_VERIFY_WORKER_ENTRY ??
   resolve(HERE, "dist", "worker-entry.js");
-// 14 shipping integrations with a local entry plus the template. The sync
-// integration has no local.js by design: its agent lives outside the
-// server process, so it stages manifest-only and does not count here.
-// Update this number deliberately when the set changes.
-const MIN_DISPATCHABLE = 15;
+const DECLARATION =
+  process.env.MARFA_INSTALLED_INTEGRATIONS ??
+  resolve(HERE, "installed-integrations.txt");
+// Outside the integrations root deliberately: what is in that root is what
+// the deployment installed, and the dispatch fixture is not that.
+const FIXTURE_ROOT =
+  process.env.MARFA_VERIFY_FIXTURE_ROOT ?? resolve(HERE, "verify-fixtures");
+// Overridable only so the suite can drive the timeout paths without waiting
+// out the real budgets. An image never sets these.
+//
+// A bad value is refused rather than coerced. `Number("")` is 0 and
+// `Number("soon")` is NaN, and setTimeout treats both as fire-immediately,
+// so the permissive reading turns a typo into a timeout that always
+// expires: a check that fails for a reason unrelated to what it tests.
+function budget(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    fail(`${name} must be a positive number of milliseconds, not "${raw}"`);
+  }
+  return parsed;
+}
 
 function fail(msg) {
   console.error(`[verify-image-integrations] FAIL: ${msg}`);
@@ -57,75 +96,163 @@ function info(msg) {
   console.log(`[verify-image-integrations] ${msg}`);
 }
 
-// Check 1: presence and count.
-if (!existsSync(INTEGRATIONS_ROOT)) {
-  fail(`integrations root does not exist: ${INTEGRATIONS_ROOT}`);
+const READY_TIMEOUT_MS = budget("MARFA_VERIFY_READY_TIMEOUT_MS", 10_000);
+const DISPATCH_TIMEOUT_MS = budget("MARFA_VERIFY_DISPATCH_TIMEOUT_MS", 15_000);
+
+// Check 1: the installed set is the declared set.
+//
+// A missing root is an empty installed set rather than an error, matching
+// what the runtime's own discovery does with it. An image that declares
+// nothing and installs nothing is coherent; an image that declares
+// something and has no root is caught below, by name.
+let declaration;
+try {
+  declaration = readInstalledIntegrations(DECLARATION);
+} catch (err) {
+  fail(String(err.message ?? err));
 }
-const dirs = readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
-  .filter((e) => e.isDirectory())
-  .map((e) => e.name)
-  .sort();
-const entries = [];
-const manifestOnly = [];
-for (const name of dirs) {
-  const localJs = resolve(INTEGRATIONS_ROOT, name, "dist", "local.js");
-  if (existsSync(localJs)) {
-    entries.push({ name, localJs });
-    continue;
-  }
-  // Manifest-only is a deliberate shape, not a broken build: the catalog
-  // reconcile reads it and the runtime loader skips it.
-  if (existsSync(resolve(INTEGRATIONS_ROOT, name, "dist", "manifest.js"))) {
-    manifestOnly.push(name);
-    continue;
-  }
-  fail(`${name} is staged without dist/local.js or dist/manifest.js`);
-}
-if (entries.length < MIN_DISPATCHABLE) {
+const declared = declaration.map((entry) => entry.name);
+const manifestOnlyByName = new Map(
+  declaration.map((entry) => [entry.name, entry.manifestOnly]),
+);
+
+const installed = existsSync(INTEGRATIONS_ROOT)
+  ? readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort()
+  : [];
+
+const missing = declared.filter((name) => !installed.includes(name));
+if (missing.length > 0) {
   fail(
-    `expected at least ${String(MIN_DISPATCHABLE)} dispatchable integration entries, found ${String(entries.length)}: ${dirs.join(", ")}`,
+    `declared but not installed under ${INTEGRATIONS_ROOT}: ${missing.join(", ")}`,
   );
 }
+const undeclared = installed.filter((name) => !declared.includes(name));
+if (undeclared.length > 0) {
+  fail(
+    `installed but not declared in ${DECLARATION}: ${undeclared.join(", ")}. ` +
+      `Declare it or stop staging it. An image quietly carrying something ` +
+      `nobody named is the failure this check exists for.`,
+  );
+}
+
+const entries = [];
+const manifestOnly = [];
+for (const name of declared) {
+  const localJs = resolve(INTEGRATIONS_ROOT, name, "dist", "local.js");
+  const manifestJs = resolve(INTEGRATIONS_ROOT, name, "dist", "manifest.js");
+  const wantsManifestOnly = manifestOnlyByName.get(name) === true;
+
+  if (wantsManifestOnly) {
+    // Manifest-only is a deliberate shape, not a broken build: the catalog
+    // reconcile reads it and the runtime loader skips it. Declaring it is
+    // what makes the runtime's skip an intention rather than an accident,
+    // so an entry that turns up dispatchable is as wrong as one that does
+    // not turn up at all.
+    if (existsSync(localJs)) {
+      fail(
+        `${name} is declared manifest-only but staged a dispatchable ` +
+          `dist/local.js. Either it grew a handler, in which case drop the ` +
+          `marker, or the wrong tree was staged.`,
+      );
+    }
+    if (!existsSync(manifestJs)) {
+      fail(`${name} is declared manifest-only but staged no dist/manifest.js`);
+    }
+    manifestOnly.push({ name, entryJs: manifestJs });
+    continue;
+  }
+
+  if (!existsSync(localJs)) {
+    fail(
+      `${name} is declared dispatchable but staged no dist/local.js` +
+        (existsSync(manifestJs)
+          ? `. It built a manifest and no handler, which is the shape that ` +
+            `used to shrink the image silently; mark it manifest-only if ` +
+            `that is now what it is.`
+          : ""),
+    );
+  }
+  entries.push({ name, localJs });
+}
 info(
-  `${String(entries.length)} dispatchable integration entries staged` +
+  `${String(declared.length)} declared integrations all installed: ` +
+    `${String(entries.length)} dispatchable` +
     (manifestOnly.length > 0
-      ? `, plus ${String(manifestOnly.length)} manifest-only (${manifestOnly.join(", ")})`
+      ? `, ${String(manifestOnly.length)} manifest-only (${manifestOnly
+          .map((entry) => entry.name)
+          .join(", ")})`
       : ""),
 );
 
-// Check 2: each entry imports and exports a manifest. Importing also runs
-// each entry's registerHandlers() against this process's registry; that
-// registry is throwaway here, so the overwrites are harmless.
-for (const entry of entries) {
+// Check 2: every staged entry imports and exports a manifest. Both shapes,
+// not only the dispatchable ones: the catalog reconcile imports a
+// manifest-only entry at boot exactly as the runtime loader imports a
+// handler entry, so a truncated one is a boot failure this is the last
+// chance to refuse. Importing also runs each handler entry's
+// registerHandlers() against this process's registry; that registry is
+// throwaway here, so the overwrites are harmless.
+//
+// Duck-typed on the export rather than keyed to a name, because a handler
+// entry exports `manifest` and a manifest-only package exports its own
+// constant. The server's own loader does the same and for the same reason.
+function manifestFrom(mod) {
+  const named = mod.manifest ?? mod.default?.manifest;
+  if (usableManifest(named)) return named;
+  return Object.values(mod).find(usableManifest);
+}
+
+// Deliberately the same three fields the server's own catalog loader
+// requires before it will even attempt validation. A weaker test here would
+// pass an entry the catalog then skips at boot, which is precisely the
+// failure this check exists to refuse, and it would also let the search
+// below settle on a different export than the loader would pick.
+function usableManifest(value) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "manifest_schema_version" in value &&
+    typeof value.name === "string" &&
+    "version" in value
+  );
+}
+
+for (const entry of [
+  ...entries.map((e) => ({ name: e.name, entryJs: e.localJs })),
+  ...manifestOnly,
+]) {
   let mod;
   try {
-    mod = await import(pathToFileURL(entry.localJs).href);
+    mod = await import(pathToFileURL(entry.entryJs).href);
   } catch (err) {
-    fail(`${entry.name}/dist/local.js failed to import: ${String(err)}`);
+    fail(`${entry.name} failed to import ${entry.entryJs}: ${String(err)}`);
   }
-  const manifest = mod.manifest ?? mod.default?.manifest;
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    typeof manifest.name !== "string"
-  ) {
-    fail(`${entry.name}/dist/local.js exports no usable manifest`);
+  if (!usableManifest(manifestFrom(mod))) {
+    fail(`${entry.name} exports no usable manifest from ${entry.entryJs}`);
   }
 }
 info(`all entries import and export manifests`);
 
-// Check 3: worker-thread dispatch through the template integration.
+// Check 3: worker-thread dispatch through the scaffold fixture.
+if (entries.length === 0) {
+  info(
+    `nothing dispatchable installed; the dispatch check has nothing to prove`,
+  );
+  info(`PASSED`);
+  process.exit(0);
+}
 if (!existsSync(WORKER_ENTRY)) {
   fail(`worker entry does not exist: ${WORKER_ENTRY}`);
 }
-const templateLocal = resolve(
-  INTEGRATIONS_ROOT,
-  "_template",
-  "dist",
-  "local.js",
-);
+const templateLocal = resolve(FIXTURE_ROOT, "_template", "dist", "local.js");
 if (!existsSync(templateLocal)) {
-  fail(`_template/dist/local.js missing; the dispatch check needs it`);
+  fail(
+    `the dispatch fixture is missing at ${templateLocal}, so the ` +
+      `module-resolution proof cannot run against an image that installs ` +
+      `${String(entries.length)} dispatchable integrations`,
+  );
 }
 
 // Stub for the template handler's activity emit; shape matches what
@@ -183,7 +310,13 @@ try {
       });
     }),
     new Promise((_, rej) =>
-      setTimeout(() => rej(new Error("worker not ready within 10s")), 10_000),
+      setTimeout(
+        () =>
+          rej(
+            new Error(`worker not ready within ${String(READY_TIMEOUT_MS)}ms`),
+          ),
+        READY_TIMEOUT_MS,
+      ),
     ),
   ]);
   info(`worker thread loaded the template entry`);
@@ -193,7 +326,15 @@ try {
       if (msg !== null && typeof msg === "object" && msg.kind !== "ready")
         res(msg);
     });
-    setTimeout(() => rej(new Error("dispatch timed out after 15s")), 15_000);
+    setTimeout(
+      () =>
+        rej(
+          new Error(
+            `dispatch timed out after ${String(DISPATCH_TIMEOUT_MS)}ms`,
+          ),
+        ),
+      DISPATCH_TIMEOUT_MS,
+    );
     worker.postMessage({
       apiUrl: `http://127.0.0.1:${String(port)}`,
       credential: {

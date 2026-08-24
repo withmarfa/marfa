@@ -76,9 +76,13 @@ jobs:
       - name: Build and push linux/amd64 image
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
-        # The Dockerfile's own build steps verify the image can run its
-        # integrations (see packages/server/Dockerfile); a broken image
-        # fails here, before anything is pushed.
+        # The Dockerfile's own build steps verify the image installs the
+        # integrations it declares and can run them (see
+        # packages/server/Dockerfile), so an image whose staged tree cannot
+        # load fails here, before anything is pushed. What it cannot judge
+        # is whether the declaration itself is right: that is held to the
+        # directory by the ordinary suite, which this job does not run. A
+        # ref that never passed CI can therefore be built and pushed.
         run: |
           docker buildx build --platform linux/amd64 \
             -f packages/server/Dockerfile \
