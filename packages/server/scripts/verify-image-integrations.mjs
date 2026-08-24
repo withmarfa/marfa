@@ -10,27 +10,40 @@
  *
  * Three checks, in order:
  *
- *   1. Presence and count. Every directory under the integrations root
- *      must carry either dist/local.js (a dispatchable integration) or
- *      dist/manifest.js (a manifest-only entry the catalog reconcile
- *      reads and the runtime never dispatches, such as sync). There must
- *      be at least MIN_DISPATCHABLE of the former. The count is a
- *      tripwire: removing an integration should be a visible decision
- *      here, not a silent shrink of the image.
+ *   1. The installed set is the declared set. installed-integrations.txt
+ *      says what this image installs; the integrations root must hold
+ *      exactly those, no more and no fewer, and each must carry either
+ *      dist/local.js (a dispatchable integration) or dist/manifest.js (a
+ *      manifest-only entry the catalog reconcile reads and the runtime
+ *      never dispatches, such as sync).
+ *
+ *      This replaced a hardcoded minimum count. The count existed because
+ *      nothing else could say whether the image was complete, and it had
+ *      the two faults of every such number: it passed a build that had
+ *      quietly gained an integration, and it needed raising by hand every
+ *      time the set grew. A declaration answers the same question without
+ *      either, and removing an integration stays what it should be, an
+ *      edit somebody made on purpose.
  *
  *   2. Main-process import. The server's loader imports each entry on
  *      boot to read its manifest; this repeats that read and fails on a
  *      missing or shapeless manifest export.
  *
  *   3. Worker-thread dispatch. Spawns dist/worker-entry.js with the
- *      template integration's local.js and runs one schedule dispatch
- *      against a stub HTTP server. This is the module-singleton proof:
- *      if @withmarfa/runtime-sdk resolves to a second copy inside the
- *      image, the handler registers into one registry and dispatch reads
+ *      scaffold's local.js and runs one schedule dispatch against a stub
+ *      HTTP server. This is the module-singleton proof: if
+ *      @withmarfa/runtime-sdk resolves to a second copy inside the image,
+ *      the handler registers into one registry and dispatch reads
  *      another, and the result comes back not-ok. The request shape
  *      mirrors scripts/smoke-worker-entry.ts; the two must move together.
+ *
+ *      The scaffold is a build fixture rather than an installed
+ *      integration, so it lives outside the integrations root and the
+ *      image drops it as soon as this passes. An image installing nothing
+ *      dispatchable has nothing to prove and skips this; anything else
+ *      needs the fixture and fails without it.
  */
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
@@ -42,11 +55,13 @@ const INTEGRATIONS_ROOT =
 const WORKER_ENTRY =
   process.env.MARFA_VERIFY_WORKER_ENTRY ??
   resolve(HERE, "dist", "worker-entry.js");
-// 14 shipping integrations with a local entry plus the template. The sync
-// integration has no local.js by design: its agent lives outside the
-// server process, so it stages manifest-only and does not count here.
-// Update this number deliberately when the set changes.
-const MIN_DISPATCHABLE = 15;
+const DECLARATION =
+  process.env.MARFA_INSTALLED_INTEGRATIONS ??
+  resolve(HERE, "installed-integrations.txt");
+// Outside the integrations root deliberately: what is in that root is what
+// the deployment installed, and the dispatch fixture is not that.
+const FIXTURE_ROOT =
+  process.env.MARFA_VERIFY_FIXTURE_ROOT ?? resolve(HERE, "verify-fixtures");
 
 function fail(msg) {
   console.error(`[verify-image-integrations] FAIL: ${msg}`);
@@ -57,17 +72,51 @@ function info(msg) {
   console.log(`[verify-image-integrations] ${msg}`);
 }
 
-// Check 1: presence and count.
-if (!existsSync(INTEGRATIONS_ROOT)) {
-  fail(`integrations root does not exist: ${INTEGRATIONS_ROOT}`);
+// Check 1: the installed set is the declared set.
+//
+// A missing root is an empty installed set rather than an error, matching
+// what the runtime's own discovery does with it. An image that declares
+// nothing and installs nothing is coherent; an image that declares
+// something and has no root is caught below, by name.
+let declaredText;
+try {
+  declaredText = readFileSync(DECLARATION, "utf8");
+} catch (err) {
+  fail(
+    `cannot read the integration declaration at ${DECLARATION}: ${String(err)}`,
+  );
 }
-const dirs = readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
-  .filter((e) => e.isDirectory())
-  .map((e) => e.name)
+const declared = declaredText
+  .split("\n")
+  .map((line) => line.replace(/#.*$/, "").trim())
+  .filter((line) => line.length > 0)
   .sort();
+
+const installed = existsSync(INTEGRATIONS_ROOT)
+  ? readdirSync(INTEGRATIONS_ROOT, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort()
+  : [];
+
+const missing = declared.filter((name) => !installed.includes(name));
+if (missing.length > 0) {
+  fail(
+    `declared but not installed under ${INTEGRATIONS_ROOT}: ${missing.join(", ")}`,
+  );
+}
+const undeclared = installed.filter((name) => !declared.includes(name));
+if (undeclared.length > 0) {
+  fail(
+    `installed but not declared in ${DECLARATION}: ${undeclared.join(", ")}. ` +
+      `Declare it or stop staging it. An image quietly carrying something ` +
+      `nobody named is the failure this check exists for.`,
+  );
+}
+
 const entries = [];
 const manifestOnly = [];
-for (const name of dirs) {
+for (const name of declared) {
   const localJs = resolve(INTEGRATIONS_ROOT, name, "dist", "local.js");
   if (existsSync(localJs)) {
     entries.push({ name, localJs });
@@ -81,15 +130,11 @@ for (const name of dirs) {
   }
   fail(`${name} is staged without dist/local.js or dist/manifest.js`);
 }
-if (entries.length < MIN_DISPATCHABLE) {
-  fail(
-    `expected at least ${String(MIN_DISPATCHABLE)} dispatchable integration entries, found ${String(entries.length)}: ${dirs.join(", ")}`,
-  );
-}
 info(
-  `${String(entries.length)} dispatchable integration entries staged` +
+  `${String(declared.length)} declared integrations all installed: ` +
+    `${String(entries.length)} dispatchable` +
     (manifestOnly.length > 0
-      ? `, plus ${String(manifestOnly.length)} manifest-only (${manifestOnly.join(", ")})`
+      ? `, ${String(manifestOnly.length)} manifest-only (${manifestOnly.join(", ")})`
       : ""),
 );
 
@@ -114,18 +159,24 @@ for (const entry of entries) {
 }
 info(`all entries import and export manifests`);
 
-// Check 3: worker-thread dispatch through the template integration.
+// Check 3: worker-thread dispatch through the scaffold fixture.
+if (entries.length === 0) {
+  info(
+    `nothing dispatchable installed; the dispatch check has nothing to prove`,
+  );
+  info(`PASSED`);
+  process.exit(0);
+}
 if (!existsSync(WORKER_ENTRY)) {
   fail(`worker entry does not exist: ${WORKER_ENTRY}`);
 }
-const templateLocal = resolve(
-  INTEGRATIONS_ROOT,
-  "_template",
-  "dist",
-  "local.js",
-);
+const templateLocal = resolve(FIXTURE_ROOT, "_template", "dist", "local.js");
 if (!existsSync(templateLocal)) {
-  fail(`_template/dist/local.js missing; the dispatch check needs it`);
+  fail(
+    `the dispatch fixture is missing at ${templateLocal}, so the ` +
+      `module-resolution proof cannot run against an image that installs ` +
+      `${String(entries.length)} dispatchable integrations`,
+  );
 }
 
 // Stub for the template handler's activity emit; shape matches what

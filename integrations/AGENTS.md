@@ -94,6 +94,8 @@ Integrations run in-process on the server's integration runtime (Node + pg-boss 
 
 So this is documentation rather than a source of truth, kept because the one-line descriptions are the part a directory scan cannot produce. **It is checked against the directory**, so a new integration nobody wrote a line for fails the suite, and so does a bullet for something that no longer exists.
 
+**What the hosted container image ships is a separate list, and that one is real.** `packages/server/installed-integrations.txt` declares which integrations the image installs into the runtime's directory, so a new integration is added there as well as here. It changes nothing about how the runtime finds them; it decides only what is put in the directory when the image is built, which is what lets a deployment install something the image never carried. It is checked against the directory too, so forgetting it fails in seconds rather than during a build.
+
 - **`_template`** — scaffold to copy when starting a new integration.
 - **`podcasts`** — scheduled poll of podcast RSS feeds to `marfa.podcast.show` and `marfa.podcast.episode`, joined by `in-collection` edges, or to `core.media.series` and `core.media.episode` when a connection selects the core family.
 - **`rss-watcher`** — scheduled poll of a feed to `core.bookmark`.

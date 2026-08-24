@@ -1,0 +1,48 @@
+# What this image installs into MARFA_INTEGRATIONS_ROOT.
+#
+# The image build stages exactly these and nothing else, and the in-image
+# verification asserts that exactly these arrived. Removing one is an edit
+# here, which is a decision somebody makes on purpose, rather than a
+# directory quietly shrinking and the image getting smaller with it.
+#
+# One name per line. Blank lines are ignored and everything from a # to the
+# end of a line is a comment. A name is a directory under integrations/
+# today; when integrations are ordinary published packages this becomes the
+# install list and a name gains a package specifier beside it.
+#
+# A name here with no matching directory fails the build, and a directory
+# with no name here is not shipped. src/integrations/installed-integrations
+# .test.ts holds the two in agreement in the ordinary suite, so an
+# integration nobody declared fails long before an image build does.
+#
+# The scaffold under integrations/_template is deliberately absent. It is a
+# starting point for authors rather than an integration, and the runtime's
+# discovery skips it for the same reason. The build stages it separately as
+# the fixture the verification dispatches through, and the image drops it
+# once that has passed.
+#
+# An empty list is a valid deployment: the build stages nothing, the image
+# ships an empty integrations root, and the substrate boots with no
+# registrations. That is the shape a deployment installing its own
+# integrations starts from.
+
+github-webhooks
+google-calendar
+google-contacts
+google-drive
+google-tasks
+google-youtube
+inbox
+podcasts
+raindrop
+readwise
+readwise-reader
+rss-watcher
+task-auto-archive
+todoist
+
+# sync ships a manifest and no dispatchable entry: its agent runs outside
+# the server process. The catalog still needs a current manifest for it,
+# because the catalog describes what is installable, which is a larger set
+# than what dispatches.
+sync
