@@ -448,9 +448,6 @@ importers:
 
   packages/runtime-sdk:
     dependencies:
-      '@withmarfa/sdk':
-        specifier: workspace:*
-        version: link:../sdk
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
