@@ -501,6 +501,14 @@ export function buildOauthProjectionPlugin(opts: {
   // registries and the same configured bundles, so the narrowing hook and
   // the validation it runs ahead of always agree on what exists.
   const liveScopes = new Set(buildAllowedScopes());
+  // What discovery advertises to every client, as opposed to everything a
+  // client may request. `liveScopes` is the wider set (wildcards, every
+  // registered type); this is the curated bundle union the metadata
+  // document publishes. The distinction is what lets a stored ceiling stop
+  // freezing without becoming no ceiling at all — see `narrowAuthorizeScopes`.
+  const bundleScopes = new Set(
+    getPermissionBundles().flatMap((bundle) => bundle.scopes),
+  );
   const acceptedResources = baseURL
     ? new Set(
         [
@@ -546,7 +554,7 @@ export function buildOauthProjectionPlugin(opts: {
           // URI with an error and no way forward.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            narrowAuthorizeScopes(ctx, storage, liveScopes),
+            narrowAuthorizeScopes(ctx, storage, liveScopes, bundleScopes),
           ),
         },
         ...(acceptedResources
@@ -708,6 +716,7 @@ async function narrowAuthorizeScopes(
   ctx: HookCtxLite,
   storage: Storage,
   liveScopes: Set<string>,
+  bundleScopes: Set<string>,
 ): Promise<void> {
   const query = ctx.query;
   if (!query || typeof query !== "object") return;
@@ -764,6 +773,92 @@ async function narrowAuthorizeScopes(
       granted_scopes: grantable,
     });
     return;
+  }
+
+  // Catch the ceiling up to what this request asks for, before anything is
+  // narrowed against it.
+  //
+  // `auth_oauth_client.scopes` is written once, at registration, and never
+  // again, so it is a snapshot of an allowlist that moves whenever the type
+  // registry does. A client ages out of the platform silently: a type
+  // registered after the client was is uncoverable by it forever, the
+  // consent screen still offers the scope, the authorize request still asks
+  // for it, and the grant comes back without it and without a word. Six
+  // scopes went missing from one client that way, and no grant on either
+  // environment held any of them.
+  //
+  // It has to be a write rather than a wider view here, because the plugin
+  // validates the request against `client.scopes` itself. Narrowing less
+  // aggressively without moving the stored row just hands the plugin a
+  // literal it will refuse outright, which is the dead end this hook exists
+  // to prevent.
+  //
+  // Two things bound it, and both matter.
+  //
+  // Only what this request actually asks for, rather than the whole bundle
+  // union. The ceiling is also what a client gets when it omits `scope`, so
+  // widening it wholesale would silently turn every no-scope authorize into
+  // a request for everything. Growing it one requested literal at a time
+  // means the row ends up recording what this client has genuinely asked
+  // for, which is the honest version of the same repair.
+  //
+  // And only scopes the bundles publish. The bundles are what the metadata
+  // document advertises to every client, re-derived from the live registry
+  // at every boot precisely so custom types stay coverable, so a client
+  // asking for one is asking for something this server tells every client
+  // it may ask for — and the user still consents to it on the screen that
+  // follows. Everything outside them still needs the client registered for
+  // it: the wildcards, and the per-type scopes the curated set leaves out.
+  //
+  // Widen only, never shrink. The snapshot is stale in both directions, and
+  // a scope for a type that no longer exists is already dropped below
+  // against the live allowlist, where it costs nothing and needs no write.
+  //
+  // A null ceiling already tracks the live set, and an empty one is a
+  // deliberate, real ceiling this must not quietly fill in.
+  if (ceiling !== null && ceiling.length > 0) {
+    const held = ceiling;
+    const missing = requested.filter(
+      (scope) => bundleScopes.has(scope) && !held.includes(scope),
+    );
+    if (missing.length > 0) {
+      const widened = [...held, ...missing];
+      try {
+        if (await oauth.widenClientScopes(clientId, held, widened)) {
+          log("info", "oauth authorize: caught a stale client ceiling up", {
+            client_id: clientId,
+            added_scopes: missing,
+          });
+          ceiling = widened;
+          // Audited here rather than only logged, and audited separately
+          // from the narrowing below, because this one is the registration
+          // row changing. It also happens before the plugin resolves a
+          // session, so it is the one event on this path that no signed-in
+          // identity is attached to — which makes it the one most worth a
+          // record rather than the one least worth it.
+          void storage.audit.log({
+            space_id: null,
+            action: "auth.client.scopes_widened",
+            resource_type: "oauth_client",
+            resource_id: clientId,
+            client_ip: null,
+            details: {
+              client_id: clientId,
+              added_scopes: missing,
+              ceiling_size: widened.length,
+            },
+          });
+        }
+      } catch (err) {
+        // A failed catch-up is not a failed authorize. The narrowing below
+        // still runs against the ceiling as it stands, which is what
+        // happened before this existed.
+        log("warn", "oauth authorize: could not widen a stale ceiling", {
+          client_id: clientId,
+          error: err,
+        });
+      }
+    }
   }
 
   const granted: string[] = [];
@@ -827,6 +922,36 @@ async function narrowAuthorizeScopes(
       granted_scopes: granted,
     });
   }
+
+  // And an audit row, because a log line is not a record anybody goes
+  // looking through afterwards. A narrowed authorize is a grant that is
+  // quietly smaller than the one the user was shown a screen for, and the
+  // operator trail already carries `auth.grant.created` next to it — this
+  // is the line that says the two do not match and why.
+  //
+  // No space: the narrowing happens before the plugin resolves a session,
+  // so there is no user to attribute it to yet, and inventing one by
+  // guessing would be worse than the null the audit store already admits
+  // for system-initiated rows. The client is the subject here anyway.
+  void storage.audit.log({
+    space_id: null,
+    action: "auth.scopes.narrowed",
+    resource_type: "oauth_client",
+    resource_id: clientId,
+    client_ip: null,
+    details: {
+      client_id: clientId,
+      requested_scopes: requested,
+      granted_scopes: granted,
+      // Two fields rather than one, for the same reason there are two log
+      // lines: a scope this server has never heard of points at a client
+      // built against a different registry, and a scope it knows but the
+      // client is not registered for points at the client's ceiling. They
+      // want different fixes.
+      dropped_unknown_to_server: unknownToServer,
+      dropped_outside_client_ceiling: outsideClientCeiling,
+    },
+  });
 }
 
 /**

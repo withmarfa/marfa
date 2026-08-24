@@ -1432,6 +1432,33 @@ export interface OauthProviderStore {
   /** Full client row by business key. Used by the device-flow initiation
    *  path to validate `redirect_uri` and resolve a display name. */
   getClient(clientId: string): Promise<OauthClientRow | null>;
+  /**
+   * Widen a client's stored scope ceiling, but only while it still holds
+   * exactly `expectedScopes`. Returns true when the write landed, false
+   * when there was no client or its ceiling had already moved on.
+   *
+   * `auth_oauth_client.scopes` is otherwise written once, at registration,
+   * and never again, so it is a snapshot of an allowlist that moves
+   * whenever the type registry does. A client therefore ages out of the
+   * platform silently: a type registered after the client was is
+   * uncoverable by it forever. This is how the ceiling catches up.
+   *
+   * The guard is the same shape as `setConsentScopes` below and is
+   * there for the same reason: the ceiling was read before the decision to
+   * widen it, so it is only still the truth if nothing else has touched
+   * the row since. A concurrent registration update is left alone rather
+   * than overwritten by a stale set.
+   *
+   * Widen only. Nothing here removes a scope, because a stale ceiling is
+   * stale in both directions and the two want different handling: a scope
+   * for a type that no longer exists is already dropped at request time
+   * against the live allowlist, where it costs nothing and needs no write.
+   */
+  widenClientScopes(
+    clientId: string,
+    expectedScopes: readonly string[],
+    scopes: readonly string[],
+  ): Promise<boolean>;
   /** Update the browser-logout configuration for an existing first-party
    * client. Used by the deployment seed so a pre-existing client gains new
    * redirect URIs without requiring a destructive reset. */

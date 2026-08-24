@@ -396,6 +396,10 @@ Credentials carry three permission maps:
 
 Edge mutations dual-gate: the caller needs **both** write on the source item's type AND write on the edge type. Admin keys bypass both.
 
+**A client's stored scope ceiling catches up to the bundles it asks for.** `auth_oauth_client.scopes` is written once at registration and never refreshed, so on its own it is a snapshot of an allowlist that moves whenever the type registry does, and a client silently ages out of the platform: a type registered after the client was is uncoverable by it forever, while the consent screen goes on offering the scope. The authorize hook now widens the stored row to include the bundle scopes a request names, once, lazily, so every existing client self-heals on its next sign-in.
+
+Three bounds on that, each load-bearing. It widens **by what was requested**, not to the whole bundle union, because the ceiling is also what a client gets when it omits `scope`. It admits **only scopes the bundles publish**, so wildcards and the per-type scopes outside the curated set still need the client registered for them. And it **never shrinks**, because a scope for a type that no longer exists is already dropped at request time against the live allowlist, where it costs nothing.
+
 OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@withmarfa/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Two sub-resource scopes are enforced: `metadata.types:write` gates `POST /types` and `metadata.edge_types:write` gates `POST /edge-types`, both for non-admin credentials. Admin keys bypass; OAuth tokens project the scopes into the `metadata_permissions` map on the synthetic `ApiKey`.
 
 New keys default to `edge_permissions: {}` — edge access is opt-in; callers must grant explicitly.
