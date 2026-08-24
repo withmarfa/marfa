@@ -101,6 +101,18 @@ function loadIntegration(dir: string): Promise<LoadedIntegration> {
  * to the integration set. The scaffold filled this role while it was the
  * only minimal thing in the tree, which coupled a substrate smoke to a
  * directory that exists for integration authors.
+ *
+ * **Why this case stays when the integrations leave**, since it is the
+ * obvious thing to ask of the one case in this file that is not an
+ * integration. What it proves is that *the server's* in-process substrate
+ * works end to end — the supervisor's lock, credential mint, cursor
+ * snapshot and delta merge, driven through a real built entry. That is a
+ * property of the server, not of any integration. Every case below leaves
+ * with the integration it smokes, because each proves something about that
+ * integration; this one would land in a repository with no server to smoke
+ * against, and this repository would lose its only substrate smoke. So it
+ * dispatches through a fixture the server owns rather than through
+ * whichever integration happened to be smallest.
  */
 function loadDispatchFixture(): Promise<LoadedIntegration> {
   return loadBuiltEntry(

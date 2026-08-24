@@ -26,15 +26,25 @@
  * it once the verification has passed, so nothing running in the container
  * can mistake it for something a deployment installed.
  *
- * **What it has to keep doing.** Two callers drive it —
- * `packages/server/scripts/verify-image-integrations.mjs` inside the image
- * and `packages/server/scripts/smoke-worker-entry.ts` against the monorepo
- * — and between them they assert that one schedule dispatch comes back ok
- * and that a cursor delta reaches them under `cursor:main`. Both stand up
- * an HTTP stub that answers any POST with a created item, which is what the
- * activity emit below needs and the whole of what it may need: a handler
- * here that wanted a real Marfa would make the check untestable in the one
- * place it has to run.
+ * **What it has to keep doing.** Three callers drive it, and between them
+ * they pin every observable below.
+ *
+ *   - `packages/server/scripts/verify-image-integrations.mjs`, inside the
+ *     image, and `packages/server/scripts/smoke-worker-entry.ts`, against
+ *     the monorepo. Both spawn the built `worker-entry.js`, which imports
+ *     this module and relies on the load-time registration at the bottom;
+ *     both assert one schedule dispatch comes back ok, and the smoke also
+ *     asserts a cursor delta arrives under `cursor:main`.
+ *   - `src/integrations/local-runtime/in-tree-smoke.test.ts`, which drives
+ *     the supervisor rather than a worker thread. It calls the exported
+ *     `registerHandlers` itself after resetting the registry, and asserts
+ *     the persisted cursor carries `run_count`. That is the only reason
+ *     `registerHandlers` is exported and the only reader of that field.
+ *
+ * All three stand up something that answers a POST with a created item,
+ * which is what the activity emit below needs and the whole of what it may
+ * need: a handler here that wanted a real Marfa would make the check
+ * untestable in the one place it has to run.
  */
 import {
   registerScheduleHandler,
