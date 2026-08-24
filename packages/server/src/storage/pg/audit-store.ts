@@ -1,8 +1,15 @@
+/* eslint-disable no-restricted-syntax -- Not yet on the shared space
+ * fence. `storage/space-condition.ts` is the one spelling of it, and
+ * this store predates it; the rule covers every store so a new file is
+ * covered by default, which leaves the existing ones needing a line
+ * that says so. Normalizing one is a change of its own: an absent space
+ * has to be read call site by call site, and reading it wrong is the
+ * defect the helper exists for. Delete this line when you do. */
 import { eq, and, desc, lt, or, gte, lte, isNull, like } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
-import type { AuditStore, AuditEntry } from "../interface.js";
+import type { AuditEntry, AuditLogEntry, AuditStore } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { WriteTracker } from "../write-tracker.js";
@@ -39,38 +46,46 @@ export class PgAuditStore implements AuditStore {
 
   constructor(private db: PgDb) {}
 
-  async log(entry: {
-    key_id?: string;
-    space_id?: string | null;
-    action: string;
-    resource_type: string;
-    resource_id?: string;
-    client_ip?: string | null;
-    details?: Record<string, unknown>;
-  }): Promise<void> {
-    // Fold the typed `client_ip` into the JSON `details` blob.
-    // Persisting alongside the existing details keeps the schema stable
-    // (no migration needed) while exposing IP as a typed field on read.
+  /** Fold the typed `client_ip` into the JSON `details` blob. Persisting it
+   *  alongside the existing details keeps the schema stable (no migration
+   *  needed) while exposing IP as a typed field on read. */
+  private buildRow(entry: AuditLogEntry): typeof auditLog.$inferInsert {
     const detailsBlob: Record<string, unknown> = { ...(entry.details ?? {}) };
     if (entry.client_ip !== undefined && entry.client_ip !== null) {
       detailsBlob.client_ip = entry.client_ip;
     }
-    // Run the insert under the write tracker: it's tracked so `drain()` can
-    // wait for it before the pool closes, and its errors are swallowed so a
-    // late write that loses the race against teardown can never surface as
-    // an unhandled rejection. Callers stay fire-and-forget (`void log(...)`).
+    return {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      key_id: entry.key_id ?? null,
+      space_id: entry.space_id ?? null,
+      action: entry.action,
+      resource_type: entry.resource_type,
+      resource_id: entry.resource_id ?? null,
+      details: JSON.stringify(detailsBlob),
+    };
+  }
+
+  /** Fire-and-forget. Runs under the write tracker so `drain()` can wait for
+   *  it before the pool closes and so its errors are swallowed: a late write
+   *  that loses the race against teardown can never surface as an unhandled
+   *  rejection. Never rejects — see the interface. */
+  async log(entry: AuditLogEntry): Promise<void> {
     await this.writes.track(async () => {
-      await this.db.insert(auditLog).values({
-        id: generateId(),
-        timestamp: new Date().toISOString(),
-        key_id: entry.key_id ?? null,
-        space_id: entry.space_id ?? null,
-        action: entry.action,
-        resource_type: entry.resource_type,
-        resource_id: entry.resource_id ?? null,
-        details: JSON.stringify(detailsBlob),
-      });
+      // Inside the tracker, not outside it. Building the row serializes
+      // `details`, which can itself fail, and a caller promised a writer
+      // that never rejects must not be handed one that rejects before the
+      // insert is even attempted.
+      const row = this.buildRow(entry);
+      await this.db.insert(auditLog).values(row);
     });
+  }
+
+  /** The propagating form. Not tracked: the caller is awaiting it, so there
+   *  is nothing in flight for shutdown to find, and tracking would swallow
+   *  the very failure this exists to surface. */
+  async logOrThrow(entry: AuditLogEntry): Promise<void> {
+    await this.db.insert(auditLog).values(this.buildRow(entry));
   }
 
   /** Resolve once every in-flight audit write has settled. Called by the

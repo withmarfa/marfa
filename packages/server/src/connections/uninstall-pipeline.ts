@@ -16,21 +16,30 @@
  *   2. Revoke every active runtime credential bound to this connection
  *      (`apiKeys.connection_id`). Idempotent; revoking a row that's
  *      already revoked is a no-op.
- *   3. Delete the `connection_oauth_tokens` row if present (the upstream
- *      OAuth tokens cached for the proxy).
+ *   3. Delete the `connection_oauth_tokens` row if there is one (the
+ *      upstream OAuth tokens cached for the proxy). Unconditional: the
+ *      delete's own row count is what says whether there was.
  *   4. Revoke every active `connection_leased_tokens` row.
  *   5. Disable every `inbound_webhooks` subscription bound to this
  *      connection so further deliveries are dropped.
- *   6. Revoke the `system.connection`: transition its state from `active`
- *      to `revoked`, and set `properties.status` to match in the same
- *      transaction. The two are the same fact stored twice, and they were
- *      allowed to disagree.
+ *   6. Revoke the `system.connection`, through the writer the install
+ *      pipeline's compensation shares — see `revoked-connection.ts`.
  *   7. Release the upstream credential the connection was installed with
  *      — the user's own API or OAuth token — purging it unless another
  *      live connection still shares it. Runs after step 6 so a failure
  *      here leaves the connection revoked rather than half-installed.
  *   8. Emit a `system.activity` row recording the uninstall.
  *   9. Awaited audit-log write.
+ *
+ * **Every count and id list here is affected rows.** Steps 2, 3 and 5 each
+ * used to report a read taken before the write rather than the write: the
+ * credentials a list had returned, the token row a prior `get` had seen,
+ * the subscriptions a list had called enabled. Nothing holds a lock across
+ * either half, so each of those was a claim about the moment before the
+ * mutation, and a row that moved in between was reported wrongly in
+ * whichever direction the read happened to be stale. Four of the nine
+ * steps reported intent that way. Each mutation now answers with what it
+ * changed, and the pipeline reports the answer.
  *
  * **Three kinds of credential, reported separately.** Steps 2, 3 and 7
  * remove different things, and the result says which of them happened to
@@ -50,6 +59,7 @@
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
+import { writeRevokedConnectionState } from "./revoked-connection.js";
 import {
   releaseUpstreamCredential,
   type UpstreamCredentialOutcome,
@@ -146,24 +156,26 @@ async function performUninstallLocked(
     input.connectionId,
     input.spaceId,
   );
+  // The list is already filtered to unrevoked rows, so the guard reads as
+  // redundant and is not: nothing holds a lock over `api_keys` between the
+  // read and the write, and a credential the supersede path retired in
+  // that gap would otherwise be reported as revoked by this call. What the
+  // uninstall claims to have revoked is what it revoked.
   const revokedCredentialIds: string[] = [];
   for (const cred of credentials) {
-    await storage.keys.revoke(cred.id);
-    revokedCredentialIds.push(cred.id);
+    if (await storage.keys.revoke(cred.id)) revokedCredentialIds.push(cred.id);
   }
 
   // -------------------------------------------------------------------
   // Step 3: delete the connection_oauth_tokens row if present.
   // -------------------------------------------------------------------
-  const existingToken = await storage.connectionOauthTokens.get(
+  // No read first. A read followed by a conditional delete reports the
+  // read's answer, which is a claim about the moment before the write; the
+  // delete's own row count is a claim about the write.
+  const oauthTokensDeleted = await storage.connectionOauthTokens.delete(
     input.connectionId,
     input.spaceId,
   );
-  let oauthTokensDeleted = false;
-  if (existingToken) {
-    await storage.connectionOauthTokens.delete(input.connectionId);
-    oauthTokensDeleted = true;
-  }
 
   // -------------------------------------------------------------------
   // Step 4: revoke every active leased token for this connection.
@@ -191,53 +203,26 @@ async function performUninstallLocked(
     input.connectionId,
     input.spaceId,
   );
+  // `setDisabled` refuses to count a flag that was already where it is
+  // being put, so a subscription disabled before the uninstall started is
+  // not reported as one this uninstall disabled.
   let inboundWebhooksDisabled = 0;
   for (const sub of inboundSubs) {
-    if (!sub.disabled) {
-      await storage.inboundWebhooks.setDisabled(sub.id, true);
+    if (await storage.inboundWebhooks.setDisabled(sub.id, true)) {
       inboundWebhooksDisabled += 1;
     }
   }
 
   // -------------------------------------------------------------------
-  // Step 6: revoke the connection — lifecycle state and the denormalised
-  // properties that describe it.
+  // Step 6: revoke the connection — lifecycle state and the denormalized
+  // properties that describe it. The install pipeline's compensation
+  // walker writes the same terminal state, so both go through one writer;
+  // `revoked-connection.ts` carries why each field is written.
   //
-  // `properties.status` is the type's own "Lifecycle status (universal
-  // across all kinds)" field, and its enum is exactly `active | revoked`.
-  // Transitioning `state` and leaving it behind produced a row reading
-  // `state: revoked` beside `status: active`, which is not an ambiguity to
-  // interpret: the field is documented as the lifecycle status and it was
-  // not set. `runtime_status: healthy` on a connection whose credentials
-  // are all revoked is wrong for the same reason.
-  //
-  // Both writes land in one transaction so a partial failure cannot leave
-  // them disagreeing, which is the state this fixes.
+  // Already under the lifecycle lock: `performUninstall` holds it for the
+  // whole pipeline.
   // -------------------------------------------------------------------
-  // `runtime_status` is stamped, not cleared. A property cannot be removed
-  // through the update path at all: the merge is shallow and an explicit
-  // null on an optional field means "leave unset", so a delete here would
-  // silently leave `healthy` in place. That is how the stale value
-  // survived. The field gained a `revoked` member for this, because a
-  // status enum that cannot express "the runtime is gone" will always be
-  // reporting the health of something that no longer runs.
-  const revokedProperties: Record<string, unknown> = {
-    ...connection.properties,
-    status: "revoked",
-    runtime_status: "revoked",
-  };
-  await storage.runInTransaction(async () => {
-    await storage.items.transition(
-      input.connectionId,
-      "revoked",
-      input.spaceId,
-    );
-    await storage.items.update(
-      input.connectionId,
-      { properties: revokedProperties },
-      input.spaceId,
-    );
-  });
+  await writeRevokedConnectionState(storage, input.connectionId, input.spaceId);
 
   // -------------------------------------------------------------------
   // Step 7: release the upstream credential.
@@ -281,9 +266,18 @@ async function performUninstallLocked(
   );
 
   // -------------------------------------------------------------------
-  // Step 9: audit log. Awaited — failures are not silently swallowed.
+  // Step 9: audit log, through the propagating writer.
+  //
+  // An uninstall revokes credentials and removes a secret, so an unaudited
+  // one is exactly the operation an operator later needs a record of. A
+  // failure here surfaces: the uninstall itself is monotonic and has
+  // already happened, so the caller gets a loud error over a connection
+  // that is genuinely gone rather than a 200 with no trail.
+  //
+  // `log` would not do it. It cannot reject, so the guarantee the previous
+  // comment here stated had been removed by the implementation.
   // -------------------------------------------------------------------
-  await storage.audit.log({
+  await storage.audit.logOrThrow({
     key_id: input.apiKeyId,
     client_ip: input.clientIp ?? null,
     space_id: input.spaceId ?? null,

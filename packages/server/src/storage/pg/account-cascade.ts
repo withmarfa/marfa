@@ -1,3 +1,10 @@
+/* eslint-disable no-restricted-syntax -- Not yet on the shared space
+ * fence. `storage/space-condition.ts` is the one spelling of it, and
+ * this store predates it; the rule covers every store so a new file is
+ * covered by default, which leaves the existing ones needing a line
+ * that says so. Normalizing one is a change of its own: an absent space
+ * has to be read call site by call site, and reading it wrong is the
+ * defect the helper exists for. Delete this line when you do. */
 /**
  * PG account hard-delete cascade.
  *
@@ -72,6 +79,7 @@ import {
   users,
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
+import { pgRequestContext } from "./request-context.js";
 import type { PgTxContext } from "./request-context.js";
 
 /**
@@ -254,18 +262,51 @@ export async function pgDeleteAccountCascade(
       }
     }
 
-    // ---- 9. Redact the existing audit trail. -----------------------------
-    await storage.audit.redactForUser(authUserId);
+    // ---- 9-10. The audit trail, on this transaction's own connection.
+    //
+    // `pgRequestContext.run` is what puts it there, and without it neither
+    // write is part of this transaction at all. The audit store holds the
+    // request-context-wrapped Drizzle instance, this cascade runs on the
+    // unwrapped base instance and threads `tx` by hand, and the wrapper
+    // with no context installed falls straight through to the pool. Both
+    // writes would therefore take a second connection and commit on their
+    // own. The visible failure is the inverse of the one the propagating
+    // writer guards: the row lands, the delete below fails, the
+    // transaction rolls back, and a permanent record survives of a hard
+    // delete that never happened.
+    //
+    // It also gives back a pool connection acquired while this transaction
+    // is held. A caller that holds one slot and then needs a second is the
+    // shape documented elsewhere here as the way to exhaust the pool under
+    // concurrency, and this was an instance of it.
+    //
+    // Scoped to these two calls rather than to the whole cascade. One
+    // other call reaches storage — `storage.items.bulkPurge` inside the
+    // space-scoped teardown — and it is outside this transaction for the
+    // same reason. Pulling it in would resolve its own `db.transaction` to
+    // a savepoint and change the failure behavior of the item purge and
+    // its search-index cleanup, which the docstring above already treats
+    // as best-effort with respect to this transaction. That is a change of
+    // its own, not a line to slip into this one.
+    await pgRequestContext.run({ tx }, async () => {
+      // Redact the existing audit trail.
+      await storage.audit.redactForUser(authUserId);
 
-    // ---- 10. Hard-delete audit row, written AFTER the sweep — the sweep
-    // matches on resource_id, so a row written before it is rewritten to
-    // the sentinel like any other. Writing it after is what makes this the
-    // one row in the chain that keeps its details payload. --------------
-    await storage.audit.log({
-      action: "auth.account.hard_deleted",
-      resource_type: "auth_account",
-      resource_id: authUserId,
-      details: { space_id: spaceId, redacted: false },
+      // The hard-delete row, written AFTER the sweep — the sweep matches on
+      // resource_id, so a row written before it is rewritten to the
+      // sentinel like any other. Writing it after is what makes this the
+      // one row in the chain that keeps its details payload.
+      //
+      // The propagating writer, because a hard delete nothing recorded must
+      // not report success. `log` cannot reject, so it would answer success
+      // whatever happened; the swallow is the difference between the two
+      // writers, not where the write lands.
+      await storage.audit.logOrThrow({
+        action: "auth.account.hard_deleted",
+        resource_type: "auth_account",
+        resource_id: authUserId,
+        details: { space_id: spaceId, redacted: false },
+      });
     });
 
     // ---- 11. Delete auth_user (cascades sessions / accounts / passkeys). -

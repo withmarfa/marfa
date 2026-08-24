@@ -7,10 +7,11 @@
  * mint reprojects from the manifest the connection now resolves.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IntegrationManifest, Item } from "@withmarfa/shared";
 import { registerIntegrationManifest } from "../integrations/register-manifest.js";
+import { hashApiKey } from "../middleware/auth.js";
 import {
   performUpgrade,
   previewUpgrade,
@@ -363,5 +364,169 @@ describe("previewUpgrade", () => {
     });
     expect(preview.candidate).toBeNull();
     expect(preview.consent_lines).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A connection that lives in a space.
+//
+// Every case above runs `spaceId: undefined`, where nothing carries a space,
+// so the credential revocation below — the half of the acceptance that says
+// a runtime credential stops carrying the old manifest's permissions — had
+// no coverage at all, against a fence or otherwise.
+//
+// `authMode: "hosted"` matches the deployed shape and nothing here turns on
+// it: no code path this suite reaches reads it. The named space is what
+// makes the fence narrow something.
+// ---------------------------------------------------------------------------
+
+describe("performUpgrade — a connection inside a space", () => {
+  let hosted: TestContext;
+
+  beforeAll(async () => {
+    hosted = await createTestContext({ authMode: "hosted" });
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  /** Two registered versions, a connection in its own space bound to the
+   *  first, and a runtime credential carrying that space. */
+  async function hostedScenario(): Promise<{
+    spaceId: string;
+    connection: Item;
+    credentialId: string;
+    v2: Item;
+  }> {
+    const name = nextName();
+    const space = await hosted.storage.spaces!.create(
+      `upgrade-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    // The catalog rows carry no space, as they do on a live deployment:
+    // they are registered by a platform credential and read through the
+    // widening.
+    const v1 = await registerIntegrationManifest(
+      hosted.storage,
+      manifest(name),
+      undefined,
+    );
+    const v2 = await registerIntegrationManifest(
+      hosted.storage,
+      manifest(name, { version: "2.0.0" }),
+      undefined,
+    );
+    const connection = await hosted.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          runtime_status: "healthy",
+          integration_ref: v1.item.id,
+          configuration: {},
+          direction: "read",
+          triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
+        },
+      },
+      space.id,
+    );
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const credential = await hosted.storage.keys.createRuntimeCredential(
+      {
+        label: `upgrade runtime ${suffix}`,
+        source: `integration:${connection.id}`,
+        role: "member",
+        type_permissions: { "core.note": "write" },
+        connection_id: connection.id,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: "integration:acme/upgrade",
+      },
+      hashApiKey(`marfa_k1_upgrade_${suffix}`, TEST_API_KEY_SALT),
+      space.id,
+    );
+    return {
+      spaceId: space.id,
+      connection,
+      credentialId: credential.id,
+      v2: v2.item,
+    };
+  }
+
+  it("revokes the space's runtime credential on a space-scoped upgrade", async () => {
+    const s = await hostedScenario();
+
+    const result = await performUpgrade(hosted.storage, {
+      apiKeyId: "key-under-test",
+      spaceId: s.spaceId,
+      connectionId: s.connection.id,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([s.credentialId]);
+    expect(
+      (await hosted.storage.keys.listForSpace(s.spaceId)).find(
+        (k) => k.id === s.credentialId,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("revokes it when a platform admin drives the upgrade", async () => {
+    // Same mismatch the uninstall path has: a platform admin carries no
+    // space, so the pipeline resolves the connection unfenced and then has
+    // to find credentials that all carry the connection's space. Leaving
+    // them live is worse here than on uninstall, because they keep working
+    // against an upgraded connection while carrying the permissions the
+    // old manifest projected.
+    const s = await hostedScenario();
+
+    const result = await performUpgrade(hosted.storage, {
+      apiKeyId: "key-under-test",
+      spaceId: undefined,
+      connectionId: s.connection.id,
+    });
+
+    expect(result.integration_ref).toBe(s.v2.id);
+    expect(result.revoked_credential_ids).toEqual([s.credentialId]);
+    expect(
+      (await hosted.storage.keys.listForSpace(s.spaceId)).find(
+        (k) => k.id === s.credentialId,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not claim a credential revoked after it was listed", async () => {
+    // The supersede path retires a connection's older credentials on every
+    // mint and takes no lock this pipeline waits on. An id reported here
+    // rides onto the activity row an operator reads, so reporting the list
+    // rather than the revoke names a retirement that did not happen.
+    //
+    // Revoking it up front instead would pass against the old shape too:
+    // `listByConnectionId` has always filtered revoked rows, so the
+    // credential would never reach the loop. The window between the list
+    // and the revoke is the only place the two shapes differ.
+    const s = await hostedScenario();
+
+    const real = hosted.storage.keys;
+    const keys = Object.create(real) as typeof real;
+    keys.listByConnectionId = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnectionId(connectionId, spaceId);
+      await real.revoke(s.credentialId);
+      return rows;
+    };
+
+    const result = await performUpgrade(
+      { ...hosted.storage, keys },
+      {
+        apiKeyId: "key-under-test",
+        spaceId: s.spaceId,
+        connectionId: s.connection.id,
+      },
+    );
+
+    expect(result.revoked_credential_ids).toEqual([]);
   });
 });

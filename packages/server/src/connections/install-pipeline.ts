@@ -60,6 +60,7 @@ import {
   withConnectionLifecycleLockInTransaction,
 } from "./lifecycle-lock.js";
 import { assertMintableSpaceScope } from "./runtime-credential-lifecycle.js";
+import { writeRevokedConnectionState } from "./revoked-connection.js";
 
 const KEY_PREFIX = "marfa_k1_";
 
@@ -282,45 +283,29 @@ export async function performInstall(
     // rollback that left the Connection active: every install failure
     // after this point stranded a live Connection nobody had asked for.
     //
-    // The state alone is not the whole of it. `properties.status` is the
-    // type's own lifecycle status and `runtime_status` describes a runtime
-    // that a rolled-back install never got, and every surface a person
-    // looks at reads those rather than the item's state. Writing one and
-    // not the others produced a row disagreeing with itself: revoked, and
-    // active, and healthy. Uninstall writes all three together for exactly
-    // this reason; this is the other producer of the same shape.
+    // Which fields, and why each of them, lives with the writer. The point
+    // here is that the writer is shared with uninstall: this and that are
+    // the two producers of a revoked connection, and correcting one of
+    // them without the other is how they came to disagree.
     //
-    // Under the lifecycle lock, in one transaction. This was the only
-    // lifecycle-state write in this directory running unlocked: uninstall,
-    // pause and upgrade all take it, and the connection is externally
-    // visible and mutable from the moment step 1 commits, so a rollback
-    // racing a pause could interleave with it.
+    // Under the lifecycle lock. This was the only lifecycle-state write in
+    // this directory running unlocked: uninstall, pause and upgrade all
+    // take it, and the connection is externally visible and mutable from
+    // the moment step 1 commits, so a rollback racing a pause could
+    // interleave with it.
     //
     // The transaction-riding shape rather than the bracketing one, because
     // this is pure database work. The bracketing form holds a pool
     // connection for the length of the callback and then needs a second
     // slot for the work inside it, which is the shape that once stopped the
-    // server answering.
-    //
-    // Only the two fields. `items.update` merges against what is stored, so
-    // resubmitting the create-time object would be redundant on the ordinary
-    // path and a revert on any path where something had touched the
-    // connection in between.
-    // The transaction is nested inside deliberately rather than relying on
-    // the lock helper to supply one. It supplies a transaction on Postgres
-    // and not on SQLite, where it falls back to the bracketing form, so
-    // taking the helper alone would have quietly left the two writes
-    // unatomic on one dialect while the comment above claimed otherwise.
-    // Postgres resolves the inner call to a savepoint.
+    // server answering. The writer opens its own transaction inside that
+    // one deliberately rather than relying on the lock helper to supply
+    // one: the helper supplies a transaction on Postgres and not on SQLite,
+    // where it falls back to the bracketing form, so taking it alone would
+    // quietly leave the two writes unatomic on one dialect. Postgres
+    // resolves the inner call to a savepoint.
     await withConnectionLifecycleLockInTransaction(storage, connection.id, () =>
-      storage.runInTransaction(async () => {
-        await storage.items.transition(connection.id, "revoked", input.spaceId);
-        await storage.items.update(
-          connection.id,
-          { properties: { status: "revoked", runtime_status: "revoked" } },
-          input.spaceId,
-        );
-      }),
+      writeRevokedConnectionState(storage, connection.id, input.spaceId),
     );
   });
 
@@ -422,13 +407,17 @@ export async function performInstall(
   }
 
   // -------------------------------------------------------------------
-  // Audit trail. Awaited and rolled back on failure — `system.connection`
-  // writes are operationally significant; an unaudited install must not
-  // silently succeed. A failure here rolls back the install rather than
-  // being swallowed.
+  // Audit trail, through the propagating writer. An install hands a
+  // credential a share of the space's authority, so an unaudited one must
+  // not stand: a failure here rolls the install back.
+  //
+  // `log` would not do it. It runs under a tracker that catches everything
+  // and warns, so it cannot reject and the rollback below would never
+  // run — which is what it did, for as long as this was written that way,
+  // under a comment claiming the opposite.
   // -------------------------------------------------------------------
   try {
-    await storage.audit.log({
+    await storage.audit.logOrThrow({
       key_id: input.apiKeyId,
       client_ip: input.clientIp ?? null,
       space_id: input.spaceId ?? null,

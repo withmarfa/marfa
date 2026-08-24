@@ -612,18 +612,24 @@ export interface KeyStore {
    */
   listForSpace(spaceId: string): Promise<ApiKey[]>;
   /**
-   * Active (non-revoked) keys whose `connection_id` matches. The
-   * uninstall pipeline uses this to locate the runtime credential bound
-   * to a connection before revoking it. Space-scoped when supplied —
-   * single-space self-hosted deployments pass `undefined` to read keys
-   * with no space binding. Indexed on the `connection_id` column.
+   * Active (non-revoked) keys whose `connection_id` matches. The uninstall
+   * and upgrade pipelines use this to locate the runtime credentials bound
+   * to a connection before revoking them. Narrows to `spaceId` when one is
+   * supplied and to nothing at all when it is not, the same reading of an
+   * absent space every other fence here takes — see
+   * `storage/space-condition.ts`. Indexed on the `connection_id` column.
    */
   listByConnectionId(connectionId: string, spaceId?: string): Promise<ApiKey[]>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
   update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
-  revoke(id: string): Promise<void>;
+  /**
+   * Stamp `revoked_at`. Returns whether this call was the one that revoked
+   * the key: a key already revoked answers `false`, so a caller listing the
+   * credentials it retired lists the ones it actually retired.
+   */
+  revoke(id: string): Promise<boolean>;
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**
@@ -858,7 +864,12 @@ export interface InboundWebhookStore {
     connectionId: string,
     spaceId?: string,
   ): Promise<InboundWebhookRow[]>;
-  setDisabled(id: string, disabled: boolean): Promise<void>;
+  /**
+   * Flip the subscription's `disabled` flag. Returns whether the flag
+   * actually moved, so a caller counting what it disabled counts rows it
+   * changed rather than rows it looked at.
+   */
+  setDisabled(id: string, disabled: boolean): Promise<boolean>;
 }
 
 export interface InboundWebhookEventStore {
@@ -939,8 +950,12 @@ export interface ConnectionOAuthTokenStore {
     spaceId?: string,
   ): Promise<ConnectionOAuthTokenRow | null>;
 
-  /** Hard-delete the row for a connection (used on revocation). */
-  delete(connectionId: string): Promise<void>;
+  /**
+   * Hard-delete the row for a connection (used on revocation). Space-scoped
+   * when supplied. Returns whether a row was actually deleted, so the
+   * uninstall pipeline reports what it removed rather than what it meant to.
+   */
+  delete(connectionId: string, spaceId?: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1681,21 +1696,58 @@ export interface AuditEntry {
   details: Record<string, unknown>;
 }
 
+/** One audit row, in the shape both writers below take. */
+export interface AuditLogEntry {
+  key_id?: string;
+  /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
+   *  handlers; null for system-initiated audits and for the bootstrap-admin
+   *  shape on self-hosted single-space deployments. */
+  space_id?: string | null;
+  action: string;
+  resource_type: string;
+  resource_id?: string;
+  /** Client IP. Pass `c.var.clientIp ?? null` from route handlers;
+   *  null for system-initiated audits. */
+  client_ip?: string | null;
+  details?: Record<string, unknown>;
+}
+
 export interface AuditStore {
-  log(entry: {
-    key_id?: string;
-    /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
-     *  handlers; null for system-initiated audits and for the bootstrap-admin
-     *  shape on self-hosted single-space deployments. */
-    space_id?: string | null;
-    action: string;
-    resource_type: string;
-    resource_id?: string;
-    /** Client IP. Pass `c.var.clientIp ?? null` from route handlers;
-     *  null for system-initiated audits. */
-    client_ip?: string | null;
-    details?: Record<string, unknown>;
-  }): Promise<void>;
+  /**
+   * Write an audit row off the critical path. **Never rejects**, whatever
+   * the database does: the write runs under a tracker that logs a failure
+   * and drops it, so a caller cannot be broken by one.
+   *
+   * That is the right contract for almost every audit row, and it is a
+   * contract, not an accident — the guarantee is what lets a route emit one
+   * without a try/catch. What it is not is a guarantee that the row landed,
+   * and awaiting it does not make it one. Sixteen call sites awaited it
+   * inside a try/catch built to fail the operation on an unaudited write;
+   * every one of those was unreachable. Awaiting is still worth doing where
+   * the row has to be issued inside the caller's transaction, but say so at
+   * the call site, because the failure handling reads as live otherwise.
+   *
+   * Use `logOrThrow` when an unaudited operation must not stand.
+   */
+  log(entry: AuditLogEntry): Promise<void>;
+  /**
+   * Write an audit row and propagate a failure to the caller.
+   *
+   * For the operations where an unaudited success is worse than a loud
+   * failure: an account hard-delete, and the connection install and
+   * uninstall, which are the two ways a credential's whole authority
+   * changes hands. Untracked deliberately — the caller is awaiting it, so
+   * there is nothing in flight for shutdown to drain.
+   *
+   * **Propagating is the whole of what this promises.** It is not by
+   * itself a transactional write. Which connection the insert lands on is
+   * decided by the db handle the store was built with and by whatever
+   * request context is installed around the call, neither of which is this
+   * method's to choose. A caller that needs the row to commit or roll back
+   * with its own transaction has to put the store on that transaction; the
+   * account cascade is the one that does, and it says how.
+   */
+  logOrThrow(entry: AuditLogEntry): Promise<void>;
   list(filters: {
     action?: string;
     resource_type?: string;

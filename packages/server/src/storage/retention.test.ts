@@ -1110,14 +1110,15 @@ describe("RuntimeCredentialReaper — scheduling and coordination", () => {
   });
 
   it("swallows a sweep failure so the interval survives", async () => {
-    const exploding = {
-      ...ctx.storage,
-      keys: {
-        ...ctx.storage.keys,
-        revokeExpiredRuntimeCredentials: () =>
-          Promise.reject(new Error("db gone")),
-      },
-    } as unknown as typeof ctx.storage;
+    // Prototype delegation, not a spread. `ctx.storage.keys` is a class
+    // instance, so spreading it copies none of its methods: every other
+    // call the reaper makes would be `undefined`, and this case would pass
+    // on the resulting TypeError exactly as it passes on the rejection it
+    // is supposed to be about.
+    const keys = Object.create(ctx.storage.keys) as typeof ctx.storage.keys;
+    keys.revokeExpiredRuntimeCredentials = () =>
+      Promise.reject(new Error("db gone"));
+    const exploding = { ...ctx.storage, keys };
     const reaper = new RuntimeCredentialReaper(
       exploding,
       RUNTIME_TTL_MS,

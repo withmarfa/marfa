@@ -7,12 +7,14 @@
  * transition, activity emission, audit log).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "../test-utils.js";
+import { randomUUID } from "node:crypto";
+import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import type { AuditLogEntry, AuditStore } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -483,5 +485,306 @@ describe("performUninstall — the upstream credential", () => {
       (row?.details as { upstream_credential?: unknown } | undefined)
         ?.upstream_credential,
     ).toEqual({ status: "purged", credential_id: credentialId });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A connection that lives in a space.
+//
+// Everything before this point installs with `spaceId: undefined`, where
+// nothing carries a `space_id` at all. The space fence therefore never
+// narrows anything and a defect in what an absent space means is invisible:
+// every row matches either reading of it. Naming a space is what makes the
+// fence load-bearing, and it is the shape both live environments run.
+//
+// The context is `authMode: "hosted"` to match those deployments, but that
+// is not what these cases turn on: hosted only wires the users store, which
+// no pipeline here touches, and the one guard that reads `authMode` passes
+// either way once a space is named. The named space is the discriminating
+// input. (`install-pipeline.test.ts` has the one case where hosted is
+// genuinely the property under test.)
+// ---------------------------------------------------------------------------
+
+describe("performUninstall — a connection inside a space", () => {
+  let hosted: TestContext;
+
+  beforeAll(async () => {
+    hosted = await createTestContext({ authMode: "hosted" });
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+  });
+
+  async function installIntoSpace(): Promise<{
+    apiKeyId: string;
+    spaceId: string;
+    connectionId: string;
+    credentialId: string;
+  }> {
+    const adminKey = await hosted.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const space = await hosted.storage.spaces!.create(
+      `uninstall-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // The catalog row carries no space: `system.integration` is registered
+    // by a platform credential and read through the widening, exactly as it
+    // is on a live deployment.
+    const integration = await hosted.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: `acme.hosted-${stamp}`,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          manifest: manifest(),
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+
+    const result = await performInstall(hosted.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      spaceId: space.id,
+      authMode: "hosted",
+      integrationItemId: integration.id,
+      manifest: { ...manifest(), name: `acme.hosted-${stamp}` },
+      label: `hosted uninstall test ${stamp}`,
+    });
+
+    return {
+      apiKeyId: adminKey.id,
+      spaceId: space.id,
+      connectionId: result.connection_id,
+      credentialId: result.credential_id,
+    };
+  }
+
+  it("revokes the runtime credential on a space-scoped uninstall", async () => {
+    const installed = await installIntoSpace();
+
+    const result = await performUninstall(hosted.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: installed.spaceId,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
+    expect(
+      (await hosted.storage.keys.listForSpace(installed.spaceId)).find(
+        (k) => k.id === installed.credentialId,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("revokes the runtime credential when a platform admin uninstalls a space's connection", async () => {
+    // The mismatch: a platform admin holds no `space_id`, so the route
+    // computes `spaceId: undefined` and the pipeline resolves the
+    // connection unfenced. Every credential the connection owns carries
+    // the connection's space, so a fence that reads an absent space as
+    // "the rows with no space" matches none of them — not sometimes,
+    // every time — and the uninstall reports an empty revocation list
+    // beside an HTTP 200 while the credential stays live.
+    const installed = await installIntoSpace();
+
+    const result = await performUninstall(hosted.storage, {
+      apiKeyId: installed.apiKeyId,
+      spaceId: undefined,
+      connectionId: installed.connectionId,
+    });
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
+
+    // And the credential is genuinely gone, not merely reported. A list
+    // scoped to the space is the read every operator surface makes.
+    const survivors = await hosted.storage.keys.listForSpace(installed.spaceId);
+    expect(
+      survivors.find((k) => k.id === installed.credentialId),
+    ).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What the result says happened is what happened.
+// ---------------------------------------------------------------------------
+
+describe("performUninstall — affected rows, not attempts", () => {
+  it("does not count a subscription disabled after it was listed", async () => {
+    // The pipeline used to walk the subscriptions it had read and count the
+    // ones the read called enabled. Nothing holds a lock over
+    // `inbound_webhooks` across those two steps, so the count was a claim
+    // about the moment before the write. Disabling one inside that window
+    // is the whole difference between reporting the read and reporting the
+    // write, and it is what the first version of this test missed: it
+    // asserted an outcome the old shape produced too.
+    const installed = await installFresh();
+
+    const racedOff = randomUUID();
+    const stillOn = randomUUID();
+    for (const id of [racedOff, stillOn]) {
+      await ctx.storage.inboundWebhooks.create({
+        id,
+        connection_id: installed.connectionId,
+        secret_encrypted: "a|b|c",
+        verification_method: "hmac-sha256",
+        events: ["thing.happened"],
+      });
+    }
+
+    const real = ctx.storage.inboundWebhooks;
+    const inboundWebhooks = Object.create(real) as typeof real;
+    inboundWebhooks.listByConnection = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnection(connectionId, spaceId);
+      await real.setDisabled(racedOff, true);
+      return rows;
+    };
+
+    const result = await performUninstall(
+      { ...ctx.storage, inboundWebhooks },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
+
+    expect(result.inbound_webhooks_disabled).toBe(1);
+    expect((await real.getAny(stillOn))?.disabled).toBe(true);
+    expect((await real.getAny(racedOff))?.disabled).toBe(true);
+  });
+
+  it("deletes the oauth-token row even when a read disagrees with the table", async () => {
+    // The pre-read was a second source of truth about the row the delete
+    // was about to touch, and the pipeline believed the read. Any staleness
+    // in it skipped the delete and reported `false`: upstream tokens left
+    // in the database, under a connection reported as uninstalled. There is
+    // no read to be stale now, so a read that lies changes nothing.
+    const installed = await installFresh();
+    await ctx.storage.connectionOauthTokens.upsert({
+      connection_id: installed.connectionId,
+      access_token_encrypted: "a|b|c",
+      refresh_token_encrypted: null,
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      scopes: ["read"],
+    });
+
+    const real = ctx.storage.connectionOauthTokens;
+    const connectionOauthTokens = Object.create(real) as typeof real;
+    connectionOauthTokens.get = () => Promise.resolve(null);
+
+    const result = await performUninstall(
+      {
+        ...ctx.storage,
+        connectionOauthTokens,
+      },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
+
+    expect(result.oauth_tokens_deleted).toBe(true);
+    expect(await real.get(installed.connectionId, undefined)).toBeNull();
+  });
+
+  it("does not claim a credential revoked after it was listed", async () => {
+    // The supersede path retires a connection's older credentials on every
+    // mint and holds no lock this pipeline waits on, so a credential can go
+    // between the list and the revoke. Reporting the list would put an id
+    // in the audit row under an action that did not happen.
+    const installed = await installFresh();
+    const { hashApiKey } = await import("../middleware/auth.js");
+    const extra = await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "raced runtime cred",
+        source: `integration-raced:${installed.connectionId}`,
+        role: "member",
+        type_permissions: { "core.note": "read" },
+        connection_id: installed.connectionId,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
+      },
+      hashApiKey(`marfa_k1_raced_${randomUUID()}`, TEST_API_KEY_SALT),
+      undefined,
+    );
+
+    const real = ctx.storage.keys;
+    const keys = Object.create(real) as typeof real;
+    keys.listByConnectionId = async (
+      connectionId: string,
+      spaceId?: string,
+    ) => {
+      const rows = await real.listByConnectionId(connectionId, spaceId);
+      await real.revoke(extra.id);
+      return rows;
+    };
+
+    const result = await performUninstall(
+      { ...ctx.storage, keys },
+      {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      },
+    );
+
+    expect(result.revoked_credential_ids).toEqual([installed.credentialId]);
+  });
+});
+
+describe("performUninstall — an unaudited uninstall does not pass silently", () => {
+  it("surfaces a real audit failure rather than answering 200", async () => {
+    // The real store and its real write path; the only thing arranged is a
+    // `details` payload that will not serialize. Under the fire-and-forget
+    // writer this pipeline used to reach, the same failure is caught,
+    // warned about and dropped, and the caller is told the credentials were
+    // revoked by an uninstall with no record of it.
+    const installed = await installFresh();
+
+    // Prototype delegation rather than a spread: the audit store is a class
+    // instance, so a spread copies none of its methods and would turn
+    // "the pipeline called the other writer" into "the pipeline called
+    // undefined", which throws for the wrong reason and passes the test.
+    const realAudit = ctx.storage.audit;
+    const audit = Object.create(realAudit) as AuditStore;
+    audit.logOrThrow = (entry: AuditLogEntry): Promise<void> =>
+      realAudit.logOrThrow({
+        ...entry,
+        details: { ...entry.details, attempts: 1n },
+      });
+    const storage = { ...ctx.storage, audit };
+
+    await expect(
+      performUninstall(storage, {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      }),
+    ).rejects.toThrow();
+
+    // Monotonic, so the uninstall stands. The loud failure is about the
+    // missing record, not about a half-done uninstall.
+    const conn = await ctx.storage.items.getIncludingTrashed(
+      installed.connectionId,
+      undefined,
+    );
+    expect(conn?.state).toBe("revoked");
+    const rows = await ctx.storage.audit.list({
+      action: "integration.uninstall",
+      resource_id: installed.connectionId,
+      limit: 5,
+    });
+    expect(rows.data).toHaveLength(0);
   });
 });

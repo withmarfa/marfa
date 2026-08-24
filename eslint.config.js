@@ -76,6 +76,48 @@ export default [
     },
   },
   {
+    // The space fence has one spelling, and it is `space-condition.ts`.
+    //
+    // Written inline it was written differently in each store, and the
+    // stores then disagreed about what an absent space means: most read
+    // it as "every space", one key-store method read it as "the rows
+    // with no space". A platform admin uninstalling a space's connection
+    // resolved the connection under the first reading and looked for its
+    // credentials under the second, so the revocation list came back
+    // empty every time while the pipeline reported success. Nothing about
+    // either spelling looks wrong on its own, which is why this is a lint
+    // rule rather than a comment.
+    //
+    // Every store in both dialects, so a store added tomorrow is covered
+    // by default. An allowlist of the five files the connection pipelines
+    // happen to read would leave a new store outside the rule, which is
+    // the likeliest way the divergence comes back: nobody adding a file
+    // thinks to add it to a lint config. The nineteen stores that still
+    // spell the fence inline — ten on Postgres, nine on SQLite — carry
+    // a file-level disable saying so, and deleting one is how the next
+    // batch gets normalized. None of them disagrees with the meaning the
+    // helper settled on; they are unconverted, not divergent.
+    //
+    // What still slips past, stated because it is cheap to say and
+    // expensive to discover: a fence built inside a `sql` template, a
+    // column destructured out of its table object first, or a table
+    // imported under another name. The rule reads the shape, not the
+    // meaning.
+    files: ["packages/server/src/storage/{pg,sqlite}/*.ts"],
+    ignores: ["packages/server/src/storage/{pg,sqlite}/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.name=/^(eq|ne|isNull|isNotNull)$/] > MemberExpression[property.name='space_id']",
+          message:
+            "Build the space fence with spaceCondition / spaceBucketCondition / spaceOrPlatformCondition from storage/space-condition.js. Spelling it inline is how the stores came to disagree about what an absent space means.",
+        },
+      ],
+    },
+  },
+  {
     ignores: [
       "**/dist/",
       "**/coverage/",

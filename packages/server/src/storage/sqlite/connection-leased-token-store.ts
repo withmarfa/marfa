@@ -1,4 +1,5 @@
 import { eq, and, gt, isNull } from "drizzle-orm";
+import { spaceCondition } from "../space-condition.js";
 import type {
   ConnectionLeasedTokenRow,
   ConnectionLeasedTokenStore,
@@ -67,10 +68,10 @@ export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenSt
     id: string,
     spaceId?: string,
   ): Promise<ConnectionLeasedTokenRow | null> {
-    const conditions = [eq(connectionLeasedTokens.id, id)];
-    if (spaceId !== undefined) {
-      conditions.push(eq(connectionLeasedTokens.space_id, spaceId));
-    }
+    const conditions = [
+      eq(connectionLeasedTokens.id, id),
+      spaceCondition(connectionLeasedTokens.space_id, spaceId),
+    ];
     const row = await this.db
       .select()
       .from(connectionLeasedTokens)
@@ -88,10 +89,8 @@ export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenSt
       eq(connectionLeasedTokens.connection_id, connectionId),
       isNull(connectionLeasedTokens.revoked_at),
       gt(connectionLeasedTokens.expires_at, nowIso),
+      spaceCondition(connectionLeasedTokens.space_id, spaceId),
     ];
-    if (spaceId !== undefined) {
-      conditions.push(eq(connectionLeasedTokens.space_id, spaceId));
-    }
     const rows = await this.db
       .select()
       .from(connectionLeasedTokens)
