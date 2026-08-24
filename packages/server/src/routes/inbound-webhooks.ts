@@ -45,10 +45,7 @@ function rowToWire(
 ): InboundWebhook | CreatedInboundWebhook {
   // Cast is safe: validation at write time (validateManifest) enforced the discriminated union.
   const verification_method = row.verification_method as
-    | "hmac-sha256"
-    | "slack"
-    | "stripe"
-    | "github";
+    "hmac-sha256" | "slack" | "stripe" | "github";
   const base: InboundWebhook = {
     id: row.id,
     space_id: row.space_id ?? undefined,

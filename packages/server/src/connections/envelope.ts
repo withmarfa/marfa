@@ -160,10 +160,7 @@ export type DispatchOutcome =
   | {
       would_dispatch: false;
       reason:
-        | "self_event"
-        | "cross_space"
-        | "system_type"
-        | "type_not_targeted";
+        "self_event" | "cross_space" | "system_type" | "type_not_targeted";
     };
 
 /**

@@ -47,8 +47,7 @@ afterAll(async () => {
 const INTEGRATION = "acme/lifecycle";
 
 type MintOutcome =
-  | { ok: true; api_key: string }
-  | { ok: false; code: string; message: string };
+  { ok: true; api_key: string } | { ok: false; code: string; message: string };
 
 interface ErrorResponse {
   error: { code: string; message: string };

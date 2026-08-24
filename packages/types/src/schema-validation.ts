@@ -1450,11 +1450,9 @@ export function validateEdgeTypeSchema(
     id: obj.id as string,
     cardinality: obj.cardinality as EdgeCardinality,
     source_type_constraints: (obj.source_type_constraints as
-      | string[]
-      | undefined) ?? ["*"],
+      string[] | undefined) ?? ["*"],
     target_type_constraints: (obj.target_type_constraints as
-      | string[]
-      | undefined) ?? ["*"],
+      string[] | undefined) ?? ["*"],
     cascade_on_delete:
       (obj.cascade_on_delete as EdgeCascade | undefined) ?? "orphan",
     property_schema: propertySchema,

@@ -142,8 +142,7 @@ let eventLogStore: EventLogStore | null = null;
 let getHopBudget: (spaceId: string | undefined) => Promise<number> = () =>
   Promise.resolve(DEFAULT_HOP_BUDGET);
 let onHopOverflow:
-  | ((event: PubsubEvent, budget: number) => Promise<void>)
-  | null = null;
+  ((event: PubsubEvent, budget: number) => Promise<void>) | null = null;
 let notifyRemote: ((eventId: bigint) => Promise<void>) | null = null;
 
 export interface InitEventLogOptions {

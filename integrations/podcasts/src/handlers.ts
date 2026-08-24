@@ -188,8 +188,7 @@ interface ResolvedConfig {
 }
 
 type ConfigResolution =
-  | { ok: true; config: ResolvedConfig }
-  | { ok: false; error: unknown };
+  { ok: true; config: ResolvedConfig } | { ok: false; error: unknown };
 
 /**
  * Read the connection's own configuration.
@@ -210,8 +209,7 @@ async function resolveConfig(
   }
 
   const props = connection?.properties as
-    | { configuration?: unknown }
-    | undefined;
+    { configuration?: unknown } | undefined;
   const raw = (props?.configuration ?? {}) as Record<string, unknown>;
 
   const urls = Array.isArray(raw.feed_urls)

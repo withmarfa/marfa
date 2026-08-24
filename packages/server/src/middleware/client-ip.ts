@@ -87,8 +87,7 @@ function isInTrusted(
  *  Hono exposes the underlying `IncomingMessage` via `c.env.incoming`. */
 function readPeer(c: Context): string | null {
   const env = c.env as
-    | { incoming?: { socket?: { remoteAddress?: string } } }
-    | undefined;
+    { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
   return env?.incoming?.socket?.remoteAddress ?? null;
 }
 

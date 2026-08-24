@@ -16,9 +16,7 @@ const TEXT_MIMES: ReadonlySet<string> = new Set([
 ]);
 
 export type ExtractOutcome =
-  | { kind: "text"; text: string }
-  | { kind: "unsupported" }
-  | { kind: "empty" };
+  { kind: "text"; text: string } | { kind: "unsupported" } | { kind: "empty" };
 
 /**
  * Whether a declared MIME can yield text under the current configuration.

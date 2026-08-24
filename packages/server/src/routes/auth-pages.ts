@@ -1598,9 +1598,7 @@ export function authRoutes(
   router.get("/forgot-password", (c) => {
     const url = new URL(c.req.url);
     const error = url.searchParams.get("error") as
-      | "rate_limited"
-      | "email_not_configured"
-      | null;
+      "rate_limited" | "email_not_configured" | null;
     const sent = url.searchParams.get("sent") === "1";
     const email = url.searchParams.get("email");
     const returnTo = validateReturnTo(url.searchParams.get("return_to"));

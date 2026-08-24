@@ -485,11 +485,7 @@ export interface BulkActionResult {
  *  Terminal values (`completed`, `failed`, `cancelled`) freeze the row;
  *  the worker only mutates `queued` → `in_progress` → terminal. */
 export type BulkActionJobStatus =
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "queued" | "in_progress" | "completed" | "failed" | "cancelled";
 
 /** Polling knobs accepted by `bulkAction()`. Default polling is
  *  250ms → 500ms → 1s → 2s exponential, capped at the global max,

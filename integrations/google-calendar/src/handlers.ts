@@ -204,8 +204,7 @@ function adoptSingleCalendarCursor<T extends CalendarCursor>(
  * degraded run from a healthy one.
  */
 type ConfigResolution =
-  | { ok: true; config: ConnectionConfig }
-  | { ok: false; error: unknown };
+  { ok: true; config: ConnectionConfig } | { ok: false; error: unknown };
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -218,8 +217,7 @@ async function resolveConnectionConfig(
   }
 
   const props = connection?.properties as
-    | { configuration?: Record<string, unknown> }
-    | undefined;
+    { configuration?: Record<string, unknown> } | undefined;
   const cfg = props?.configuration ?? {};
   const rawSelected = cfg.selected_calendar_ids;
   const selected: string[] = Array.isArray(rawSelected)
@@ -793,8 +791,7 @@ async function resolveInboundWebhookUrl(
     const connection = await ctx.marfa.getItem(ctx.connection_id);
     const cfg = (
       connection?.properties as
-        | { configuration?: Record<string, unknown> }
-        | undefined
+        { configuration?: Record<string, unknown> } | undefined
     )?.configuration;
     const url = cfg?.inbound_webhook_url;
     if (typeof url === "string" && url.length > 0) return url;

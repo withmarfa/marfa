@@ -655,8 +655,7 @@ describe("inbound sweep", () => {
     expect(cursor.doc_mappings.d2).toBeUndefined();
 
     const summary = built.emitted.at(-1)?.properties as
-      | { detail?: { failed?: number } }
-      | undefined;
+      { detail?: { failed?: number } } | undefined;
     expect(summary?.detail?.failed).toBe(1);
   });
 

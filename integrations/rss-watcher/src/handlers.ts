@@ -205,8 +205,7 @@ export function registerHandlers(opts: RssHandlerOptions = {}): void {
  * the whole feed as new bookmarks.
  */
 type FeedUrlResolution =
-  | { ok: true; url: string }
-  | { ok: false; error: unknown };
+  { ok: true; url: string } | { ok: false; error: unknown };
 
 async function resolveFeedUrl(
   ctx: ConnectionContext,
@@ -218,8 +217,7 @@ async function resolveFeedUrl(
     return { ok: false, error: err };
   }
   const props = connection?.properties as
-    | { configuration?: unknown }
-    | undefined;
+    { configuration?: unknown } | undefined;
   const config = props?.configuration;
   if (
     typeof config === "object" &&

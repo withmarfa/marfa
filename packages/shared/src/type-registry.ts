@@ -331,12 +331,7 @@ export function listTypes(spaceId?: string | null): TypeSchema[] {
  * publisher handle.
  */
 export type NamespaceTier =
-  | "core"
-  | "system"
-  | "app"
-  | "user"
-  | "publisher"
-  | "marfa";
+  "core" | "system" | "app" | "user" | "publisher" | "marfa";
 
 const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "core",

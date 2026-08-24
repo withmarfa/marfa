@@ -557,10 +557,7 @@ export interface OAuthDeviceCode {
 }
 
 export type OAuthDeviceCodeStatus =
-  | "pending"
-  | "approved"
-  | "denied"
-  | "expired";
+  "pending" | "approved" | "denied" | "expired";
 
 // ---------------------------------------------------------------------------
 // Webhook types
@@ -1062,11 +1059,7 @@ export interface SpaceQuota {
 
 /** Resource categories tracked for quota enforcement. */
 export type QuotaResource =
-  | "items"
-  | "webhooks"
-  | "blobs"
-  | "storage_bytes"
-  | "rate_per_minute";
+  "items" | "webhooks" | "blobs" | "storage_bytes" | "rate_per_minute";
 
 /** Space-level configuration. Admin-writable via `/spaces/me/config`. */
 export interface SpaceConfig {

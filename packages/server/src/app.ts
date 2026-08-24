@@ -105,8 +105,7 @@ export function createApp(
    * `local_runtime_not_available` when this is absent.
    */
   deadLetterOps?:
-    | import("./integrations/local-runtime/dead-letters.js").DeadLetterOps
-    | null,
+    import("./integrations/local-runtime/dead-letters.js").DeadLetterOps | null,
   /**
    * The running local integration substrate, when there is one.
    *
@@ -117,8 +116,7 @@ export function createApp(
    * the auth middleware, and asking for a run is a space-admin action.
    */
   localRuntime?:
-    | import("./integrations/local-runtime/types.js").LocalRuntime
-    | null,
+    import("./integrations/local-runtime/types.js").LocalRuntime | null,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 

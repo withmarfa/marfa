@@ -125,8 +125,7 @@ async function resolveConnectionConfig(
   try {
     const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
-      | { configuration?: Record<string, unknown> }
-      | undefined;
+      { configuration?: Record<string, unknown> } | undefined;
     const cfg = props?.configuration ?? {};
     const rawSelected = cfg.selected_task_list_ids;
     const selected: string[] = Array.isArray(rawSelected)

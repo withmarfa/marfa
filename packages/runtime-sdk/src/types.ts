@@ -159,16 +159,12 @@ export interface ManualMessage extends QueueEnvelopeBase {
 }
 
 export type QueueMessage =
-  | WebhookMessage
-  | ScheduleMessage
-  | ItemEventMessage
-  | ManualMessage;
+  WebhookMessage | ScheduleMessage | ItemEventMessage | ManualMessage;
 
 /** A handler decides how its run reports back. The runtime turns
  *  these into queue ack/retry semantics + system.activity emission. */
 export type HandlerResult =
-  | { ok: true }
-  | { ok: false; retry: boolean; reason: string };
+  { ok: true } | { ok: false; retry: boolean; reason: string };
 
 /** Minted by the server for the dispatch and handed to the SDK with
  *  it; the SDK caches it for the length of the run. */

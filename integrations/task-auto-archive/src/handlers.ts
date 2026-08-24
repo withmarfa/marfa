@@ -236,8 +236,7 @@ async function resolveArchiveAfterDays(
   try {
     const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
-      | { configuration?: unknown }
-      | undefined;
+      { configuration?: unknown } | undefined;
     const config = props?.configuration;
     if (
       typeof config === "object" &&
