@@ -282,9 +282,9 @@ describe("loadPermissionBundles", () => {
 
   // `default_on` decides whether a bundle's toggles start ticked, so an
   // override that omits it is not a bundle with a sensible default: it is a
-  // bundle whose grant behavior nobody stated. The predicate did not check
-  // the field, which cost nothing while the renderer ignored it and now
-  // means a typo renders every toggle unticked and grants nothing.
+  // bundle whose grant behavior nobody stated. The field is required on
+  // `PermissionBundle`, and an override is JSON the type system never
+  // checks, so the predicate has to.
   it("refuses an entry that omits default_on", () => {
     const raw = JSON.stringify([
       { id: "x", label: "X", description: "", scopes: ["core.note:read"] },

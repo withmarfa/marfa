@@ -520,12 +520,9 @@ describe("capability labels", () => {
 // ---------------------------------------------------------------------------
 // `default_on`
 //
-// The field is declared on `PermissionBundle` and, until this, nothing read
-// it: every checkbox was hard-coded checked, so an off-by-default bundle was
-// inexpressible however it was declared. These cases are written against the
-// form's own submission rather than against attribute strings, because what
-// matters is not that a `checked` is absent but that an untouched form grants
-// nothing from the bundle.
+// These cases are written against the form's own submission rather than
+// against attribute strings, because what matters is not that a `checked` is
+// absent but that an untouched form grants nothing from the bundle.
 // ---------------------------------------------------------------------------
 
 /** The scope literals an untouched form submits: every `name="scopes"` input

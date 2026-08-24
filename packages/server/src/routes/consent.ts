@@ -124,12 +124,10 @@ interface ScopeGroup {
    * Whether the group's toggles start ticked, from the owning bundle's
    * `default_on`.
    *
-   * The screen used to hard-code every checkbox as checked, which made an
-   * off-by-default bundle inexpressible however it was declared. That is the
-   * shape a bundle needs when it carries something a person should have to
-   * reach for rather than merely leave alone, and it is also what lets an
-   * already-registered client be offered something new without every client
-   * having to re-register to get it.
+   * An off-by-default bundle is the shape a bundle needs when it carries
+   * something a person should have to reach for rather than merely leave
+   * alone, and it is also what lets an already-registered client be offered
+   * something new without every client having to re-register to get it.
    *
    * Read only where a scope is being offered. The re-consent diff overrides
    * it to `true` for scopes the user has already granted, since the question
@@ -154,12 +152,11 @@ function buildGroups(
   // overlap have to resolve it the same way or the same configuration means
   // different things on different surfaces.
   //
-  // First-bundle-wins on its own disagreed with `scopesOfferedOffByDefaultOnly`,
-  // which withholds a scope only when NO on-by-default bundle offers it. A
-  // scope in one on- and one off-by-default bundle therefore rendered
-  // unticked here, if the off one happened to be listed first, while the
-  // device flow read the same pair as on-by-default and granted it in one
-  // click. The stricter surface was the one with the toggle. An ordinary
+  // `scopesOfferedOffByDefaultOnly` withholds a scope only when NO
+  // on-by-default bundle offers it, so first-bundle-wins on its own would
+  // render a scope in one on- and one off-by-default bundle unticked here,
+  // if the off one happened to be listed first, while the device flow reads
+  // the same pair as on-by-default and grants it in one click. An ordinary
   // operator config mistake reaches this, so the tie-break is explicit: an
   // on-by-default bundle claims a scope ahead of an off-by-default one, and
   // first-listed breaks the tie within each half.

@@ -562,12 +562,8 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] =
  * the consent screen with zero bundles.
  *
  * **A missing `default_on` is an error, not a default.** The field is
- * required on `PermissionBundle` and the predicate below did not check it,
- * so an override omitting it produced an object the type system believed
- * carried a boolean and that actually carried `undefined`. That cost
- * nothing while the renderer ignored the field. Now that it reads it, the
- * same omission renders every toggle unticked and grants nothing, from a
- * typo, with no error anywhere.
+ * required on `PermissionBundle`, and an override is JSON the type system
+ * never checks.
  *
  * Neither implicit reading is better than refusing. Defaulting to `true`
  * makes a required field optional in practice and turns an operator who
@@ -657,12 +653,11 @@ export function setActivePermissionBundles(
  * Whether the operator override is both set and usable.
  *
  * Boot skips folding the runtime custom-type namespaces in when an override
- * is present, because the override outranks the derivation. Keyed on
- * presence alone, a *rejected* override took that branch too: the loader
- * fell back to the shipped defaults and the fold never ran, so the instance
- * quietly lost the handle namespaces a space's own custom types need, on
- * top of losing the override. Presence and validity are different
- * questions, and only the second one should suppress the derivation.
+ * is present, because the override outranks the derivation. Presence and
+ * validity are different questions, and only the second one should suppress
+ * the derivation: a rejected override falls back to the shipped defaults, so
+ * keying on presence alone would drop the handle namespaces a space's own
+ * custom types need on top of dropping the override.
  */
 export function hasUsablePermissionBundleOverride(): boolean {
   const raw = process.env.MARFA_PERMISSION_BUNDLES;
