@@ -1,0 +1,135 @@
+# Builds the server container image and throws it away.
+#
+# Nothing else in the estate builds it until somebody dispatches a deploy. On
+# 21 August 2026 the server's bundler ran out of memory inside the image build
+# and failed every deploy on `main`, for both environments, blocking two lanes
+# until it was fixed. It had passed the full local matrix, the whole CI matrix
+# on four pull requests, and every freshness job. None of them build the image,
+# so none of them ran the build under the constraints the image build runs it
+# under.
+#
+# The heap ceiling that instance needed is in the Dockerfile now. The gap is
+# not closed by that: anything the image build does differently stays invisible
+# until deploy. The enduring list is the linux/amd64 target, the install
+# against the committed lockfile, the integration staging step, and the runtime
+# stage's file layout.
+#
+# Its own workflow rather than a job in ci.yml, and that is load-bearing.
+# ci.yml cancels a superseded run so two Postgres-bearing matrices never
+# contend for one machine. That is right for the matrix and wrong here: a
+# merge landing inside this build's window would cancel the previous merge's
+# image build, and ci.yml's path gating derives from `github.event.before`, so
+# the newer run would compute its own diff, find no image path in it, and skip
+# the build entirely. The cancelled merge's lockfile change would never be
+# built at all.
+#
+# Here the trigger is the workflow's own `paths:`, so a push either produces a
+# run or produces nothing, and every run builds the whole tree at its own SHA.
+# `cancel-in-progress: false` then means an in-flight build survives a newer
+# push rather than being dropped, so a commit that breaks the image and is
+# fixed by the next one is still seen. These runs cost the hosted allowance
+# rather than the shared pool, so letting them overlap contends with nothing.
+# GitHub keeps at most one run pending per group, which loses nothing: a
+# superseded pending run's tree is inside the newer run's.
+#
+# Merges only, not pull requests. That still catches the failure before anyone
+# tries to deploy, which is the whole point, at a fraction of the runs.
+
+name: Server image
+
+on:
+  push:
+    branches: [main]
+    # Everything the image build does that no other job does: the Dockerfile
+    # and what it excludes, the install it performs against the committed
+    # lockfile, the build scripts and bundler configs it runs, the integration
+    # entries it stages, and the script that verifies the staged result loads.
+    #
+    # Deliberately not every source file. The instance that motivated this
+    # came from three ordinary pull requests growing the type surface past a
+    # ceiling, which no path set describes. Frequency covers that instead:
+    # roughly a quarter of merges touch this set, so accumulated growth meets
+    # a build within hours.
+    paths:
+      - "packages/server/Dockerfile"
+      - "**/.dockerignore"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "**/package.json"
+      - "**/tsup.config.ts"
+      - "packages/server/scripts/**"
+      - "integrations/*/src/local.ts"
+      - ".github/workflows/image-build.yml"
+  # Available against any branch, and the way a change to the Dockerfile or to
+  # this file gets checked before it merges. It is not free — see the header.
+  workflow_dispatch:
+
+concurrency:
+  group: server-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Server image builds
+    # Hosted rather than the self-hosted pool, which is the established
+    # exception rather than a new one: the pool is arm64, the image is
+    # linux/amd64, and cross-building under emulation is far slower than a
+    # native build. The deploy's own build job is hosted for the same reason.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # The whole image, not `--target build`. Stopping at the build stage
+      # skips the runtime stage's file layout and the verification that the
+      # staged integrations can load, which are two of the four things above.
+      # They are four layers over an already-pulled base plus one `node` run,
+      # so they cost seconds.
+      #
+      # No `--push` and no `--load`, so the image is built and discarded. That
+      # is where the saving is, and it means this job needs no registry
+      # credential. The Dockerfile's own steps are the assertion: a bundler
+      # out of heap, an integration that stages no entry, or a staged tree
+      # that cannot load all fail the build.
+      - name: Build the linux/amd64 image
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -f packages/server/Dockerfile \
+            --build-arg VERSION_SHA="${GITHUB_SHA::7}" \
+            .
+
+  notify:
+    # Reports a red image build to aic-alerts. A merge to `main` is not
+    # watched, and the failure this exists to catch is precisely the one
+    # nobody is looking for. Hosted deliberately, matching every other
+    # notifier in the estate: a notifier on the self-hosted pool cannot report
+    # that the pool is broken.
+    needs: build
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report outcome to aic-alerts
+        env:
+          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          RESULT: ${{ needs.build.result }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # `cancelled` is silent here rather than opening an alert, unlike
+          # the deploy notifier: a cancelled image build means a newer merge is
+          # already building a tree that contains this one, so it says nothing
+          # about whether the image builds. `skipped` cannot happen while
+          # `build` carries no `if:`, and is handled anyway so that adding one
+          # later cannot turn this notifier into a liar.
+          case "$RESULT" in
+            success) STATE=resolved; TITLE="The server image builds again on $REPO" ;;
+            failure) STATE=open; TITLE="The server image does not build on $REPO" ;;
+            *) echo "build result '$RESULT' says nothing about the image; not reporting."; exit 0 ;;
+          esac
+          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/server-image" \
+                --arg u "$RUN_URL" --arg r "$REPO" --arg c "$GITHUB_SHA" \
+            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+              fields:{Repository:$r,Commit:$c}}' \
+          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
+              -H "Authorization: Bearer $ALERTS_SECRET" \
+              -H "Content-Type: application/json" --data @- \
+          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
