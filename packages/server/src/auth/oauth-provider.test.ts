@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   expandBundlesToScopes,
+  isCapabilityScope,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -191,6 +192,13 @@ describe("permission bundles bind to the type registry", () => {
     const unresolved: string[] = [];
     for (const literal of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
       if (NON_TYPE_LITERALS.has(literal)) continue;
+      // A capability names no type, and `split(":")` makes it its own
+      // pattern: the literal carries no colon, so the whole string survives
+      // and falls through to a registry lookup that can never succeed now
+      // the root is reserved. The day a bundle names one, a correct config
+      // would be reported here as a deleted type. Asked of the parser rather
+      // than of the characters, like everything else that classifies a scope.
+      if (isCapabilityScope(literal)) continue;
       const pattern = literal.split(":")[0] ?? "";
       // A wildcard names a namespace rather than a member, so it resolves
       // when anything in the registry sits under it — or when it is one of

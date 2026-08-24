@@ -13,9 +13,8 @@
  */
 
 import type { ParsedScope } from "@withmarfa/shared";
-import { isCapabilityScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
-import { CAPABILITY_LABELS } from "./consent.js";
+import { capabilityLabel } from "./capability-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface DevicePageParams {
@@ -75,13 +74,6 @@ const OIDC_FRIENDLY_LABELS: Record<string, string> = {
  * cosmetic, but it is cosmetic on a screen whose only job is telling someone
  * what they are about to approve.
  */
-/** The curated label for a scope literal, or undefined when it names no
- *  capability. Mirrors the consent screen's accessor so the device screen
- *  and the browser screen cannot describe one grant two ways. */
-function capabilityLabel(literal: string): string | undefined {
-  return isCapabilityScope(literal) ? CAPABILITY_LABELS[literal] : undefined;
-}
-
 function describeCapabilities(
   scopes: ParsedScope[],
   descriptions?: Record<string, string>,

@@ -296,3 +296,69 @@ describe("POST /auth/grants/:id/revoke + /auth/sessions/:id/revoke gates", () =>
     expect(res.headers.get("location")).toMatch(/^\/auth\/sign-in/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The summary counts everything before it says anything.
+//
+// Two earlier versions returned on first sight, one arm for a write and one
+// for a capability, so the line depended on the order the scopes arrived in
+// and the losing half went unmentioned on a page that renders one line. The
+// default flow landed on the worse branch: administrative access renders
+// last on the consent screen and a form submits in document order.
+// ---------------------------------------------------------------------------
+
+describe("the summary does not depend on scope order", () => {
+  const summaryOf = (scopes: string[]): string => {
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [{ ...SAMPLE_GRANT, scopes }],
+      sessions: [],
+    });
+    return /<div class="row__meta">([^<]*)<\/div>/.exec(html)?.[1] ?? "";
+  };
+
+  it("says the same thing whichever way round the scopes arrive", () => {
+    const a = summaryOf(["capability.app_grants", "core.note:write"]);
+    const b = summaryOf(["core.note:write", "capability.app_grants"]);
+    expect(a).toBe(b);
+  });
+
+  it("mentions both halves rather than the first one seen", () => {
+    const summary = summaryOf(["core.note:write", "capability.app_grants"]);
+    expect(summary).toContain("read and write your data");
+    expect(summary).toContain("revoke the other apps");
+  });
+
+  it("names the capability rather than summarizing the family", () => {
+    // No one sentence is honest across this set, so the line lists what was
+    // granted. These three are the cases a collective phrase got wrong in
+    // both directions.
+    expect(summaryOf(["capability.upstream_access"])).toContain(
+      "use your accounts at connected services directly",
+    );
+    expect(summaryOf(["capability.item_purge"])).toContain(
+      "permanently delete things past the trash",
+    );
+    // A pure read must not read as management.
+    const audit = summaryOf(["capability.audit_read"]);
+    expect(audit).toContain("read your security history");
+    expect(audit).not.toContain("manage");
+  });
+
+  it("counts the tail rather than printing a paragraph in a table row", () => {
+    const summary = summaryOf([
+      "capability.keys",
+      "capability.item_purge",
+      "capability.audit_read",
+      "capability.webhooks",
+    ]);
+    expect(summary).toContain("2 more things");
+  });
+
+  it("still separates a sign-in-only app and a grant with nothing", () => {
+    expect(summaryOf(["openid", "profile"])).toBe(
+      "Can see who you are, nothing else",
+    );
+    expect(summaryOf([])).toBe("No access to your data");
+  });
+});

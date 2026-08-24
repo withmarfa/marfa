@@ -431,7 +431,7 @@ describe("capability scopes", () => {
   });
 
   it("is granted by naming it, and by nothing else", () => {
-    // `hasCapability` exists because the neighbouring helper answered this
+    // `hasCapability` exists because the neighboring helper answered this
     // question backwards. `*:write` is the full-access path the consent
     // screen offers under Customize, and a pattern match admitted it against
     // anything type-shaped, so the wrong tool said yes to a token holding no

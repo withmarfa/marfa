@@ -21,6 +21,7 @@
  */
 
 import { parseScope } from "@withmarfa/shared";
+import { capabilityShort } from "./capability-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
 
@@ -83,22 +84,6 @@ function formatDate(iso: string): string {
   return `${String(d.getUTCDate())} ${month} ${String(d.getUTCFullYear())}`;
 }
 
-/** What an app that can change your content reads as. */
-const READ_AND_WRITE_SUMMARY = "Can read and write your data";
-
-/**
- * The widest thing this page says, kept apart from read-and-write because it
- * is wider in kind rather than in degree. A capability hands an app one of
- * the controls around the data: registering a webhook, minting a credential,
- * emptying the trash for good. Folding that into "read and write your data"
- * would describe the smaller half of what was granted, on the page whose
- * whole job is the revoke decision.
- *
- * Being the widest is also what makes it the fallback for a permission
- * family this build cannot classify.
- */
-const MANAGE_SUMMARY = "Can manage your space, not just what is in it";
-
 /**
  * Plain-English summary of what a grant lets an app do, so the person
  * deciding whether to revoke it never has to read a permission literal.
@@ -108,42 +93,62 @@ const MANAGE_SUMMARY = "Can manage your space, not just what is in it";
  * while they say different things, sees nothing at all in a literal it does
  * not recognize, and this one line is most of what a person acts on.
  *
- * Two things resist classification, and they are answered in opposite
- * directions because they are opposite situations. A literal the parser
- * refuses is enforced as nothing, since every projection onto the permission
- * maps drops it, so the narrow reading is not a guess but the fact. A family
- * this build has never heard of may authorize a great deal, and there is
- * nothing to base a narrow claim on, so it reads as the widest. Overstating
- * an app's reach costs a revoke nobody needed; understating it loses the
- * decision this page exists for.
+ * **Every scope is counted before anything is said.** Two earlier versions
+ * returned on first sight — one arm for a write, one for a capability — and
+ * neither implied the other, so the sentence depended on the order the
+ * scopes happened to arrive in. `["capability.app_grants", "core.note:write"]`
+ * and the same pair reversed produced different lines, each omitting what
+ * the other named, and the page renders exactly one line, so the loser was
+ * not merely unnamed but unmentioned. The default flow landed on the worse
+ * of the two: the consent screen renders administrative access last and a
+ * form submits in document order, so an app holding both read as content
+ * access with its administrative reach invisible.
+ *
+ * **Capabilities are named, not summarized.** No single sentence covers this
+ * set honestly. `upstream_access` reaches outside the space entirely, to the
+ * person's account at the third-party service. `item_purge` is the contents
+ * rather than anything around them. `app_grants` revokes other apps, which
+ * is this page's own subject. And `audit_read` and `space_usage` are reads
+ * that any collective phrasing overstates. So the line lists what was
+ * granted, from the same labels the consent screen used, and a person meets
+ * the same words in both places.
+ *
+ * A literal the parser refuses contributes nothing, because it grants
+ * nothing: every projection onto the permission maps drops it. A family this
+ * build has never heard of may authorize a great deal and there is nothing
+ * to base a narrow claim on, so it reads as the widest. Overstating an app's
+ * reach costs a revoke nobody needed; understating it loses the decision
+ * this page exists for.
  */
 function scopeSummary(scopes: readonly string[]): string {
-  let readsSomething = false;
+  let writesData = false;
+  let readsData = false;
   let identifiesYou = false;
+  let unknownFamily = false;
+  const capabilities: string[] = [];
 
   for (const scope of scopes) {
     const parsed = parseScope(scope);
-    // Contributes nothing, because it grants nothing: the auth middleware
-    // builds every permission map through the same parser and drops what it
-    // cannot read. Reporting the widest here would flip a whole page of
-    // grants to "read and write" the day the pattern grammar tightens, for
-    // permissions that by then enforce as nothing.
     if (!parsed) continue;
     switch (parsed.kind) {
       case "type":
       case "edge":
       case "metadata":
-        if (parsed.operation === "write") return READ_AND_WRITE_SUMMARY;
-        readsSomething = true;
+        if (parsed.operation === "write") writesData = true;
+        else readsData = true;
         break;
       case "oidc":
         identifiesYou = true;
         break;
-      case "capability":
-        // Returned rather than accumulated, for the reason a write is: it is
-        // already the widest statement, so nothing later in the list can
-        // widen it.
-        return MANAGE_SUMMARY;
+      case "capability": {
+        const named = capabilityShort(parsed.typePattern);
+        // An unnamed capability cannot be listed, but it must not vanish
+        // either. The exhaustive label map makes this unreachable in a
+        // build that compiles; it is here for one that did not.
+        if (named === undefined) unknownFamily = true;
+        else if (!capabilities.includes(named)) capabilities.push(named);
+        break;
+      }
       default: {
         // Compile-time exhaustiveness check. A family added to the grammar
         // decides here what it lets an app do, and reads as the widest until
@@ -151,14 +156,36 @@ function scopeSummary(scopes: readonly string[]): string {
         // carry real authority.
         const _exhaustive: never = parsed.kind;
         void _exhaustive;
-        return MANAGE_SUMMARY;
+        unknownFamily = true;
+        break;
       }
     }
   }
 
-  if (readsSomething) return "Can read your data";
-  if (identifiesYou) return "Can see who you are, nothing else";
-  return "No access to your data";
+  const clauses: string[] = [];
+  if (unknownFamily) clauses.push("manage your space");
+  if (writesData) clauses.push("read and write your data");
+  else if (readsData) clauses.push("read your data");
+  // Two named, then a count. Four capabilities spelled out in full is a
+  // paragraph in a table row, and the row is a glance rather than a reading.
+  if (capabilities.length > 0) {
+    const listed = capabilities.slice(0, 2);
+    const remainder = capabilities.length - listed.length;
+    clauses.push(...listed);
+    if (remainder > 0) {
+      clauses.push(
+        `${String(remainder)} more thing${remainder > 1 ? "s" : ""}`,
+      );
+    }
+  }
+
+  if (clauses.length === 0) {
+    if (identifiesYou) return "Can see who you are, nothing else";
+    return "No access to your data";
+  }
+  if (clauses.length === 1) return `Can ${clauses[0] ?? ""}`;
+  const last = clauses[clauses.length - 1] ?? "";
+  return `Can ${clauses.slice(0, -1).join(", ")}, and ${last}`;
 }
 
 /** Trim a UA string to a hint. Real device parsing is a yak-shave;

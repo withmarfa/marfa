@@ -95,9 +95,13 @@ export const CAPABILITY_ROOT = "capability";
  *   is honest about either.
  * - **`credentials` is not `connections` either.** Registering and removing
  *   the upstream client secrets and API tokens a connection is installed
- *   against is its own authority. Leased tokens are deliberately NOT here:
- *   one carries no reach of its own beyond the connection that minted it, so
- *   it is part of operating a connection rather than a credential to hold.
+ *   against is its own authority, and so is starting the OAuth bootstrap
+ *   that obtains one: that route takes a caller-supplied scope override
+ *   straight into the upstream authorize URL, so it decides how much the
+ *   credential it is about to fetch will be able to do. Leased tokens are
+ *   deliberately NOT here: one carries no reach of its own beyond the
+ *   connection that minted it, so it is part of operating a connection
+ *   rather than a credential to hold.
  * - **`schema` is not registration.** Registering a type is already fenced
  *   by `metadata.types:write` and `metadata.edge_types:write`. This covers
  *   only what that grammar does not — changing and removing definitions that
@@ -187,14 +191,25 @@ export function isCapabilityScope(scope: string): scope is CapabilityScope {
  *
  * The only correct way to ask. A capability is granted by naming it and by
  * nothing else: no wildcard reaches one, no breadth of data access implies
- * one, and holding all eight of the others implies nothing about the ninth.
+ * one, and holding every other member of the set implies nothing about the
+ * one being asked about.
  *
  * This exists as its own function rather than as a note telling callers what
  * not to do, because the alternative is what a gate author reaches for.
- * `scopeCovers` is the neighbouring helper and it answers about the item-type
+ * `scopeCovers` is the neighboring helper and it answers about the item-type
  * axis, where `*:write` matches any pattern — so asked about a capability it
  * said yes to a token holding no capability at all. That function now refuses
  * a capability outright, and this one is what replaces it.
+ *
+ * **Nothing can call this from a route yet, and the missing piece is a
+ * carrier rather than a helper.** `ApiKey` has no scope list and the request
+ * context carries none: the bearer middleware projects a token's scopes into
+ * the three permission maps and keeps nothing else, and a capability
+ * deliberately enters none of those. So a gate reaching for this has no
+ * `held` to pass, and the change that wires the first gate has to thread the
+ * granted scopes onto the request before it can use this at all. Stated here
+ * because the shape of the fix is not obvious from the signature, and
+ * because the wrong repair is to relax one of the three projections.
  */
 export function hasCapability(
   held: readonly string[],

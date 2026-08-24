@@ -8,6 +8,12 @@ import {
   humanizeType,
 } from "./consent.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
+import {
+  CAPABILITY_LABELS,
+  CAPABILITY_SHORT,
+  capabilityLabel,
+} from "./capability-labels.js";
+import { CAPABILITY_SCOPES } from "@withmarfa/shared";
 
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
@@ -170,11 +176,17 @@ describe("renderConsentScreen — soft-tile groups", () => {
         const parsed = parseScope(literal);
         expect(parsed, `unparseable bundle scope: ${literal}`).not.toBeNull();
         if (!parsed) continue;
+        // The capability arm has to be here or the guard stops guarding:
+        // without it a capability resolves through `humanizeType` to a
+        // truthy "Webhooks" and the case passes while green-lighting the
+        // exact collision `CAPABILITY_LABELS` exists to prevent.
         const label =
           parsed.kind === "oidc"
             ? OIDC_LABELS[parsed.oidcScope ?? parsed.typePattern]
-            : (SCOPE_LABELS[parsed.typePattern] ??
-              humanizeType(parsed.typePattern));
+            : parsed.kind === "capability"
+              ? capabilityLabel(parsed.typePattern)
+              : (SCOPE_LABELS[parsed.typePattern] ??
+                humanizeType(parsed.typePattern));
         expect(label, `no label resolves for ${literal}`).toBeTruthy();
       }
     }
@@ -458,5 +470,49 @@ describe("group summaries describe the request", () => {
 
     const wildcard = summariesOf(render([scope("user.*", "read")])).join(" ");
     expect(wildcard).toContain("anything else");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The label maps, which exist for one reason.
+//
+// `humanizeType` takes the last dotted segment, so an unnamed
+// `capability.webhooks` renders as "Webhooks" — byte-identical to what
+// `system.webhook:read` gets from the same fallback. One grant is sight of a
+// webhook row and the other is the power to point a new webhook anywhere.
+// ---------------------------------------------------------------------------
+
+describe("capability labels", () => {
+  it("names every capability in both shapes", () => {
+    // The docstrings claim a test pins this. It is this one.
+    expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(
+        CAPABILITY_LABELS[literal],
+        `no toggle label: ${literal}`,
+      ).toBeTruthy();
+      expect(
+        CAPABILITY_SHORT[literal],
+        `no short label: ${literal}`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("never collides with the humanized fallback it replaces", () => {
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(capabilityLabel(literal)).not.toBe(humanizeType(literal));
+    }
+    // The specific pair that motivated the map.
+    expect(capabilityLabel("capability.webhooks")).not.toBe(
+      SCOPE_LABELS["system.webhook"],
+    );
+  });
+
+  it("keeps the inline forms comma-free, since they are joined into a list", () => {
+    // A label carrying its own comma turns one item into two when the
+    // security page lists several in a sentence.
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(CAPABILITY_SHORT[literal]).not.toContain(",");
+    }
   });
 });
