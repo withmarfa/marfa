@@ -14,6 +14,7 @@
 
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
+import { capabilityLabel } from "./capability-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface DevicePageParams {
@@ -59,10 +60,19 @@ const OIDC_FRIENDLY_LABELS: Record<string, string> = {
 };
 
 /**
- * Resolve the human-readable capability for a parsed scope, deduped across
- * the full set. OIDC literals map to friendly labels; everything else uses
- * the caller-supplied description, falling back to the scope literal. The
- * returned order follows first appearance in `scopes`.
+ * Resolve the human-readable description for a parsed scope, deduped across
+ * the full set. OIDC literals and capability scopes map to friendly labels;
+ * everything else uses the caller-supplied description, falling back to the
+ * scope literal. The returned order follows first appearance in `scopes`.
+ *
+ * The verb-less families are named rather than defaulted, because the
+ * fallback is a literal this function rebuilds and the naive rebuild is
+ * wrong for them. Appending `:${operation}` to a capability produces
+ * `capability.webhooks:none`, which no parser accepts and nobody signed, and
+ * this string is what a person reads on the device-approval screen when no
+ * description resolves. Nothing is granted from it, so the failure is
+ * cosmetic, but it is cosmetic on a screen whose only job is telling someone
+ * what they are about to approve.
  */
 function describeCapabilities(
   scopes: ParsedScope[],
@@ -72,13 +82,15 @@ function describeCapabilities(
   const out: string[] = [];
   for (const s of scopes) {
     const literal =
-      s.kind === "oidc"
-        ? (s.oidcScope ?? s.typePattern)
+      s.kind === "oidc" || s.kind === "capability"
+        ? s.typePattern
         : `${s.typePattern}:${s.operation}`;
     const human =
       s.kind === "oidc"
         ? (OIDC_FRIENDLY_LABELS[s.oidcScope ?? s.typePattern] ?? literal)
-        : (descriptions?.[s.typePattern] ?? literal);
+        : s.kind === "capability"
+          ? (capabilityLabel(s.typePattern) ?? literal)
+          : (descriptions?.[s.typePattern] ?? literal);
     if (seen.has(human)) continue;
     seen.add(human);
     out.push(human);

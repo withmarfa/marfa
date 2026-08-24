@@ -23642,7 +23642,7 @@
           "Auth"
         ],
         "summary": "Update the current user's handle",
-        "description": "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `marfa`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/guides/identity/handles-and-publishers).\n\n**Auth mode:** served only by deployments running `AUTH_MODE=hosted`. Instances in any other auth mode do not expose this endpoint.",
+        "description": "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `marfa`, `capability`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/guides/identity/handles-and-publishers).\n\n**Auth mode:** served only by deployments running `AUTH_MODE=hosted`. Instances in any other auth mode do not expose this endpoint.",
         "security": [
           {
             "bearerAuth": []

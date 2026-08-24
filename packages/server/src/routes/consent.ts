@@ -35,6 +35,7 @@
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
+import { CAPABILITY_LABELS, capabilityLabel } from "./capability-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
@@ -134,17 +135,33 @@ function buildGroups(
     desc: "Additional things this app asked to change.",
     scopes: [],
   };
+  // A capability needs a bucket of its own, and the reason is the heading
+  // rather than the tidiness. The read/write split is decided on
+  // `operation`, which a capability sets to `"none"`, so without this arm
+  // every one of them fell through to the read bucket and a grant to
+  // register webhooks or revoke keys was filed under "Additional things this
+  // app asked to read". A heading that states the opposite of what the
+  // toggle does is worse than no heading.
+  const otherCapability: ScopeGroup = {
+    label: "Administrative access",
+    desc: "Parts of your space this app asked to manage.",
+    scopes: [],
+  };
   for (const scope of scopes) {
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
     if (bundle) {
       byBundle.get(bundle.id)?.scopes.push(scope);
+    } else if (scope.kind === "capability") {
+      otherCapability.scopes.push(scope);
     } else if (scope.kind !== "oidc" && scope.operation === "write") {
       otherWrite.scopes.push(scope);
     } else {
       otherRead.scopes.push(scope);
     }
   }
-  return [...byBundle.values(), otherRead, otherWrite]
+  // Administrative access last: it is the widest thing on the screen, and a
+  // reader scanning downward should not meet it between two content groups.
+  return [...byBundle.values(), otherRead, otherWrite, otherCapability]
     .filter((g) => g.scopes.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
@@ -175,6 +192,7 @@ function summarize(group: ScopeGroup): string {
     // scopes a reader is least likely to recognize. It is the same failure
     // this function's own docstring describes, from the other end.
     const label =
+      capabilityLabel(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       OIDC_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
@@ -257,10 +275,21 @@ export const OIDC_LABELS: Record<string, string> = {
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
+/**
+ * The literal a parsed scope came from, which is what the checkbox has to
+ * carry: the decision route validates the ticked set against the scopes the
+ * plugin signed, so a reconstruction that differs by one character grants
+ * nothing and reads as the user having unticked it.
+ *
+ * The verb-less families are named rather than defaulted. Appending
+ * `:${operation}` to one produces `capability.webhooks:none`, a literal
+ * nothing signed and no parser accepts, and the failure is silent all the
+ * way to a token that is missing the permission the user just approved.
+ */
 function scopeLiteralFor(scope: ParsedScope): string {
-  return scope.kind === "oidc"
-    ? (scope.oidcScope ?? scope.typePattern)
-    : `${scope.typePattern}:${scope.operation}`;
+  if (scope.kind === "oidc") return scope.oidcScope ?? scope.typePattern;
+  if (scope.kind === "capability") return scope.capability ?? scope.typePattern;
+  return `${scope.typePattern}:${scope.operation}`;
 }
 
 /** Title-case the most specific segment of a dotted type pattern, for scopes
@@ -283,6 +312,9 @@ function labelFor(
   if (scope.kind === "oidc") {
     const lit = scope.oidcScope ?? scope.typePattern;
     return OIDC_LABELS[lit] ?? humanizeType(lit);
+  }
+  if (scope.kind === "capability" && scope.capability) {
+    return CAPABILITY_LABELS[scope.capability];
   }
   return (
     SCOPE_LABELS[scope.typePattern] ??
@@ -388,7 +420,11 @@ export function renderConsentScreen(params: ConsentParams): string {
         diff.removed.map((lit) => {
           const lastColon = lit.lastIndexOf(":");
           const typePattern = lastColon > 0 ? lit.slice(0, lastColon) : lit;
-          return SCOPE_LABELS[typePattern] ?? humanizeType(typePattern);
+          return (
+            capabilityLabel(typePattern) ??
+            SCOPE_LABELS[typePattern] ??
+            humanizeType(typePattern)
+          );
         }),
       ),
     );

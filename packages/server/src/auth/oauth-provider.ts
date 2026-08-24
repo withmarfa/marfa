@@ -29,6 +29,7 @@ import {
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
+  isValidScope,
 } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -127,7 +128,7 @@ export function setRuntimeNamespaceRoots(roots: readonly string[]): void {
  * metadata sub-resource grammar + the global type wildcards (`*:read` /
  * `*:write`, the "Customize" full-access path) + the runtime / connected-
  * service namespace wildcards (`user.*`, `app.*`, `google.*`, …) + every
- * scope referenced by a configured permission bundle.
+ * grammatically valid scope referenced by a configured permission bundle.
  *
  * This is the set of scopes that CAN be requested, which is wider than the
  * default consent bundle (the curated, per-type content set). Custom types
@@ -212,11 +213,43 @@ export function buildAllowedScopes(
   }
 
   // Every scope referenced by a configured bundle (namespace wildcards).
+  //
+  // Checked through the grammar rather than trusted, which the rest of this
+  // function does not need to do: every literal above is assembled here from
+  // a registry key, so it is well-formed by construction. A bundle's scopes
+  // are configuration — the operator override parses arbitrary JSON — and
+  // this loop is the only way into the allowlist that does not pass a
+  // parser. A misspelled literal admitted here is requestable, survives
+  // narrowing, and reaches a token as a grant nothing can enforce and
+  // nothing will ever refuse, which is indistinguishable from working until
+  // the day the name it was meant to be starts meaning something.
   for (const scope of expandBundlesToScopes(permissionBundles)) {
+    if (!isValidScope(scope)) {
+      warnOnceAboutBundleScope(scope);
+      continue;
+    }
     out.add(scope);
   }
 
   return Array.from(out).sort();
+}
+
+/**
+ * Literals already reported, so a permanently misconfigured bundle costs one
+ * log line rather than one per call. This runs on the discovery path, which
+ * is per-request; a silent drop would be the wrong trade on a permission
+ * question, and an unbounded repeat would be the wrong trade on a hot one.
+ * The set is bounded by the configured bundles, not by request input.
+ */
+const reportedInvalidBundleScopes = new Set<string>();
+
+function warnOnceAboutBundleScope(scope: string): void {
+  if (reportedInvalidBundleScopes.has(scope)) return;
+  reportedInvalidBundleScopes.add(scope);
+  log("warn", "permission bundle names a scope the grammar rejects", {
+    scope,
+    action: "dropped from the OAuth scope allowlist",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -506,8 +539,19 @@ export function buildOauthProjectionPlugin(opts: {
   // registered type); this is the curated bundle union the metadata
   // document publishes. The distinction is what lets a stored ceiling stop
   // freezing without becoming no ceiling at all — see `narrowAuthorizeScopes`.
+  //
+  // Filtered through the grammar for the same reason `buildAllowedScopes`
+  // filters, and it is the same raw configuration reaching a second reader.
+  // A malformed literal was never grantable here, since `liveScopes` is
+  // tested first and no longer carries one, but this set is what a stale
+  // ceiling is widened by, so an unchecked literal would be written into a
+  // client registration row and audit-logged as a scope. A row naming a
+  // scope that cannot exist is a false record rather than a live grant, and
+  // the cheaper of the two to prevent.
   const bundleScopes = new Set(
-    getPermissionBundles().flatMap((bundle) => bundle.scopes),
+    getPermissionBundles()
+      .flatMap((bundle) => bundle.scopes)
+      .filter((scope) => isValidScope(scope)),
   );
   const acceptedResources = baseURL
     ? new Set(

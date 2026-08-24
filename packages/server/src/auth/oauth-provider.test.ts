@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   expandBundlesToScopes,
+  isCapabilityScope,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -96,6 +97,75 @@ describe("buildAllowedScopes", () => {
   });
 });
 
+describe("a bundle is not a way around the scope grammar", () => {
+  // Every other literal in the allowlist is assembled here from a registry
+  // key, so it is well-formed by construction. Bundle scopes are the one
+  // input that is not: the operator override parses arbitrary JSON, and this
+  // loop used to add whatever it found. A literal admitted that way is
+  // requestable, survives the authorize narrowing, and lands in a token as a
+  // grant no permission map will ever carry and no route will ever check.
+  const bundleOf = (scopes: string[]) => [
+    {
+      id: "operator",
+      label: "Operator override",
+      description: "",
+      default_on: true,
+      scopes,
+    },
+  ];
+
+  it("drops a malformed literal instead of admitting it", () => {
+    const scopes = new Set(
+      buildAllowedScopes(bundleOf(["core.note:destroy"]), []),
+    );
+    expect(scopes.has("core.note:destroy")).toBe(false);
+  });
+
+  it("drops a near-miss under a reserved prefix", () => {
+    // The shape a capability typo takes. `capability.webhooks:write` reads
+    // as a capability grant and is not one, and `capability.*:read` is the
+    // literal the parser has to claim so it cannot be read as an item-type
+    // pattern instead.
+    const scopes = new Set(
+      buildAllowedScopes(
+        bundleOf([
+          "capability.webhook",
+          "capability.webhooks:write",
+          "capability.*:read",
+        ]),
+        [],
+      ),
+    );
+    expect(scopes.has("capability.webhook")).toBe(false);
+    expect(scopes.has("capability.webhooks:write")).toBe(false);
+    expect(scopes.has("capability.*:read")).toBe(false);
+  });
+
+  it("keeps the valid scopes of a bundle that also carries a bad one", () => {
+    // Refusing the whole bundle would take a working consent screen down
+    // over one typo. The literal is what is refused, not the bundle.
+    const scopes = new Set(
+      buildAllowedScopes(bundleOf(["core.note:read", "core.note:destroy"]), []),
+    );
+    expect(scopes.has("core.note:read")).toBe(true);
+    expect(scopes.has("core.note:destroy")).toBe(false);
+  });
+
+  it("admits every literal the shipped bundles name", () => {
+    // The check has to discriminate rather than merely refuse: a validity
+    // gate that also dropped the defaults would be an outage.
+    const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
+    const shipped = expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES);
+    // Without this the loop below is vacuous, and it would stay green on the
+    // day the bundles derived to nothing — which is the failure it is here
+    // to catch, since that is what a broken derivation looks like.
+    expect(shipped.length).toBeGreaterThan(20);
+    for (const s of shipped) {
+      expect(scopes.has(s)).toBe(true);
+    }
+  });
+});
+
 describe("permission bundles bind to the type registry", () => {
   // Asserting the bundles against `buildAllowedScopes` cannot fail: the
   // builder unions the bundle scopes into the set it returns, so the
@@ -122,6 +192,13 @@ describe("permission bundles bind to the type registry", () => {
     const unresolved: string[] = [];
     for (const literal of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
       if (NON_TYPE_LITERALS.has(literal)) continue;
+      // A capability names no type, and `split(":")` makes it its own
+      // pattern: the literal carries no colon, so the whole string survives
+      // and falls through to a registry lookup that can never succeed now
+      // the root is reserved. The day a bundle names one, a correct config
+      // would be reported here as a deleted type. Asked of the parser rather
+      // than of the characters, like everything else that classifies a scope.
+      if (isCapabilityScope(literal)) continue;
       const pattern = literal.split(":")[0] ?? "";
       // A wildcard names a namespace rather than a member, so it resolves
       // when anything in the registry sits under it — or when it is one of

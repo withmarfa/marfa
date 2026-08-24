@@ -11,8 +11,17 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   isTypeScope,
+  CAPABILITY_ROOT,
+  CAPABILITY_SCOPES,
+  hasCapability,
 } from "./scopes.js";
 import type { ParsedScope, PermissionBundle } from "./scopes.js";
+import {
+  isValidHandle,
+  isValidTypeIdentifier,
+  isValidTypePattern,
+} from "./validation.js";
+import { isReservedRoot } from "./type-registry.js";
 
 describe("parseScope", () => {
   it("parses a simple read scope", () => {
@@ -392,6 +401,177 @@ describe("parseScope defers to the type-pattern grammar", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Capability scopes
+// ---------------------------------------------------------------------------
+
+describe("capability scopes", () => {
+  for (const literal of CAPABILITY_SCOPES) {
+    it(`parses ${literal}`, () => {
+      expect(parseScope(literal)).toEqual({
+        typePattern: literal,
+        operation: "none",
+        kind: "capability",
+        capability: literal,
+      });
+      expect(isValidScope(literal)).toBe(true);
+    });
+  }
+
+  it("carries no verb, and that is pinned rather than incidental", () => {
+    // Verb-lessness is a property of the literal, not of the parser: the
+    // prefix claim in `parseScope` is what refuses `capability.webhooks:read`,
+    // and it would go on refusing it if a member of this set grew a colon.
+    // The member would then be unparseable and the grant silently dead, so
+    // the shape of the set is the thing to hold.
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(literal).not.toContain(":");
+      expect(parseScope(literal)?.operation).toBe("none");
+    }
+  });
+
+  it("is granted by naming it, and by nothing else", () => {
+    // `hasCapability` exists because the neighboring helper answered this
+    // question backwards. `*:write` is the full-access path the consent
+    // screen offers under Customize, and a pattern match admitted it against
+    // anything type-shaped, so the wrong tool said yes to a token holding no
+    // capability at all. These two assertions are the pair that catches it.
+    expect(hasCapability(["*:write"], "capability.item_purge")).toBe(false);
+    expect(hasCapability(["*:read"], "capability.webhooks")).toBe(false);
+    expect(hasCapability(["capability.webhooks"], "capability.webhooks")).toBe(
+      true,
+    );
+    // Holding every other capability implies nothing about this one.
+    const others = CAPABILITY_SCOPES.filter((c) => c !== "capability.keys");
+    expect(hasCapability(others, "capability.keys")).toBe(false);
+    expect(hasCapability([], "capability.keys")).toBe(false);
+  });
+
+  it("refuses to answer a capability question through scopeCovers", () => {
+    // The wrong tool must not answer yes. A capability is never a point on
+    // the item-type axis, so the category error answers false rather than
+    // matching a wildcard.
+    expect(scopeCovers(["*:read"], "capability.webhooks", "read")).toBe(false);
+    expect(scopeCovers(["*:write"], "capability.item_purge", "write")).toBe(
+      false,
+    );
+    expect(scopeCovers(["*:write"], "capability", "write")).toBe(false);
+    // And it still answers ordinary type questions the same way.
+    expect(scopeCovers(["*:write"], "core.note", "write")).toBe(true);
+  });
+
+  it("keeps every capability out of the one that would escalate it", () => {
+    // The two boundaries in the set that a reader is most likely to want to
+    // collapse, pinned so collapsing one is a test failure rather than a
+    // judgement call made again from scratch. Managing this app's own keys
+    // must not carry the power to revoke every other app's access, and
+    // configuring a connection must not carry the credential behind it.
+    const keys = ["capability.keys"];
+    expect(hasCapability(keys, "capability.app_grants")).toBe(false);
+    const connections = ["capability.connections"];
+    expect(hasCapability(connections, "capability.credentials")).toBe(false);
+    // Installing a connection must not carry the power to spend its live
+    // upstream token against the third-party account behind it.
+    expect(hasCapability(connections, "capability.upstream_access")).toBe(
+      false,
+    );
+    // And reading how full a space is must not carry rewriting its policy.
+    const usage = ["capability.space_usage"];
+    expect(hasCapability(usage, "capability.space_settings")).toBe(false);
+  });
+
+  it("names one surface per admin gate, so consent reads as sentences", () => {
+    // A set that has quietly become one entry is the failure this guards:
+    // the whole point is that a person grants webhooks without granting
+    // credentials. The count is the cheapest statement of that.
+    expect(new Set(CAPABILITY_SCOPES).size).toBe(CAPABILITY_SCOPES.length);
+    expect(CAPABILITY_SCOPES.length).toBe(11);
+  });
+
+  it("claims its whole namespace, members or nothing", () => {
+    // A near-miss must not degrade into some other family's grant. Each of
+    // these is refused for a different reason worth pinning:
+    // an unknown surface, a verb the grammar does not carry here, the bare
+    // root, and the wildcard that `isValidTypePattern` would otherwise
+    // accept as an item-type pattern.
+    expect(parseScope("capability.everything")).toBeNull();
+    // The name the previous draft of this set used. A retired member has to
+    // fail rather than linger as a literal nothing enforces.
+    expect(parseScope("capability.types")).toBeNull();
+    expect(parseScope("capability.webhooks:read")).toBeNull();
+    expect(parseScope("capability.webhooks:write")).toBeNull();
+    expect(parseScope("capability")).toBeNull();
+    expect(parseScope("capability.*")).toBeNull();
+    expect(parseScope("capability.*:read")).toBeNull();
+    expect(parseScope("capability.")).toBeNull();
+    expect(parseScope("Capability.webhooks")).toBeNull();
+    expect(parseScope("capability.web hooks")).toBeNull();
+  });
+
+  it("does not admit a near-miss on the item-type axis either", () => {
+    // The refusal above is only worth anything if nothing downstream
+    // reinstates the literal. `capability.*:read` is the one that matters:
+    // parsed as an item-type pattern it would resolve against the live
+    // registry rather than naming a capability at all.
+    expect(scopesToTypePermissions(["capability.*:read"])).toEqual({});
+    expect(
+      scopeCovers(["capability.*:read"], "capability.webhooks", "read"),
+    ).toBe(false);
+  });
+
+  for (const literal of CAPABILITY_SCOPES) {
+    it(`${literal} reaches none of the three permission maps`, () => {
+      expect(scopesToTypePermissions([literal])).toEqual({});
+      expect(scopesToEdgePermissions([literal])).toEqual({});
+      expect(scopesToMetadataPermissions([literal])).toEqual({});
+    });
+  }
+
+  it("carries no authority alongside a grant that has some", () => {
+    // The realistic shape: a capability arrives in the same token as the
+    // data-plane scopes an app actually uses, so the projections have to
+    // stay exact rather than merely non-empty.
+    const held = [
+      "core.note:read",
+      "edge.parent-of:write",
+      "metadata.types:write",
+      "capability.webhooks",
+      "capability.keys",
+    ];
+    expect(scopesToTypePermissions(held)).toEqual({ "core.note": "read" });
+    expect(scopesToEdgePermissions(held)).toEqual({ "parent-of": "write" });
+    expect(scopesToMetadataPermissions(held)).toEqual({ types: "write" });
+  });
+
+  it("passes through wildcard expansion unchanged", () => {
+    // The set holds no wildcard, so expansion has nothing to do here and
+    // must not drop the literal on its way to the consent screen.
+    expect(
+      expandWildcardScopes(
+        ["capability.webhooks", "core.media.*:read"],
+        ["core.media", "core.media.book"],
+      ),
+    ).toEqual([
+      "capability.webhooks",
+      "core.media:read",
+      "core.media.book:read",
+    ]);
+  });
+
+  it("keeps the root out of the type grammar", () => {
+    // The reservation is what stops a publisher registering a type whose
+    // identifier is a capability literal. Without it the grant and the type
+    // would be the same string with two meanings.
+    expect(isReservedRoot(CAPABILITY_ROOT)).toBe(true);
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(isValidTypeIdentifier(literal)).toBe(false);
+      expect(isValidTypePattern(literal)).toBe(false);
+    }
+    expect(isValidTypeIdentifier("capability.anything")).toBe(false);
+    expect(isValidHandle(CAPABILITY_ROOT)).toBe(false);
+  });
+});
+
 describe("metadata.edge_types sub-resource scope", () => {
   it("parses as a metadata sub-resource", () => {
     expect(parseScope("metadata.edge_types:write")).toEqual({
@@ -648,6 +828,7 @@ describe("only type scopes reach the item-type axis", () => {
     edge: "edge.parent-of:write",
     metadata: "metadata.types:write",
     oidc: "openid",
+    capability: "capability.webhooks",
   };
 
   const kinds = Object.keys(LITERAL_BY_KIND) as ParsedScope["kind"][];
