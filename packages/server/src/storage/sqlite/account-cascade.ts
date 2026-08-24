@@ -182,7 +182,12 @@ export async function sqliteDeleteAccountCascade(
     // Written AFTER the sweep — the sweep matches on resource_id, so a row
     // written before it is rewritten to the sentinel like any other. Order
     // is what makes this the one row that keeps its details payload.
-    await storage.audit.log({
+    //
+    // The propagating writer, because the row has to commit with the
+    // deletion or the deletion has to not commit. `log` runs under a
+    // tracker that catches everything, so it would both escape this
+    // transaction and report success on a hard delete with no record of it.
+    await storage.audit.logOrThrow({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,

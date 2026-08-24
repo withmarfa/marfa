@@ -1696,21 +1696,51 @@ export interface AuditEntry {
   details: Record<string, unknown>;
 }
 
+/** One audit row, in the shape both writers below take. */
+export interface AuditLogEntry {
+  key_id?: string;
+  /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
+   *  handlers; null for system-initiated audits and for the bootstrap-admin
+   *  shape on self-hosted single-space deployments. */
+  space_id?: string | null;
+  action: string;
+  resource_type: string;
+  resource_id?: string;
+  /** Client IP. Pass `c.var.clientIp ?? null` from route handlers;
+   *  null for system-initiated audits. */
+  client_ip?: string | null;
+  details?: Record<string, unknown>;
+}
+
 export interface AuditStore {
-  log(entry: {
-    key_id?: string;
-    /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
-     *  handlers; null for system-initiated audits and for the bootstrap-admin
-     *  shape on self-hosted single-space deployments. */
-    space_id?: string | null;
-    action: string;
-    resource_type: string;
-    resource_id?: string;
-    /** Client IP. Pass `c.var.clientIp ?? null` from route handlers;
-     *  null for system-initiated audits. */
-    client_ip?: string | null;
-    details?: Record<string, unknown>;
-  }): Promise<void>;
+  /**
+   * Write an audit row off the critical path. **Never rejects**, whatever
+   * the database does: the write runs under a tracker that logs a failure
+   * and drops it, so a caller cannot be broken by one.
+   *
+   * That is the right contract for almost every audit row, and it is a
+   * contract, not an accident — the guarantee is what lets a route emit one
+   * without a try/catch. What it is not is a guarantee that the row landed,
+   * and awaiting it does not make it one. Sixteen call sites awaited it
+   * inside a try/catch built to fail the operation on an unaudited write;
+   * every one of those was unreachable. Awaiting is still worth doing where
+   * the row has to be issued inside the caller's transaction, but say so at
+   * the call site, because the failure handling reads as live otherwise.
+   *
+   * Use `logOrThrow` when an unaudited operation must not stand.
+   */
+  log(entry: AuditLogEntry): Promise<void>;
+  /**
+   * Write an audit row and propagate a failure to the caller.
+   *
+   * For the operations where an unaudited success is worse than a loud
+   * failure: an account hard-delete, whose row has to commit with the
+   * deletion inside one transaction, and the connection install and
+   * uninstall, which are the two ways a credential's whole authority
+   * changes hands. Untracked deliberately — the caller is awaiting it, so
+   * there is nothing in flight for shutdown to drain.
+   */
+  logOrThrow(entry: AuditLogEntry): Promise<void>;
   list(filters: {
     action?: string;
     resource_type?: string;

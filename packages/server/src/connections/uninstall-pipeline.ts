@@ -263,9 +263,18 @@ async function performUninstallLocked(
   );
 
   // -------------------------------------------------------------------
-  // Step 9: audit log. Awaited — failures are not silently swallowed.
+  // Step 9: audit log, through the propagating writer.
+  //
+  // An uninstall revokes credentials and removes a secret, so an unaudited
+  // one is exactly the operation an operator later needs a record of. A
+  // failure here surfaces: the uninstall itself is monotonic and has
+  // already happened, so the caller gets a loud error over a connection
+  // that is genuinely gone rather than a 200 with no trail.
+  //
+  // `log` would not do it. It cannot reject, so the guarantee the previous
+  // comment here stated had been removed by the implementation.
   // -------------------------------------------------------------------
-  await storage.audit.log({
+  await storage.audit.logOrThrow({
     key_id: input.apiKeyId,
     client_ip: input.clientIp ?? null,
     space_id: input.spaceId ?? null,

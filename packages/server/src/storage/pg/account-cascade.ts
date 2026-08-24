@@ -260,8 +260,14 @@ export async function pgDeleteAccountCascade(
     // ---- 10. Hard-delete audit row, written AFTER the sweep — the sweep
     // matches on resource_id, so a row written before it is rewritten to
     // the sentinel like any other. Writing it after is what makes this the
-    // one row in the chain that keeps its details payload. --------------
-    await storage.audit.log({
+    // one row in the chain that keeps its details payload.
+    //
+    // The propagating writer, because the row has to commit with the
+    // deletion or the deletion has to not commit. `log` runs under a
+    // tracker that catches everything, so it would both escape this
+    // transaction and report success on a hard delete with no record of
+    // it. --------------------------------------------------------------
+    await storage.audit.logOrThrow({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",
       resource_id: authUserId,

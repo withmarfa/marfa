@@ -11,6 +11,7 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
+import type { AuditLogEntry, AuditStore } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -326,7 +327,7 @@ describe("performInstall — compensating writes on activity failure", () => {
     ]);
   });
 
-  it("rolls back when audit.log throws", async () => {
+  it("rolls back in reverse order when the audit write throws", async () => {
     const calls: string[] = [];
     const stubStorage = {
       items: {
@@ -383,7 +384,12 @@ describe("performInstall — compensating writes on activity failure", () => {
       },
       coordination: lockRecorder(calls),
       audit: {
-        log: (): Promise<void> => {
+        // `logOrThrow`, not `log`. The stub used to reject from `log`,
+        // which the real store cannot do, so the rollback this case pins
+        // could not be reached in production at all. What is stubbed here
+        // is the ordering fixture; the real writer's rejection is covered
+        // against real storage below and in storage/audit-contract.test.ts.
+        logOrThrow: (): Promise<void> => {
           calls.push("audit:log:throw");
           return Promise.reject(new Error("audit DB unavailable"));
         },
@@ -809,5 +815,96 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     expect(connection?.state).toBe("revoked");
     expect(connection?.properties.status).toBe("revoked");
     expect(connection?.properties.runtime_status).toBe("revoked");
+  });
+});
+
+describe("performInstall — an unaudited install does not stand", () => {
+  it("rolls back when the real audit write fails", async () => {
+    // The real store, the real write path, a real rejection. The only thing
+    // arranged is a `details` payload that will not serialize, which is
+    // enough because the audit writer this pipeline reaches is the
+    // propagating one: under the fire-and-forget writer the same failure is
+    // caught, warned about and dropped, and the install below would return
+    // an id for a connection nothing recorded.
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: `acme.audit-${stamp}`,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          manifest: manifest(),
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+
+    // Prototype delegation rather than a spread: the audit store is a class
+    // instance, so a spread copies none of its methods and would turn
+    // "the pipeline called the other writer" into "the pipeline called
+    // undefined", which throws for the wrong reason and passes the test.
+    const realAudit = ctx.storage.audit;
+    const audit = Object.create(realAudit) as AuditStore;
+    audit.logOrThrow = (entry: AuditLogEntry): Promise<void> =>
+      realAudit.logOrThrow({
+        ...entry,
+        details: { ...entry.details, attempts: 1n },
+      });
+    const storage = { ...ctx.storage, audit };
+
+    const before = await ctx.storage.items.list({
+      type: "system.connection",
+      limit: 500,
+    });
+
+    await expect(
+      performInstall(storage, "test-salt", {
+        apiKeyId: adminKey.id,
+        spaceId: undefined,
+        authMode: "keys",
+        integrationItemId: integration.id,
+        manifest: { ...manifest(), name: `acme.audit-${stamp}` },
+        label: `audit failure ${stamp}`,
+      }),
+    ).rejects.toThrow();
+
+    const after = await ctx.storage.items.list({
+      type: "system.connection",
+      limit: 500,
+    });
+    const seen = new Set(before.data.map((i) => i.id));
+    const stranded = after.data.filter((i) => !seen.has(i.id));
+    expect(stranded).toHaveLength(1);
+
+    // State, not order. The connection reads revoked on every field a
+    // person sees, and the credential the mint issued is retired.
+    const connection = await ctx.storage.items.getIncludingTrashed(
+      stranded[0]!.id,
+      undefined,
+    );
+    expect(connection?.state).toBe("revoked");
+    expect(connection?.properties.status).toBe("revoked");
+    expect(connection?.properties.runtime_status).toBe("revoked");
+
+    const liveCredential = (await ctx.storage.keys.list()).find(
+      (k) => k.connection_id === stranded[0]!.id,
+    );
+    expect(liveCredential).toBeUndefined();
+
+    // And nothing claims the install was audited.
+    const rows = await ctx.storage.audit.list({
+      action: "integration.install",
+      resource_id: stranded[0]!.id,
+      limit: 5,
+    });
+    expect(rows.data).toHaveLength(0);
   });
 });

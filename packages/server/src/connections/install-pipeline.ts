@@ -407,13 +407,17 @@ export async function performInstall(
   }
 
   // -------------------------------------------------------------------
-  // Audit trail. Awaited and rolled back on failure — `system.connection`
-  // writes are operationally significant; an unaudited install must not
-  // silently succeed. A failure here rolls back the install rather than
-  // being swallowed.
+  // Audit trail, through the propagating writer. An install hands a
+  // credential a share of the space's authority, so an unaudited one must
+  // not stand: a failure here rolls the install back.
+  //
+  // `log` would not do it. It runs under a tracker that catches everything
+  // and warns, so it cannot reject and the rollback below would never
+  // run — which is what it did, for as long as this was written that way,
+  // under a comment claiming the opposite.
   // -------------------------------------------------------------------
   try {
-    await storage.audit.log({
+    await storage.audit.logOrThrow({
       key_id: input.apiKeyId,
       client_ip: input.clientIp ?? null,
       space_id: input.spaceId ?? null,

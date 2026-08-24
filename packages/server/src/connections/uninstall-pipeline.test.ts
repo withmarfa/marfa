@@ -14,6 +14,7 @@ import { performInstall } from "./install-pipeline.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import type { AuditLogEntry, AuditStore } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -687,5 +688,51 @@ describe("performUninstall — affected rows, not attempts", () => {
     });
 
     expect(result.revoked_credential_ids).toEqual([]);
+  });
+});
+
+describe("performUninstall — an unaudited uninstall does not pass silently", () => {
+  it("surfaces a real audit failure rather than answering 200", async () => {
+    // The real store and its real write path; the only thing arranged is a
+    // `details` payload that will not serialize. Under the fire-and-forget
+    // writer this pipeline used to reach, the same failure is caught,
+    // warned about and dropped, and the caller is told the credentials were
+    // revoked by an uninstall with no record of it.
+    const installed = await installFresh();
+
+    // Prototype delegation rather than a spread: the audit store is a class
+    // instance, so a spread copies none of its methods and would turn
+    // "the pipeline called the other writer" into "the pipeline called
+    // undefined", which throws for the wrong reason and passes the test.
+    const realAudit = ctx.storage.audit;
+    const audit = Object.create(realAudit) as AuditStore;
+    audit.logOrThrow = (entry: AuditLogEntry): Promise<void> =>
+      realAudit.logOrThrow({
+        ...entry,
+        details: { ...entry.details, attempts: 1n },
+      });
+    const storage = { ...ctx.storage, audit };
+
+    await expect(
+      performUninstall(storage, {
+        apiKeyId: installed.apiKeyId,
+        spaceId: undefined,
+        connectionId: installed.connectionId,
+      }),
+    ).rejects.toThrow();
+
+    // Monotonic, so the uninstall stands. The loud failure is about the
+    // missing record, not about a half-done uninstall.
+    const conn = await ctx.storage.items.getIncludingTrashed(
+      installed.connectionId,
+      undefined,
+    );
+    expect(conn?.state).toBe("revoked");
+    const rows = await ctx.storage.audit.list({
+      action: "integration.uninstall",
+      resource_id: installed.connectionId,
+      limit: 5,
+    });
+    expect(rows.data).toHaveLength(0);
   });
 });
