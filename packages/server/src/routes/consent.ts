@@ -257,10 +257,21 @@ export const OIDC_LABELS: Record<string, string> = {
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
+/**
+ * The literal a parsed scope came from, which is what the checkbox has to
+ * carry: the decision route validates the ticked set against the scopes the
+ * plugin signed, so a reconstruction that differs by one character grants
+ * nothing and reads as the user having unticked it.
+ *
+ * The verb-less families are named rather than defaulted. Appending
+ * `:${operation}` to one produces `capability.webhooks:none`, a literal
+ * nothing signed and no parser accepts, and the failure is silent all the
+ * way to a token that is missing the permission the user just approved.
+ */
 function scopeLiteralFor(scope: ParsedScope): string {
-  return scope.kind === "oidc"
-    ? (scope.oidcScope ?? scope.typePattern)
-    : `${scope.typePattern}:${scope.operation}`;
+  if (scope.kind === "oidc") return scope.oidcScope ?? scope.typePattern;
+  if (scope.kind === "capability") return scope.capability ?? scope.typePattern;
+  return `${scope.typePattern}:${scope.operation}`;
 }
 
 /** Title-case the most specific segment of a dotted type pattern, for scopes

@@ -27,7 +27,7 @@ import type {
   VersionPolicy,
 } from "@withmarfa/types";
 import type { EnforcementSettings, SpaceConfig } from "./types.js";
-import { isValidTypeIdentifier } from "./validation.js";
+import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
 
 // Re-export schema-shape types and the shipped registries so consumers of
 // @withmarfa/shared don't need to reach into @withmarfa/types directly.
@@ -326,22 +326,28 @@ export function listTypes(spaceId?: string | null): TypeSchema[] {
 
 /**
  * The five-tier namespace classification. The first segment of a type
- * identifier determines its tier; reserved roots (`core`, `system`, `app`,
- * `user`, `marfa`) carry platform-defined semantics, anything else is a
- * publisher handle.
+ * identifier determines its tier; the reserved roots that name a tier
+ * (`core`, `system`, `app`, `user`, `marfa`) carry platform-defined
+ * semantics, anything else is a publisher handle.
+ *
+ * `RESERVED_ROOTS` holds one more entry than this has tiers. `capability`
+ * is reserved so that no type is ever registrable under it, which means no
+ * identifier reaching a classifier can carry that root; it has no tier
+ * because there is nothing there to classify.
  */
 export type NamespaceTier =
   "core" | "system" | "app" | "user" | "publisher" | "marfa";
 
-const RESERVED_ROOTS: ReadonlySet<string> = new Set([
-  "core",
-  "system",
-  "app",
-  "user",
-  "marfa",
-]);
-
-/** Returns true if the candidate is a reserved root prefix. */
+/**
+ * Returns true if the candidate is a reserved root prefix.
+ *
+ * The set is `validation.ts`'s, imported rather than restated. A second copy
+ * lived here and the two were free to drift, which on this particular set is
+ * a security question and not a tidiness one: `isReservedRoot` is what the
+ * registration paths ask, `RESERVED_ROOTS` is what the identifier grammar
+ * asks, and a root present in one and absent from the other is a namespace
+ * that refuses registration in one direction and admits it in the other.
+ */
 export function isReservedRoot(candidate: string): boolean {
   return RESERVED_ROOTS.has(candidate);
 }

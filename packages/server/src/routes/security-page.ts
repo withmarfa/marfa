@@ -83,9 +83,21 @@ function formatDate(iso: string): string {
   return `${String(d.getUTCDate())} ${month} ${String(d.getUTCFullYear())}`;
 }
 
-/** The widest thing this page says about an app, and what a permission family
- *  this build cannot classify falls back to. */
+/** What an app that can change your content reads as. */
 const READ_AND_WRITE_SUMMARY = "Can read and write your data";
+
+/**
+ * The widest thing this page says, kept apart from read-and-write because it
+ * is wider in kind rather than in degree. A capability hands an app one of
+ * the controls around the data: registering a webhook, minting a credential,
+ * emptying the trash for good. Folding that into "read and write your data"
+ * would describe the smaller half of what was granted, on the page whose
+ * whole job is the revoke decision.
+ *
+ * Being the widest is also what makes it the fallback for a permission
+ * family this build cannot classify.
+ */
+const MANAGE_SUMMARY = "Can manage your space, not just what is in it";
 
 /**
  * Plain-English summary of what a grant lets an app do, so the person
@@ -127,6 +139,11 @@ function scopeSummary(scopes: readonly string[]): string {
       case "oidc":
         identifiesYou = true;
         break;
+      case "capability":
+        // Returned rather than accumulated, for the reason a write is: it is
+        // already the widest statement, so nothing later in the list can
+        // widen it.
+        return MANAGE_SUMMARY;
       default: {
         // Compile-time exhaustiveness check. A family added to the grammar
         // decides here what it lets an app do, and reads as the widest until
@@ -134,7 +151,7 @@ function scopeSummary(scopes: readonly string[]): string {
         // carry real authority.
         const _exhaustive: never = parsed.kind;
         void _exhaustive;
-        return READ_AND_WRITE_SUMMARY;
+        return MANAGE_SUMMARY;
       }
     }
   }

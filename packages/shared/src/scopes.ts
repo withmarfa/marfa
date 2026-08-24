@@ -7,13 +7,15 @@ import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed representation of a scope string. Five shapes today:
+ * Parsed representation of a scope string. Six shapes today:
  *   - item-type scope:  "core.note:read"     → kind="type", typePattern="core.note"
  *                       ("*:read" / "*:write" are the global type wildcard)
  *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
+ *   - capability:       "capability.webhooks"
+ *                       → kind="capability", capability=<literal>, no operation suffix
  *   - OIDC literal:     "openid" / "profile" / "email"
  *                       → kind="oidc", oidcScope=<literal>, no operation suffix
  *
@@ -30,10 +32,94 @@ import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
  */
 export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 
+// ---------------------------------------------------------------------------
+// Capability scopes
+// ---------------------------------------------------------------------------
+
+/**
+ * The reserved root every capability scope lives under. Reserved in
+ * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath
+ * it and no publisher handle can claim the word — a capability literal and
+ * an item-type identifier can never name the same thing.
+ *
+ * Reserving a root that names no type tier is deliberate and is the whole
+ * point: the other five roots classify types, this one exists so that
+ * nothing ever does.
+ */
+export const CAPABILITY_ROOT = "capability";
+
+/**
+ * Authority over one administrative surface, named and consented to rather
+ * than inherited from a role.
+ *
+ * **Why a family of its own.** The four existing kinds each grant on a
+ * resource axis the data plane already fences — an item type, an edge type,
+ * a metadata sub-resource — and an administrative surface is none of those.
+ * The two namespaces that read as though they would serve both fail for
+ * concrete reasons rather than stylistic ones. `admin.*` is a reserved
+ * handle word but not a reserved root, and type registration consults the
+ * roots, so a real type could appear under it and a grant there would be
+ * ambiguous between the two readings. `system.*` is worse: `system.connection`
+ * is a live type with a live scope in the default read bundle, so a
+ * capability beside it is indistinguishable from a type grant by inspection.
+ *
+ * **Why no verb.** A capability is one authority, not a read/write axis over
+ * a resource: `capability.item_purge:read` names nothing, and admitting the
+ * suffix would mean inventing a rule to refuse the halves that have no
+ * meaning. Where a surface genuinely splits, the split is in the surface
+ * name — `audit_read` grants reading the audit log and nothing writes it.
+ * The consequence to know is that a capability literal carries no colon, so
+ * anything deriving a verb by splitting on one sees a capability as
+ * verb-less rather than as a read.
+ *
+ * **One per coherent surface, not one per route.** The list is what a
+ * consent screen has to read as sentences — "manage your webhooks", "read
+ * your audit log" — so a person can grant an app the one power it needs.
+ * A single "administer everything" toggle is the thing this replaces.
+ */
+export type CapabilityScope =
+  | "capability.webhooks"
+  | "capability.connections"
+  | "capability.credentials"
+  | "capability.keys"
+  | "capability.space_settings"
+  | "capability.types"
+  | "capability.item_purge"
+  | "capability.audit_read";
+
+/**
+ * Every capability scope, in the order a consent screen should offer them:
+ * the surfaces an app plausibly needs first, the ones that hand over the
+ * space's own security last. Not alphabetical, and not incidentally
+ * ordered — a reader deciding what to grant reads down the list, so the
+ * order is part of what the screen says.
+ *
+ * Exported because the route gate and the consent renderer both need the
+ * set, and a second copy in either would be the thing that drifts.
+ */
+export const CAPABILITY_SCOPES: readonly CapabilityScope[] = [
+  "capability.webhooks",
+  "capability.connections",
+  "capability.types",
+  "capability.space_settings",
+  "capability.audit_read",
+  "capability.item_purge",
+  "capability.keys",
+  "capability.credentials",
+];
+
+const CAPABILITY_SET: ReadonlySet<string> = new Set(CAPABILITY_SCOPES);
+
+/** Returns true if the literal names a capability this build recognizes. */
+export function isCapabilityScope(scope: string): scope is CapabilityScope {
+  return CAPABILITY_SET.has(scope);
+}
+
 export interface ParsedScope {
   typePattern: string;
-  /** "read" / "write" for type / edge / metadata scopes; "none" for OIDC
-   *  literals (which have no read/write semantics on Marfa resources). */
+  /** "read" / "write" for type / edge / metadata scopes; "none" for
+   *  capability and OIDC literals (neither of which has read/write
+   *  semantics on a Marfa resource). */
   operation: "read" | "write" | "none";
   /**
    * Which family the scope belongs to. Always set, including for the
@@ -46,13 +132,15 @@ export interface ParsedScope {
    * whatever nobody has thought of yet, and on the item-type axis being
    * admitted means having a pattern matched against the live type registry.
    */
-  kind: "type" | "edge" | "metadata" | "oidc";
+  kind: "type" | "edge" | "metadata" | "oidc" | "capability";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
   subresource?: string;
   /** Present when kind === "oidc"; one of the standard OIDC literals. */
   oidcScope?: OidcScope;
+  /** Present when kind === "capability"; the administrative surface named. */
+  capability?: CapabilityScope;
 }
 
 /**
@@ -79,6 +167,7 @@ export function isTypeScope(parsed: ParsedScope): boolean {
     case "edge":
     case "metadata":
     case "oidc":
+    case "capability":
       return false;
     default: {
       // Compile-time exhaustiveness check. The runtime arm refuses too, so a
@@ -127,6 +216,24 @@ export function parseScope(scope: string): ParsedScope | null {
       operation: "none",
       kind: "oidc",
       oidcScope: scope as OidcScope,
+    };
+  }
+  // The capability root is claimed whole, not matched shape-first: anything
+  // under it that is not a member of the closed set is refused here rather
+  // than left to fall through. That matters for one literal in particular.
+  // `capability.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
+  // branch checks the prefix grammar and not the reserved roots, which is
+  // why `core.*:read` is a scope the server issues — so without this claim it
+  // would parse as an item-type grant that reads like a capability grant and
+  // is neither. Refusing the whole namespace except its members is the only
+  // reading with no second interpretation.
+  if (scope === CAPABILITY_ROOT || scope.startsWith(`${CAPABILITY_ROOT}.`)) {
+    if (!isCapabilityScope(scope)) return null;
+    return {
+      typePattern: scope,
+      operation: "none",
+      kind: "capability",
+      capability: scope,
     };
   }
   if (scope === "metadata:read" || scope === "metadata:write") {
@@ -186,6 +293,12 @@ export function isValidScope(scope: string): boolean {
  * the consent screen can name what a grant actually covers.
  * "core.media.*:read" → ["core.media:read", "core.media.book:read", ...]
  * Non-wildcard scopes pass through unchanged.
+ *
+ * Expansion keys on the pattern rather than on the kind, and stays that way:
+ * what a wildcard covers is a question about the pattern. A capability needs
+ * no arm of its own because the set is closed and holds no wildcard, so every
+ * capability literal takes the pass-through branch and reaches consent as
+ * itself.
  */
 export function expandWildcardScopes(
   requested: string[],
@@ -302,8 +415,8 @@ export function scopesToEdgePermissions(
     const parsed = parseScope(scope);
     if (parsed?.kind !== "edge") continue;
     if (!parsed.edgeType) continue;
-    // Edge parser path only emits "read" / "write" — OIDC literals are
-    // caught by the kind guard above.
+    // Edge parser path only emits "read" / "write" — the verb-less families
+    // (OIDC literals, capabilities) are caught by the kind guard above.
     if (parsed.operation === "none") continue;
     const current = perms[parsed.edgeType];
     if (parsed.operation === "write" || current === undefined) {
@@ -331,8 +444,9 @@ export function scopesToMetadataPermissions(
   for (const scope of scopes) {
     const parsed = parseScope(scope);
     if (parsed?.kind !== "metadata") continue;
-    // Metadata parser path only emits "read" / "write" — OIDC literals
-    // are caught by the kind guard above.
+    // Metadata parser path only emits "read" / "write" — the verb-less
+    // families (OIDC literals, capabilities) are caught by the kind guard
+    // above.
     if (parsed.operation === "none") continue;
     const key = parsed.subresource ?? "*";
     const current = perms[key];

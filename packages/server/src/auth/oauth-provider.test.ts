@@ -96,6 +96,70 @@ describe("buildAllowedScopes", () => {
   });
 });
 
+describe("a bundle is not a way around the scope grammar", () => {
+  // Every other literal in the allowlist is assembled here from a registry
+  // key, so it is well-formed by construction. Bundle scopes are the one
+  // input that is not: the operator override parses arbitrary JSON, and this
+  // loop used to add whatever it found. A literal admitted that way is
+  // requestable, survives the authorize narrowing, and lands in a token as a
+  // grant no permission map will ever carry and no route will ever check.
+  const bundleOf = (scopes: string[]) => [
+    {
+      id: "operator",
+      label: "Operator override",
+      description: "",
+      default_on: true,
+      scopes,
+    },
+  ];
+
+  it("drops a malformed literal instead of admitting it", () => {
+    const scopes = new Set(
+      buildAllowedScopes(bundleOf(["core.note:destroy"]), []),
+    );
+    expect(scopes.has("core.note:destroy")).toBe(false);
+  });
+
+  it("drops a near-miss under a reserved prefix", () => {
+    // The shape a capability typo takes. `capability.webhooks:write` reads
+    // as a capability grant and is not one, and `capability.*:read` is the
+    // literal the parser has to claim so it cannot be read as an item-type
+    // pattern instead.
+    const scopes = new Set(
+      buildAllowedScopes(
+        bundleOf([
+          "capability.webhook",
+          "capability.webhooks:write",
+          "capability.*:read",
+        ]),
+        [],
+      ),
+    );
+    expect(scopes.has("capability.webhook")).toBe(false);
+    expect(scopes.has("capability.webhooks:write")).toBe(false);
+    expect(scopes.has("capability.*:read")).toBe(false);
+  });
+
+  it("keeps the valid scopes of a bundle that also carries a bad one", () => {
+    // Refusing the whole bundle would take a working consent screen down
+    // over one typo. The literal is what is refused, not the bundle.
+    const scopes = new Set(
+      buildAllowedScopes(bundleOf(["core.note:read", "core.note:destroy"]), []),
+    );
+    expect(scopes.has("core.note:read")).toBe(true);
+    expect(scopes.has("core.note:destroy")).toBe(false);
+  });
+
+  it("admits every literal the shipped bundles name", () => {
+    // The check has to discriminate rather than merely refuse: a validity
+    // gate that also dropped the defaults would be an outage.
+    const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
+    for (const s of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
+      expect(scopes.has(s)).toBe(true);
+    }
+  });
+});
+
 describe("permission bundles bind to the type registry", () => {
   // Asserting the bundles against `buildAllowedScopes` cannot fail: the
   // builder unions the bundle scopes into the set it returns, so the

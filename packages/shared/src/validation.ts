@@ -91,12 +91,22 @@ export function isValidLanguageCode(value: string): boolean {
 //                                non-reserved-root handle
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
+/**
+ * First segments a publisher may never claim, in the type grammar or as a
+ * handle. Five of them name a namespace tier the platform defines
+ * (`classifyNamespace`); `capability` names none, and is reserved for the
+ * opposite reason — it is the root the OAuth capability scopes live under,
+ * and reserving it is what stops a registered type ever sharing a literal
+ * with a grant of administrative authority. A reserved root without a tier
+ * is therefore a namespace nothing can occupy, which is the intent.
+ */
 export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "core",
   "system",
   "app",
   "user",
   "marfa",
+  "capability",
 ]);
 
 /**
