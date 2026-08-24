@@ -279,6 +279,18 @@ pnpm --filter @withmarfa/server schema-sql:generate
 
 The cost that justified the exclusion also moved: it was billed minutes on hosted runners, and CI runs on a self-hosted pool now. What remains is machine time on a shared box, which the path filters keep off the majority of pull requests.
 
+### A red `main` says which kind of red
+
+`ci.yml`'s `notify` job reports `main`'s verdict to the alerting service, and distinguishes a test failure from a job that never ran.
+
+**The two mean opposite things.** A test failure says the commit is bad. An abandonment says nothing at all about the commit, and every later pull request is then measured against a baseline nobody has information about. Two runs were once abandoned when the host ran out of ephemeral TCP source ports and the runners' own lease-renewal loop could not open a socket; both reported `failure`, neither had run a failing test, and the only place that said so was a log file on the machine.
+
+**The distinction is clean through the API**, which is what makes this cheap: an abandoned job has no step whose conclusion is `failure` and at least one that is `cancelled`, while every genuine failure has exactly one failing step. When it fires, the alert names the affected jobs and says to re-run rather than read it as a defect.
+
+`main` only. A pull request's red is already in front of whoever pushed it. Hosted, like every notifier here, because a notifier on the pool cannot report that the pool is broken, which in this job's case is the whole point.
+
+**Two cases are deliberately silent**, and a reader whose alert never resolved should look here first. A run **cancelled as a whole** is skipped: `always()` includes the cancelled case, and the concurrency group supersedes a main run whenever two merges land inside one matrix, so reporting it would alert on a commit the newer run already covers. A **green verdict on a merge the `changes` job called non-code** is not reported either: the two dialect jobs gate at step level and report success without running anything, so resolving on that would close an alert about a red `main` that nothing has re-tested. In both, a genuinely open alert stays open until something actually runs, which is the right direction.
+
 ### The image build
 
 `Server image` (`.github/workflows/image-build.yml`) builds the container image and throws it away. It runs **on merges to `main`** when a path it is gated on changes, and on manual dispatch against any branch.
