@@ -62,16 +62,26 @@ function recordingBoss() {
       calls.push({ method, args });
       return Promise.resolve();
     };
+  // What the schedule table already holds. The reconcile in `start()` reads
+  // this and retires anything under the prefix that no registration wants.
+  let existingSchedules: { name: string }[] = [];
   const boss = {
     createQueue: record("createQueue"),
     work: record("work"),
     schedule: record("schedule"),
     unschedule: record("unschedule"),
+    getSchedules: (...args: unknown[]) => {
+      calls.push({ method: "getSchedules", args });
+      return Promise.resolve(existingSchedules);
+    },
     send: record("send"),
     stop: record("stop"),
   };
   const of = (method: string) => calls.filter((c) => c.method === method);
-  return { boss: boss as unknown as PgBoss, calls, of };
+  const seedSchedules = (names: string[]): void => {
+    existingSchedules = names.map((name) => ({ name }));
+  };
+  return { boss: boss as unknown as PgBoss, calls, of, seedSchedules };
 }
 
 const shapeRegistration: LocalIntegrationRegistration = {
@@ -138,6 +148,53 @@ describe("enqueue-only supervisor shape", () => {
     await runtime.stop();
     expect(of("unschedule")).toHaveLength(0);
     expect(of("stop")).toHaveLength(1);
+  });
+
+  // Seeding is driven from the registration set and so is the teardown, so
+  // a removed integration's cron row used to be cleaned up only by luck: the
+  // outgoing process had to run the old code, still list it, and exit
+  // gracefully. Anything else left the row firing into a queue nothing would
+  // ever work again, and nothing else would ever clear it.
+  it("retires the cron of an integration this deployment no longer has", async () => {
+    const { boss, of, seedSchedules } = recordingBoss();
+    seedSchedules([
+      "marfa.integrations.local.schedule.test/role-split",
+      "marfa.integrations.local.schedule.acme/template",
+    ]);
+    const runtime = shapeSupervisor(boss, true);
+    await runtime.start();
+
+    // Only the one nothing registers. The live integration's schedule is
+    // left alone, which is the half a blunt "unschedule everything then
+    // reseed" would get wrong.
+    expect(of("unschedule").map((c) => c.args[0])).toEqual([
+      "marfa.integrations.local.schedule.acme/template",
+    ]);
+  });
+
+  it("leaves schedules that are not the runtime's alone", async () => {
+    const { boss, of, seedSchedules } = recordingBoss();
+    seedSchedules([
+      "marfa.scheduled.activity-purge",
+      "marfa.scheduled.audit-cleanup",
+      "__pgboss__send-it",
+    ]);
+    const runtime = shapeSupervisor(boss, true);
+    await runtime.start();
+    expect(of("unschedule")).toHaveLength(0);
+  });
+
+  // The enqueue-only role must not touch the schedule table at all, for the
+  // same reason it never unschedules on stop: those cron rows belong to the
+  // worker, and a web-role boot reconciling them would strip the worker's
+  // schedules out from under it.
+  it("the enqueue-only role does not reconcile schedules", async () => {
+    const { boss, of, seedSchedules } = recordingBoss();
+    seedSchedules(["marfa.integrations.local.schedule.acme/template"]);
+    const runtime = shapeSupervisor(boss, false);
+    await runtime.start();
+    expect(of("getSchedules")).toHaveLength(0);
+    expect(of("unschedule")).toHaveLength(0);
   });
 
   it("the default shape registers workers, seeds crons, and unschedules on stop", async () => {

@@ -21,17 +21,7 @@
  */
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { IN_TREE_INTEGRATIONS } from "@withmarfa/shared";
-
-// The in-tree set, read from the one table that already describes it.
-// This list was written out by hand here until now, which made it a
-// second enumeration of the same thing with nothing keeping the two in
-// agreement. They happened to agree; nothing said they had to, and the
-// hand-maintained copy is exactly the kind of list a new integration
-// gets added to in one place and not the other. `_template` carries no
-// real manifest and is not in the table; any dir without a manifest
-// export is skipped with a warning rather than failing the run.
-const DIRS = IN_TREE_INTEGRATIONS.map((i) => i.dirName);
+import { discoverIntegrationDirs } from "../src/integrations/discover.js";
 
 interface Manifest {
   name: string;
@@ -64,11 +54,19 @@ async function main(): Promise<void> {
     "../../../integrations",
   );
 
+  // Read from the directory, like the server's own two loaders. This was a
+  // hand-written list, then a read of a hand-written table, and both were
+  // the same enumeration a new integration gets added to in one place and
+  // not the other. `_template` and anything else without a manifest export
+  // is skipped with a warning rather than failing the run, which is what
+  // makes reading the directory safe here.
+  const dirs = discoverIntegrationDirs(integrationsRoot);
+
   let registered = 0;
   let existed = 0;
   let failed = 0;
 
-  for (const dir of DIRS) {
+  for (const dir of dirs) {
     const manifestPath = resolve(integrationsRoot, dir, "src/manifest.ts");
     let manifest: Manifest | undefined;
     try {

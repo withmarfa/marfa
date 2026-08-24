@@ -24,9 +24,9 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { IN_TREE_INTEGRATIONS } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { validateManifest } from "./validate-manifest.js";
+import { discoverIntegrationDirs } from "./discover.js";
 
 export interface InTreeManifest {
   /** Manifest `name`, `<handle>/<name>`. */
@@ -77,11 +77,12 @@ function findManifestExport(mod: Record<string, unknown>): unknown {
 export async function loadInTreeManifests(options: {
   /** Absolute path to the `integrations/` directory. */
   integrationsRoot: string;
-  /** Per-integration directory names. Defaults to the in-tree set. */
+  /** Per-integration directory names. Defaults to whatever is installed. */
   integrationDirs?: string[];
 }): Promise<LoadManifestsResult> {
   const dirs =
-    options.integrationDirs ?? IN_TREE_INTEGRATIONS.map((i) => i.dirName);
+    options.integrationDirs ??
+    discoverIntegrationDirs(options.integrationsRoot);
   const manifests: InTreeManifest[] = [];
   const skipped: { dirName: string; reason: string }[] = [];
 
