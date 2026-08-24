@@ -875,9 +875,54 @@ exports[`every gallery variant renders > renders 'auth/keys/reveal' 1`] = `
     
       <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
       <h1 class="title">Your key is ready</h1>
-      <p class="sub"><b>Personal laptop</b> can read and write your notes and tasks.</p>
+      <p class="sub"><b>Personal laptop</b> can read and write your content.</p>
       <div class="copyfield">
         <span class="copyfield__val" id="new-key-value">marfa_k1_examplekeyvaluethatisshownonce0000</span>
+        <button type="button" class="copyfield__copy" id="copy-key" aria-label="Copy key" data-copy-target="new-key-value">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </div>
+      <p class="caution">Copy it now. You won't be able to see this key again.</p>
+      <div class="actions">
+        <a href="/auth/keys" class="btn btn--primary">Done</a>
+      </div>
+      <script>(function () {
+  var btn = document.getElementById('copy-key');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var el = document.getElementById(btn.getAttribute('data-copy-target'));
+    if (!el) return;
+    var text = el.textContent || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        btn.setAttribute('aria-label', 'Copied');
+      });
+    }
+  });
+})();</script>
+    
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'auth/keys/reveal-no-content' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your key is ready</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--wide card--confirm" aria-label="Your key is ready">
+    
+      <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <h1 class="title">Your key is ready</h1>
+      <p class="sub"><b>Type registrar</b> can reach none of your content.</p>
+      <div class="copyfield">
+        <span class="copyfield__val" id="new-key-value">marfa_k1_examplekeyvaluethatisshownonce0001</span>
         <button type="button" class="copyfield__copy" id="copy-key" aria-label="Copy key" data-copy-target="new-key-value">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -1182,6 +1227,26 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
                 <div class="row__meta row__meta--faint">Connected 11 Apr 2026</div>
               </div>
               <form method="POST" action="/auth/grants/grant-2/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>
+<div class="row">
+              <div class="row__main">
+                <div class="row__title">Standup Bot</div>
+                <div class="row__meta">Can see who you are, nothing else</div>
+                <div class="row__meta row__meta--faint">Last used 19 Jun 2026</div>
+              </div>
+              <form method="POST" action="/auth/grants/grant-3/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>
+<div class="row">
+              <div class="row__main">
+                <div class="row__title">Archived Importer</div>
+                <div class="row__meta">No access to your data</div>
+                <div class="row__meta row__meta--faint">Connected 14 Jan 2026</div>
+              </div>
+              <form method="POST" action="/auth/grants/grant-4/revoke" class="row__action">
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>

@@ -6,8 +6,10 @@ import {
   MarfaError,
   ErrorCode,
   parseScope,
+  isTypeScope,
   isValidScope,
   scopesToTypePermissions,
+  scopesToEdgePermissions,
   isValidHandle,
   isReservedHandle,
   canGrantRole,
@@ -171,6 +173,74 @@ function generateToken(prefix: string): string {
 
 function sha256(input: string): string {
   return createHash("sha256").update(input).digest("base64url");
+}
+
+/**
+ * The widest verb the console form's content picker was ticked for, or null
+ * when it was ticked for nothing.
+ *
+ * Content types only, and asked of the parser. What a person picks on that
+ * form is which of their content an app may read or change, and the key's
+ * reach across the space is mirrored from it. A permission that is not about
+ * content has no opinion on that question however its literal happens to
+ * end: `metadata.types:write` registers a type, `edge.parent-of:write` names
+ * one relation, and reading either as "the owner asked for write" hands the
+ * key authority nobody chose.
+ */
+function contentScopeLevel(scopes: string[]): "read" | "write" | null {
+  let level: "read" | "write" | null = null;
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    if (!parsed || !isTypeScope(parsed)) continue;
+    if (parsed.operation === "write") return "write";
+    if (parsed.operation === "read") level = "read";
+  }
+  return level;
+}
+
+/**
+ * The edge grants a self-serve key is minted with: what its own
+ * `edge.<type>:<verb>` permissions name, plus a global entry mirroring the
+ * level picked for content.
+ *
+ * The mirror is why the wildcard is here rather than an enumerated set. A
+ * space's edge types include every one it registers at runtime, so a set
+ * fixed at mint time silently omits each one created afterwards, and a key
+ * that cannot write edges cannot seed, migrate or restore the space it
+ * belongs to. It is narrower than it reads: an edge mutation dual-gates on
+ * the source item's type as well, so a key scoped to notes still only builds
+ * edges out of notes.
+ *
+ * A named edge type is dropped once the wildcard already covers it, because
+ * `edgePermissionCovers` gives an exact id precedence over a pattern. Keeping
+ * a `read` entry for `parent-of` beside a `write` wildcard would deny writes
+ * on the one relation the owner named and allow them everywhere else.
+ */
+function selfServeEdgePermissions(
+  scopes: string[],
+  contentLevel: "read" | "write" | null,
+): Record<string, "read" | "write"> {
+  const named = scopesToEdgePermissions(scopes);
+  // A named global permission outranks the mirror, and the mirror only has to
+  // beat it when it is the wider of the two. Testing `named` for "write" as
+  // well would be a clause that can never decide anything, since the fallback
+  // already yields it.
+  const wildcard =
+    contentLevel === "write"
+      ? "write"
+      : (named[GLOBAL_TYPE_WILDCARD] ?? contentLevel);
+  if (wildcard === null) return named;
+
+  const permissions: Record<string, "read" | "write"> = {
+    [GLOBAL_TYPE_WILDCARD]: wildcard,
+  };
+  for (const [edgeType, level] of Object.entries(named)) {
+    if (edgeType === GLOBAL_TYPE_WILDCARD) continue;
+    if (level === "write" && wildcard === "read") {
+      permissions[edgeType] = level;
+    }
+  }
+  return permissions;
 }
 
 /**
@@ -1276,33 +1346,24 @@ export function authRoutes(
     const fullAccess = wantsFullAccess;
     const requestedRole: MarfaRole = fullAccess ? userRow.role : "member";
 
-    const hasWrite = fullAccess || scopes.some((s) => s.endsWith(":write"));
-    const hasRead = scopes.some((s) => s.endsWith(":read"));
+    // Full access is its own grant over every content type, so it sets the
+    // content level outright rather than being read back off the ticked set.
+    const contentLevel: "read" | "write" | null = fullAccess
+      ? "write"
+      : contentScopeLevel(scopes);
 
     const typePermissions = fullAccess
       ? { [GLOBAL_TYPE_WILDCARD]: "write" as const }
       : scopesToTypePermissions(scopes);
 
-    // Edge permissions mirror the level the owner picked. The wildcard rather
-    // than an enumerated set is deliberate: a space's edge types include any
-    // the space registers at runtime, so a set fixed at mint time would
-    // silently omit every edge type created after it. This is narrower than it
-    // reads — an edge mutation dual-gates on the source item's type too.
-    const edgeLevel: "read" | "write" | null = hasWrite
-      ? "write"
-      : hasRead
-        ? "read"
-        : null;
-    const edgePermissions: Record<string, "read" | "write"> = edgeLevel
-      ? { [GLOBAL_TYPE_WILDCARD]: edgeLevel }
-      : {};
+    const edgePermissions = selfServeEdgePermissions(scopes, contentLevel);
     const accessSummary = fullAccess
       ? "read and write everything in your space"
-      : hasWrite
+      : contentLevel === "write"
         ? "read and write your content"
-        : hasRead
+        : contentLevel === "read"
           ? "read your content"
-          : "access your content";
+          : "reach none of your content";
 
     const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
     const stored = await storage.keys.create(
