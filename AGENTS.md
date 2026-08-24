@@ -102,6 +102,8 @@ Three coupled subsystems shipped together as the Connections build:
 
 **Integrations run in-process.** The runtime is a Node + pg-boss + `worker_thread` substrate bundled inside `@withmarfa/server`; it requires Postgres, so SQLite deployments run without integrations. Component map is in `packages/server/AGENTS.md` under "Local integrations runtime".
 
+**A dispatch that gives up degrades `/health`.** When a dispatch exhausts its retries, `/health` reports a `dead_letters` component and the overall status goes `degraded`, which is what the external poller keys on — no new credential, no second notifier. It carries **a count and nothing else**: the admin listing over the same rows returns connection identifiers spanning every space, and `/health` is unauthenticated. `POST /admin/runtime/dead-letters/{id}/replay` clears it. Two things to know about the shape: `/health` still answers 200 when degraded, so the container's own liveness probe is unaffected, and the evidence expires, because pg-boss deletes a failed row seven days after it fails. The row goes at seven days whether or not anyone was told, so an untouched alert resolving itself is a reason to act on it rather than a reason not to raise it.
+
 For per-route specifics, including the OAuth bootstrap callback at `/oauth/callback` and the inbound webhook receipt URL pattern, see `packages/server/AGENTS.md`.
 
 ## Environment variables

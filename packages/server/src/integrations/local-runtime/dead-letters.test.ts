@@ -142,6 +142,43 @@ describe.skipIf(!isPg)("dead-letter ops (real pg-boss)", () => {
     });
   }, 30_000);
 
+  it("counts every failed dispatch, past the listing's limit", async () => {
+    // The count exists for `/health`, which is unauthenticated and gets a
+    // number rather than the identifiers `list` returns. It has to be a
+    // real count and not a list length: `list` is bounded, and a count
+    // that silently stops at the bound would report a healthy-looking
+    // number for a queue that is anything but.
+    const before = await ops.count();
+
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const jobId = await boss.send(
+        QUEUE_NAME,
+        {
+          ...envelope,
+          message: {
+            ...envelope.message,
+            connection_id: `conn-count-${String(i)}`,
+          },
+        },
+        { retryLimit: 0 },
+      );
+      ids.push(jobId!);
+      await boss.fetch(QUEUE_NAME, { batchSize: 10 });
+      await boss.fail(QUEUE_NAME, jobId!, { message: `count ${String(i)}` });
+    }
+
+    expect(await ops.count()).toBe(before + 3);
+    // Past a limit smaller than the truth, which is the case a length
+    // would get wrong.
+    expect((await ops.list(1)).length).toBe(1);
+    expect(await ops.count()).toBe(before + 3);
+
+    // Replaying one takes it out of `failed`, so the count follows.
+    await ops.replay(ids[0]!);
+    expect(await ops.count()).toBe(before + 2);
+  }, 30_000);
+
   it("answers not_found for a job id that never existed", async () => {
     const missing = "00000000-0000-4000-8000-000000000000";
     const err = await ops.replay(missing).catch((e: unknown) => e);
