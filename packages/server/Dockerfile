@@ -3,8 +3,9 @@
 # Marfa server production container image.
 #
 # Build context is the MONOREPO ROOT (the server's workspace deps —
-# @withmarfa/shared, @withmarfa/webhooks, @withmarfa/runtime-sdk — are built
-# from source). Build from the repo root:
+# @withmarfa/shared, @withmarfa/webhooks, @withmarfa/runtime-sdk,
+# @withmarfa/sync-manifest — are built from source). Build from the repo
+# root:
 #
 #   docker buildx build --platform linux/amd64 -f packages/server/Dockerfile .
 #
@@ -66,11 +67,15 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 #
 # A declared integration without a src/local.ts still ships a manifest, and
 # the catalog reconcile at boot needs it: the catalog describes what is
-# installable, which is a larger set than what dispatches. The sync
-# integration is the standing case, a client whose agent lives outside
-# the server process. Its dist/ is staged so the catalog can carry a
-# current manifest for it, and the runtime loader still skips it because
-# there is no local.js to dispatch into.
+# installable, which is a larger set than what dispatches. Its dist/ is
+# staged so the catalog can carry a current manifest for it, and the
+# runtime loader skips it because there is no local.js to dispatch into.
+#
+# Nothing a client needs is staged here, deliberately. A client's code runs
+# on the user's machine, so there is nothing for a deployment to install,
+# and its manifest is compiled into the server bundle instead. Staging one
+# into the integrations root as an exception would put it back among the
+# integrations, which is what the split removed.
 #
 # This build runs before the deploy prune below: `pnpm deploy` rewrites
 # the workspace's modules state, and any later `pnpm run` then fails the

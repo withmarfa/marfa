@@ -9,11 +9,15 @@
  * is installable, and an integration whose code runs elsewhere is still
  * installable.
  *
- * `marfa/sync` is the standing example. It is a client rather than an
- * integration, its daemon runs on the user's machine, and it ships a
- * manifest with no handlers so a connection can hold its credentials,
- * configuration and observability. The runtime must skip it and the
- * catalog must carry it.
+ * So an integration declaring itself `manifest-only` is found here and
+ * skipped by the runtime, on purpose: a connection can hold its
+ * credentials, configuration and observability without anything ever
+ * dispatching into it.
+ *
+ * This reads the installed directory and nothing else. A manifest the
+ * build ships rather than a deployment installs is not an integration and
+ * belongs to no directory: `client-manifests.ts` carries those, and the
+ * catalog reconcile takes the union.
  *
  * Manifests are read from built output rather than from `src/manifest.ts`
  * because this runs inside the server, which is compiled JavaScript with
@@ -62,10 +66,16 @@ function looksLikeManifest(v: unknown): boolean {
 /**
  * Pull the manifest out of an imported module.
  *
- * Duck-typed rather than keyed on an export name: `local.js` exports
- * `manifest`, while a manifest-only package exports its own constant
- * (`SYNC_MANIFEST`). Requiring one name would mean renaming exports across
- * the tree to satisfy a loader.
+ * Duck-typed rather than keyed on an export name, because the two entry
+ * shapes do not agree on one. A handler entry re-exports its manifest as
+ * `manifest`; a manifest-only entry is the integration's own `manifest.ts`
+ * built directly, and each of those names its constant after itself.
+ * Requiring a single name would mean renaming exports across the tree to
+ * satisfy a loader.
+ *
+ * No integration ships the manifest-only shape today. Every one of them
+ * builds a handler entry, so naming an example here would name something
+ * dispatchable and teach the opposite of the distinction.
  */
 function findManifestExport(mod: Record<string, unknown>): unknown {
   if (looksLikeManifest(mod.manifest)) return mod.manifest;

@@ -18,6 +18,14 @@
 # lose its handler and still verify, which was the one kind of shrink the
 # old count did catch.
 #
+# Nothing carries the marker today, and it earns its place anyway. What it
+# buys is not the manifest-only case, which currently has no instance; it
+# is the strictness a plain name can then be held to. Drop the marker and
+# the verification has to accept `dist/manifest.js` for every name, because
+# it can no longer tell a deliberate manifest-only entry from an
+# integration that quietly lost its handler. So the marker protects the
+# fourteen names that do not carry it.
+#
 # A name here with no matching directory fails the build, and a directory
 # with no name here is not shipped. The suite holds the two in agreement,
 # so an integration nobody declared fails in seconds rather than during a
@@ -49,9 +57,3 @@ readwise-reader
 rss-watcher
 task-auto-archive
 todoist
-
-# sync's agent runs outside the server process, so it ships a manifest and
-# nothing to dispatch into. The catalog still needs a current manifest for
-# it, because the catalog describes what is installable, which is a larger
-# set than what dispatches.
-sync manifest-only

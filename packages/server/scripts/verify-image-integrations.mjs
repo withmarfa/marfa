@@ -13,7 +13,7 @@
  * inside the runtime image, where there is no tsx and no monorepo;
  * everything it needs must resolve from the image's own filesystem.
  *
- * Three checks, in order:
+ * Four checks, in order:
  *
  *   1. The installed set is the declared set, in the declared shape.
  *      installed-integrations.txt says what this image installs; the
@@ -36,7 +36,29 @@
  *      boot to read its manifest; this repeats that read and fails on a
  *      missing or shapeless manifest export.
  *
- *   3. Worker-thread dispatch. Spawns dist/worker-entry.js with the
+ *   3. The client manifests resolve from the image. A client's code runs
+ *      on the user's machine, so nothing about it is installed into the
+ *      integrations root and checks 1 and 2 cannot see it: its manifest is
+ *      a workspace dependency of the server, kept by the deploy prune and
+ *      resolved from /app/node_modules. Nothing else in the estate proves
+ *      that. The prune is the one step that could drop it, and neither
+ *      smoke:boot nor the suite runs against a pruned tree, so a
+ *      dependency demoted to devDependencies would pass everything and
+ *      fail on the first container.
+ *
+ *      The failure it guards is the better of the two available. Because
+ *      the import is static, a missing client manifest crashes the process
+ *      at startup rather than booting a catalog quietly short an entry,
+ *      which is what the discovered half does. Loud is not a reason to
+ *      leave it to production: this fails the build instead.
+ *
+ *      The set is read from dist/client-manifests.js, the same constant
+ *      boot hands to the reconcile, so it cannot drift from what ships.
+ *      Membership is the server suite's business; what is proved here is
+ *      that whatever the build claims to ship still resolves and parses
+ *      once the image has been pruned to production dependencies.
+ *
+ *   4. Worker-thread dispatch. Spawns dist/worker-entry.js with the
  *      scaffold's local.js and runs one schedule dispatch against a stub
  *      HTTP server. This is the module-singleton proof: if
  *      @withmarfa/runtime-sdk resolves to a second copy inside the image,
@@ -66,6 +88,9 @@ const WORKER_ENTRY =
 const DECLARATION =
   process.env.MARFA_INSTALLED_INTEGRATIONS ??
   resolve(HERE, "installed-integrations.txt");
+const CLIENT_MANIFESTS_ENTRY =
+  process.env.MARFA_VERIFY_CLIENT_MANIFESTS ??
+  resolve(HERE, "dist", "client-manifests.js");
 // Outside the integrations root deliberately: what is in that root is what
 // the deployment installed, and the dispatch fixture is not that.
 const FIXTURE_ROOT =
@@ -235,7 +260,51 @@ for (const entry of [
 }
 info(`all entries import and export manifests`);
 
-// Check 3: worker-thread dispatch through the scaffold fixture.
+// Check 3: the client manifests this build ships resolve from the image.
+//
+// Ahead of the dispatch check rather than after it, because that one exits
+// early when nothing dispatchable is installed. A deployment that installs
+// no integrations still ships every client the build knows about, so a
+// client manifest that stopped resolving there is exactly as broken and
+// would have been skipped.
+let clientManifests;
+try {
+  const mod = await import(pathToFileURL(CLIENT_MANIFESTS_ENTRY).href);
+  clientManifests = mod.CLIENT_MANIFESTS;
+} catch (err) {
+  fail(
+    `the client manifests could not be loaded from ${CLIENT_MANIFESTS_ENTRY}: ` +
+      `${String(err)}. A module-not-found here means the deploy prune ` +
+      `dropped a manifest package the server imports statically, so the ` +
+      `container would crash at startup.`,
+  );
+}
+if (!Array.isArray(clientManifests)) {
+  fail(
+    `${CLIENT_MANIFESTS_ENTRY} exports no CLIENT_MANIFESTS array; the ` +
+      `verification cannot tell what this build claims to ship.`,
+  );
+}
+for (const client of clientManifests) {
+  if (!usableManifest(client?.manifest)) {
+    fail(
+      `the client manifest ${String(client?.name ?? "<unnamed>")} resolved ` +
+        `but is not a usable manifest, so the catalog reconcile would ` +
+        `refuse it at boot.`,
+    );
+  }
+}
+const clientNames = clientManifests.map((client) => client.name).join(", ");
+info(
+  clientManifests.length === 0
+    ? `no client manifests to resolve`
+    : clientManifests.length === 1
+      ? `1 client manifest resolves and parses from the image (${clientNames})`
+      : `${String(clientManifests.length)} client manifests resolve and ` +
+        `parse from the image (${clientNames})`,
+);
+
+// Check 4: worker-thread dispatch through the scaffold fixture.
 if (entries.length === 0) {
   info(
     `nothing dispatchable installed; the dispatch check has nothing to prove`,

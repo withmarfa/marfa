@@ -42,10 +42,6 @@ Thumbs.db
 # Seed data (local dev only)
 seed/
 
-# Renamed to integrations/sync — keep the old name ignored so stale
-# build artifacts can't reappear in checkouts that pre-date the rename.
-integrations/sync-agent/
-
 # Database and blob data
 data/
 .claude/worktrees/

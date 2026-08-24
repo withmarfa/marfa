@@ -81,7 +81,7 @@ To install end-to-end:
 
 ## Runtime contract
 
-Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The runtime loads every integration that ships a built handler entry; there is one runtime, so there is nothing to declare compatibility with. An integration without a handler entry is a client, and its code runs wherever the client runs. Build invariants:
+Integrations run in-process on the server's integration runtime (Node + pg-boss + `worker_threads`; Postgres required). The runtime loads every integration that ships a built handler entry; there is one runtime, so there is nothing to declare compatibility with. An integration without a handler entry declares a surface a connection can install against and nothing to dispatch into, so the catalog carries it and the runtime skips it. **Something whose code has to run elsewhere is a client rather than an integration and does not belong in this directory at all** — its manifest lives in `packages/` and ships with the server build. Build invariants:
 
 - **The handler entry is `src/local.ts` and the built entry is `dist/local.js`.** Both halves are the convention rather than a preference: the image build pairs them to catch an integration whose source is present and whose output is missing, and the suite reads the source half to decide whether an integration ships a handler at all. Emitting `dist/local.js` from a differently named source satisfies neither reader, and the two then disagree about what the integration is.
 - `tsup.config.ts` emits `dist/local.js`, which the server's supervisor loads at boot.
@@ -112,6 +112,5 @@ So this is documentation rather than a source of truth, kept because the one-lin
 - **`raindrop`** — inbound token sync of bookmarks and collections.
 - **`inbox`** — email capture via Cloudflare Email Routing.
 - **`task-auto-archive`** — item-event automation on `core.task` items.
-- **`sync`** — the external file-sync client installed as a connection (local-only); its items are user-owned and editable, not mirrors.
 
 Per-integration `AGENTS.md` files (where present) carry upstream-specific gotchas: scope choices, dedup quirks, recurrence handling, channel renewal patterns.

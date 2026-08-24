@@ -62,6 +62,29 @@ interface Image {
   declaration: string;
   fixtureRoot: string;
   workerEntry: string;
+  clientManifests: string;
+}
+
+/**
+ * A stand-in for the built `dist/client-manifests.js`. Names are manifest
+ * names; one suffixed `!unusable` resolves but is not a manifest.
+ */
+function clientManifestsSource(clients: string[]): string {
+  const entries = clients.map((raw) => {
+    const [name, shape] = raw.split("!");
+    return {
+      name: name ?? raw,
+      manifest:
+        shape === "unusable"
+          ? { note: "not a manifest" }
+          : {
+              manifest_schema_version: "2.0.0",
+              name: name ?? raw,
+              version: "1.0.0",
+            },
+    };
+  });
+  return `export const CLIENT_MANIFESTS = ${JSON.stringify(entries)};\n`;
 }
 
 /**
@@ -79,6 +102,16 @@ function image(options: {
   installed: string[];
   fixture?: boolean;
   worker?: WorkerBehavior;
+  /** Client manifests the build claims to ship. Defaults to one usable. */
+  clients?: string[];
+  /**
+   * The entry imports a package that is not installed, which is what the
+   * deploy prune dropping a client manifest package looks like from inside
+   * the image. Not a per-client shape, so it gets its own flag.
+   */
+  clientsUnresolvable?: boolean;
+  /** The entry loads but exports no CLIENT_MANIFESTS. */
+  clientsBare?: boolean;
 }): Image {
   scratchRoot = mkdtempSync(join(tmpdir(), "marfa-verify-image-"));
   // The staged entries are ESM `.js`, which in a real image resolves
@@ -145,7 +178,26 @@ parentPort.on("message", () => {
 `,
   );
 
-  return { integrationsRoot, declaration, fixtureRoot, workerEntry };
+  // The built client-manifest entry. Every case gets a usable one by
+  // default, so a test that says nothing about clients still runs the
+  // check rather than skipping it.
+  const clientManifests = join(scratchRoot, "client-manifests.js");
+  writeFileSync(
+    clientManifests,
+    options.clientsUnresolvable === true
+      ? 'export { CLIENT_MANIFESTS } from "@withmarfa/not-installed";\n'
+      : options.clientsBare === true
+        ? "export const somethingElse = 1;\n"
+        : clientManifestsSource(options.clients ?? ["marfa/sync"]),
+  );
+
+  return {
+    integrationsRoot,
+    declaration,
+    fixtureRoot,
+    workerEntry,
+    clientManifests,
+  };
 }
 
 interface Run {
@@ -164,6 +216,7 @@ function verify(img: Image, overrides: Record<string, string> = {}): Run {
         MARFA_INSTALLED_INTEGRATIONS: img.declaration,
         MARFA_VERIFY_FIXTURE_ROOT: img.fixtureRoot,
         MARFA_VERIFY_WORKER_ENTRY: img.workerEntry,
+        MARFA_VERIFY_CLIENT_MANIFESTS: img.clientManifests,
         ...overrides,
       },
     });
@@ -181,8 +234,8 @@ describe("the in-image integration verification", () => {
   it("passes an image that installs exactly what it declares", () => {
     const run = verify(
       image({
-        declared: ["alpha", "sync manifest-only"],
-        installed: ["alpha", "sync!manifest"],
+        declared: ["alpha", "beta manifest-only"],
+        installed: ["alpha", "beta!manifest"],
         fixture: true,
       }),
     );
@@ -190,6 +243,59 @@ describe("the in-image integration verification", () => {
     expect(run.output).toContain("1 dispatchable");
     expect(run.output).toContain("all entries import and export manifests");
     expect(run.output).toContain("PASSED");
+    expect(run.code).toBe(0);
+  });
+
+  it("refuses an image whose client manifest no longer resolves", () => {
+    // The one thing the deploy prune can break that nothing else sees. A
+    // client's manifest is not installed into the integrations root, so
+    // checks 1 and 2 walk straight past it; it rides in as a production
+    // dependency, and demoting it to devDependencies passes the suite,
+    // passes smoke:boot against the monorepo, and crashes the container.
+    const run = verify(
+      image({ declared: ["none"], installed: [], clientsUnresolvable: true }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("client manifests could not be loaded");
+    expect(run.output).toContain("crash at startup");
+  });
+
+  it("refuses a client manifest that resolves but is not a manifest", () => {
+    const run = verify(
+      image({
+        declared: ["none"],
+        installed: [],
+        clients: ["marfa/sync!unusable"],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("is not a usable manifest");
+    expect(run.output).toContain("marfa/sync");
+  });
+
+  it("refuses an entry that says nothing about what the build ships", () => {
+    const run = verify(
+      image({ declared: ["none"], installed: [], clientsBare: true }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("exports no CLIENT_MANIFESTS array");
+  });
+
+  it("checks the client manifests even when the image installs nothing", () => {
+    // The dispatch check exits early on an empty image, which is why the
+    // client check runs before it: a deployment that installs no
+    // integrations still ships every client the build knows about.
+    const run = verify(image({ declared: ["none"], installed: [] }));
+    expect(run.output).toContain("1 client manifest resolves");
+    expect(run.output).toContain("marfa/sync");
+    expect(run.code).toBe(0);
+  });
+
+  it("accepts a build that ships no client manifests", () => {
+    const run = verify(
+      image({ declared: ["none"], installed: [], clients: [] }),
+    );
+    expect(run.output).toContain("no client manifests to resolve");
     expect(run.code).toBe(0);
   });
 
@@ -234,7 +340,7 @@ describe("the in-image integration verification", () => {
 
   it("fails when a manifest-only integration built a handler", () => {
     const run = verify(
-      image({ declared: ["sync manifest-only"], installed: ["sync"] }),
+      image({ declared: ["beta manifest-only"], installed: ["beta"] }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("declared manifest-only");
@@ -247,8 +353,8 @@ describe("the in-image integration verification", () => {
     // failure and this is the last place to refuse it.
     const run = verify(
       image({
-        declared: ["sync manifest-only"],
-        installed: ["sync!bare-manifest"],
+        declared: ["beta manifest-only"],
+        installed: ["beta!bare-manifest"],
       }),
     );
     expect(run.code).toBe(1);

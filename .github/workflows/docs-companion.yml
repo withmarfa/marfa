@@ -69,10 +69,15 @@ jobs:
             const SURFACE_EXCLUDES = [
               'packages/server/src/routes/auth-static/',
             ];
+            // A manifest is a documented contract wherever it lives: the
+            // integrations carry theirs under `integrations/`, and a client
+            // whose code runs on the user's machine carries its own under
+            // `packages/`. Matching the filename rather than a directory is
+            // what stops the second kind falling out of the check.
+            const isManifest = (f) => f.endsWith('/src/manifest.ts');
             const isDocSurface = (f) =>
               !SURFACE_EXCLUDES.some((p) => f.startsWith(p)) &&
-              (SURFACE_PREFIXES.some((p) => f.startsWith(p)) ||
-                (f.startsWith('integrations/') && f.endsWith('manifest.ts')));
+              (SURFACE_PREFIXES.some((p) => f.startsWith(p)) || isManifest(f));
 
             const pr = context.payload.pull_request;
             const { owner, repo } = context.repo;

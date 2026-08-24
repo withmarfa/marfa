@@ -53,10 +53,9 @@ import {
   type LocalRuntimeBundle,
 } from "./integrations/local-runtime/index.js";
 import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
-import { loadInTreeManifests } from "./integrations/load-manifests.js";
 import {
   describeReconcile,
-  reconcileIntegrationCatalog,
+  reconcileShippedCatalog,
 } from "./integrations/catalog-reconcile.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
@@ -864,31 +863,27 @@ async function main() {
   // and a SQLite instance whose catalog silently disagreed with its build
   // would be the same defect in a quieter place.
   try {
-    const catalogRoot = resolveIntegrationsRoot();
-    if (catalogRoot) {
-      const loaded = await loadInTreeManifests({
-        integrationsRoot: catalogRoot,
+    const shipped = await reconcileShippedCatalog(storage, {
+      integrationsRoot: resolveIntegrationsRoot(),
+    });
+    for (const skip of shipped.skipped) {
+      log("warn", "Integration manifest not loaded for the catalog", {
+        integration: skip.dirName,
+        reason: skip.reason,
       });
-      for (const skip of loaded.skipped) {
-        log("warn", "Integration manifest not loaded for the catalog", {
-          integration: skip.dirName,
-          reason: skip.reason,
-        });
-      }
-      const reconciled = await reconcileIntegrationCatalog(
-        storage,
-        loaded.manifests,
-      );
-      log("info", describeReconcile(reconciled), {
-        registered: reconciled.registered.map((r) => `${r.name}@${r.version}`),
-        failed: reconciled.failed,
-      });
-    } else {
+    }
+    if (shipped.rootUnresolved) {
       log(
         "warn",
-        "Integration catalog not reconciled: the integrations root could not be resolved. Set MARFA_INTEGRATIONS_ROOT.",
+        "No installed integrations reached the catalog: the integrations root could not be resolved. Set MARFA_INTEGRATIONS_ROOT.",
       );
     }
+    log("info", describeReconcile(shipped.result), {
+      registered: shipped.result.registered.map(
+        (r) => `${r.name}@${r.version}`,
+      ),
+      failed: shipped.result.failed,
+    });
   } catch (err) {
     // A catalog that could not reconcile is a stale catalog, which is the
     // state this instance was already in. Say so and boot; refusing to

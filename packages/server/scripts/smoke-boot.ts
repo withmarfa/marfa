@@ -27,6 +27,10 @@
  *
  * Wired into `pnpm test:full` after `test:pg` and into the `ci-pg` job,
  * the same placement `smoke:worker-entry` has on the SQLite side.
+ *
+ * It also owns the one catalog claim nothing else can make: that the
+ * manifests this build ships, rather than installs, reach the catalog on a
+ * real boot. See FIRST_BOOT_REGISTERS.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -42,6 +46,27 @@ const MIGRATE_ENTRY = resolve(SERVER_ROOT, "dist/migrate.js");
 const ROLES = ["both", "web", "worker"] as const;
 const READY_BUDGET_MS = 90_000;
 const SHUTDOWN_BUDGET_MS = 20_000;
+
+/**
+ * Manifests the first boot must be seen registering.
+ *
+ * A client's manifest is not installed into the integrations root: it
+ * ships with the build. So `marfa/sync@` appearing in the catalog
+ * reconcile's registered list can only have come from the build, which is
+ * the whole proposition, and boot is the only place it is provable. A unit
+ * test can call the reconcile directly and stay green through a boot
+ * rewired to build the catalog from discovery alone, which is the
+ * regression that matters and the one that reports nothing: the reconcile
+ * logs what it did, the server starts, and the catalog is short an entry
+ * nobody looks for until an install fails weeks later.
+ *
+ * First role only. The reconcile registers an absent (name, version) pair
+ * and leaves an existing row exactly as it is, so the second and third
+ * roles boot against a catalog the first already filled and register
+ * nothing. The database is a throwaway per run, so the first role always
+ * has the work to do.
+ */
+const FIRST_BOOT_REGISTERS = ["marfa/sync@"];
 
 /** The log line that proves the role gating held in the real binary. */
 const ROLE_MARKER: Record<(typeof ROLES)[number], string> = {
@@ -181,6 +206,20 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
       `role=${role} health passed but the boot log lacks "${ROLE_MARKER[role]}"`,
       output,
     );
+  }
+
+  if (role === ROLES[0]) {
+    for (const tag of FIRST_BOOT_REGISTERS) {
+      if (!output.includes(tag)) {
+        fail(
+          `role=${role} booted against an empty catalog without registering ` +
+            `${tag}. Its manifest ships with the build rather than being ` +
+            `installed, so this is what a boot that reconciles only the ` +
+            `integrations directory looks like.`,
+          output,
+        );
+      }
+    }
   }
 
   child.kill("SIGTERM");

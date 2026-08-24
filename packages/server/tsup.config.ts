@@ -18,6 +18,16 @@ export default defineConfig({
     // the only place this can run, and there is no checkout there to run tsx
     // against.
     "seed-oauth-clients": "src/scripts/seed-oauth-clients.ts",
+    // The client manifests, as their own entry so the in-image verification
+    // can read the set this build actually ships without importing the
+    // server. Importing `lib.js` would pull the whole route tree and the
+    // storage layer in to read one array, and hardcoding the names in the
+    // verification would be a fourth hand-maintained enumeration of a set
+    // the code already states once.
+    //
+    // It costs a bundle pass and no dts pass: `dts` names its entries
+    // explicitly, which is what keeps the heap ceiling above this.
+    "client-manifests": "src/integrations/client-manifests.ts",
   },
   format: ["esm"],
   // Declarations for the one entry anything imports. `exports` exposes

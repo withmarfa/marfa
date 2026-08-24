@@ -56,8 +56,9 @@ export function resolveLocalEntry(
 /**
  * Load every in-tree integration's `local.ts` entry from
  * `integrations/<name>/dist/local.js`. An integration that ships no local
- * entry is skipped: its code runs somewhere else, which is what makes it
- * a client rather than an integration.
+ * entry is skipped: it declares a surface a connection can install
+ * against and nothing for this process to dispatch into, so the catalog
+ * carries it and the runtime does not.
  *
  * The default integration list mirrors the in-tree set; callers can
  * override for tests or alternate self-host bundles.

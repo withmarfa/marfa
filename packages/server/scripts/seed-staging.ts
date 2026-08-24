@@ -1,5 +1,5 @@
 /**
- * Register every in-tree integration manifest against a Marfa server.
+ * Register every manifest this build ships against a Marfa server.
  *
  * Mostly historical now: the server reconciles its own catalog at boot
  * (`integrations/catalog-reconcile.ts`), so a deployed instance registers
@@ -7,8 +7,23 @@
  * script remains useful against an instance you are not deploying to, and
  * for registering a manifest from source rather than from built output.
  *
- * It imports each in-tree manifest from `integrations/<dir>/src/manifest.ts`
- * and registers it via `POST /integrations` (platform-credential gated).
+ * It registers via `POST /integrations` (platform-credential gated), and
+ * takes the same union the boot reconcile does, from two places:
+ *
+ *   - **Integrations**, imported from `integrations/<dir>/src/manifest.ts`.
+ *     Source, which is the point of running this by hand.
+ *   - **Client manifests**, from `src/integrations/client-manifests.ts`.
+ *     A client is not installed into any directory, so there is no
+ *     directory to read it from; it arrives as a workspace dependency.
+ *
+ * **The two halves are not equally fresh, and it matters here.** The
+ * integration half is read from `.ts` and is whatever the tree says. The
+ * client half resolves through the package's `exports` to its built
+ * output, so a stale or missing `dist` under the manifest's own package
+ * seeds a stale manifest, and the instance then carries a catalog row
+ * nobody can correct without a version bump. Run `pnpm build` first. Reading the client half from
+ * source instead would mean hardcoding a path per client, which is the
+ * enumeration this file already stopped keeping.
  *
  * Usage (from the monorepo root):
  *   MARFA_API_URL=https://your-instance \
@@ -22,6 +37,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverIntegrationDirs } from "../src/integrations/discover.js";
+import { CLIENT_MANIFESTS } from "../src/integrations/client-manifests.js";
 
 interface Manifest {
   name: string;
@@ -66,6 +82,8 @@ async function main(): Promise<void> {
   let existed = 0;
   let failed = 0;
 
+  const candidates: Manifest[] = [];
+
   for (const dir of dirs) {
     const manifestPath = resolve(integrationsRoot, dir, "src/manifest.ts");
     let manifest: Manifest | undefined;
@@ -83,7 +101,17 @@ async function main(): Promise<void> {
       console.warn(`skip ${dir}: no manifest export found`);
       continue;
     }
+    candidates.push(manifest);
+  }
 
+  // The half no directory read can reach. Without it this registers
+  // fourteen of fifteen while its whole purpose is filling a catalog by
+  // hand, which is the same defect in a quieter place.
+  for (const client of CLIENT_MANIFESTS) {
+    candidates.push(client.manifest);
+  }
+
+  for (const manifest of candidates) {
     const res = await fetch(`${apiUrl}/integrations`, {
       method: "POST",
       headers: {

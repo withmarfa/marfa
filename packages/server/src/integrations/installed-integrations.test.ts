@@ -50,6 +50,12 @@ describe("the installed-integrations declaration", () => {
   it("marks exactly the integrations that ship no handler", () => {
     // Derived from the tree rather than restated, so an integration that
     // gains or loses a handler fails here instead of at an image build.
+    //
+    // Both sides are empty today: every integration ships a handler, and
+    // the one manifest-only entry there ever was turned out to be a client
+    // filed in the wrong place. That is a live guard rather than a dormant
+    // one — it is what fails the moment a handler goes missing without the
+    // declaration admitting it.
     const onDisk = discoverIntegrationDirs(INTEGRATIONS_ROOT).filter(
       (name) =>
         !existsSync(resolve(INTEGRATIONS_ROOT, name, "src", "local.ts")),
@@ -71,9 +77,9 @@ describe("the declaration parser", () => {
   });
 
   it("reads the manifest-only marker", () => {
-    expect(parse("alpha\nsync manifest-only\n")).toEqual([
+    expect(parse("alpha\nbeta manifest-only\n")).toEqual([
       { name: "alpha", manifestOnly: false },
-      { name: "sync", manifestOnly: true },
+      { name: "beta", manifestOnly: true },
     ]);
   });
 
@@ -114,9 +120,9 @@ describe("the declaration parser", () => {
   it("reads a file with Windows line endings", () => {
     // One of the four disagreements that justified collapsing three
     // parsers into one, so it is worth a case rather than a comment.
-    expect(parse("alpha\r\nsync manifest-only\r\n")).toEqual([
+    expect(parse("alpha\r\nbeta manifest-only\r\n")).toEqual([
       { name: "alpha", manifestOnly: false },
-      { name: "sync", manifestOnly: true },
+      { name: "beta", manifestOnly: true },
     ]);
   });
 
