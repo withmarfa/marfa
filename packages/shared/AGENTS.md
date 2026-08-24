@@ -17,7 +17,7 @@ Contents (`src/`):
 
 - `diff-type-schemas.ts` — `diffTypeSchemas` classifies a registration diff as `noop | patch | minor | major`; `isValidVersionBump` encodes the integer-version semantics.
 - `edge-registry.ts` — same shape as type-registry, for edge types.
-- `scopes.ts` — OAuth scope grammar (`<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`); `parseScope`, `scopesToTypePermissions`, etc.
+- `scopes.ts` — OAuth scope grammar (`<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, the OIDC literals, and the verb-less `capability.<surface>` set); `parseScope`, `scopesToTypePermissions`, `hasCapability`, etc. `ParsedScope["kind"]` is a required discriminant, and every projection admits by naming the family it wants rather than skipping the ones it does not, so adding a family stops the package compiling until each site has classified it.
 - `query-parser.ts` — the `?filter=` DSL parser used by `/items` and `/search`. `SYSTEM_FIELDS` lists the columns the parser knows (state, type, source, timestamp, created_at, updated_at, tier, device, version, id).
 
 ## Authoring rules

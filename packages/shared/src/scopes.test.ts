@@ -13,6 +13,7 @@ import {
   isTypeScope,
   CAPABILITY_ROOT,
   CAPABILITY_SCOPES,
+  hasCapability,
 } from "./scopes.js";
 import type { ParsedScope, PermissionBundle } from "./scopes.js";
 import {
@@ -417,12 +418,69 @@ describe("capability scopes", () => {
     });
   }
 
+  it("carries no verb, and that is pinned rather than incidental", () => {
+    // Verb-lessness is a property of the literal, not of the parser: the
+    // prefix claim in `parseScope` is what refuses `capability.webhooks:read`,
+    // and it would go on refusing it if a member of this set grew a colon.
+    // The member would then be unparseable and the grant silently dead, so
+    // the shape of the set is the thing to hold.
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(literal).not.toContain(":");
+      expect(parseScope(literal)?.operation).toBe("none");
+    }
+  });
+
+  it("is granted by naming it, and by nothing else", () => {
+    // `hasCapability` exists because the neighbouring helper answered this
+    // question backwards. `*:write` is the full-access path the consent
+    // screen offers under Customize, and a pattern match admitted it against
+    // anything type-shaped, so the wrong tool said yes to a token holding no
+    // capability at all. These two assertions are the pair that catches it.
+    expect(hasCapability(["*:write"], "capability.item_purge")).toBe(false);
+    expect(hasCapability(["*:read"], "capability.webhooks")).toBe(false);
+    expect(hasCapability(["capability.webhooks"], "capability.webhooks")).toBe(
+      true,
+    );
+    // Holding every other capability implies nothing about this one.
+    const others = CAPABILITY_SCOPES.filter((c) => c !== "capability.keys");
+    expect(hasCapability(others, "capability.keys")).toBe(false);
+    expect(hasCapability([], "capability.keys")).toBe(false);
+  });
+
+  it("refuses to answer a capability question through scopeCovers", () => {
+    // The wrong tool must not answer yes. A capability is never a point on
+    // the item-type axis, so the category error answers false rather than
+    // matching a wildcard.
+    expect(scopeCovers(["*:read"], "capability.webhooks", "read")).toBe(false);
+    expect(scopeCovers(["*:write"], "capability.item_purge", "write")).toBe(
+      false,
+    );
+    expect(scopeCovers(["*:write"], "capability", "write")).toBe(false);
+    // And it still answers ordinary type questions the same way.
+    expect(scopeCovers(["*:write"], "core.note", "write")).toBe(true);
+  });
+
+  it("keeps every capability out of the one that would escalate it", () => {
+    // The two boundaries in the set that a reader is most likely to want to
+    // collapse, pinned so collapsing one is a test failure rather than a
+    // judgement call made again from scratch. Managing this app's own keys
+    // must not carry the power to revoke every other app's access, and
+    // configuring a connection must not carry the credential behind it.
+    const keys = ["capability.keys"];
+    expect(hasCapability(keys, "capability.app_grants")).toBe(false);
+    const connections = ["capability.connections"];
+    expect(hasCapability(connections, "capability.credentials")).toBe(false);
+    // And reading how full a space is must not carry rewriting its policy.
+    const usage = ["capability.space_usage"];
+    expect(hasCapability(usage, "capability.space_settings")).toBe(false);
+  });
+
   it("names one surface per admin gate, so consent reads as sentences", () => {
     // A set that has quietly become one entry is the failure this guards:
     // the whole point is that a person grants webhooks without granting
     // credentials. The count is the cheapest statement of that.
     expect(new Set(CAPABILITY_SCOPES).size).toBe(CAPABILITY_SCOPES.length);
-    expect(CAPABILITY_SCOPES.length).toBe(8);
+    expect(CAPABILITY_SCOPES.length).toBe(10);
   });
 
   it("claims its whole namespace, members or nothing", () => {
@@ -432,6 +490,9 @@ describe("capability scopes", () => {
     // root, and the wildcard that `isValidTypePattern` would otherwise
     // accept as an item-type pattern.
     expect(parseScope("capability.everything")).toBeNull();
+    // The name the previous draft of this set used. A retired member has to
+    // fail rather than linger as a literal nothing enforces.
+    expect(parseScope("capability.types")).toBeNull();
     expect(parseScope("capability.webhooks:read")).toBeNull();
     expect(parseScope("capability.webhooks:write")).toBeNull();
     expect(parseScope("capability")).toBeNull();

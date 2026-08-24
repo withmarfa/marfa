@@ -154,7 +154,12 @@ describe("a bundle is not a way around the scope grammar", () => {
     // The check has to discriminate rather than merely refuse: a validity
     // gate that also dropped the defaults would be an outage.
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
-    for (const s of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
+    const shipped = expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES);
+    // Without this the loop below is vacuous, and it would stay green on the
+    // day the bundles derived to nothing — which is the failure it is here
+    // to catch, since that is what a broken derivation looks like.
+    expect(shipped.length).toBeGreaterThan(20);
+    for (const s of shipped) {
       expect(scopes.has(s)).toBe(true);
     }
   });

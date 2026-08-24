@@ -539,8 +539,19 @@ export function buildOauthProjectionPlugin(opts: {
   // registered type); this is the curated bundle union the metadata
   // document publishes. The distinction is what lets a stored ceiling stop
   // freezing without becoming no ceiling at all — see `narrowAuthorizeScopes`.
+  //
+  // Filtered through the grammar for the same reason `buildAllowedScopes`
+  // filters, and it is the same raw configuration reaching a second reader.
+  // A malformed literal was never grantable here, since `liveScopes` is
+  // tested first and no longer carries one, but this set is what a stale
+  // ceiling is widened by, so an unchecked literal would be written into a
+  // client registration row and audit-logged as a scope. A row naming a
+  // scope that cannot exist is a false record rather than a live grant, and
+  // the cheaper of the two to prevent.
   const bundleScopes = new Set(
-    getPermissionBundles().flatMap((bundle) => bundle.scopes),
+    getPermissionBundles()
+      .flatMap((bundle) => bundle.scopes)
+      .filter((scope) => isValidScope(scope)),
   );
   const acceptedResources = baseURL
     ? new Set(

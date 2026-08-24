@@ -33,7 +33,12 @@
  * `/oauth2/consent`.
  */
 
-import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
+import type {
+  CapabilityScope,
+  ParsedScope,
+  PermissionBundle,
+} from "@withmarfa/shared";
+import { isCapabilityScope } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
@@ -134,17 +139,33 @@ function buildGroups(
     desc: "Additional things this app asked to change.",
     scopes: [],
   };
+  // A capability needs a bucket of its own, and the reason is the heading
+  // rather than the tidiness. The read/write split is decided on
+  // `operation`, which a capability sets to `"none"`, so without this arm
+  // every one of them fell through to the read bucket and a grant to
+  // register webhooks or revoke keys was filed under "Additional things this
+  // app asked to read". A heading that states the opposite of what the
+  // toggle does is worse than no heading.
+  const otherCapability: ScopeGroup = {
+    label: "Administrative access",
+    desc: "Parts of your space this app asked to manage.",
+    scopes: [],
+  };
   for (const scope of scopes) {
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
     if (bundle) {
       byBundle.get(bundle.id)?.scopes.push(scope);
+    } else if (scope.kind === "capability") {
+      otherCapability.scopes.push(scope);
     } else if (scope.kind !== "oidc" && scope.operation === "write") {
       otherWrite.scopes.push(scope);
     } else {
       otherRead.scopes.push(scope);
     }
   }
-  return [...byBundle.values(), otherRead, otherWrite]
+  // Administrative access last: it is the widest thing on the screen, and a
+  // reader scanning downward should not meet it between two content groups.
+  return [...byBundle.values(), otherRead, otherWrite, otherCapability]
     .filter((g) => g.scopes.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
@@ -175,6 +196,7 @@ function summarize(group: ScopeGroup): string {
     // scopes a reader is least likely to recognize. It is the same failure
     // this function's own docstring describes, from the other end.
     const label =
+      capabilityLabel(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       OIDC_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
@@ -255,6 +277,43 @@ export const OIDC_LABELS: Record<string, string> = {
   openid: "Confirm your identity",
 };
 
+/**
+ * Human toggle labels for the capability scopes.
+ *
+ * Curated rather than humanized, and that is the whole point of the map.
+ * The generic fallback takes the last dotted segment, so `capability.webhooks`
+ * renders as "Webhooks" — byte-identical to what `system.webhook:read` gets
+ * from the same fallback. An app asking for both would show a person two
+ * rows reading the same words, one granting sight of a webhook row and the
+ * other granting the power to point a new webhook wherever it likes.
+ *
+ * Every label is a verb phrase for that reason: what a person is being asked
+ * to hand over here is an action, not a category of content, and a noun
+ * reads as the latter. A capability with no entry falls back to the
+ * humanized segment and reads as a noun again, which is why the test pins
+ * one entry per member of the set.
+ */
+export const CAPABILITY_LABELS: Record<CapabilityScope, string> = {
+  "capability.webhooks": "Set up webhooks that send your data elsewhere",
+  "capability.connections": "Connect and disconnect other services",
+  "capability.schema": "Change and remove your type definitions",
+  "capability.space_usage": "See how much of your space is used",
+  "capability.space_settings": "Change your space settings",
+  "capability.audit_read": "Read your security history",
+  "capability.item_purge": "Permanently delete things, past the trash",
+  "capability.keys": "Create and revoke API keys",
+  "capability.credentials":
+    "Reach the credentials behind your connected services",
+  "capability.app_grants": "See and revoke the other apps you have connected",
+};
+
+/** The curated label for a scope literal, or undefined when it names no
+ *  capability. A guard rather than a cast, so a literal outside the set
+ *  cannot be asserted into a lookup that has no entry for it. */
+function capabilityLabel(literal: string): string | undefined {
+  return isCapabilityScope(literal) ? CAPABILITY_LABELS[literal] : undefined;
+}
+
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 /**
@@ -294,6 +353,9 @@ function labelFor(
   if (scope.kind === "oidc") {
     const lit = scope.oidcScope ?? scope.typePattern;
     return OIDC_LABELS[lit] ?? humanizeType(lit);
+  }
+  if (scope.kind === "capability" && scope.capability) {
+    return CAPABILITY_LABELS[scope.capability];
   }
   return (
     SCOPE_LABELS[scope.typePattern] ??
@@ -399,7 +461,11 @@ export function renderConsentScreen(params: ConsentParams): string {
         diff.removed.map((lit) => {
           const lastColon = lit.lastIndexOf(":");
           const typePattern = lastColon > 0 ? lit.slice(0, lastColon) : lit;
-          return SCOPE_LABELS[typePattern] ?? humanizeType(typePattern);
+          return (
+            capabilityLabel(typePattern) ??
+            SCOPE_LABELS[typePattern] ??
+            humanizeType(typePattern)
+          );
         }),
       ),
     );

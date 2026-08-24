@@ -76,14 +76,47 @@ export const CAPABILITY_ROOT = "capability";
  * consent screen has to read as sentences — "manage your webhooks", "read
  * your audit log" — so a person can grant an app the one power it needs.
  * A single "administer everything" toggle is the thing this replaces.
+ *
+ * Four boundaries in the set are decisions rather than groupings, and each
+ * exists because the obvious grouping would hand a holder something wider
+ * than the name implies.
+ *
+ * - **`app_grants` is not `keys`.** The routes sit beside each other and the
+ *   code calls them the same tier, which is exactly why they are split: a
+ *   key is this app's own credential, and a grant is another app's access.
+ *   Folding them together would let an app trusted to rotate a key
+ *   enumerate and revoke every other app the space has authorized, which is
+ *   the escalation this whole model exists to fence.
+ * - **`credentials` is not `connections`.** Configuring a connection, its
+ *   upstream mapping included, says nothing about reaching the secret behind
+ *   it or minting a leased token that authenticates as it. Credential
+ *   issuance is its own authority in both directions: what a connection
+ *   holds, and what it hands out.
+ * - **`schema` is not registration.** Registering a type is already fenced
+ *   by `metadata.types:write` and `metadata.edge_types:write`. This covers
+ *   only what that grammar does not — changing and removing definitions that
+ *   already exist — so the two never describe the same act. A capability
+ *   duplicating an existing scope would put two names on one authority and
+ *   leave a consent screen unable to tell a reader which one it is showing.
+ * - **`space_usage` is not `space_settings`.** Reading how much room is left
+ *   is what an app doing ordinary work wants; changing a space's enforcement
+ *   policy is not. Bundling them would make every app that checks headroom
+ *   ask for the power to rewrite policy.
+ *
+ * Not everything reached through space-admin authority is a surface. The
+ * caller resolver behind the console pages answers which space a request is
+ * acting in, and gating it would be gating the question rather than an
+ * answer, so no capability covers it and none should.
  */
 export type CapabilityScope =
   | "capability.webhooks"
   | "capability.connections"
   | "capability.credentials"
   | "capability.keys"
+  | "capability.app_grants"
   | "capability.space_settings"
-  | "capability.types"
+  | "capability.space_usage"
+  | "capability.schema"
   | "capability.item_purge"
   | "capability.audit_read";
 
@@ -94,18 +127,23 @@ export type CapabilityScope =
  * ordered — a reader deciding what to grant reads down the list, so the
  * order is part of what the screen says.
  *
- * Exported because the route gate and the consent renderer both need the
- * set, and a second copy in either would be the thing that drifts.
+ * Exported so that the set has one home before it has a second reader. No
+ * route gate consults a capability yet and no bundle offers one, so today
+ * the only consumers are this package's own tests; the export exists so the
+ * gate and the consent renderer read this array when they arrive rather than
+ * each growing a list that can drift from it.
  */
 export const CAPABILITY_SCOPES: readonly CapabilityScope[] = [
   "capability.webhooks",
   "capability.connections",
-  "capability.types",
+  "capability.schema",
+  "capability.space_usage",
   "capability.space_settings",
   "capability.audit_read",
   "capability.item_purge",
   "capability.keys",
   "capability.credentials",
+  "capability.app_grants",
 ];
 
 const CAPABILITY_SET: ReadonlySet<string> = new Set(CAPABILITY_SCOPES);
@@ -113,6 +151,32 @@ const CAPABILITY_SET: ReadonlySet<string> = new Set(CAPABILITY_SCOPES);
 /** Returns true if the literal names a capability this build recognizes. */
 export function isCapabilityScope(scope: string): scope is CapabilityScope {
   return CAPABILITY_SET.has(scope);
+}
+
+/**
+ * Whether a held scope set carries one specific capability.
+ *
+ * The only correct way to ask. A capability is granted by naming it and by
+ * nothing else: no wildcard reaches one, no breadth of data access implies
+ * one, and holding all eight of the others implies nothing about the ninth.
+ *
+ * This exists as its own function rather than as a note telling callers what
+ * not to do, because the alternative is what a gate author reaches for.
+ * `scopeCovers` is the neighbouring helper and it answers about the item-type
+ * axis, where `*:write` matches any pattern — so asked about a capability it
+ * said yes to a token holding no capability at all. That function now refuses
+ * a capability outright, and this one is what replaces it.
+ */
+export function hasCapability(
+  held: readonly string[],
+  capability: CapabilityScope,
+): boolean {
+  for (const scope of held) {
+    const parsed = parseScope(scope);
+    if (parsed?.kind !== "capability") continue;
+    if (parsed.capability === capability) return true;
+  }
+  return false;
 }
 
 export interface ParsedScope {
@@ -371,6 +435,24 @@ export function scopeCovers(
   requiredType: string,
   requiredOp: "read" | "write",
 ): boolean {
+  // A capability is not a point on the item-type axis, so asking this
+  // function about one is a category error, and the honest answer to a
+  // category error is no.
+  //
+  // Answering at all was the hazard. `*:read` and `*:write` are the
+  // full-access path the consent screen offers under "Customize", and a
+  // pattern match admits them against any string shaped like a type — so
+  // this returned true for a token that holds no capability, and false for
+  // one that holds exactly the capability being asked about. A gate reaching
+  // for the nearest helper would have inherited a fail-open one level above
+  // the one the capability kind exists to remove. Ask {@link hasCapability}.
+  if (
+    requiredType === CAPABILITY_ROOT ||
+    requiredType.startsWith(`${CAPABILITY_ROOT}.`)
+  ) {
+    return false;
+  }
+
   for (const scope of held) {
     const parsed = parseScope(scope);
     if (!parsed) continue;
