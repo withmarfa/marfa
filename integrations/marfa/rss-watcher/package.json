@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-rss-watcher",
+  "name": "marfa-rss-watcher",
   "version": "0.0.1",
   "private": true,
   "type": "module",

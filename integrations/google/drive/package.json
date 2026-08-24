@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-google-drive",
+  "name": "google-drive",
   "version": "0.0.2",
   "private": true,
   "type": "module",

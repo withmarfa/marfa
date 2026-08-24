@@ -81,13 +81,20 @@ RUN NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @withmarfa/server... bu
 # the workspace's modules state, and any later `pnpm run` then fails the
 # verify-deps-before-run guard.
 #
-# The filter also catches the dispatch fixture, which is named into the
-# same namespace on purpose. It has to be bundled exactly the way an
-# integration is bundled or it proves nothing about how an integration
-# bundles, and sharing the build invocation is the only version of that
-# which cannot drift — a second `--filter` beside this one is a line
-# somebody has to keep in agreement.
-RUN pnpm --filter "@withmarfa/integration-*" run build
+# Selected by path, not by a name pattern. A package name is now the
+# manifest identifier with the slash flattened, so there is no shared
+# prefix left to match on and nothing should reintroduce one: what makes
+# these the integrations is that they live in `integrations/`, and the
+# selector may as well say so.
+#
+# The dispatch fixture builds in the same command, named in full because it
+# is outside that directory and is not an integration. Same command,
+# because a fixture bundled by a different one proves nothing about how an
+# integration bundles. There is exactly one of it and it is spelled out, so
+# this cannot drift the way a pattern could. When the integrations leave,
+# the first filter goes and this one stays.
+RUN pnpm --filter "./integrations/**" \
+         --filter dispatch-fixture run build
 # The parser's output is captured into a variable rather than expanded
 # inline. `set -e` does not reach a command substitution performed while
 # expanding a `for` word list, and a loop whose body never runs exits 0, so

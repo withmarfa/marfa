@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@withmarfa/integration-todoist",
+    name: "todoist-tasks",
     include: ["src/**/*.test.ts"],
   },
 });

@@ -1,5 +1,5 @@
 {
-  "name": "@withmarfa/integration-readwise-reader",
+  "name": "readwise-reader",
   "version": "0.0.1",
   "private": true,
   "type": "module",

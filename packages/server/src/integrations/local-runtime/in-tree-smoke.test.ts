@@ -12,7 +12,8 @@
  *   - marfa/task-auto-archive (schedule against the real test Marfa server)
  *
  * Each smoke loads the integration's compiled `dist/local.js`
- * (produced by `pnpm --filter @withmarfa/integration-<name> build`),
+ * (produced by `pnpm --filter <package-name> build`, where the name is
+ * the manifest identifier with the slash flattened),
  * registers handlers through `_resetHandlers` + `registerHandlers`,
  * drives one trigger via `supervisor.dispatchForTest`, and asserts
  * the expected outcome. The directDispatch seam keeps the smoke
