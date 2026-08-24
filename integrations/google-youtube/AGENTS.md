@@ -1,5 +1,11 @@
 # google-youtube
 
+**This file is moving.** It goes with the integrations into their own
+repository, and it hasn't yet been reviewed against decisions made since
+it was written. Treat it as a record of how things worked here rather than
+as current guidance, and use the move to review, correct, and tighten it
+rather than carry it over unchanged.
+
 Inbound-only YouTube sync via the YouTube Data API v3. Fourth
 instance of the `google.*` publisher family — sibling to
 `google/calendar`, `google/tasks`, and `google/contacts`.

@@ -1,5 +1,7 @@
 # integrations/
 
+**This file is moving.** It goes with the integrations into their own repository, and it hasn't yet been reviewed against decisions made since it was written. Treat it as a record of how things worked here rather than as current guidance, and use the move to review, correct, and tighten it rather than carry it over unchanged.
+
 Per-integration packages implementing the manifest contract from `@withmarfa/shared/integration-manifest.ts`. Each subdirectory is a self-contained npm workspace; the runtime substrate loads them through the patterns below.
 
 ## Manifest contract

@@ -1,5 +1,11 @@
 # readwise-reader
 
+**This file is moving.** It goes with the integrations into their own
+repository, and it hasn't yet been reviewed against decisions made since
+it was written. Treat it as a record of how things worked here rather than
+as current guidance, and use the move to review, correct, and tighten it
+rather than carry it over unchanged.
+
 Bidirectional sync with Readwise Reader. Uses the token-credential
 install seam with a non-default `auth_scheme`.
 
