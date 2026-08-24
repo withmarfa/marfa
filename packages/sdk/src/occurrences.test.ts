@@ -69,16 +69,24 @@ describe("occurrences.list", () => {
   });
 
   it("omits an event outside the window", async () => {
-    const id = await createEvent({
+    const outside = await createEvent({
       title: "Far away",
       starts_at: "2030-01-10T14:00:00.000Z",
+    });
+    // Seeded alongside so the absence below cannot be satisfied by an
+    // empty read. Without it this test passes against a route that
+    // returns nothing at all.
+    const inside = await createEvent({
+      title: "Inside the window",
+      starts_at: "2026-06-14T09:00:00.000Z",
     });
 
     const result = await fx.client.occurrences.list({
       from: "2026-06-01T00:00:00Z",
       to: "2026-06-30T00:00:00Z",
     });
-    expect(result.data.some((o) => o.item.id === id)).toBe(false);
+    expect(result.data.some((o) => o.item.id === inside)).toBe(true);
+    expect(result.data.some((o) => o.item.id === outside)).toBe(false);
   });
 
   it("expands a weekly series into one entry per occurrence in the window", async () => {
@@ -107,10 +115,27 @@ describe("occurrences.list", () => {
   });
 
   it("returns occurrences ordered by start time across every source", async () => {
+    // Ordering is vacuous on an empty list, and the window below is only
+    // populated by earlier tests in this file. Seeding a series and a
+    // single event here makes the assertion stand on its own rather than
+    // on declaration order.
+    const series = await createEvent({
+      title: "Ordering series",
+      starts_at: "2026-05-04T08:00:00.000Z",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=3"],
+    });
+    const single = await createEvent({
+      title: "Ordering one-off",
+      starts_at: "2026-06-20T18:00:00.000Z",
+    });
+
     const result = await fx.client.occurrences.list({
       from: "2026-05-01T00:00:00Z",
       to: "2026-07-01T00:00:00Z",
     });
+
+    expect(result.data.filter((o) => o.series_id === series)).toHaveLength(3);
+    expect(result.data.some((o) => o.item.id === single)).toBe(true);
     const starts = result.data.map((o) => o.starts_at);
     expect([...starts].sort()).toEqual(starts);
   });
@@ -332,12 +357,21 @@ describe("occurrences.list refusals", () => {
         throw new Error("the kit should not have issued a request");
       },
     });
-    await expect(
-      unreachable.occurrences.list({
+    const err = await unreachable.occurrences
+      .list({
         from: new Date("not a date"),
         to: "2026-06-30T00:00:00Z",
-      }),
-    ).rejects.toThrow(ValidationError);
+      })
+      .then(
+        () => null,
+        (e: unknown) => e as ValidationError,
+      );
+
+    expect(err).toBeInstanceOf(ValidationError);
+    // Zero, not 400: nothing answered, and telemetry bucketed on status
+    // would otherwise record a rejection by an endpoint never contacted.
+    expect(err?.status).toBe(0);
+    expect(err?.code).toBe("invalid_window_bound");
   });
 });
 

@@ -587,8 +587,14 @@ export interface ListOccurrencesOptions {
   from: string | Date;
   /** Window end, exclusive. */
   to: string | Date;
-  /** Restrict to one event type. Defaults to every event type the
-   *  credential can read. */
+  /**
+   * Restrict to one event type. Defaults to every event type the
+   * credential can read.
+   *
+   * A valid type that holds no events is not an error: the read succeeds
+   * with an empty `data`, the same answer a window with nothing in it
+   * gives. Only a malformed identifier is refused.
+   */
   type?: string;
 }
 
@@ -2254,6 +2260,17 @@ export class MarfaClient {
      * ever cover the span — the occurrence ceiling depends on the data,
      * so half the refusals would still need the round trip and a caller
      * could not tell the two apart.
+     *
+     * A third refusal is shaped like those two and does not behave like
+     * them. When the space holds more events than one read will scan, the
+     * same `ValidationError` arrives carrying `max_events_scanned` and
+     * neither of the other keys. **Narrowing the window does not clear
+     * it.** The passes that gather series and exceptions cannot be
+     * windowed, since a rule written years ago produces occurrences in
+     * any window and an exception moved out of one still shadows the slot
+     * it left, so both read the space whole however little is asked for.
+     * A caller that has learned "narrow and retry" from the other two
+     * will otherwise loop on it. Branch on which key is present.
      */
     list: async (
       options: ListOccurrencesOptions,
@@ -2278,13 +2295,20 @@ export class MarfaClient {
    * `RangeError`, which would be the single refusal from this namespace
    * that is not a `MarfaError`. A string goes through untouched, leaving
    * the server the only judge of what it will accept.
+   *
+   * The refusal carries its own code and a zero status, because no server
+   * saw it: `validation_error` and 400 both name a rejection that never
+   * happened.
    */
   private windowBound(value: string | Date, field: string): string {
     if (typeof value === "string") return value;
     if (Number.isNaN(value.getTime())) {
-      throw new ValidationError(`${field} is not a usable Date`, {
-        [field]: String(value),
-      });
+      throw new ValidationError(
+        `${field} is not a usable Date`,
+        { [field]: String(value) },
+        "invalid_window_bound",
+        0,
+      );
     }
     return value.toISOString();
   }

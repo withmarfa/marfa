@@ -59,8 +59,16 @@ export class ValidationError extends MarfaError {
     message: string,
     details?: Record<string, unknown>,
     code?: string,
+    /**
+     * Defaults to the 400 a server rejection carries. A refusal the client
+     * reached on its own passes 0, matching `timeout`, `network_error` and
+     * `parse_error` in the transport: `status` reports what the server
+     * answered, and nothing answered. Telemetry bucketed on it otherwise
+     * records a rejection against an endpoint never contacted.
+     */
+    status = 400,
   ) {
-    super(code ?? "validation_error", message, 400, details);
+    super(code ?? "validation_error", message, status, details);
     this.name = "ValidationError";
   }
 }
