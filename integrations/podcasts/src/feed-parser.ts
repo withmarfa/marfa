@@ -6,10 +6,17 @@
  * paginate. One document carries every episode a show has published, and the
  * largest in ordinary circulation is close to eighteen megabytes across
  * nearly three thousand items. A general XML parser materializes that as an
- * object tree several times the size of the source, which does not fit the
- * memory a Worker is given. Scanning for item blocks and reading the twenty
- * or so fields that matter holds the source string, one item at a time, and
- * the output.
+ * object tree several times the size of the source. Scanning for item
+ * blocks and reading the twenty or so fields that matter holds the source
+ * string, one item at a time, and the output.
+ *
+ * The measurement behind that choice was taken against a memory ceiling
+ * this no longer runs under, and nobody has re-derived it against a Node
+ * process in a container, where the ceiling is far higher. What survives
+ * is the shape rather than the number: a scanning parser holds the source,
+ * one item and the output, while a tree parser holds the source and a
+ * structure several times its size, and that ratio is the same whatever
+ * the ceiling is.
  *
  * This is extraction, not XML processing. It does not validate the grammar,
  * and it matches namespace prefixes literally — `itunes:`, `podcast:`,

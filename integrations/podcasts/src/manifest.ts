@@ -14,10 +14,11 @@
  *
  * Podcast Index is not a token requirement. Its key belongs to whoever runs
  * the deployment rather than to a person using it, so it is supplied as a
- * Worker secret and enrichment simply does not run without it. A manifest
- * cannot express an optional credential in any case: `token_requirements`
- * admits only "required", and declaring it would make a directory lookup a
- * precondition for reading a public feed.
+ * deployment environment variable rather than as a credential a connection
+ * carries. A manifest cannot express an optional credential in any case:
+ * `token_requirements` admits only "required", and declaring it would make
+ * a directory lookup a precondition for reading a public feed. Nothing
+ * calls it yet; see `podcast-index.ts`.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -138,9 +139,9 @@ export const MAX_FEEDS_PER_CONNECTION = 50;
 export const RECENT_ID_RING_SIZE = 300;
 
 /**
- * Largest feed body this will read. The biggest feed measured in the wild is
- * a little under eighteen megabytes; the ceiling leaves room above that
- * while still refusing something that would exhaust a Worker.
+ * Largest feed body this will read. The biggest feed measured in the wild
+ * is a little under eighteen megabytes; the ceiling leaves room above that
+ * while still refusing a body no podcast feed has any business being.
  */
 export const MAX_FEED_BYTES = 40 * 1024 * 1024;
 

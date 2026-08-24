@@ -6,16 +6,25 @@
  * truncated. A show with a thousand episodes behind a ten-item feed is
  * invisible to any reader of that feed. Podcast Index has the rest.
  *
+ * **Nothing in the handlers calls any of this.** Signing is written and
+ * tested because it can be, against fixed vectors and with no network; the
+ * lookups that would use it are not, for the reason below. Read this module
+ * as the half that could be finished without a secret, not as a code path a
+ * sweep takes. Finishing it means a response mapping written against
+ * observed responses and a call site in the sweep, under one rule: the feed
+ * is authoritative for everything the feed carries, and Podcast Index only
+ * supplies episodes the feed truncated away.
+ *
  * Two deliberate limits on what is written here.
  *
- * The credential is a Worker secret rather than a per-connection one,
- * because the key identifies whoever runs this deployment rather than the
- * person using it. Every connection in every space would present the same
- * value, and asking each person to register their own turns "paste a feed
- * address" into "go and sign up for a directory API". It is also the only
- * shape a manifest can express: `token_requirements` admits only
- * "required", so declaring it at all would make a directory lookup a
- * precondition for reading a public feed.
+ * The credential is a deployment environment variable rather than a
+ * per-connection one, because the key identifies whoever runs this
+ * deployment rather than the person using it. Every connection in every
+ * space would present the same value, and asking each person to register
+ * their own turns "paste a feed address" into "go and sign up for a
+ * directory API". It is also the only shape a manifest can express:
+ * `token_requirements` admits only "required", so declaring it at all would
+ * make a directory lookup a precondition for reading a public feed.
  *
  * And there is no response mapping here, on purpose. The signing scheme is
  * fully specified and can be checked against fixed vectors without a
@@ -97,15 +106,11 @@ export async function signRequest(
 }
 
 /**
- * The enrichment seam.
+ * The enrichment seam, and like everything else here it has no caller.
  *
- * Wired at the call site and inert without credentials, so the path that
- * runs when a deployment holds none is the path exercised by every test
- * and every environment so far. When the secret arrives, the mapping is
- * written here against observed responses rather than documented ones, and
- * the rule it must follow is already decided: the feed is authoritative
- * for everything the feed carries, and Podcast Index only supplies
- * episodes the feed truncated away.
+ * A type guard rather than a check: `readCredentials` above is what
+ * enforces both halves, and this only narrows what it returned so a call
+ * site can branch without repeating the null test.
  */
 export function enrichmentAvailable(
   credentials: PodcastIndexCredentials | null,

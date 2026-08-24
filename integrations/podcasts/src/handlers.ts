@@ -23,7 +23,8 @@
  * **The watermark is stricter than progress.** It advances only when a feed
  * drains completely with every batch applied. Stepping over an episode the
  * server refused would strand it permanently, because nothing re-offers an
- * episode that has not changed.
+ * episode that has not changed, so the drain boundary stops at the last
+ * episode that landed rather than at the end of the pass.
  */
 import {
   registerScheduleHandler,
@@ -92,13 +93,86 @@ interface FeedCursor {
   /** Revalidators, echoed back exactly as received, weak prefix included. */
   etag: string | null;
   last_modified: string | null;
-  /** Newest publication date fully drained. Only moves on a clean complete pass. */
-  last_seen_published: string | null;
   recent_entry_ids: string[];
   /** Index into this pass's episode list while a feed is parked mid-drain. */
   backfill_cursor: number | null;
-  /** Set when a pass began, so a resumed drain does not re-derive a moving target. */
-  pass_started_at: string | null;
+  /**
+   * The identity that stood at `backfill_cursor` when the pass parked.
+   *
+   * The index alone is not enough. It points into a list rebuilt from the
+   * feed on every tick, and the reasoning written for it only covers
+   * additions: episodes arrive at the end of an oldest-first list, so a
+   * show publishing mid-drain shifts nothing already recorded. A show
+   * *deleting* an old episode shifts every later index down, and a resume
+   * at the stored number then steps over exactly as many episodes as were
+   * removed. They were never written, so the ring does not hold them, and
+   * the boundary recorded at the end of the pass puts them out of reach.
+   *
+   * That was unreachable while a parked drain never resumed against a
+   * changed body, which is the defect this branch fixes, so it stops being
+   * unreachable here. The anchor is what makes the index checkable: it has
+   * to still be sitting at that index, or the position is re-derived.
+   */
+  backfill_anchor_id: string | null;
+  /**
+   * The earliest episode this pass refused, by identity, or null if it has
+   * refused nothing yet.
+   *
+   * On the cursor rather than in a local, because a pass spans ticks and
+   * this decides where the pass's drain boundary lands. A local forgot the
+   * refusal the moment the budget ran out, so a feed one tick's budget too
+   * long recorded its boundary at the end and stranded the episode: the
+   * exact case the boundary exists for.
+   *
+   * By identity for the same reason `backfill_anchor_id` exists. An index
+   * recorded on one tick and read on another is an index into two
+   * different lists, and a publisher removing an old episode shifts every
+   * later one down. Read positionally, the boundary would land *on* the
+   * refused episode rather than before it, which strands it in exactly the
+   * way this field is here to prevent.
+   */
+  pass_first_refused_id: string | null;
+  /**
+   * Whether this pass saw episodes appear below the position it parked at.
+   *
+   * The drain follows its anchor rather than restarting, because
+   * restarting need never converge, so the inserted episodes are behind it
+   * by the time the pass finishes. Recording a boundary at the end would
+   * put them permanently out of reach, so the pass declines to record one
+   * and the next pass walks the feed once. That is the same one-pass cost
+   * a drained feed already pays for an insertion.
+   */
+  pass_saw_insertion: boolean;
+  /**
+   * Identity of the newest episode a completed drain reached, and how many
+   * episodes stood at or before it.
+   *
+   * `recent_entry_ids` is a bounded ring, so on a feed longer than the ring
+   * it cannot answer "have I imported this" for the whole catalog. Without
+   * these two, a drained feed is walked from the beginning on every tick
+   * and everything older than the ring is offered again, forever: a settled
+   * subscription rewriting hundreds of rows an hour and reporting them as
+   * work. Measured on a six-hundred-episode feed against a three-hundred
+   * entry ring, it oscillates between the two halves and never settles.
+   *
+   * The identity is what makes the pair shift-proof: finding it in this
+   * pass's list says where the drained region ends wherever it now sits.
+   * The count is how a drop is told from an insertion, which need opposite
+   * answers. `resumeAfterDrain` carries the reasoning.
+   */
+  drained_through_id: string | null;
+  drained_count: number | null;
+  /**
+   * The scheduled time of the last tick that wrote an episode, while a
+   * pass is open.
+   *
+   * Its one reader is the stuck ceiling, which is documented as a pass
+   * open this long *without progress*. Stamped when the pass began instead
+   * of when it last moved, it measures the pass rather than the stall, so
+   * a catalog too large to finish inside the ceiling trips on its own
+   * size.
+   */
+  last_progress_at: string | null;
   failed_since_watermark: number;
   retried_after_failure: boolean;
   /**
@@ -139,6 +213,16 @@ interface FeedCursor {
    * fetch or parse, keeps the stored marker until one gets further.
    */
   checkpoint_lookup_failed_at: string | null;
+  /**
+   * When this feed last reported that a single import has been open too
+   * long.
+   *
+   * Its own marker rather than a shared one, for the reason the other two
+   * are separate: a stuck import and a checkpoint pointing at rows that
+   * are gone are different findings, and suppressing one with the other
+   * hides whichever arrives second.
+   */
+  stuck_pass_reported_at: string | null;
   /** Set when the address leaves the configuration. State is kept, not deleted. */
   retired_at: string | null;
   last_success_at: string | null;
@@ -152,15 +236,20 @@ function defaultFeedCursor(feedUrl: string): FeedCursor {
     show_title: null,
     etag: null,
     last_modified: null,
-    last_seen_published: null,
     recent_entry_ids: [],
     backfill_cursor: null,
-    pass_started_at: null,
+    backfill_anchor_id: null,
+    pass_first_refused_id: null,
+    pass_saw_insertion: false,
+    drained_through_id: null,
+    drained_count: null,
+    last_progress_at: null,
     failed_since_watermark: 0,
     retried_after_failure: false,
     pending_joins: [],
     stale_checkpoint_reported_at: null,
     checkpoint_lookup_failed_at: null,
+    stuck_pass_reported_at: null,
     retired_at: null,
     last_success_at: null,
   };
@@ -366,14 +455,6 @@ function episodeProperties(
 export interface PodcastHandlerOptions {
   /** Injected so tests drive the upstream deterministically. */
   fetch?: typeof fetch;
-  /**
-   * Whether signed Podcast Index enrichment is available. Threaded from the
-   * Worker entry because handlers receive a connection context, which
-   * carries no environment.
-   */
-  podcastIndexAvailable?: boolean;
-  /** Injected so a tick's clock is deterministic under test. */
-  now?: () => number;
 }
 
 /** Errors reach here as unknown; only a string or an Error says anything useful. */
@@ -409,8 +490,6 @@ export function createScheduleHandler(
   message: { scheduled_for_ms: number },
 ) => Promise<HandlerResult> {
   const fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
-  const enrichment = opts.podcastIndexAvailable === true;
-  const clock = opts.now ?? (() => Date.now());
 
   return async (ctx, message) => {
     const resolution = await resolveConfig(ctx);
@@ -516,7 +595,6 @@ export function createScheduleHandler(
       const outcome = await sweepFeed({
         ctx,
         fetchImpl,
-        clock,
         key: entry.key,
         feedUrl: entry.url,
         family,
@@ -548,7 +626,6 @@ export function createScheduleHandler(
         episodes_failed: totals.failed,
         episodes_skipped: totals.skipped,
         write_family: family,
-        podcast_index_enrichment: enrichment ? "available" : "not configured",
       },
     });
 
@@ -597,6 +674,12 @@ async function retireFeeds(
       retired_at: startedAt,
       stale_checkpoint_reported_at: null,
       checkpoint_lookup_failed_at: null,
+      stuck_pass_reported_at: null,
+      // The progress stamp goes too. State is kept, so a re-added feed
+      // resumes its parked pass, and a stamp that counted the period the
+      // feed was not being swept would call it stuck on its first tick
+      // back and send it straight into a 304.
+      last_progress_at: null,
     });
     await ctx.activity.emit({
       severity: "info",
@@ -739,7 +822,10 @@ async function reportOnce(
   ctx: ConnectionContext,
   cursor: FeedCursor,
   key: string,
-  marker: "stale_checkpoint_reported_at" | "checkpoint_lookup_failed_at",
+  marker:
+    | "stale_checkpoint_reported_at"
+    | "checkpoint_lookup_failed_at"
+    | "stuck_pass_reported_at",
   activity: {
     severity: "warning" | "action_required";
     summary: string;
@@ -774,7 +860,6 @@ function filterForPrefix(prefix: string): string | null {
 async function sweepFeed(args: {
   ctx: ConnectionContext;
   fetchImpl: typeof fetch;
-  clock: () => number;
   key: string;
   feedUrl: string;
   family: WriteFamily;
@@ -813,9 +898,65 @@ async function sweepFeed(args: {
     Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
     "User-Agent": "MarfaPodcasts/0.1",
   };
-  if (cursor.etag !== null) headers["If-None-Match"] = cursor.etag;
-  if (cursor.last_modified !== null)
-    headers["If-Modified-Since"] = cursor.last_modified;
+  // Revalidators are sent unless a drain is parked and still moving.
+  //
+  // A drain that ran out of budget parks mid-feed and persists the new
+  // revalidator on its way out, so the next tick asks the question the
+  // conditional request answers, "has this changed since I last read it",
+  // and gets "no" for a feed it has read half of. The 304 returns before
+  // anything looks at the parked position, and the drain never continues:
+  // every host tested honors `If-None-Match`, so on a real feed longer
+  // than one tick's budget the import simply stopped at one tick's worth
+  // and waited for the publisher to release something.
+  //
+  // Asking unconditionally costs one full body per tick, which is what the
+  // budget was already spending it on, and would be bounded by the drain
+  // if every parked drain finished. Several do not: a fetch that throws, a
+  // non-2xx, a body over the size ceiling, a parse failure, a show write
+  // that fails, or a batch that fails the same way every time all leave
+  // the position stored and return. On a seventeen-megabyte feed that is
+  // the whole body pulled from somebody else's CDN every hour for as long
+  // as the condition lasts.
+  //
+  // So the progress stamp and `STUCK_FEED_DAYS` finally have the read
+  // side they were written for. A pass that has been open longer than the
+  // ceiling stops being treated as in progress: the feed goes back to
+  // asking conditionally and says once that it is stuck. It stays parked,
+  // so nothing is lost, and it resumes the moment the feed changes.
+  // `last_progress_at` moves forward on any tick that writes, so this is
+  // time without progress rather than time since the pass began. A long
+  // import that is converging never trips it; one that cannot finish does.
+  //
+  // Measured against the tick's own scheduled time, which is what stamps
+  // the marker. Comparing a wall clock against a scheduled stamp mixes two
+  // time sources and the difference between them is not a duration.
+  const lastProgress = cursor.last_progress_at;
+  const stuck =
+    lastProgress !== null &&
+    Date.parse(startedAt) - Date.parse(lastProgress) >
+      STUCK_FEED_DAYS * 24 * 3_600_000;
+  if (cursor.backfill_cursor === null || stuck) {
+    if (cursor.etag !== null) headers["If-None-Match"] = cursor.etag;
+    if (cursor.last_modified !== null)
+      headers["If-Modified-Since"] = cursor.last_modified;
+  }
+  if (stuck) {
+    // A warning rather than an action: the feed resumes on its own the
+    // moment the publisher releases something, so there is nothing for a
+    // person to do beyond knowing the import is not finished. An
+    // action_required row nobody can act on is the habit that makes the
+    // activity log unreadable.
+    await reportOnce(ctx, cursor, key, "stuck_pass_reported_at", {
+      severity: "warning",
+      summary:
+        "Podcasts: this feed has been part-way through an import for longer than it should be",
+      detail: {
+        feed_url: feedUrl,
+        last_progress_at: lastProgress,
+        stopped_at_position: cursor.backfill_cursor,
+      },
+    });
+  }
 
   let response: Response;
   try {
@@ -1005,11 +1146,17 @@ async function sweepFeed(args: {
     candidates.push({ episode, localId });
   }
 
-  const resumeAt = Math.min(cursor.backfill_cursor ?? 0, candidates.length);
+  const resume = resumeParkedPass(cursor, candidates);
+  if (resume.insertedBelow) cursor.pass_saw_insertion = true;
+  const resumeAt = Math.min(
+    resume.at ?? resumeAfterDrain(cursor, candidates),
+    candidates.length,
+  );
   const work: {
     episode: ParsedEpisode;
     input: CreateItemInput;
     index: number;
+    localId: string;
   }[] = [];
   for (let i = resumeAt; i < candidates.length; i += 1) {
     const entry = candidates[i];
@@ -1019,6 +1166,7 @@ async function sweepFeed(args: {
     work.push({
       episode: entry.episode,
       index: i,
+      localId: entry.localId,
       input: {
         type: FAMILY_DEFINITIONS[family].types.episode,
         source_id: episodeSourceId(scopeKey, entry.localId),
@@ -1067,6 +1215,16 @@ async function sweepFeed(args: {
       if (result.outcome === "errored" || result.id === undefined) {
         out.failed += 1;
         cursor.failed_since_watermark += 1;
+        // Where the drained region has to stop. Everything before the
+        // first refusal landed and never needs offering again; the refusal
+        // and everything after it does. On the cursor because a pass spans
+        // ticks and this outlives the one that saw it, and by identity
+        // because the index it sits at is only meaningful in this tick's
+        // list.
+        const alreadyAt = indexOfId(candidates, cursor.pass_first_refused_id);
+        if (alreadyAt === null || entry.index < alreadyAt) {
+          cursor.pass_first_refused_id = entry.localId;
+        }
         await ctx.activity.emit({
           severity: "action_required",
           summary: "Podcasts: an episode was refused",
@@ -1107,7 +1265,10 @@ async function sweepFeed(args: {
       out.written += 1;
       // An episode landing means whatever the checkpoint report saw has
       // changed, so a later recurrence is a new fact and reports again.
+      // The stuck report clears on the same evidence: a pass that stalls,
+      // moves, and stalls again has stalled twice.
       cursor.stale_checkpoint_reported_at = null;
+      cursor.stuck_pass_reported_at = null;
       const localId =
         entry.input.source_id?.slice(`ep:${scopeKey}:`.length) ?? "";
       if (localId !== "") {
@@ -1123,26 +1284,97 @@ async function sweepFeed(args: {
     // space. Everything up to here has landed, so it is recorded before
     // asking for more and a tick that dies next resumes from this point.
     processed = (batch[batch.length - 1]?.index ?? processed - 1) + 1;
-    cursor.backfill_cursor = processed < candidates.length ? processed : null;
+    const more = processed < candidates.length;
+    cursor.backfill_cursor = more ? processed : null;
+    // The anchor and the progress stamp move with the position, not only
+    // at the park below. This checkpoint exists so a tick that dies next
+    // resumes from here, and resuming from an index whose anchor belongs
+    // to an earlier position is the shift hazard the anchor is for. The
+    // stamp matters for the same reason: a pass whose only tick died here
+    // left it null, so the ceiling that bounds unconditional fetching
+    // could never evaluate.
+    //
+    // Not covered by a test. Reaching this state needs a tick that dies
+    // after a checkpoint and before the park block, which means an
+    // exception escaping the sweep rather than the ordinary parking paths,
+    // and the harness drives the parking paths. Said here rather than
+    // covered by a case that looks like one and is not.
+    cursor.backfill_anchor_id = more
+      ? (candidates[processed]?.localId ?? null)
+      : null;
+    if (out.written > 0) cursor.last_progress_at = startedAt;
     await ctx.cursor.write(key, cursor);
   }
 
   if (parked) {
     cursor.backfill_cursor = processed;
-    cursor.pass_started_at = cursor.pass_started_at ?? startedAt;
+    cursor.backfill_anchor_id = candidates[processed]?.localId ?? null;
+    // Stamped when the pass began, and moved forward by any tick that
+    // wrote something. The ceiling it feeds is documented as a pass open
+    // this long *without progress*, and a stamp that never moves measures
+    // the wrong thing: a legitimately long import trips it, and a feed
+    // that recovers and parks again is still measured from the beginning.
+    cursor.last_progress_at =
+      out.written > 0 ? startedAt : (cursor.last_progress_at ?? startedAt);
     await ctx.cursor.write(key, cursor);
     return out;
   }
 
   // The feed drained. The watermark moves only if nothing was refused, or
-  // if a pass has already been retried once for the same refusals — held
+  // if a pass has already been retried once for the same refusals: held
   // forever, one bad episode would make every tick re-walk the catalog.
   cursor.backfill_cursor = null;
-  cursor.pass_started_at = null;
+  cursor.backfill_anchor_id = null;
+  cursor.last_progress_at = null;
+  cursor.stuck_pass_reported_at = null;
   cursor.last_success_at = startedAt;
+  // The drain boundary stops at the last episode that actually landed,
+  // which is one before the first refusal of this pass and the end of the
+  // list when there was none.
+  //
+  // Not the same condition as the watermark above. That one releases after
+  // a single retry so one permanently bad episode cannot make every tick
+  // re-walk the catalog; releasing the boundary on the same terms would
+  // record it past the refusal, and nothing re-offers an episode that has
+  // not changed, so the episode would be stranded silently and the retry
+  // would run with no work in it.
+  //
+  // What that trade costs, stated rather than implied: an episode that is
+  // refused every time is re-offered every tick, along with everything
+  // between it and the ring, and it emits its own activity row each time.
+  // That is loud rather than unbounded, and loud is the side to err on
+  // when the alternative is losing an episode in silence.
+  //
+  // A feed that parsed to nothing, or one whose very first episode was
+  // refused, leaves the boundary alone rather than clearing it. A
+  // momentarily empty channel is a transient, and treating it as a
+  // completed drain of zero would full-walk a whole catalog on the next
+  // good tick.
+  // Re-derived in this tick's own list. Gone from the feed entirely means
+  // the publisher withdrew the episode that was being refused, which is
+  // the one way a refusal stops mattering.
+  const refusedAt = indexOfId(candidates, cursor.pass_first_refused_id);
+  const firstRefused = refusedAt ?? Number.POSITIVE_INFINITY;
+  const boundaryIndex = Math.min(firstRefused - 1, candidates.length - 1);
+  const boundary = boundaryIndex >= 0 ? candidates[boundaryIndex] : undefined;
+  if (cursor.pass_saw_insertion) {
+    // The list shifted under this pass in a way that can hide work, and it
+    // carried on rather than restarting, so anything hidden is behind the
+    // boundary it would otherwise record. Record none: the next pass walks
+    // the feed and picks it up.
+    //
+    // This runs ahead of the empty-parse guard below and clears the stored
+    // boundary rather than leaving it. That is the same answer either way,
+    // since owing a walk and having no boundary are the same instruction.
+    cursor.drained_through_id = null;
+    cursor.drained_count = null;
+  } else if (boundary !== undefined) {
+    cursor.drained_through_id = boundary.localId;
+    cursor.drained_count = boundaryIndex + 1;
+  }
+  cursor.pass_first_refused_id = null;
+  cursor.pass_saw_insertion = false;
   if (cursor.failed_since_watermark === 0 || cursor.retried_after_failure) {
-    cursor.last_seen_published =
-      ordered[ordered.length - 1]?.pub_date ?? cursor.last_seen_published;
     cursor.failed_since_watermark = 0;
     cursor.retried_after_failure = false;
   } else {
@@ -1151,6 +1383,138 @@ async function sweepFeed(args: {
   }
   await ctx.cursor.write(key, cursor);
   return out;
+}
+
+/** The index an identity now sits at in this tick's list, or null. */
+function indexOfId(
+  candidates: { localId: string }[],
+  id: string | null,
+): number | null {
+  if (id === null) return null;
+  const at = candidates.findIndex((c) => c.localId === id);
+  return at === -1 ? null : at;
+}
+
+/**
+ * Where to resume a pass that parked, or nothing if it did not park, and
+ * whether the pass owes a full walk once it completes.
+ *
+ * `backfill_cursor` is an index into a list rebuilt from the feed on every
+ * tick, so it is only meaningful while the list has not shifted under it.
+ * A removal shifts it: a show deleting one old episode moves every later
+ * index down by one, and resuming at the stored number steps over exactly
+ * that many episodes, which were never written, are not in the ring, and
+ * end up behind the boundary the pass records at the end. A back-catalog
+ * upload shifts it the other way, because an oldest-first list puts new
+ * old episodes at the front.
+ *
+ * So the position travels with the identity that stood at it. Found where
+ * it was, or found earlier, the resume point is wherever it now is and
+ * nothing is owed. Found later or not at all, the list moved in a way that
+ * can hide work: the pass resumes from the best position it has and owes
+ * one full walk, which the pass after it performs. The reasoning for
+ * carrying on rather than restarting is at the branch itself.
+ */
+function resumeParkedPass(
+  cursor: FeedCursor,
+  candidates: { localId: string }[],
+): { at: number | null; insertedBelow: boolean } {
+  const parkedAt = cursor.backfill_cursor;
+  if (parkedAt === null) return { at: null, insertedBelow: false };
+  const anchor = cursor.backfill_anchor_id;
+  // A parked position with no anchor is a cursor written before the anchor
+  // existed. The current code writes the pair together, so this is
+  // tolerance for the deploy that introduces the field and nothing else:
+  // one tick of the old positional behavior, then the park below records
+  // an anchor.
+  if (anchor === null) return { at: parkedAt, insertedBelow: false };
+  if (candidates[parkedAt]?.localId === anchor)
+    return { at: parkedAt, insertedBelow: false };
+  const moved = indexOfId(candidates, anchor);
+
+  // Moved down means episodes were removed before it, and everything up
+  // to it was still drained, so its new position is the resume point and
+  // nothing is owed.
+  if (moved !== null && moved <= parkedAt) {
+    return { at: moved, insertedBelow: false };
+  }
+
+  // Everything else is the same shape: the list moved under the position
+  // in a way that can hide work, and the pass carries on regardless.
+  //
+  // Moved up means episodes were inserted below it, which is a show
+  // uploading its back catalog mid-drain. Gone entirely means the feed
+  // re-identified the episode the pass was standing on, which a guid-less
+  // feed does when a publisher retitles or re-hosts an old item.
+  //
+  // Neither restarts the drain, because restarting does not converge: the
+  // condition that moved the anchor is usually still there on the next
+  // tick, so the pass never completes, `backfill_cursor` never returns to
+  // null, and the unconditional full-body fetch a parked pass performs
+  // never stops. That is the two-halves oscillation this whole change
+  // exists to remove, reached through a different door.
+  //
+  // Instead the pass finishes from the best position it has, and owes one
+  // full walk afterwards: `insertedBelow` makes the completion decline to
+  // record a boundary, so the next pass walks the feed and picks up
+  // anything this one stepped over. Bounded, because a pass that owes a
+  // walk still completes.
+  return {
+    at: moved ?? Math.min(parkedAt, candidates.length),
+    insertedBelow: true,
+  };
+}
+
+/**
+ * Where to start on a feed that has already drained once.
+ *
+ * The pair recorded at the end of a drain says which episode the drained
+ * region ends at and how many stood at or before it. Locating that episode
+ * by identity in this pass's list is what makes the answer survive a feed
+ * that has changed since: everything up to and including that identity is
+ * already imported, wherever it now sits.
+ *
+ * **A shorter run before the boundary is a drop, and a longer one is an
+ * insertion.** They need opposite answers and the distinction is the
+ * direction of the comparison, not the fact of a difference. A rolling
+ * window drops its oldest as it publishes, so its run before the boundary
+ * shrinks on every tick while nothing behind it is new; treating that as a
+ * change would full-walk on every tick forever, which is the defect this
+ * exists to fix, on the one feed shape most likely to be long. A show
+ * uploading its back catalog lengthens that run instead, and resuming past
+ * the boundary would skip exactly those, so that one takes the full walk.
+ *
+ * A boundary that is absent means the feed re-identified its episodes and
+ * there is nothing left to anchor to, which is the full walk as well.
+ *
+ * **What this cannot see** is an insertion behind the boundary that
+ * arrives with at least as many removals behind it, because the run's
+ * length is the only evidence of one and removals cancel it out. A
+ * substitution is the same shape with a length change of zero: an episode
+ * before the boundary whose identity changes, which a guid-less feed
+ * produces when a publisher re-hosts or retitles an old item. Both are
+ * skipped rather than re-imported.
+ *
+ * Distinguishing them needs the whole drained set rather than its boundary
+ * and length, which is the unbounded thing the ring exists to avoid. The
+ * ring still catches either near the tail, where a publisher is most
+ * likely to be editing.
+ *
+ * A full walk is noisy on a long feed, not wrong: every write is an upsert
+ * keyed on the episode's own identity, and the walk records a fresh
+ * boundary at the end of it, so the noise is one pass rather than every
+ * pass.
+ */
+function resumeAfterDrain(
+  cursor: FeedCursor,
+  candidates: { localId: string }[],
+): number {
+  const boundary = cursor.drained_through_id;
+  if (boundary === null || cursor.drained_count === null) return 0;
+  const at = candidates.findIndex((c) => c.localId === boundary);
+  if (at === -1) return 0;
+  if (at + 1 > cursor.drained_count) return 0;
+  return at + 1;
 }
 
 export function registerHandlers(opts: PodcastHandlerOptions = {}): void {
