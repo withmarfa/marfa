@@ -241,9 +241,16 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # `needs.<job>.result` is one of success, failure, cancelled or
+          # skipped, and nothing else. A job past its timeout reports
+          # failure, so there is no `timed_out` to match.
+          #
+          # `skipped` sits with `cancelled` rather than with failure: a
+          # deploy that did not run did not fail, and the two want different
+          # first questions from whoever reads the alert.
           case "$DEPLOY_RESULT" in
             success) STATE=resolved; TITLE="$WORKFLOW ($ENVIRONMENT) is green again on $REPO" ;;
-            cancelled) STATE=open; TITLE="$WORKFLOW ($ENVIRONMENT) did not complete on $REPO" ;;
+            cancelled|skipped) STATE=open; TITLE="$WORKFLOW ($ENVIRONMENT) did not complete on $REPO" ;;
             *) STATE=open; TITLE="$WORKFLOW ($ENVIRONMENT) failed on $REPO" ;;
           esac
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW/$ENVIRONMENT" \

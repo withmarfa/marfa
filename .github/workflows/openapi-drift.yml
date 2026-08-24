@@ -109,9 +109,18 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # `needs.<job>.result` is one of success, failure, cancelled or
+          # skipped, and nothing else. A job past its timeout reports
+          # failure, so there is no `timed_out` to match.
+          #
+          # `skipped` sits with `cancelled` rather than falling through to
+          # the catch-all: a job that did not run is not a job that ran
+          # green, and reporting one as the other is how a guard goes dark
+          # quietly. Unreachable while `sync` has no `if:`, and here so that
+          # adding one later cannot turn this notifier into a liar.
           case ",$RESULTS," in
-            *,failure,*|*,timed_out,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
-            *,cancelled,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
+            *,failure,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
+            *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
             *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
           esac
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \

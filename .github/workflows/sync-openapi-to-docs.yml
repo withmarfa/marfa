@@ -56,3 +56,69 @@ jobs:
 
             Source commit: `${{ github.sha }}`
             Triggered by workflow run ${{ github.run_id }}.
+
+  notify:
+    # Reports this run's outcome to aic-alerts. Hosted rather than on the
+    # self-hosted pool deliberately: when the pool is the thing that broke, a
+    # notifier living on it cannot tell anyone.
+    #
+    # Three workflows carry a copy of the step below and that is on purpose,
+    # not an extraction waiting to happen. A composite action would have to
+    # be checked out before it can run, which makes the one job whose whole
+    # purpose is working when other things are not depend on one more thing
+    # working. The copies are kept identical instead: an edit to one belongs
+    # in all three.
+    #
+    # Unlike the drift guard's notifier this is not gated on a schedule,
+    # because this workflow has none. It fires on a spec change landing on
+    # main, so a failure is a spec the docs repository is never offered, and
+    # the published reference drifts from the server until either the drift
+    # guard's next daily run notices or a reader hits a route that is not in
+    # the reference. This job is what makes that same-day rather than
+    # next-day, and it says which run broke.
+    #
+    # A run that never happens at all is not this job's to report: a notifier
+    # inside a run cannot speak for a run that did not start. That is the
+    # drift guard's job, and it is why the guard is scheduled.
+    #
+    # `cancelled` opens an alert rather than staying silent, for the reason it
+    # does on the drift guard: a run queued on the pool that never gets picked
+    # up is cancelled by the queue limit, which is exactly the pool-down case
+    # worth hearing about. One caveat that does not carry over from the guard:
+    # having no schedule, this workflow has nothing that reliably posts the
+    # matching resolve, so a deliberate cancel leaves an alert open until the
+    # next spec change or manual dispatch runs green.
+    needs: [sync]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report outcome to aic-alerts
+        env:
+          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
+          WORKFLOW: ${{ github.workflow }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # `needs.<job>.result` is one of success, failure, cancelled or
+          # skipped, and nothing else. A job past its timeout reports
+          # failure, so there is no `timed_out` to match.
+          #
+          # `skipped` sits with `cancelled` rather than falling through to
+          # the catch-all: a job that did not run is not a job that ran
+          # green, and reporting one as the other is how a guard goes dark
+          # quietly. Unreachable while `sync` has no `if:`, and here so that
+          # adding one later cannot turn this notifier into a liar.
+          case ",$RESULTS," in
+            *,failure,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
+            *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
+            *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
+          esac
+          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
+                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
+            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+              fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
+          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
+              -H "Authorization: Bearer $ALERTS_SECRET" \
+              -H "Content-Type: application/json" --data @- \
+          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
