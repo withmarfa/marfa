@@ -16,9 +16,10 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  *   archive quietly accepts a chain `POST /types` would refuse, and the
  *   disagreement shows up later at a registration, or never.
  *
- * These are not the only paths that put a schema into the registry. Manifest
- * registration writes declared schemas without checking a parent chain at
- * all, which is its own defect rather than something this file closes.
+ * A third path shares it now. Manifest registration checked nothing about a
+ * parent chain until it was given this one, and it writes its declared
+ * schemas parents-first, so a manifest may list a child before its parent
+ * and still be checked against the same cap as the other two.
  *
  * Distinct from `MAX_RESOLUTION_DEPTH` in `@withmarfa/shared`. That one is
  * the backstop every resolution walk stops at, whatever produced the chain,
