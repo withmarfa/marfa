@@ -163,14 +163,62 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # Cache only on runners known to keep no store between jobs. Every
+          # `actions/setup-node` step in this file carries the same rule,
+          # resolved through its own job's runs-on chain, and
+          # `ci/cache-rule.test.ts` holds each one to it. This is the copy
+          # with the reasoning; the other seven point here.
+          #
+          # It is an allowlist rather than an exclusion, so a label nobody
+          # recognizes gets no cache. A missed cache costs one slow install.
+          # A wrongly enabled one costs `actions/setup-node`'s post step
+          # tarring the self-hosted pool's pnpm store, which already persists
+          # at ~/Library/pnpm/store and so restores nothing, and which is
+          # about 12 GB. Several jobs finishing together is what made runs
+          # take about an hour with every visible step green, on a machine
+          # every repository's CI shares.
+          #
+          # `ubuntu-` and `blacksmith-` only. `macos-` is absent
+          # deliberately, not by oversight. Nothing here runs on hosted
+          # macOS, the self-hosted pool is macOS, and its labels sit
+          # alongside `self-hosted`, `macOS` and `ARM64`. A second pool
+          # called something like `macos-pool-1` is the plausible next
+          # label, and a `macos-` prefix would match it and switch the tar
+          # back on. Add it only together with something that separates a
+          # hosted macOS runner from a pool that happens to run macOS.
+          #
+          # The same trust runs the other way and is worth saying to whoever
+          # names the next pool: these prefixes assume a label describes the
+          # machine behind it. A self-hosted pool called `ubuntu-pool-1` or
+          # `blacksmith-2` would match, switch the tar back on, and pass every
+          # check here. Keep a pool label clear of both prefixes.
+          #
+          # Two shapes look right and are not. `!= 'self-hosted'` is correct
+          # only while the pool is spelled that way, and the runner variables
+          # exist precisely so a job can be pointed at a pool with another
+          # name. `runner.environment` reports `self-hosted` for third-party
+          # ephemeral runners too, because they register through GitHub's
+          # self-hosted API, so it would drop the cache where it pays.
+          #
+          # The chain is written twice, here and in runs-on. `runs-on` cannot
+          # read `env`, which is the usual explanation and is not the whole
+          # one: `runs-on` can read `needs`, and every job carrying this rule
+          # already has `needs: changes`, so the `changes` job could emit the
+          # resolved runner once and both keys could read it. That route was
+          # declined rather than overlooked. It moves where a job runs out of
+          # the job and into another job's output, so `runs-on` stops telling
+          # you where the job runs and you have to trace an output to find
+          # out. The legibility is worth more than the second copy, now that
+          # `ci/cache-rule.test.ts` holds the copy to the original.
+          #
+          # Nothing in a green run shows either that or the rule above: on
+          # the pool the old `!= 'self-hosted'` test and this one both
+          # resolve to no cache, so a run passes whichever is in the file.
+          # The test is what checks it, and it runs in `pnpm test`.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:
@@ -201,14 +249,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:
@@ -245,14 +294,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:
@@ -303,14 +353,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:
@@ -345,14 +396,15 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         if: needs.changes.outputs.code == 'true'
@@ -406,10 +458,15 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         with:
           node-version: 22
-          # A self-hosted runner keeps its pnpm store between jobs; an
-          # ephemeral runner needs the Actions cache. This repeats the
-          # runs-on selection so an absent override follows CI_RUNNER safely.
-          cache: ${{ (github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest') != 'self-hosted' && 'pnpm' || '' }}
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         if: needs.changes.outputs.code == 'true'
@@ -489,17 +546,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # Mirrors this job's own runs-on selection, so the cache follows
-          # wherever the job lands rather than a second guess at it.
-          #
-          # On the self-hosted pool the store at ~/Library/pnpm/store already
-          # persists between jobs, so the cache restores nothing, and its post
-          # step still tars the whole 12 GB store. Several jobs finishing
-          # together put concurrent multi-gigabyte tars on one machine, which
-          # is what made runs take about an hour with every step green. On an
-          # ephemeral runner the store does not survive the job, so the cache
-          # is what stops every run reinstalling from the registry.
-          cache: ${{ (vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest') != 'self-hosted' && 'pnpm' || '' }}
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:
@@ -532,17 +587,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # Mirrors this job's own runs-on selection, so the cache follows
-          # wherever the job lands rather than a second guess at it.
-          #
-          # On the self-hosted pool the store at ~/Library/pnpm/store already
-          # persists between jobs, so the cache restores nothing, and its post
-          # step still tars the whole 12 GB store. Several jobs finishing
-          # together put concurrent multi-gigabyte tars on one machine, which
-          # is what made runs take about an hour with every step green. On an
-          # ephemeral runner the store does not survive the job, so the cache
-          # is what stops every run reinstalling from the registry.
-          cache: ${{ (vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest') != 'self-hosted' && 'pnpm' || '' }}
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
 
       - name: Configure registry auth
         env:

@@ -5,7 +5,21 @@ export default defineConfig({
     // Per-package projects. Packages without their own vitest config
     // (shared, sdk, types) inherit from this root config when their
     // directory is matched.
-    projects: ["packages/*"],
+    projects: [
+      "packages/*",
+      {
+        // `ci/` holds tests over the repository's own CI configuration
+        // rather than over any package, so the glob above cannot reach it
+        // and it has no package.json to be discovered by. Named inline so
+        // the whole project set is readable in one place. Not `.github/`:
+        // a leading dot is skipped by the globber unless asked for, and a
+        // test that silently matches nothing reports a confident pass.
+        test: {
+          name: "ci-config",
+          include: ["ci/**/*.test.ts"],
+        },
+      },
+    ],
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template
     // (`packages/server/src/storage/pg/test-template.ts`), so workers
