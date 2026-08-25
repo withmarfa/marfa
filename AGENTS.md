@@ -307,6 +307,16 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 
 **Dispatching it is not free.** Unlike a `ci.yml` dispatch, a `Server image` dispatch always runs the full amd64 build. That is the point of having it — it is how a Dockerfile change gets checked before it merges — but it is billed hosted minutes rather than pool time.
 
+### The integrations pin
+
+`Integrations pin drift` (`.github/workflows/integrations-pin-drift.yml`) says when `packages/server/integrations-ref.txt` has fallen behind something the image would ship. Daily at 07:42 UTC, plus dispatch. Hosted, with its own `notify` job.
+
+**It compares built output rather than changed paths**, and that is the whole design. esbuild discards ordinary comments unconditionally, so a JSDoc-only edit to a manifest and a comment-only edit to a handler both produce a byte-identical bundle, and those edits dominate that repository's history. Any path filter wide enough to catch a real source change catches them too, so the obvious version of this guard reports noise on its first run. Paths decide only whether the comparison is worth doing: they narrow to declared packages plus everything outside `packages/`, then exclude what no bundle can carry, and an unrecognised path is compared rather than passed.
+
+**It also asks the question the image build asks, a day earlier.** The image build holds the registry at the _pinned_ commit; this holds `main`'s, so a new integration merged there and marked `shippedByMarfa` is reported the next morning rather than whenever somebody next moves the pin.
+
+**Hosted, not the pool.** Two installs and two builds of a fifteen-package workspace, on a timer, unattended. The pool is one shared machine serving every pull request in the estate, and several suites fail on fixed time budgets, so a scheduled pair of builds landing there manufactures failures in whatever else is running. It is the one job here that turns `cache: pnpm` back on, for the reason `ci.yml` records: hosted runners keep no store between runs.
+
 ## Before pushing
 
 Two validation layers:
