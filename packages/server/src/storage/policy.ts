@@ -9,6 +9,7 @@
 // shipped parent never passes through codegen, so a role flattened at build
 // time would be a role only in-tree types could hold.
 
+import { MAX_RESOLUTION_DEPTH } from "@withmarfa/shared";
 import type {
   DisplayHints,
   FieldDefinition,
@@ -59,23 +60,6 @@ export function resolveMergePolicy(
 }
 
 /**
- * Guards against a cyclic or pathologically deep `parent` chain, and it is
- * the depth half that this bound is really for: a cycle short enough to fit
- * inside it trips the `seen` check first.
- *
- * Reaching the depth means either that a schema entered the registry by a
- * path running no parent-chain check, or that a chain was grown past the
- * registration cap in steps that each passed it. Manifest registration is
- * the first; re-parenting through `PUT /types/:id` is the second, because
- * the check walks upward from the type being changed and revalidates none
- * of its descendants.
- *
- * Kept above the registration cap so a legitimately deep hierarchy never
- * trips it.
- */
-const MAX_CHAIN_DEPTH = 100;
-
-/**
  * Builds the parent chain for `typeId` in root→leaf order. Returns an empty
  * array if the type is unknown, and throws on a cycle or excessive depth.
  *
@@ -91,7 +75,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
   let current = resolve(typeId);
   const seen = new Set<string>();
   while (current) {
-    if (seen.has(current.id) || seen.size >= MAX_CHAIN_DEPTH) {
+    if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
       throw new Error(
         `Inheritance cycle or excessive depth detected resolving type "${typeId}" (at "${current.id}")`,
       );

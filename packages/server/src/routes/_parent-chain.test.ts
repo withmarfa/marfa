@@ -11,13 +11,16 @@ import {
   registerTypeSchema,
   unregisterTypeSchema,
 } from "@withmarfa/shared";
-import { MAX_INHERITANCE_DEPTH, assertParentChain } from "./_parent-chain.js";
+import {
+  MAX_REGISTRATION_CHAIN_DEPTH,
+  assertParentChain,
+} from "./_parent-chain.js";
 
 const SPACE = "space-parent-chain-test";
 const OTHER_SPACE = "space-parent-chain-other";
 
 /** `acme.a0` has no parent; each `acme.aN` inherits from `acme.a(N-1)`. */
-const CHAIN_LENGTH = MAX_INHERITANCE_DEPTH + 1;
+const CHAIN_LENGTH = MAX_REGISTRATION_CHAIN_DEPTH + 1;
 const link = (n: number): string => `acme.a${String(n)}`;
 
 /** Distinguishable phrasing, so a case cannot pass on the wrong rejection. */
@@ -51,7 +54,7 @@ describe("the depth a registered chain may reach", () => {
     expect(() => {
       assertParentChain(
         "acme.new",
-        link(MAX_INHERITANCE_DEPTH - 1),
+        link(MAX_REGISTRATION_CHAIN_DEPTH - 1),
         SPACE,
         MESSAGES,
       );
@@ -62,11 +65,11 @@ describe("the depth a registered chain may reach", () => {
     expect(() => {
       assertParentChain(
         "acme.new",
-        link(MAX_INHERITANCE_DEPTH),
+        link(MAX_REGISTRATION_CHAIN_DEPTH),
         SPACE,
         MESSAGES,
       );
-    }).toThrow(`too-deep:${String(MAX_INHERITANCE_DEPTH)}`);
+    }).toThrow(`too-deep:${String(MAX_REGISTRATION_CHAIN_DEPTH)}`);
   });
 });
 
@@ -135,7 +138,7 @@ describe("the registration cap against the registry's own backstop", () => {
       {
         id: deepest,
         version: 1,
-        parent: link(MAX_INHERITANCE_DEPTH - 1),
+        parent: link(MAX_REGISTRATION_CHAIN_DEPTH - 1),
         fields: { own: { type: "string", description: "Own field" } },
       },
       SPACE,
