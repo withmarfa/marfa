@@ -58,7 +58,7 @@
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { HIDDEN_MECHANISM_SCOPES } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
-import { CAPABILITY_LABELS, capabilityLabel } from "./capability-labels.js";
+import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
@@ -129,9 +129,9 @@ interface ScopeGroup {
    * alone, and it is also what lets an already-registered client be offered
    * something new without every client having to re-register to get it.
    *
-   * Read only where a scope is being offered. The re-consent diff overrides
-   * it to `true` for scopes the user has already granted, since the question
-   * the flag answers does not arise a second time.
+   * Read only where a scope is being offered. The re-consent diff sets it
+   * `true` for scopes the user has already granted, since the question the
+   * flag answers does not arise a second time.
    */
   defaultOn: boolean;
 }
@@ -263,10 +263,16 @@ function summarize(group: ScopeGroup): string {
     // list below still showed it, so the summary undercounted exactly the
     // scopes a reader is least likely to recognize. It is the same failure
     // this function's own docstring describes, from the other end.
+    //
+    // Capabilities and the profile scopes resolve through their inline-list
+    // forms rather than their toggle labels. A toggle label sits alone above
+    // a switch, so it is capitalized and free to carry a comma; joined into
+    // a sentence, the capital lands mid-clause and the comma turns one item
+    // into two. `CAPABILITY_SHORT` exists for precisely this and says so.
     const label =
-      capabilityLabel(scope.typePattern) ??
+      capabilityShort(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
-      OIDC_LABELS[scope.typePattern] ??
+      SENTENCE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
     if (label && !names.includes(label)) names.push(label);
   }
@@ -282,7 +288,14 @@ function summarize(group: ScopeGroup): string {
   if (remainder > 0) list += `, and ${String(remainder)} more`;
   else if (openEnded) list += ", and anything else of that kind";
 
-  return `${list}.`;
+  // The labels are written for a toggle row, where each one starts a line of
+  // its own and a capital is right. Joined into a sentence they carry that
+  // capital into the middle of it, which read as "Your name and Your email
+  // address". Only the labels that are phrases rather than category names
+  // have a sentence form, so the fix is not a general lowercasing pass: a
+  // brand keeps its capital wherever it lands, and "Notes, Tasks and Files"
+  // is a list of names that reads correctly as it stands.
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)}.`;
 }
 
 /**
@@ -343,6 +356,24 @@ export const OIDC_LABELS: Record<string, string> = {
   profile: "Your name",
   email: "Your email address",
   openid: "Confirm your identity",
+};
+
+/**
+ * Sentence forms of the labels that are phrases rather than category names.
+ *
+ * A toggle row and a prose summary want opposite things from the same string.
+ * "Your name" is right above a switch and wrong in the middle of a sentence,
+ * while "Notes" is right in both places, so the override is per label rather
+ * than a rule applied to all of them. {@link summarize} capitalizes whatever
+ * ends up first, which is why these are stored lowercase.
+ *
+ * Only the OIDC three need it today. A content type earns an entry here when
+ * its label reads as a phrase, not on a schedule.
+ */
+export const SENTENCE_LABELS: Record<string, string> = {
+  profile: "your name",
+  email: "your email address",
+  openid: "confirm your identity",
 };
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
@@ -518,28 +549,55 @@ export function renderConsentScreen(params: ConsentParams): string {
       addedVisible.length > 0
         ? `<p class="lsec" style="margin-top:8px">New</p>${groupedTiles(addedVisible)}`
         : "";
+    // The standing grant keeps the same partition the new request uses, and
+    // that is deliberate rather than untouched.
+    //
+    // It costs something real: "Other read access" and "Other write access"
+    // render in both sections, covering different scopes each time, and the
+    // second stack is most of the height between the reader and the buttons.
+    // Collapsing it into one tile fixes both and loses more than it fixes,
+    // because the read and write halves of a grant are told apart by their
+    // bundle headings and by nothing else. `labelFor` resolves a row from
+    // `typePattern` alone, so `core.note:read` and `core.note:write` are both
+    // the word "Notes"; merged into one body they become two identical rows,
+    // and `summarize` de-duplicates them into one word. A screen that cannot
+    // say an app may write your notes has failed at the only job it has.
+    //
+    // So the shorter standing grant is structural work rather than a smaller
+    // edit: it needs the operation carried by the row, or the section
+    // summarized without re-listing it. Left whole here on purpose.
     const keptSection =
       keptVisible.length > 0
         ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
         : "";
-    // Removed scopes are being dropped, not re-granted — show their group
-    // names as a quiet line, no toggles.
+    // Removed scopes are being dropped, not re-granted, so their group names
+    // render as a quiet line with no toggles.
+    //
+    // Joined into that line, so a capability resolves through its inline-list
+    // form for the same reason the summaries do: the toggle labels are
+    // capitalized and two of them carry a comma, which turns one item in this
+    // list into two fragments.
     const removedLabels = Array.from(
       new Set(
         diff.removed.map((lit) => {
           const lastColon = lit.lastIndexOf(":");
           const typePattern = lastColon > 0 ? lit.slice(0, lastColon) : lit;
           return (
-            capabilityLabel(typePattern) ??
+            capabilityShort(typePattern) ??
             SCOPE_LABELS[typePattern] ??
             humanizeType(typePattern)
           );
         }),
       ),
     );
+    // Capitalized on the same rule the summaries use, since an inline-list
+    // form is stored lowercase and can land first here.
+    const removedList = removedLabels.join(", ");
     const removedSection =
       removedLabels.length > 0
-        ? `<p class="lsec" style="margin-top:24px">No longer needed</p><p class="rmeta" style="padding-top:2px">${escapeHtml(removedLabels.join(", "))}</p>`
+        ? `<p class="lsec" style="margin-top:24px">No longer needed</p><p class="rmeta" style="padding-top:2px">${escapeHtml(
+            `${removedList.charAt(0).toUpperCase()}${removedList.slice(1)}`,
+          )}</p>`
         : "";
 
     // Hidden mechanisms (openid / offline_access) that survive the diff

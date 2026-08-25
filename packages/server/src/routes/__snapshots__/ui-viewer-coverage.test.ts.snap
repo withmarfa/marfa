@@ -62,7 +62,7 @@ exports[`every gallery variant renders > renders 'auth/consent/first-time' 1`] =
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Your profile</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
-          <span class="gdesc">Your name and Your email address.</span>
+          <span class="gdesc">Your name and your email address.</span>
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
       </summary>
@@ -122,7 +122,7 @@ exports[`every gallery variant renders > renders 'auth/consent/re-consent' 1`] =
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Your profile</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
-          <span class="gdesc">Your name and Your email address.</span>
+          <span class="gdesc">Your name and your email address.</span>
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
       </summary>
