@@ -652,6 +652,13 @@
       "when": 1787445817000,
       "tag": "0092_the_retired_capture_identifier_leaves_the_registry",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1787612550771,
+      "tag": "0093_the_space_rename_reaches_the_users_table",
+      "breakpoints": true
     }
   ]
 }

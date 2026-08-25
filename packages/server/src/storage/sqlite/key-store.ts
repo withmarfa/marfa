@@ -23,6 +23,7 @@ import type {
   Tier,
   TypePermission,
 } from "@withmarfa/shared";
+import { storedRole } from "../stored-role.js";
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -40,7 +41,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     space_id: row.space_id ?? undefined,
     label: row.label,
     source: row.source,
-    role: row.role as "admin" | "space_admin" | "member",
+    role: storedRole(row.role, { table: "api_keys", id: row.id }),
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,

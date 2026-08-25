@@ -14,7 +14,12 @@
  * minted. It resolves that person's space rather than reading one off a key.
  */
 import type { Context } from "hono";
-import { ErrorCode, MarfaError, ROLE_RANK } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  parseMarfaRole,
+  ROLE_RANK,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hasSpaceAdminAuthority } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -75,7 +80,16 @@ export async function resolveSpaceAdminCaller(
       // owner is unaffected — what this refuses is a member of someone
       // else's space, and a session with no space record at all.
       const user = await storage.users.getByAuthUserId(session.user.id);
-      if (!user || ROLE_RANK[user.role] < ROLE_RANK.space_admin) {
+      // Rank lookup on a parsed role, never on the raw one. An unknown
+      // role makes `ROLE_RANK[...]` undefined, and `undefined < 2` is
+      // false, so the comparison admits exactly what it means to refuse.
+      // The store narrows on read, so this is belt and braces, but it is
+      // the difference between failing open and failing closed for a
+      // caller constructed some other way.
+      if (
+        !user ||
+        ROLE_RANK[parseMarfaRole(user.role)] < ROLE_RANK.space_admin
+      ) {
         throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
       }
       // An unresolved space is refused, never passed on. See `SpaceCaller`.

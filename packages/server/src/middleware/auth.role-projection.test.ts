@@ -16,6 +16,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import type { MarfaRole } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -81,6 +82,28 @@ describe("bearer middleware role projection (OAuth)", () => {
     const space = await spaces().create("orphaned-user-space");
     const { token } = await seedOauthBearer(ctx.storage, [], {
       spaceId: space.id,
+    });
+
+    const res = await request(ctx.app, "GET", "/keys", { key: token });
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses a stored role this build does not recognize, /keys CRUD forbidden", async () => {
+    // The case every other test here misses: not a role below the bar, but a
+    // string outside the union entirely. A rename left every account holder
+    // holding `tenant_admin`, which matched no branch in any gate, so the
+    // refusal below was already the behavior, what was missing was anything
+    // asserting it, and the same value read as "not below space_admin" where
+    // a gate compared ranks instead of literals.
+    //
+    // The cast is the point. Nothing reachable from TypeScript can write this
+    // value, which is exactly why it sat in two production databases
+    // unnoticed, so constructing the state needs the type system stepped
+    // around deliberately.
+    const space = await spaces().create("stale-role-space");
+    const { token } = await seedOauthBearer(ctx.storage, [], {
+      spaceId: space.id,
+      userRole: "tenant_admin" as MarfaRole,
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });

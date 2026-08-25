@@ -8,6 +8,7 @@
 import { eq, and } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { MarfaRole, User } from "@withmarfa/shared";
+import { storedRole } from "../stored-role.js";
 import type { UserStore, UpdateProfileInput } from "../interface.js";
 import { users, auth_user } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -25,7 +26,7 @@ function rowToUser(row: typeof users.$inferSelect): User {
     space_id: row.space_id,
     handle: row.handle,
     auth_user_id: row.auth_user_id,
-    role: row.role as User["role"],
+    role: storedRole(row.role, { table: "users", id: row.id }),
     timezone: row.timezone,
     created_at: row.created_at,
     updated_at: row.updated_at,

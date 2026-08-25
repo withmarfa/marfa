@@ -12,7 +12,7 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
 } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
+import type { ApiKey, MarfaRole } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
@@ -380,7 +380,11 @@ export function authMiddleware(
       // Falls back to `member` when no `users` row maps to the
       // auth_user (an unmapped auth_user, or a token whose user was
       // hard-deleted mid-session).
-      let projectedRole: "admin" | "space_admin" | "member" = "member";
+      // `MarfaRole` rather than the union spelled out again. The store is
+      // what guarantees the value is in the union at all, it narrows on
+      // read and falls back loudly, so this annotation is the type
+      // following the guarantee rather than restating it.
+      let projectedRole: MarfaRole = "member";
       if (oauthToken.userId && storage.users) {
         const user = await storage.users.getByAuthUserId(oauthToken.userId);
         if (user) projectedRole = user.role;
