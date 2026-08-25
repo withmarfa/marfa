@@ -13,39 +13,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    # Hardcoded hosted — npm OIDC trusted-publisher provenance only works on a
-    # GitHub-hosted runner; honoring CI_RUNNER (self-hosted) breaks the
-    # provenance attestation on publish. This workflow must not pick up the
-    # org/repo CI_RUNNER override the way the test workflows do.
+  require-green-ci:
+    name: Require green CI
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
-      id-token: write
-      # Reading this commit's ci.yml result needs the Actions API.
       actions: read
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-
-      # Node 24 ships with npm 11+, which has OIDC trusted-publisher
-      # support. Node 22 only has npm 10.x (no OIDC).
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-          registry-url: "https://registry.npmjs.org"
-
       # A tag points at a commit that already went through `ci.yml` on main:
       # build, typecheck, lint, format, the SQLite and Postgres suites,
       # fresh-migrate and the smoke tests. Re-running any of that here
       # recomputes a known answer on the slowest runner in the estate, because
-      # this job is pinned to the hosted lane for OIDC. On v11.0.0 that cost
-      # over 26 minutes for a suite the self-hosted pool finishes in about one,
-      # with every publish step still queued behind it.
+      # publishing is pinned to the hosted lane for OIDC. On v11.0.0 that cost
+      # over 26 minutes for a suite the self-hosted pool finishes in about one.
       #
       # So verify the result instead of recomputing it. That is strictly
       # stronger than what it replaces: nothing previously stopped a tag being
@@ -63,6 +44,33 @@ jobs:
             exit 1
           fi
           echo "ci.yml is green for $GITHUB_SHA"
+
+  publish-dependency-chain:
+    name: Publish dependency chain
+    needs: require-green-ci
+    # Hardcoded hosted — npm OIDC trusted-publisher provenance only works on a
+    # GitHub-hosted runner; honoring CI_RUNNER (self-hosted) breaks the
+    # provenance attestation on publish. This workflow must not pick up the
+    # org/repo CI_RUNNER override the way the test workflows do.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      # Node 24 ships with npm 11+, which has OIDC trusted-publisher
+      # support. Node 22 only has npm 10.x (no OIDC).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
 
@@ -175,6 +183,35 @@ jobs:
         run: |
           pnpm pack
           npm publish withmarfa-runtime-test-*.tgz --access=public
+
+  publish-webhooks:
+    name: Publish webhooks
+    needs: require-green-ci
+    # Webhooks has no dependency on the ordered package chain, so it publishes
+    # independently once the tagged commit's CI result has been verified.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      # Node 24 ships with npm 11+, which has OIDC trusted-publisher support.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      # `pnpm pack` publishes the built package output rather than the sources.
+      - run: pnpm build
 
       - name: Check @withmarfa/webhooks publish status
         id: check_webhooks
