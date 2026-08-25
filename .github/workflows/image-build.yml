@@ -93,6 +93,7 @@ jobs:
     # linux/amd64, and cross-building under emulation is far slower than a
     # native build. The deploy's own build job is hosted for the same reason.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       # The integrations the image installs. They live in
@@ -151,7 +152,9 @@ jobs:
           missing="$(comm -13 declared.txt shipped.txt)"
           if [ -n "$missing" ]; then
             echo "::error::The registry marks these shippedByMarfa and packages/server/installed-integrations.txt does not declare them:"
-            echo "$missing" | sed 's/^/  /'
+            while IFS= read -r entry; do
+              echo "  $entry"
+            done <<< "$missing"
             echo "The image would not carry them and the listing would offer them. Declare them, or set shippedByMarfa false."
             exit 1
           fi
@@ -185,6 +188,7 @@ jobs:
     needs: build
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Report outcome to aic-alerts
         env:
