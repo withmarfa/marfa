@@ -432,26 +432,44 @@ export function unregisterTypeSchema(
   zodSchemaStrictCache.delete(zodCacheKey(id, spaceId));
 }
 
-// Hard bound on inheritance-chain depth for the hot-path walks below
-// (`getResolvedFields`, `isSubtypeOf`, `typeHasRole`). It is really a depth
-// bound: a cycle short enough to fit inside it trips the `seen` check first.
-//
-// The server's registration routes reject a cycle and an over-deep chain
-// before a schema enters the registry, in the server's own
-// `routes/_parent-chain.ts`. `validateTypeSchema` does not: it tolerates an
-// unresolvable or cyclic parent rather than erroring, so it is not one of the
-// guards this bound sits behind.
-//
-// Reaching this bound therefore means one of two things: a schema entered by a
-// path that runs no parent-chain check at all, or a chain was grown past the
-// registration cap in steps that each passed it. Re-parenting does the second,
-// because the check walks upward from the type being changed and revalidates
-// none of its descendants.
-//
-// Throw a clear error rather than loop forever: these walks run per-write and
-// per-edge-check, so an unbounded loop here would hang the request. The bound
-// is generous, and real type hierarchies are a handful of levels deep.
-const MAX_INHERITANCE_DEPTH = 100;
+/**
+ * How deep a resolution walk follows an inheritance chain before refusing to
+ * follow it further. It is really a depth bound: a cycle short enough to fit
+ * inside it trips a walk's `seen` check first.
+ *
+ * Two bounds guard type inheritance and they are not the same thing.
+ *
+ * - **The registration cap** bounds what one checked registration may
+ *   produce. `POST /types`, `PUT /types/:id` and the archive restore all run
+ *   it before a schema enters the registry, and it sits well below this one
+ *   deliberately. It lives with those routes, as
+ *   `MAX_REGISTRATION_CHAIN_DEPTH` in the server's `routes/_parent-chain.ts`.
+ * - **This backstop** bounds what a walk follows after the fact, whatever
+ *   produced the chain. It guards the registry's own walks below
+ *   (`getResolvedFields`, `isSubtypeOf`, `typeHasRole`) and the server's
+ *   merge-policy and role chain in `storage/policy.ts`, which imports it
+ *   rather than declaring a second copy beside it.
+ *
+ * One name stood for both until now, held privately here and exported under
+ * the same spelling from the server's own file, at different values. Nothing
+ * broke while this one stayed private, and exporting it as it stood is what
+ * would have broken: a file needing both could not have imported both without
+ * renaming one at the import. Names that say which is which are the point of
+ * this pair, and the reason neither is called `MAX_INHERITANCE_DEPTH` now.
+ *
+ * Reaching this bound means a registration cap was bypassed or outgrown: a
+ * schema entered by a path that runs no parent-chain check at all, or a chain
+ * was grown past the registration cap in steps that each passed it.
+ * Re-parenting does the second, because the check walks upward from the type
+ * being changed and revalidates none of its descendants. `validateTypeSchema`
+ * is not one of the guards this sits behind either: it tolerates an
+ * unresolvable or cyclic parent rather than erroring.
+ *
+ * Throw a clear error rather than loop forever. These walks run per-write and
+ * per-edge-check, so an unbounded loop here would hang the request, and the
+ * bound is generous enough that a real hierarchy never reaches it.
+ */
+export const MAX_RESOLUTION_DEPTH = 100;
 
 /**
  * Returns the fully resolved fields for a type, including inherited parent
@@ -476,7 +494,7 @@ export function getResolvedFields(
   const seen = new Set<string>();
   let current: TypeSchema | undefined = schema;
   while (current) {
-    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+    if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
       throw new Error(
         `Inheritance cycle or excessive depth detected resolving fields for type "${typeId}" (at "${current.id}")`,
       );
@@ -555,11 +573,11 @@ export function isSubtypeOf(
   if (typeId === parentId) return true;
   // The `seen` set guards against a cycle that somehow reached the registry —
   // without it a cyclic `parent` chain loops forever on this per-edge-check
-  // hot path. See MAX_INHERITANCE_DEPTH.
+  // hot path. See MAX_RESOLUTION_DEPTH.
   const seen = new Set<string>();
   let current = resolveSchema(typeId, spaceId);
   while (current?.parent) {
-    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+    if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
       throw new Error(
         `Inheritance cycle or excessive depth detected classifying type "${typeId}" (at "${current.id}")`,
       );
@@ -596,7 +614,7 @@ export function typeHasRole(
   while (current) {
     if (current.roles?.includes(role)) return true;
     if (!current.parent) return false;
-    if (seen.has(current.id) || seen.size >= MAX_INHERITANCE_DEPTH) {
+    if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
       throw new Error(
         `Inheritance cycle or excessive depth detected resolving roles for type "${typeId}" (at "${current.id}")`,
       );

@@ -20,20 +20,18 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * registration writes declared schemas without checking a parent chain at
  * all, which is its own defect rather than something this file closes.
  *
- * Distinct from the resolution backstops of 100 that sit above it. There are
- * two, guarding different walks and each declared without reference to the
- * other: `MAX_INHERITANCE_DEPTH` in `@withmarfa/shared` guards the registry's
- * own walks, and `MAX_CHAIN_DEPTH` in `storage/policy.ts` guards the chain
- * the merge policy and role set are built from. Both are sized so a real
- * hierarchy never reaches them. This is the bound on what one checked
- * registration may produce, and it sits well below both deliberately.
+ * Distinct from `MAX_RESOLUTION_DEPTH` in `@withmarfa/shared`. That one is
+ * the backstop every resolution walk stops at, whatever produced the chain,
+ * and its declaration carries the relationship between the two. This is the
+ * bound on what one checked registration may produce, and it sits well below
+ * the backstop deliberately.
  *
  * It does not bound a chain's final depth. Re-parenting through
  * `PUT /types/:id` walks upward from the type being changed and revalidates
  * none of its descendants, so a chain can be grown past this cap, and past
- * the backstops above it, in steps that each pass.
+ * the backstop above it, in steps that each pass.
  */
-export const MAX_INHERITANCE_DEPTH = 10;
+export const MAX_REGISTRATION_CHAIN_DEPTH = 10;
 
 /** How a caller phrases the three ways a parent chain can be rejected. */
 export interface ParentChainMessages {
@@ -67,10 +65,10 @@ export function assertParentChain(
   let depth = 0;
   while (current) {
     depth += 1;
-    if (depth > MAX_INHERITANCE_DEPTH) {
+    if (depth > MAX_REGISTRATION_CHAIN_DEPTH) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        messages.tooDeep(MAX_INHERITANCE_DEPTH),
+        messages.tooDeep(MAX_REGISTRATION_CHAIN_DEPTH),
       );
     }
     if (current === typeId) {
