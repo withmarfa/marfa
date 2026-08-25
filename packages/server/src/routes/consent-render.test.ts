@@ -5,6 +5,7 @@ import {
   renderConsentScreen,
   SCOPE_LABELS,
   OIDC_LABELS,
+  SENTENCE_LABELS,
   humanizeType,
 } from "./consent.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
@@ -744,5 +745,38 @@ describe("renderConsentScreen — a scope in two bundles", () => {
       ],
     });
     expect(defaultSubmission(html)).toEqual(["core.note:write"]);
+  });
+});
+
+/**
+ * Every label that reaches a joined sentence needs a sentence form.
+ *
+ * `summarize` resolves OIDC scopes through SENTENCE_LABELS and capabilities
+ * through CAPABILITY_SHORT, both of which are separate maps from the toggle
+ * labels. Two maps with the same keys and no compile-time link is exactly
+ * how the capitalization bug this replaced got in: adding a toggle label
+ * without its sentence form breaks nothing that anything notices.
+ */
+describe("sentence forms cover every label that can be joined into one", () => {
+  it("has a sentence form for every OIDC toggle label", () => {
+    for (const literal of Object.keys(OIDC_LABELS)) {
+      expect(SENTENCE_LABELS[literal]).toBeDefined();
+    }
+  });
+
+  it("keeps every inline-list form lowercase and comma-free", () => {
+    // summarize capitalizes whichever one lands first and nothing else, so a
+    // capitalized entry landing second reproduces exactly the defect these
+    // maps exist to prevent. A label carrying its own comma turns one list
+    // item into two fragments. CAPABILITY_SHORT is checked here rather than
+    // only for commas, because it is the larger map and the one whose toggle
+    // labels are full sentences.
+    for (const value of [
+      ...Object.values(SENTENCE_LABELS),
+      ...Object.values(CAPABILITY_SHORT),
+    ]) {
+      expect(value).not.toMatch(/,/);
+      expect(value[0]).toBe(value[0]?.toLowerCase());
+    }
   });
 });
