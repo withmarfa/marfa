@@ -38,3 +38,12 @@ The replica tests need the optional `@tanstack/db` peer installed. When a test d
 ## Versioning
 
 Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the publish workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.
+
+**`@tanstack/db` is a `>=0.6.17 <0.9.0` range and not a caret, deliberately.** On a 0.x package a
+caret admits only the same minor, so `^0.8.0` and `^0.6.17` are disjoint: narrowing one to the other
+strands every consumer on the older line, and it did, in 2.3.0. The replica surface touches two
+symbols from that package, `createCollection` and the `Collection` type, and the binding constraint
+is `Collection<Item, string, ReplicaUtils>`, three type parameters, which is what an older release
+fails to satisfy. The surface typechecks against 0.4.20 through 0.8.4 and fails on 0.2.5, so the
+range is narrower than what works rather than a guess. Widening it further is safe; narrowing it is
+a breaking change to an optional peer and wants a major.
