@@ -882,6 +882,68 @@ export function permitsMirrorWrite(
   return key?.item_source === row.source;
 }
 
+/**
+ * The type a write declares is the type it lands on, or the write is
+ * refused.
+ *
+ * Most doors address a row by something other than its type — a natural
+ * key, or an id — and carry a `type` in the body that played no part in
+ * finding it. Those doors took the resolved row's type and merged the
+ * submitted properties onto it, so a caller that declared one type and
+ * resolved another was not refused, it was reinterpreted, with a 200 and
+ * nothing said.
+ *
+ * Two doors are exempt and neither by omission. `POST /items` create
+ * resolves no row, so the type it names IS the row. `bulk-actions`
+ * selects by filter, where a type is a selector and cannot disagree with
+ * what it selected.
+ *
+ * Refusing here rather than in each caller is the deliberate half, and
+ * the reason is stronger than it first looked. Counted against the
+ * integrations repository rather than recalled: **no inbound integration
+ * reads the type of the row it is about to write.** Every `getItem` call
+ * in every handler fetches either the connection's own configuration row
+ * or, on the outbound path, the item an event names.
+ *
+ * Eight address the row by an id they cached from an earlier sync, which
+ * is what lets them call the update route at all. That is an identity
+ * cache, not a type check: it narrows the exposure without closing it.
+ * Five cannot even do that — three hold a bounded delivery ring rather
+ * than item ids, and two hand a whole page to a bulk upsert with no
+ * per-record id to read by.
+ *
+ * Deliberately no fleet total here. It depends on whether the scaffold
+ * package and the one write-only integration are counted, an earlier
+ * draft of this comment asserted one, and it was wrong.
+ *
+ * So there is no caller-side defence to defer to. The door is the only
+ * place the disagreement can be seen at all, which is also why it does
+ * not care why the two types differ — a type a caller derives fresh on
+ * every run from configuration the user can change is the likeliest
+ * source, and no caller is in a position to notice.
+ *
+ * Called from each door that resolves a row it did not create; the
+ * door-coverage tests pin the set.
+ */
+export function requireDeclaredTypeMatches(
+  declared: string,
+  row: { id: string; type: string },
+): void {
+  // Exact, not subtype-aware, and that is a choice rather than an
+  // oversight. Admitting an ancestor would soften the one failure this
+  // causes — a write family moved from a specific type to the core one
+  // it descends from would keep syncing — but it also makes the declared
+  // type unfalsifiable for every type with descendants, which is most of
+  // them. The claim is either the row's type or it is not, and a caller
+  // that means to move a corpus between types has an operation for it.
+  if (declared === row.type) return;
+  throw new MarfaError(
+    ErrorCode.TYPE_MISMATCH,
+    `Request declares type "${declared}" but resolves an item of type "${row.type}"; a write does not re-type the row it lands on`,
+    { item_id: row.id, declared_type: declared, actual_type: row.type },
+  );
+}
+
 export function permitsActivityAttribution(
   key: ApiKey | undefined,
   type: string,

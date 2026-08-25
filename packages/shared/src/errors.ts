@@ -323,6 +323,23 @@ export enum ErrorCode {
    * item already carries is a no-op success, not a conflict.
    */
   SOURCE_ID_CONFLICT = "source_id_conflict",
+  /**
+   * A write resolved an existing row whose type is not the one the request
+   * declared. The write is refused rather than reinterpreted.
+   *
+   * Every door that addresses a row by something other than its type —
+   * `(source, source_id)` on `POST /items` and `POST /items/bulk`, and an
+   * id on `PATCH /items/{id}` and on the bulk path — used to take the
+   * resolved row's type and merge the submitted properties onto it. A caller declaring one type and
+   * landing on another got a 200 and a row of the other shape. That is
+   * silent, and it is reachable from both directions: a mapping added
+   * re-types on the way in, a mapping removed re-types on the way back.
+   *
+   * 409 rather than 400: the request is well-formed, and it is the state
+   * of the stored row that makes it impossible. Moving a corpus between
+   * types is a deliberate operation rather than a side effect of a sync.
+   */
+  TYPE_MISMATCH = "type_mismatch",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -405,6 +422,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
+  [ErrorCode.TYPE_MISMATCH]: 409,
 };
 
 /** Returns the HTTP status code for a given error code. */

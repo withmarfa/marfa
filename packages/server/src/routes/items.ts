@@ -31,6 +31,7 @@ import {
   itemProvenanceSource,
   requireActivityAttribution,
   requireMirrorProtection,
+  requireDeclaredTypeMatches,
   checkTypeAccess,
   requireEdgePermission,
   requireRowWritable,
@@ -162,7 +163,9 @@ const createItemRoute = createRoute({
         "idempotent re-sync of the upstream entry. When the resolved item " +
         "has been trashed the response carries `acknowledged: true` and " +
         "nothing is written: the deletion stands, and the re-sync is " +
-        "accepted rather than refused forever.",
+        "accepted rather than refused forever. The resolved item's `type` " +
+        "decides the shape written, so a request naming a different one " +
+        "is refused with 409 `type_mismatch` rather than reinterpreted.",
     },
     201: {
       content: {
@@ -206,6 +209,17 @@ const createItemRoute = createRoute({
         },
       },
       description: "Forbidden",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_mismatch"]),
+        },
+      },
+      description:
+        "The `(source, source_id)` natural key resolved an existing item " +
+        "whose type is not the one declared. Re-typing an item is a " +
+        "deliberate operation, not something a re-sync does in passing.",
     },
   },
 });
@@ -496,7 +510,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values while tier and timestamp replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve.",
+    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values while tier and timestamp replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -505,6 +519,18 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.object({
             properties: z.record(z.string(), z.unknown()).optional(),
+            /** The item's own type, and only that. This route does not
+             *  re-type the row it addresses, so the field exists to be
+             *  checked rather than applied: equal to the item's type it is
+             *  accepted and ignored, anything else is refused.
+             *
+             *  Present in the schema at all because callers send it
+             *  constantly. The fleet builds one input object and hands it
+             *  to either the create or the update call, so a type rides on
+             *  nearly every reactive update. It used to be stripped here
+             *  in silence, which is how a re-type could be attempted,
+             *  answered with a 200, and do nothing. */
+            type: z.string().optional(),
             version: z.number().int().min(0).optional(),
             force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
@@ -579,12 +605,12 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
-            makeErrorResponseSchema(["source_id_conflict"]),
+            makeErrorResponseSchema(["source_id_conflict", "type_mismatch"]),
           ]),
         },
       },
       description:
-        "Version conflict (optimistic-concurrency mismatch on `properties`) or `source_id_conflict` (target natural key already in use by another item under the item's `source`).",
+        "Version conflict (optimistic-concurrency mismatch on `properties`), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -1204,6 +1230,15 @@ export function itemRoutes(storage: Storage) {
             },
           );
         }
+
+        // And the same refusal on the type. `type` is required by this
+        // route because the create branch needs it, but it plays no part
+        // in resolving the row, so a body naming one type while the
+        // natural key lands on another used to be merged in silently.
+        // Shared with the bulk door rather than written twice: the last
+        // time a rule lived at one door and not its neighbours, four of
+        // six were found disagreeing.
+        requireDeclaredTypeMatches(type, existing);
 
         // An owning integration's re-sync gets faithful-mirror null
         // semantics: the upstream cleared the field, so an explicit null
@@ -1923,8 +1958,18 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+
+    // Held to the same rule as every other door rather than refused
+    // outright: a claim that matches the row is the ordinary case and
+    // passes, a claim that disagrees is the re-type this route does not
+    // perform. Refusing any `type` at all would have been tidier to
+    // describe and would have failed most reactive syncs in the fleet on
+    // their first request.
+    if (body.type !== undefined) requireDeclaredTypeMatches(body.type, item);
+
     // Same rule the create door applies, judged on the resolved row's
-    // type rather than on a claim the body never carries here.
+    // type. The claim above is held to that type rather than replacing
+    // it: nothing below reads a caller-supplied type.
     assertTierApplicable(item.type, body.tier);
 
     // The row has to be this integration's both before and after the
