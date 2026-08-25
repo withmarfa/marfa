@@ -51,6 +51,42 @@ describe("the client manifests this build ships", () => {
     expect(CLIENT_MANIFESTS.map((c) => c.name)).toContain("marfa/sync");
   });
 
+  it("credits Marfa for the clients Marfa ships", () => {
+    // `publisher` is the handle of whoever wrote it and is accountable, and
+    // Marfa's is `marfa`. `withmarfa` is the GitHub organization and the npm
+    // scope, taken because `marfa` was unavailable on both, and it names no
+    // handle anybody holds here.
+    //
+    // Worth stating precisely, because the obvious summary is backwards:
+    // `marfa` is the value `isValidHandle` **refuses**, being a reserved
+    // root and a reserved word, and `withmarfa` is the one it accepts. The
+    // platform reserves its own name rather than leaving it claimable, and
+    // its own integrations live under it by the same exception
+    // `isValidIntegrationIdentifier` already makes. So the value here is
+    // right and the reason is the opposite of "one is a handle and the
+    // other is not".
+    //
+    // This manifest said `withmarfa` while the fourteen arriving from
+    // withmarfa/integrations were corrected, which would have left one row
+    // of the catalog's fifteen crediting the organization. The check
+    // holding those fourteen lives in that repository and cannot see this
+    // one, so each side asserts the rule rather than assuming it carries.
+    //
+    // Unconditional, unlike that one, and the difference is deliberate: a
+    // client manifest ships with this build, so every entry here is by
+    // definition ours. The integrations rule is keyed on the registry's
+    // `shippedByMarfa` because a contributor's integration is not. If a
+    // client manifest somebody else wrote ever ships here, this needs the
+    // same discriminator.
+    expect(CLIENT_MANIFESTS.length).toBeGreaterThan(0);
+    for (const client of CLIENT_MANIFESTS) {
+      expect(
+        client.manifest.publisher,
+        `${client.name} credits "${client.manifest.publisher}"`,
+      ).toBe("marfa");
+    }
+  });
+
   it("validates every one against the manifest schema", () => {
     // A discovered manifest is validated as it is loaded. One that ships
     // with the build never passes through that loader, so nothing else would catch a
