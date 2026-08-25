@@ -32,6 +32,9 @@
 #   vars.STAGING_DEPLOY_SSH            ssh target for the staging box,
 #                                      user@host on the private network
 #   vars.PROD_DEPLOY_SSH               same for production
+#   secrets.INTEGRATIONS_DEPLOY_KEY    read-only deploy key for
+#                                      withmarfa/integrations, which the image
+#                                      stages its integrations from
 #
 # Required on the self-hosted pool: an SSH key at ~/.ssh/marfa-droplets
 # authorized on the boxes. Required on each box: /opt/marfa with .env and

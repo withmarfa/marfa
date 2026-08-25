@@ -156,8 +156,9 @@ describe("discoverIntegrationDirs", () => {
     expect(discoverIntegrationDirs(at)).toEqual(["marfa/podcasts"]);
   });
 
-  // The same rule at the leaf, because a namespace can carry scaffolding
-  // of its own — a template someone copies, or a directory an editor left.
+  // The same rule at the leaf, because a namespace can carry a directory
+  // that is not an integration — tooling output, or a scratch space an
+  // editor left.
   it("skips scaffolding at the leaf level too", () => {
     const at = scratch();
     for (const d of ["marfa/_scaffold", "marfa/.turbo", "marfa/podcasts"]) {
