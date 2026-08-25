@@ -3,7 +3,11 @@
  * depth it stops at, so the archive restore could have started accepting
  * chains `POST /types` refuses without anything failing. They share it now,
  * and nothing here covered the walk itself: the cap, the cycle check and
- * the space scoping were all untested at both doors.
+ * the space scoping were all untested at every door.
+ *
+ * Manifest registration is the third caller. Its own ordering and its
+ * stalled-batch refusal are covered where they live, in
+ * `integrations-travelling-types.test.ts`.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {

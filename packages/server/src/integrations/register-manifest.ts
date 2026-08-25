@@ -20,10 +20,10 @@ import {
   MarfaError,
   getTypeSchema,
   isReservedRoot,
-  registerTypeSchema,
   validateTypeSchema,
 } from "@withmarfa/shared";
 import type { IntegrationManifest, Item, TypeSchema } from "@withmarfa/shared";
+import { assertParentChain } from "../routes/_parent-chain.js";
 import type { Storage } from "../storage/interface.js";
 
 export interface IntegrationCatalogProperties {
@@ -107,6 +107,188 @@ function validateDeclaredTypes(
 }
 
 /**
+ * How a manifest's parent-chain refusal reads.
+ *
+ * The author of the manifest is the person who can act, and they are not
+ * holding the type individually the way a `POST /types` caller is, so every
+ * message names the manifest and the schema it declared.
+ *
+ * `unknownParent` says "ancestor" rather than "parent" deliberately. The
+ * check only runs once a schema's immediate parent resolves, so the id it
+ * reports is always something further up the chain.
+ */
+function assertDeclaredParentChain(
+  manifestName: string,
+  typeId: string,
+  parentId: string,
+  spaceId: string | undefined,
+): void {
+  assertParentChain(typeId, parentId, spaceId, {
+    tooDeep: (maxDepth) =>
+      `${manifestName} declares type "${typeId}" with an inheritance chain deeper than ${String(maxDepth)}`,
+    circular: () =>
+      `${manifestName} declares a circular parent chain for type "${typeId}"`,
+    unknownParent: (ancestor) =>
+      `${manifestName} declares type "${typeId}" under an ancestor that resolves to no registered type: "${ancestor}"`,
+  });
+}
+
+/**
+ * Write a manifest's declared schemas, parents before children.
+ *
+ * A manifest may legitimately list a child before its parent, so the order
+ * of `type_schemas` cannot be the write order. Each pass writes whatever has
+ * a resolvable immediate parent and stops when a pass writes nothing, which
+ * is the same shape the archive restore uses for the same reason.
+ *
+ * The chain is checked once the immediate parent resolves, so a schema is
+ * refused for the reason that actually applies rather than for the order it
+ * happened to appear in.
+ *
+ * **A stalled remainder is refused for the reason that actually blocks it.**
+ * See {@link diagnoseStalled}: a cycle among the manifest's own declarations
+ * is something `assertParentChain` never sees, because that check runs only
+ * once a parent resolves.
+ *
+ * **This is not atomic and does not pretend to be.** There is no transaction
+ * around the batch and the registry is process-level in-memory state, so a
+ * refusal partway through leaves the schemas already written in place. What
+ * keeps that recoverable is that the catalog row is written last: the
+ * manifest is not registered, so a corrected manifest is an ordinary
+ * registration.
+ *
+ * **A type already registered is left exactly as it stands**, and a manifest
+ * declaring it differently is a no-op for that type rather than an update.
+ * That is what makes the replay above safe, and it is also the reason the
+ * registry write is left to `types.create` rather than repeated after it:
+ * registering unconditionally would leave this process serving a shape the
+ * stored row does not carry, which the next restart silently reverts.
+ * Evolving a registered type is `PUT /types/:id`, where the version bump is
+ * checked.
+ */
+async function writeDeclaredTypes(
+  storage: Storage,
+  manifest: IntegrationManifest,
+  declaredTypes: readonly TypeSchema[],
+  spaceId: string | undefined,
+): Promise<void> {
+  const pending = [...declaredTypes];
+  let progress = true;
+  while (pending.length > 0 && progress) {
+    progress = false;
+    for (let i = pending.length - 1; i >= 0; i -= 1) {
+      const schema = pending[i];
+      if (!schema) continue;
+      if (schema.parent) {
+        if (!getTypeSchema(schema.parent, spaceId)) continue;
+        assertDeclaredParentChain(
+          manifest.name,
+          schema.id,
+          schema.parent,
+          spaceId,
+        );
+      }
+      // Replaying a catalog entry must not stand on its own type
+      // registration, so an id that already resolves is skipped rather than
+      // rewritten. `types.create` registers as part of the write in both
+      // dialects, which is why nothing registers separately here.
+      const already = await storage.types.get(schema.id, spaceId);
+      if (!already) {
+        await storage.types.create(schema, spaceId, {
+          origin: "integration",
+          owner_integration: manifest.name,
+        });
+      }
+      pending.splice(i, 1);
+      progress = true;
+    }
+  }
+  if (pending.length === 0) return;
+  throw stalledBatchRefusal(manifest.name, pending);
+}
+
+/**
+ * Why each schema in a stalled batch could not be written.
+ *
+ * Every one of them is blocked, but not by itself and not for the same
+ * reason, and the difference is the whole value of the message. Walking a
+ * schema's parents through the batch either leaves it at a parent nothing
+ * resolves, or closes a loop.
+ *
+ * **Being blocked by a cycle is not being in one.** Given `a` under `b`,
+ * `b` under `c` and `c` under `b`, the loop is `b` and `c`; `a` is merely
+ * queued behind it. Naming `a` as circular sends its author looking for a
+ * loop it is not part of, which is the same wrong turn as reporting the
+ * loop as a missing parent.
+ *
+ * Only the schema whose own parent is unresolvable is named, not everything
+ * standing behind it, for the same reason. A schema that is neither is
+ * blocked by one that is, so the refusal already names what to fix.
+ */
+function diagnoseStalled(pending: readonly TypeSchema[]): {
+  unresolvable: { id: string; parent: string }[];
+  cyclic: string[];
+} {
+  const byId = new Map(pending.map((schema) => [schema.id, schema]));
+  const unresolvable = new Map<string, string>();
+  const cyclic = new Set<string>();
+
+  for (const start of pending) {
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let current: TypeSchema = start;
+    while (current.parent !== undefined) {
+      if (onPath.has(current.id)) {
+        for (const id of path.slice(path.indexOf(current.id))) cyclic.add(id);
+        break;
+      }
+      path.push(current.id);
+      onPath.add(current.id);
+      const next = byId.get(current.parent);
+      if (!next) {
+        // The walk left the batch, and the loop above would already have
+        // written this schema if the registry could resolve that parent.
+        unresolvable.set(current.id, current.parent);
+        break;
+      }
+      current = next;
+    }
+  }
+
+  return {
+    unresolvable: [...unresolvable].map(([id, parent]) => ({ id, parent })),
+    cyclic: [...cyclic],
+  };
+}
+
+/** The refusal a stalled batch earns, naming each cause it actually has. */
+function stalledBatchRefusal(
+  manifestName: string,
+  pending: readonly TypeSchema[],
+): MarfaError {
+  const { unresolvable, cyclic } = diagnoseStalled(pending);
+  const causes: string[] = [];
+  if (unresolvable.length > 0) {
+    causes.push(
+      `these name a parent that resolves to no registered type: ${unresolvable
+        .map((entry) => `"${entry.id}" names "${entry.parent}"`)
+        .join(", ")}`,
+    );
+  }
+  if (cyclic.length > 0) {
+    causes.push(
+      `these sit in a circular parent chain: ${cyclic
+        .map((id) => `"${id}"`)
+        .join(", ")}`,
+    );
+  }
+  return new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `${manifestName} declares types that cannot be registered. ${causes.join(". ")}`,
+  );
+}
+
+/**
  * Register one manifest into the catalog.
  *
  * Returns `already_present` rather than throwing when the exact
@@ -150,19 +332,7 @@ export async function registerIntegrationManifest(
     );
   }
 
-  for (const schema of declaredTypes) {
-    // Idempotent: re-registering a manifest version that ships the same
-    // schema is a no-op rather than a conflict, so a catalog entry can be
-    // replayed without the type registration standing in the way.
-    const already = await storage.types.get(schema.id, spaceId);
-    if (!already) {
-      await storage.types.create(schema, spaceId, {
-        origin: "integration",
-        owner_integration: manifest.name,
-      });
-    }
-    registerTypeSchema(schema, spaceId);
-  }
+  await writeDeclaredTypes(storage, manifest, declaredTypes, spaceId);
 
   const properties: IntegrationCatalogProperties = {
     manifest_name: manifest.name,
