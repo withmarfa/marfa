@@ -66,7 +66,7 @@ exports[`every gallery variant renders > renders 'auth/consent/first-time' 1`] =
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
       </summary>
-      <div class="gsub"><div class="subrow"><span>Your name</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Your email address</span><label class="sw"><input type="checkbox" name="scopes" value="email" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+      <div class="gsub"><div class="subrow"><span>Your name and picture</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Your email address</span><label class="sw"><input type="checkbox" name="scopes" value="email" checked><span class="tk" aria-hidden="true"></span></label></div></div>
     </details></div><input type="checkbox" name="scopes" value="openid" checked hidden>
       <div class="actions">
         <button type="submit" name="accept" value="true" class="btn btn--primary" data-loading-label="Allow access...">Allow access</button>
@@ -126,7 +126,7 @@ exports[`every gallery variant renders > renders 'auth/consent/re-consent' 1`] =
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
       </summary>
-      <div class="gsub"><div class="subrow"><span>Your name</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Your email address</span><label class="sw"><input type="checkbox" name="scopes" value="email" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+      <div class="gsub"><div class="subrow"><span>Your name and picture</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Your email address</span><label class="sw"><input type="checkbox" name="scopes" value="email" checked><span class="tk" aria-hidden="true"></span></label></div></div>
     </details></div><p class="lsec" style="margin-top:24px">Already allowed</p><div class="t-soft"><details class="grp">
       <summary>
         <span class="gmain">
@@ -208,7 +208,7 @@ exports[`every gallery variant renders > renders 'auth/device/consent' 1`] = `
     <p class="sub"><b>marfa CLI</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
     <div class="codetile">BDRF-7H2K</div>
     <div style="margin-top:10px">
-      <div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your notes</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your tasks</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Confirm who you are</span></div>
+      <div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your notes</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your tasks</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Confirm your identity</span></div>
     </div>
     <div class="actions">
       <form method="POST" action="/auth/device/consent" novalidate>

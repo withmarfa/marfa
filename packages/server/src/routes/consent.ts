@@ -59,6 +59,7 @@ import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import { HIDDEN_MECHANISM_SCOPES } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
+import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
@@ -271,8 +272,8 @@ function summarize(group: ScopeGroup): string {
     // into two. `CAPABILITY_SHORT` exists for precisely this and says so.
     const label =
       capabilityShort(scope.typePattern) ??
+      oidcShort(scope.oidcScope ?? scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
-      SENTENCE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
     if (label && !names.includes(label)) names.push(label);
   }
@@ -352,30 +353,6 @@ export const SCOPE_LABELS: Record<string, string> = {
   metadata: "Type definitions",
 };
 
-export const OIDC_LABELS: Record<string, string> = {
-  profile: "Your name",
-  email: "Your email address",
-  openid: "Confirm your identity",
-};
-
-/**
- * Sentence forms of the labels that are phrases rather than category names.
- *
- * A toggle row and a prose summary want opposite things from the same string.
- * "Your name" is right above a switch and wrong in the middle of a sentence,
- * while "Notes" is right in both places, so the override is per label rather
- * than a rule applied to all of them. {@link summarize} capitalizes whatever
- * ends up first, which is why these are stored lowercase.
- *
- * Only the OIDC three need it today. A content type earns an entry here when
- * its label reads as a phrase, not on a schedule.
- */
-export const SENTENCE_LABELS: Record<string, string> = {
-  profile: "your name",
-  email: "your email address",
-  openid: "confirm your identity",
-};
-
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 /**
@@ -414,7 +391,7 @@ function labelFor(
 ): string {
   if (scope.kind === "oidc") {
     const lit = scope.oidcScope ?? scope.typePattern;
-    return OIDC_LABELS[lit] ?? humanizeType(lit);
+    return oidcLabel(lit) ?? humanizeType(lit);
   }
   if (scope.kind === "capability" && scope.capability) {
     return CAPABILITY_LABELS[scope.capability];
@@ -584,6 +561,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           const typePattern = lastColon > 0 ? lit.slice(0, lastColon) : lit;
           return (
             capabilityShort(typePattern) ??
+            oidcLabel(typePattern) ??
             SCOPE_LABELS[typePattern] ??
             humanizeType(typePattern)
           );

@@ -149,8 +149,11 @@ describe("renderDeviceConsentScreen", () => {
         { kind: "type", typePattern: "core.note", operation: "read" },
       ],
     });
-    expect(html).toContain("Confirm who you are");
-    expect(html).toContain("See your email address");
+    // The consent screen's words, not this screen's own. Both surfaces now
+    // read the same literal the same way; this screen used to say "Confirm
+    // who you are" and "See your email address" from a map of its own.
+    expect(html).toContain("Confirm your identity");
+    expect(html).toContain("Your email address");
     // The raw OIDC literal must not surface as a capability row.
     expect(html).not.toContain(">openid<");
     expect(html).not.toContain("openid:none");

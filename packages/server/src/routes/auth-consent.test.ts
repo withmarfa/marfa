@@ -624,7 +624,7 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Your profile");
-    expect(html).toContain("<span>Your name</span>");
+    expect(html).toContain("<span>Your name and picture</span>");
     expect(html).toContain("<span>Your email address</span>");
     // openid + offline_access are OAuth mechanisms, not data permissions —
     // they ride along as always-on hidden fields rather than toggles.
