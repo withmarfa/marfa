@@ -680,16 +680,43 @@ describe("GET /auth/authorize (consent skip)", () => {
 // What "already granted" is NOT
 // ---------------------------------------------------------------------------
 
-describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
-  it("a wildcard grant does not cover a concrete scope", async () => {
+/**
+ * What the standing grant covers, which is not the same question as which
+ * strings it contains.
+ *
+ * This block used to be titled "coverage is literal" and pinned the
+ * opposite of the first case below, on the reasoning that the skip "must
+ * not be the component that decides" what a wildcard implies. That was the
+ * right instinct about ownership and the wrong conclusion: deciding by set
+ * membership is still deciding, and it decided wrongly. The scope grammar
+ * does answer the question — `typeMatchesPattern` is the platform's own
+ * rule, and the middleware that admits a request already applies it — so
+ * the skip now asks the grammar through one shared helper instead of
+ * asking a `Set`.
+ *
+ * The cases below it are unchanged and are the reason the first is safe:
+ * breadth means the wildcard, not the identifier. A grant on a parent type
+ * reaches its children only when it says `.*`.
+ */
+describe("GET /auth/authorize (consent skip) — what the grant covers", () => {
+  it("a wildcard grant covers a concrete scope beneath it", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "skip-wildcard@example.com");
 
-    // The user approved the wildcard literal `core.*:read`. Whether that
-    // implies `core.note:read` is a question the scope grammar answers
-    // differently in different places; the consent skip must not be the
-    // component that decides it. Set membership, nothing else.
+    // The user approved `core.*:read`. A later request naming one type under
+    // it asks for strictly less than they already said yes to, and asking
+    // again is the re-prompt this exists to stop.
+    //
+    // Worth being exact about which grants this reaches, because the obvious
+    // claim is wrong. The shipped `read`, `write` and `connected` bundles
+    // enumerate concrete per-type literals, so a release that registers a
+    // platform type still moves the requested set and still prompts — that
+    // half needs the bundles to express breadth, not this. What holds a
+    // wildcard today is the `custom` bundle, whose own description promises
+    // "ones you define later", and any client asking for `core.*` or `*`
+    // directly. So this is the fix for runtime custom types, which is the
+    // category that actually churns, and the prerequisite for the rest.
     await grantFirstConsent(ctx, clientId, cookie, "openid core.*:read", [
       "openid",
       "core.*:read",
@@ -697,6 +724,42 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
 
     const signedQuery = await mintSignedQuery(
       authorizeFields(clientId, "openid core.note:read"),
+    );
+    const res = await landOnConsentPage(ctx, signedQuery, { cookie });
+    expectCodeRedirect(res);
+  });
+
+  /**
+   * The escalation this whole comparison exists to prevent, end to end.
+   *
+   * The standing grant pairs a broad write with a narrower read, which is a
+   * shape a client can ask for and a person can approve: write everything,
+   * except only read what is under `core`. Dropping the narrower half from a
+   * later request leaves every requested literal present in the stored set
+   * verbatim — so a subset test, and a coverage test with a membership
+   * shortcut in front of it, both say covered and skip the screen.
+   *
+   * Skipping is the escalation. The code is minted from the REQUEST, so the
+   * token carries `*:write` with nothing holding it down, and the middleware
+   * then permits a write the standing grant refused. Meanwhile the consent
+   * record is restored to the wider standing set, so `/auth/security` goes on
+   * showing a grant narrower than the live token.
+   */
+  it("a request that drops the narrower half of a grant is not covered by it", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "skip-escalation@example.com");
+
+    await grantFirstConsent(
+      ctx,
+      clientId,
+      cookie,
+      "openid *:write core.*:read",
+      ["openid", "*:write", "core.*:read"],
+    );
+
+    const signedQuery = await mintSignedQuery(
+      authorizeFields(clientId, "openid *:write"),
     );
     const res = await landOnConsentPage(ctx, signedQuery, { cookie });
     expectRendersConsent(res, await res.text());
@@ -707,6 +770,9 @@ describe("GET /auth/authorize (consent skip) — coverage is literal", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "skip-parent-type@example.com");
 
+    // `core.media` with no `.*` is one type, not a subtree. The wildcard is
+    // what expresses breadth, and this is what keeps the case above from
+    // being a general "prefix wins" rule.
     await grantFirstConsent(ctx, clientId, cookie, "openid core.media:read", [
       "openid",
       "core.media:read",

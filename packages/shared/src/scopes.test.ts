@@ -15,6 +15,7 @@ import {
   CAPABILITY_SCOPES,
   hasCapability,
   scopesOfferedOffByDefaultOnly,
+  grantCoversScope,
 } from "./scopes.js";
 import type { ParsedScope, PermissionBundle } from "./scopes.js";
 import {
@@ -944,5 +945,358 @@ describe("scopesOfferedOffByDefaultOnly", () => {
       bundle("manage", false, ["core.task:write"]),
     ]);
     expect(out.has("core.bookmark:read")).toBe(false);
+  });
+});
+
+/**
+ * Coverage, which is the question every consent comparison was asking and
+ * none of them was answering.
+ *
+ * These pin behaviour that partly already held — exact membership always
+ * worked — so there is no red phase to notice and each guard is worth
+ * breaking on purpose. The capability arm is the one to break first: it is
+ * the only one whose failure is a fail-open rather than a re-prompt.
+ */
+describe("grantCoversScope", () => {
+  describe("item types, where breadth is the whole point", () => {
+    it("covers a named type from a namespace wildcard", () => {
+      // The fix, in one line. A person who granted "all your core content"
+      // has already answered the question a later request for `core.note`
+      // asks, and the string comparison this replaces asked it again on
+      // every launch.
+      expect(grantCoversScope(["core.*:read"], "core.note:read")).toBe(true);
+    });
+
+    it("covers anything from the global wildcard", () => {
+      expect(grantCoversScope(["*:read"], "core.note:read")).toBe(true);
+      expect(grantCoversScope(["*:read"], "jonah.reading_item:read")).toBe(
+        true,
+      );
+    });
+
+    it("covers a read requirement from a write grant", () => {
+      expect(grantCoversScope(["core.*:write"], "core.note:read")).toBe(true);
+    });
+
+    it("does not cover a write requirement from a read grant", () => {
+      expect(grantCoversScope(["core.*:read"], "core.note:write")).toBe(false);
+    });
+
+    it("does not let a narrow grant cover a broad requirement", () => {
+      // The asymmetry is the point: this direction is how a widening is
+      // told apart from a narrowing, and reading it the other way revokes
+      // a client's live tokens.
+      expect(grantCoversScope(["core.note:read"], "core.*:read")).toBe(false);
+    });
+
+    /**
+     * Precedence, which is the half a pattern matcher does not have.
+     *
+     * A grant may hold a broad pattern and a narrower one at a lower verb,
+     * because a client may request both. The bearer middleware resolves that
+     * by precedence — exact, then the longest matching subtree wildcard, then
+     * the global one — so the narrower pattern genuinely holds the broader one
+     * down. A helper that returns on the first pattern to match with a
+     * sufficient verb answers the opposite way, and this function delegated to
+     * one until a review found it.
+     *
+     * The direction matters: answering yes here skips a consent screen, and
+     * the token minted from the request then carries the concrete literal,
+     * which projects to an exact entry and outranks the wildcard that had been
+     * holding it down. The grant gains write access nobody agreed to.
+     */
+    it("lets a narrower pattern hold a broader one down", () => {
+      const held = ["*:write", "core.*:read"];
+      expect(grantCoversScope(held, "core.note:write")).toBe(false);
+      // The same grant still covers the read, and still covers a write
+      // outside the namespace the narrower pattern speaks for.
+      expect(grantCoversScope(held, "core.note:read")).toBe(true);
+      expect(grantCoversScope(held, "jonah.reading_item:write")).toBe(true);
+    });
+
+    it("lets a narrower pattern raise the verb as well as lower it", () => {
+      expect(
+        grantCoversScope(["*:read", "core.*:write"], "core.note:write"),
+      ).toBe(true);
+    });
+
+    it("lets an exact grant outrank a wildcard above it", () => {
+      expect(
+        grantCoversScope(["core.*:write", "core.note:read"], "core.note:write"),
+      ).toBe(false);
+    });
+
+    it("resolves a subtree wildcard as parent-inclusive", () => {
+      // `core.media.*` speaks for `core.media` itself, matching the
+      // resolver the request path runs.
+      expect(grantCoversScope(["core.media.*:read"], "core.media:read")).toBe(
+        true,
+      );
+    });
+
+    /**
+     * A wildcard requirement is not a point question, and answering it as one
+     * is fail-open.
+     *
+     * Every resolver on every axis takes a concrete identifier and looks at
+     * the entries at or above it. Handed a pattern, it therefore never sees a
+     * held entry BENEATH that pattern — and an entry beneath is exactly what
+     * narrows a grant. The first version of this function asked the resolver
+     * anyway, and a review caught it.
+     */
+    it("refuses a wildcard requirement that something under it narrows", () => {
+      // `*:write` sits above `core`, so the resolver finds it and says yes,
+      // having never looked at the `core.note` that is the reason to say no.
+      expect(
+        grantCoversScope(["*:write", "core.note:read"], "core.*:write"),
+      ).toBe(false);
+    });
+
+    it("refuses a global requirement that any entry narrows", () => {
+      // The same shape one level up, and the case that also made a verbatim
+      // membership test unsafe: `*:write` is literally in the held set.
+      expect(grantCoversScope(["*:write", "core.*:read"], "*:write")).toBe(
+        false,
+      );
+    });
+
+    it("refuses a global requirement nothing grants at the top", () => {
+      expect(grantCoversScope(["core.*:write"], "*:write")).toBe(false);
+    });
+
+    it("still covers a wildcard requirement nothing narrows", () => {
+      // The other direction matters just as much. Too strict here means a
+      // widening read as a narrowing, and a narrowing revokes live tokens.
+      expect(grantCoversScope(["*:write"], "core.*:write")).toBe(true);
+      expect(grantCoversScope(["*:write", "core.*:write"], "*:write")).toBe(
+        true,
+      );
+      // A deeper entry that is narrower in BREADTH but not in verb does not
+      // narrow anything.
+      expect(
+        grantCoversScope(["core.*:write", "core.media.*:read"], "core.*:read"),
+      ).toBe(true);
+    });
+
+    it("covers a type by naming it exactly", () => {
+      expect(grantCoversScope(["core.note:read"], "core.note:read")).toBe(true);
+    });
+
+    it("does not cover a sibling namespace", () => {
+      expect(grantCoversScope(["core.*:write"], "jonah.note:read")).toBe(false);
+    });
+  });
+
+  /**
+   * A capability names an administrative surface — issuing credentials,
+   * reading the audit log — and the kind exists precisely so that no breadth
+   * expression reaches one.
+   *
+   * **These pin the intent; they are not what stops a regression, and an
+   * earlier version of this comment claimed otherwise.** The property is
+   * guarded three times over in the code — the verb-less arm, the operation
+   * refusal behind it, and the exhaustiveness binding — so deleting any one
+   * of them leaves every assertion here green, and deleting the arm itself
+   * fails the build rather than a test. That is the right amount of guard
+   * and the wrong thing to describe as a test.
+   *
+   * What they are worth is saying, in one place a person will read, what the
+   * answer has to be. Nothing gates on a capability yet: no route consults
+   * one and no bundle offers one. So a wrong answer today skips a consent
+   * screen for a literal that reaches nothing, and the reason to hold the
+   * line now is that the gates arrive later and will inherit whatever this
+   * says.
+   */
+  describe("capabilities, reachable only by name", () => {
+    it("covers a capability the grant names", () => {
+      expect(grantCoversScope(["capability.keys"], "capability.keys")).toBe(
+        true,
+      );
+    });
+
+    it("is not reached by the global write wildcard", () => {
+      for (const capability of CAPABILITY_SCOPES) {
+        expect(
+          grantCoversScope(["*:write", "*:read"], capability),
+          capability,
+        ).toBe(false);
+      }
+    });
+
+    it("is not reached by a wildcard shaped like the capability root", () => {
+      // Two independent refusals sit behind this, and the assertion cannot
+      // tell them apart: the requirement parses as a capability and is turned
+      // down before any held scope is read, AND the held literals do not
+      // parse at all, so they contribute nothing on any axis either. The
+      // second is the one worth stating, because it is not obvious:
+      // `capability.*:read` satisfies the type-pattern grammar, so without
+      // `parseScope` claiming the whole root it would parse as an item-type
+      // grant that reads like a capability grant and is neither.
+      expect(
+        grantCoversScope(
+          ["capability.*:read", "capability.*:write"],
+          "capability.keys",
+        ),
+      ).toBe(false);
+    });
+
+    it("does not let one capability cover another", () => {
+      expect(grantCoversScope(["capability.webhooks"], "capability.keys")).toBe(
+        false,
+      );
+    });
+
+    it("refuses a capability-shaped literal that names no capability", () => {
+      // Also a parser property rather than an arm property: the whole root is
+      // claimed, so a non-member under it is unparseable and refused before
+      // any axis is consulted. Stated because the alternative reading — that
+      // the capability arm turned it down — would be wrong about where the
+      // guarantee lives.
+
+      expect(grantCoversScope(["*:write"], "capability.not_a_thing")).toBe(
+        false,
+      );
+      expect(
+        grantCoversScope(["capability.keys"], "capability.not_a_thing"),
+      ).toBe(false);
+    });
+  });
+
+  describe("OIDC literals, which have no breadth to compare", () => {
+    it("covers a literal the grant names", () => {
+      expect(grantCoversScope(["openid", "email"], "openid")).toBe(true);
+    });
+
+    it("does not let one literal cover another", () => {
+      expect(grantCoversScope(["profile"], "email")).toBe(false);
+    });
+
+    it("is not reached by a type wildcard", () => {
+      for (const literal of ["openid", "profile", "email", "offline_access"]) {
+        expect(grantCoversScope(["*:write"], literal), literal).toBe(false);
+      }
+    });
+  });
+
+  describe("edges, which have their own wildcard axis", () => {
+    it("covers a named edge from the edge wildcard", () => {
+      expect(grantCoversScope(["edge.*:write"], "edge.parent-of:read")).toBe(
+        true,
+      );
+    });
+
+    it("covers a runtime edge from its namespace wildcard", () => {
+      expect(
+        grantCoversScope(["edge.user.*:read"], "edge.user.blocks:read"),
+      ).toBe(true);
+    });
+
+    it("refuses a wildcard requirement that something under it narrows", () => {
+      // `resolveEdgePermission` is longest-match precedence, exactly like the
+      // item-type resolver, so the edge axis has the same downward blind spot
+      // and needs the same answer.
+      expect(
+        grantCoversScope(
+          ["edge.*:write", "edge.user.blocks:read"],
+          "edge.user.*:write",
+        ),
+      ).toBe(false);
+    });
+
+    it("does not cross from the item-type axis", () => {
+      // `edge` is a claimable publisher handle, so `edge.foo` is a
+      // registrable item type — but the scope grammar resolves everything
+      // under `edge.` to the edge axis, so the crossing can only be stated
+      // from the grant side. A type wildcard reaches no edge, and an edge
+      // grant reaches no item type.
+      //
+      // The first draft asserted the second half with `parent-of:read`,
+      // which is not a scope at all: a bare single-segment identifier is
+      // not a valid type, so the requirement was refused for being
+      // unparseable and the test passed without exercising the axis split.
+      expect(grantCoversScope(["*:write"], "edge.parent-of:read")).toBe(false);
+      expect(grantCoversScope(["edge.*:write"], "core.note:read")).toBe(false);
+    });
+
+    it("covers a read requirement from a write grant on the same edge", () => {
+      expect(
+        grantCoversScope(["edge.parent-of:write"], "edge.parent-of:read"),
+      ).toBe(true);
+    });
+
+    it("does not cover a write requirement from a read grant", () => {
+      expect(grantCoversScope(["edge.*:read"], "edge.parent-of:write")).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("metadata, where the bare form is the wildcard", () => {
+    it("covers a sub-resource from the bare namespace grant", () => {
+      expect(grantCoversScope(["metadata:write"], "metadata.types:read")).toBe(
+        true,
+      );
+    });
+
+    it("does not reach back up from a sub-resource to the namespace", () => {
+      expect(grantCoversScope(["metadata.types:write"], "metadata:read")).toBe(
+        false,
+      );
+    });
+
+    it("does not cross from the item-type axis", () => {
+      expect(grantCoversScope(["*:write"], "metadata.types:read")).toBe(false);
+      expect(grantCoversScope(["metadata:write"], "core.note:read")).toBe(
+        false,
+      );
+    });
+
+    it("covers a read requirement from a write grant on the same sub-resource", () => {
+      expect(
+        grantCoversScope(["metadata.types:write"], "metadata.types:read"),
+      ).toBe(true);
+    });
+
+    it("does not let one sub-resource cover another", () => {
+      expect(
+        grantCoversScope(["metadata.types:write"], "metadata.edge_types:read"),
+      ).toBe(false);
+    });
+  });
+
+  describe("what it does with a literal it cannot read", () => {
+    it("covers an unparseable requirement the grant names verbatim", () => {
+      // Both sides carrying a scope this build has stopped understanding is
+      // not a narrowing, and reading it as one would revoke live tokens
+      // over a grammar change.
+      expect(
+        grantCoversScope(["from-a-later-build"], "from-a-later-build"),
+      ).toBe(true);
+    });
+
+    it("refuses an unparseable requirement nothing names", () => {
+      // Fail closed: an unrecognized literal waved through here is a
+      // consent skip for something nobody granted.
+      expect(grantCoversScope(["*:write"], "from-a-later-build")).toBe(false);
+    });
+
+    it("ignores an unparseable grant entry rather than throwing", () => {
+      expect(
+        grantCoversScope(["", "  ", "::", "core.*:read"], "core.note:read"),
+      ).toBe(true);
+      expect(grantCoversScope(["::"], "core.note:read")).toBe(false);
+    });
+
+    it("covers nothing when the grant is empty", () => {
+      for (const required of [
+        "core.note:read",
+        "openid",
+        "capability.keys",
+        "edge.parent-of:read",
+        "metadata.types:read",
+      ]) {
+        expect(grantCoversScope([], required), required).toBe(false);
+      }
+    });
   });
 });

@@ -1,6 +1,10 @@
 import type { MetadataPermission, TypePermission } from "./types.js";
-import { isValidTypePattern } from "./validation.js";
-import { subtreeWildcardRoot, typeMatchesPattern } from "./type-patterns.js";
+import { isValidTypePattern, resolveTypePermission } from "./validation.js";
+import {
+  GLOBAL_TYPE_WILDCARD,
+  subtreeWildcardRoot,
+  typeMatchesPattern,
+} from "./type-patterns.js";
 
 // ---------------------------------------------------------------------------
 // Scope parsing
@@ -452,7 +456,7 @@ export function expandWildcardScopes(
  * including a family this build has never heard of, contributes nothing.
  */
 export function scopesToTypePermissions(
-  scopes: string[],
+  scopes: readonly string[],
 ): Record<string, TypePermission> {
   const perms: Record<string, TypePermission> = {};
 
@@ -473,9 +477,26 @@ export function scopesToTypePermissions(
 /**
  * Checks whether the held scopes satisfy a required type + operation.
  * Write scopes satisfy read requirements.
+ *
+ * **This is not the rule the request path applies, and it is one letter away
+ * from looking like it is.** It returns on the FIRST held pattern that
+ * matches with a sufficient verb. The bearer middleware projects scopes into
+ * `type_permissions` and resolves with {@link resolveTypePermission}, which is
+ * exact, then the LONGEST matching subtree wildcard, then the global one. The
+ * two answer differently whenever a grant pairs a broad pattern with a
+ * narrower one at a lower verb: held `*:write core.*:read`, asked about
+ * writing `core.note`, this says yes and the middleware says no.
+ *
+ * So it is right about breadth on one pattern and wrong about precedence
+ * across several, which makes it safe for "does any grant here mention this
+ * type at this verb" and unsafe for "may this credential do this". Ask
+ * {@link grantCoversScope} for the second. That function delegated here at
+ * first, on the strength of this being the neighbouring helper with the right
+ * shape and a careful docblock, and was fail-open for exactly the grant above
+ * until a review caught it.
  */
 export function scopeCovers(
-  held: string[],
+  held: readonly string[],
   requiredType: string,
   requiredOp: "read" | "write",
 ): boolean {
@@ -534,7 +555,7 @@ export function scopeCovers(
 
 /** Projects edge-typed scopes into the edge_permissions map stored on keys. */
 export function scopesToEdgePermissions(
-  scopes: string[],
+  scopes: readonly string[],
 ): Record<string, "read" | "write"> {
   const perms: Record<string, "read" | "write"> = {};
   for (const scope of scopes) {
@@ -564,7 +585,7 @@ export function scopesToEdgePermissions(
  * read, never downgrade.
  */
 export function scopesToMetadataPermissions(
-  scopes: string[],
+  scopes: readonly string[],
 ): Record<string, MetadataPermission> {
   const perms: Record<string, MetadataPermission> = {};
   for (const scope of scopes) {
@@ -664,6 +685,225 @@ export function edgePermissionCovers(
   const resolved = resolveEdgePermission(perms, edgeType);
   if (resolved === "write") return true;
   return resolved === "read" && requiredOp === "read";
+}
+
+// ---------------------------------------------------------------------------
+// Grant coverage
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a held grant covers a required scope literal, on whichever axis
+ * that literal belongs to.
+ *
+ * The question every consent comparison actually asks, and the one none of
+ * them asked. A grant of `core.*:read` genuinely covers `core.note:read`, so
+ * a stored set holding the first is not short of the second — but a string
+ * comparison reports it as missing, which asks a person who has already said
+ * yes to say it again, and reports the reverse pairing as a *narrowing*,
+ * which revokes the client's live tokens. Both readings are wrong and the
+ * second is wrong destructively.
+ *
+ * The three axes with a verb are answered the way the bearer middleware
+ * answers them: project the held scopes into the permission map a credential
+ * is stored with, then resolve against that map with the resolver the request
+ * path uses — {@link resolveTypePermission}, {@link edgePermissionCovers},
+ * {@link metadataPermissionCovers}. So the breadth rule here is the breadth
+ * rule enforced at the point of use, rather than a second one written to
+ * match.
+ *
+ * **It is not the whole of what the middleware refuses, and should not be
+ * mistaken for it.** The reserved-namespace gate turns down every `system.*`
+ * and `marfa.*` write from an OAuth token before any permission map is
+ * consulted, so a grant can cover `system.connection:write` here and be
+ * refused there. That direction is harmless — a screen skipped for access
+ * that then does not work — but it is the direction to check before adding an
+ * arm. The two verb-less families have no middleware counterpart at all: no
+ * route gates on a capability yet, and OIDC literals are read by the id_token
+ * and userinfo callbacks rather than by the request principal.
+ *
+ * **That is a stricter requirement than "reuse a helper that looks right",
+ * and the difference is not cosmetic.** {@link scopeCovers} sits beside this
+ * function, refuses capabilities, is well tested, and answers a genuinely
+ * different question: first match wins rather than longest match wins. This
+ * delegated to it and was fail-open for one shape of grant until a review
+ * found it. The test is not whether a helper is correct, it is whether it is
+ * the one the request path runs.
+ *
+ * **A capability is covered by naming it and by nothing else, and that is the
+ * property to break first when testing this.** The capability kind exists
+ * because a wildcard must not reach an administrative surface; a coverage
+ * helper answering otherwise would reinstate the fail-open one level above
+ * the one that kind was added to remove. {@link scopeCovers} refuses to
+ * answer about a capability at all, and this function never asks it — the
+ * capability arm is the membership test at the top and nothing further.
+ *
+ * OIDC literals land in the same arm by different reasoning: they carry no
+ * pattern and no verb, so exact membership is the only test that means
+ * anything for them.
+ *
+ * A `held` entry this build cannot parse contributes nothing on any axis. A
+ * `required` this build cannot parse is refused — an unrecognized literal
+ * must not be waved through a consent skip — but only after the membership
+ * test, so a grant naming it verbatim still covers it, and a scope the server
+ * has stopped understanding does not read as a narrowing while both sides
+ * carry it.
+ *
+ * Deliberately singular. A plural `missingScopes` reads well and had no
+ * caller that needed the list, and an export with no production caller is
+ * exactly how {@link scopeCovers} came to sit unused while five comparisons
+ * beside it compared text.
+ */
+export function grantCoversScope(
+  held: readonly string[],
+  required: string,
+): boolean {
+  const need = parseScope(required);
+
+  // A literal this build cannot read is covered by naming it and by nothing
+  // else. Both sides carrying a scope the grammar has stopped understanding
+  // is not a narrowing, and reading it as one would revoke live tokens over a
+  // grammar change.
+  if (!need) return held.includes(required);
+
+  // The two families with no breadth. A capability names an administrative
+  // surface and is reached by naming it; an OIDC literal carries no pattern
+  // and no verb. Membership is the whole test for both, and letting either
+  // fall through to a pattern matcher is the hazard the capability kind
+  // exists to remove.
+  if (need.kind === "oidc" || need.kind === "capability") {
+    return held.includes(required);
+  }
+
+  // Everything remaining carries a real verb: "none" is emitted only by the
+  // two parser paths just refused. Refused rather than asserted, so a value
+  // built by hand or arriving from a stale build cannot reach a matcher with
+  // no operation to match on.
+  if (need.operation === "none") return false;
+
+  // Note what is deliberately NOT here: a `held.includes(required)`
+  // short-circuit ahead of the axis logic. It was, and it was unsound on
+  // every verb-carrying axis. A grant of `*:write core.*:read` contains the
+  // literal `*:write`, so a request for `*:write` matched verbatim and read
+  // as covered — while the grant it was measured against cannot write
+  // `core.note`, because the narrower entry outranks the wildcard. Naming a
+  // pattern is not the same as holding what the pattern claims, once a
+  // sibling can hold it down.
+  switch (need.kind) {
+    case "type": {
+      const perms = scopesToTypePermissions(held);
+      return grantCoversPattern(
+        need.typePattern,
+        need.operation,
+        Object.keys(perms),
+        (key) => resolveTypePermission(key, perms),
+      );
+    }
+    case "edge": {
+      if (!need.edgeType) return false;
+      const perms = scopesToEdgePermissions(held);
+      return grantCoversPattern(
+        need.edgeType,
+        need.operation,
+        Object.keys(perms),
+        (key) => effectiveLevel((op) => edgePermissionCovers(perms, key, op)),
+      );
+    }
+    case "metadata": {
+      // A bare `metadata:<verb>` requirement names no sub-resource and asks
+      // about the whole namespace. Sub-resources are a single dot-free
+      // segment by grammar, so the namespace form is the only breadth this
+      // axis has.
+      const perms = scopesToMetadataPermissions(held);
+      return grantCoversPattern(
+        need.subresource ?? GLOBAL_TYPE_WILDCARD,
+        need.operation,
+        Object.keys(perms),
+        (key) =>
+          effectiveLevel((op) => metadataPermissionCovers(perms, key, op)),
+      );
+    }
+    default: {
+      // Compile-time exhaustiveness, on the same reasoning as `isTypeScope`:
+      // a kind added to the union stops the package compiling until someone
+      // decides how breadth works on it, rather than inheriting whichever
+      // arm happens to sit last.
+      const _exhaustive: never = need.kind;
+      void _exhaustive;
+      return false;
+    }
+  }
+}
+
+/** Turns an axis's boolean `covers(op)` into the level it resolves to, so one
+ *  breadth rule can be written over every axis without a second resolver. */
+function effectiveLevel(
+  covers: (op: "read" | "write") => boolean,
+): "read" | "write" | "none" {
+  if (covers("write")) return "write";
+  return covers("read") ? "read" : "none";
+}
+
+/**
+ * Whether a grant reaches everything a required pattern claims, at a verb.
+ *
+ * **A concrete requirement is a point question and a wildcard requirement is
+ * not, and answering the second as though it were the first is fail-open.**
+ * Every resolver on every axis here takes a concrete identifier and consults
+ * the entries at or above it — exact, then the longest matching subtree
+ * wildcard, then the global one. Handed a pattern instead, it therefore never
+ * sees a single held entry BENEATH that pattern, and an entry beneath it is
+ * exactly what narrows a grant. Held `*:write core.note:read`, asked whether
+ * `core.*:write` is covered: the resolver finds the global `write` above
+ * `core` and answers yes, having skipped the `core.note` that is the reason
+ * the answer is no. A skipped consent screen, and a minted token whose exact
+ * `core.*:write` then outranks the entry that had been holding it down.
+ *
+ * So a wildcard requirement is two questions. The subtree root has to be
+ * covered, which is the resolver's own question and delegates to it. And
+ * nothing inside the subtree may sit lower than what is being asked for,
+ * which no resolver can answer because none of them look downward.
+ *
+ * `resolve` is the axis's own resolver, so the point question is answered by
+ * whatever the request path runs and this adds a rule rather than replacing
+ * one.
+ */
+function grantCoversPattern(
+  pattern: string,
+  op: "read" | "write",
+  heldKeys: readonly string[],
+  resolve: (key: string) => "read" | "write" | "none" | undefined,
+): boolean {
+  const enough = (level: "read" | "write" | "none" | undefined): boolean =>
+    level === "write" || (level === "read" && op === "read");
+
+  // `null` here means one of two things and the next line tells them apart:
+  // a concrete identifier, or the global wildcard, which has no root string.
+  const root = subtreeWildcardRoot(pattern);
+
+  // A concrete requirement is a point, and the axis's own resolver is the
+  // whole answer.
+  if (root === null && pattern !== GLOBAL_TYPE_WILDCARD) {
+    return enough(resolve(pattern));
+  }
+
+  // Upward: is the subtree granted at all. `core.*` is parent-inclusive, so
+  // `core` is a fair representative of it. For the global wildcard there is
+  // no root above, and asking a resolver about `*` returns the global entry
+  // alone on every axis here — which is exactly the ceiling in question.
+  if (!enough(resolve(root ?? GLOBAL_TYPE_WILDCARD))) return false;
+
+  // Downward, which is the half no resolver can do. A key at or above the
+  // requested root was already answered above; only a key strictly inside the
+  // subtree can narrow it.
+  for (const key of heldKeys) {
+    if (key === GLOBAL_TYPE_WILDCARD) continue;
+    const keyRoot = subtreeWildcardRoot(key) ?? key;
+    const inside =
+      root === null || (keyRoot !== root && keyRoot.startsWith(`${root}.`));
+    if (!inside) continue;
+    if (!enough(resolve(key))) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
