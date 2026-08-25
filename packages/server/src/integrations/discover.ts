@@ -60,12 +60,20 @@ function subdirectories(dir: string): string[] {
       // download. An underscore marks working material by the same
       // convention.
       //
-      // The scaffold is governed by the declaration rather than by this
-      // rule. `installed-integrations.txt` names what the image stages and
-      // the scaffold is not among them, so its directory name decides
-      // nothing. That file refuses a declared name carrying either prefix
-      // for the mirror of this rule: such a name would stage into the
-      // image and never load.
+      // The scaffold is kept out by this rule, and the prefix it carries
+      // is the whole of the protection. That is worth stating because the
+      // sentence here used to say otherwise: it said the declaration
+      // governed the scaffold, and for a while that was false in a way
+      // nothing caught. `installed-integrations.txt` decides what the image
+      // stages, and an image is not the only place this loader runs. A
+      // developer points `MARFA_INTEGRATIONS_ROOT` at a built checkout, and
+      // a scaffold with no prefix registers there as one more integration
+      // with the declaration nowhere in the path. So the two mechanisms
+      // answer different questions and neither stands in for the other.
+      //
+      // That file refuses a declared name carrying either prefix for the
+      // mirror of this rule: such a name would stage into the image and
+      // never load.
       .filter((e) => !e.name.startsWith(".") && !e.name.startsWith("_"))
       .map((e) => e.name)
   );
