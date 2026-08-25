@@ -73,6 +73,17 @@ export enum ErrorCode {
    */
   TYPE_HAS_SUBTYPES = "type_has_subtypes",
   /**
+   * A type's stored inheritance chain cannot be resolved: it is circular, or
+   * deeper than any resolution walk will follow. Details carry `type_id`.
+   *
+   * The caller did nothing wrong, which is why this is not a 400. Every
+   * write path refuses to produce such a chain, so meeting one means the
+   * registry already held it. It is coded rather than bare so the type can
+   * still be corrected through `PUT /types/{id}`, which reads the stored
+   * schema directly and never walks the chain.
+   */
+  TYPE_CHAIN_UNRESOLVABLE = "type_chain_unresolvable",
+  /**
    * A credential cannot be removed while a connection that is not
    * revoked still references it. Details carry `connection_ids`.
    */
@@ -345,6 +356,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.TYPE_HAS_SUBTYPES]: 409,
+  [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: 409,
   [ErrorCode.CREDENTIAL_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,

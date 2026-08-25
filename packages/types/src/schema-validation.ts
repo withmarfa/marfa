@@ -444,6 +444,18 @@ function validateFieldShape(
  * field, plus the type that declared it. Stops on an unresolvable parent and
  * on a cycle, so a malformed chain degrades to a partial view rather than
  * hanging the request.
+ *
+ * **The odd one out among the chain walks, deliberately.** Every other one
+ * carries a depth bound and throws on reaching it; this carries only the
+ * `seen` set, so its depth is bounded by the number of distinct types rather
+ * than by a number. That cannot spin and never throws, so it is not a live
+ * fault, and it is what lets a type whose chain is already broken still be
+ * validated and therefore corrected.
+ *
+ * Giving it a bound is a behavior change to the validator, not a tightening
+ * of this function: it would decide that a submission naming a broken
+ * ancestor is refused rather than validated against what resolves, which is
+ * a question about the authoring contract and wants deciding as one.
  */
 function collectAncestorFields(
   parentId: string,

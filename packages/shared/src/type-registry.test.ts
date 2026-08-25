@@ -6,6 +6,8 @@ import {
   getResolvedFields,
   isSubtypeOf,
   directChildrenOf,
+  maxDescendantDepth,
+  MAX_RESOLUTION_DEPTH,
   registerTypeSchema,
   unregisterTypeSchema,
   validateProperties,
@@ -13,6 +15,7 @@ import {
   validateTransition,
   validateTypeSchema,
 } from "./type-registry.js";
+import { ErrorCode, MarfaError } from "./errors.js";
 import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
@@ -1501,5 +1504,140 @@ describe("unregisterTypeSchema and the schemas it invalidates", () => {
       unregisterTypeSchema("cyc.a", SPACE);
       unregisterTypeSchema("cyc.b", SPACE);
     }
+  });
+});
+
+/**
+ * The number a re-parent has to account for. Registration bounds the chain
+ * ABOVE the type being written, which is not a bound on the chain the write
+ * produces: moving a type with subtypes under a new parent lengthens every
+ * one of their chains without any of them being submitted.
+ */
+describe("maxDescendantDepth", () => {
+  const SPACE = "01a02000-0000-7000-8000-0000000000e1";
+  const ids = ["d.root", "d.mid", "d.leaf", "d.shallow", "d.deeper"];
+
+  afterEach(() => {
+    for (const id of [...ids].reverse()) unregisterTypeSchema(id, SPACE);
+  });
+
+  it("counts edges, so a type nothing inherits from answers zero", () => {
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
+    expect(maxDescendantDepth("d.root", SPACE)).toBe(0);
+  });
+
+  it("takes the longest branch, not the first or the shortest", () => {
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
+    registerTypeSchema(
+      { id: "d.shallow", version: 1, parent: "d.root", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "d.mid", version: 1, parent: "d.root", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "d.leaf", version: 1, parent: "d.mid", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "d.deeper", version: 1, parent: "d.leaf", fields: {} },
+      SPACE,
+    );
+    expect(maxDescendantDepth("d.root", SPACE)).toBe(3);
+    expect(maxDescendantDepth("d.mid", SPACE)).toBe(2);
+    expect(maxDescendantDepth("d.deeper", SPACE)).toBe(0);
+  });
+
+  // The identifier and the declared parent are two different hierarchies and
+  // nothing keeps them in agreement, so counting by name would miss a subtype
+  // named anywhere else.
+  it("counts a subtype named outside its parent's namespace", () => {
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
+    registerTypeSchema(
+      { id: "elsewhere.child", version: 1, parent: "d.root", fields: {} },
+      SPACE,
+    );
+    try {
+      expect(maxDescendantDepth("d.root", SPACE)).toBe(1);
+    } finally {
+      unregisterTypeSchema("elsewhere.child", SPACE);
+    }
+  });
+
+  it("does not count another space's subtype", () => {
+    registerTypeSchema({ id: "d.root", version: 1, fields: {} }, SPACE);
+    registerTypeSchema(
+      { id: "d.mid", version: 1, parent: "d.root", fields: {} },
+      "01a02000-0000-7000-8000-0000000000e2",
+    );
+    try {
+      expect(maxDescendantDepth("d.root", SPACE)).toBe(0);
+    } finally {
+      unregisterTypeSchema("d.mid", "01a02000-0000-7000-8000-0000000000e2");
+    }
+  });
+
+  it("terminates on a cycle that reached the registry", () => {
+    registerTypeSchema(
+      { id: "d.mid", version: 1, parent: "d.leaf", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "d.leaf", version: 1, parent: "d.mid", fields: {} },
+      SPACE,
+    );
+    expect(() => maxDescendantDepth("d.mid", SPACE)).not.toThrow();
+  });
+});
+
+/**
+ * A chain past the backstop used to throw a bare error, which reached the
+ * caller as a 500: the server saying it broke, rather than that this type's
+ * stored chain did, with nothing to act on and no way back through the API.
+ */
+describe("a chain past the resolution backstop", () => {
+  const SPACE = "01a02000-0000-7000-8000-0000000000e3";
+  const link = (n: number): string => `deep.n${String(n)}`;
+  const LENGTH = MAX_RESOLUTION_DEPTH + 5;
+
+  beforeEach(() => {
+    registerTypeSchema({ id: link(0), version: 1, fields: {} }, SPACE);
+    for (let n = 1; n < LENGTH; n += 1) {
+      registerTypeSchema(
+        { id: link(n), version: 1, parent: link(n - 1), fields: {} },
+        SPACE,
+      );
+    }
+  });
+
+  afterEach(() => {
+    for (let n = LENGTH - 1; n >= 0; n -= 1)
+      unregisterTypeSchema(link(n), SPACE);
+  });
+
+  it("raises a coded error rather than a bare one", () => {
+    let thrown: unknown;
+    try {
+      getResolvedFields(link(LENGTH - 1), SPACE);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MarfaError);
+    expect((thrown as MarfaError).code).toBe(ErrorCode.TYPE_CHAIN_UNRESOLVABLE);
+  });
+
+  it("raises it from the classification walk too", () => {
+    expect(() => isSubtypeOf(link(LENGTH - 1), link(0), SPACE)).toThrow(
+      MarfaError,
+    );
+  });
+
+  // The plain lookup is what `PUT /types/{id}` reads, so a type nothing can
+  // resolve is still a type somebody can correct.
+  it("leaves the stored schema readable, which is the way back", () => {
+    const schema = getTypeSchema(link(LENGTH - 1), SPACE);
+    expect(schema?.id).toBe(link(LENGTH - 1));
+    expect(schema?.parent).toBe(link(LENGTH - 2));
   });
 });
