@@ -22,7 +22,10 @@ import { renderForgotPasswordPage } from "../src/routes/forgot-password-page.js"
 import { renderResetPasswordPage } from "../src/routes/reset-password-page.js";
 import { renderConsentScreen } from "../src/routes/consent.js";
 import { renderAuthorizeExpiredPage } from "../src/routes/authorize-expired-page.js";
-import { renderSignInLinkFailedPage } from "../src/routes/sign-in-link-page.js";
+import {
+  renderSignInLinkFailedPage,
+  hostFromBaseUrl,
+} from "../src/routes/sign-in-link-page.js";
 import { renderSignedOutPage } from "../src/routes/signed-out-page.js";
 import {
   renderDevicePage,
@@ -415,6 +418,38 @@ const AUTH_SCREENS: GalleryScreen[] = [
         id: "failed",
         label: "Link did not work",
         render: () => renderSignInLinkFailedPage({ returnTo: RETURN_TO }),
+      },
+      {
+        // The other half of the same route, and a different message
+        // entirely: sign-up is closed, so a fresh link bounces the same
+        // way and the page offers none. Two variants because the host is
+        // named only when there is one worth naming, and the pair is the
+        // only way to see both readings.
+        //
+        // Both go through `hostFromBaseUrl` on a base URL rather than
+        // passing a host straight in, so the gallery can only ever show a
+        // state the route can actually reach. Handing it `host: "localhost"`
+        // would otherwise preview a page that no longer renders.
+        id: "signup-closed",
+        label: "Sign-up closed, host named",
+        render: () =>
+          renderSignInLinkFailedPage({
+            returnTo: RETURN_TO,
+            reason: "signup_closed",
+            host: hostFromBaseUrl("https://marfa.so"),
+          }),
+      },
+      {
+        // The deployment that never configured its public identity, where
+        // config resolves to a localhost URL and the page names no host.
+        id: "signup-closed-no-host",
+        label: "Sign-up closed, no host to name",
+        render: () =>
+          renderSignInLinkFailedPage({
+            returnTo: RETURN_TO,
+            reason: "signup_closed",
+            host: hostFromBaseUrl("http://localhost:8600"),
+          }),
       },
     ],
   },
