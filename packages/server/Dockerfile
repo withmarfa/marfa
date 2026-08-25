@@ -151,9 +151,17 @@ RUN set -euf; \
 # a deployment declaring `none` has no checkout and so no registry, and the
 # runtime stage's COPY has to work either way: an absent file fails a COPY
 # and an empty directory does not.
+# Guarded on the checkout rather than on the file, so the two causes stay
+# apart: no checkout is the `none` deployment and is fine, while a checkout
+# that carries no registry is a repository that moved the file and is a
+# fault worth naming here rather than three steps later.
 RUN set -eu; \
     mkdir -p /integrations-meta; \
-    if [ -f integrations-src/registry.json ]; then \
+    if [ -d integrations-src ]; then \
+      if [ ! -f integrations-src/registry.json ]; then \
+        echo "ERROR: integrations-src has no registry.json" >&2; \
+        exit 1; \
+      fi; \
       cp integrations-src/registry.json /integrations-meta/registry.json; \
     fi
 # The dispatch fixture, staged outside the integrations root because it is
@@ -218,9 +226,11 @@ RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \
   && chown -R node:node /app
 USER node
 # An image carrying integrations other than the ones it declares, or in a
-# shape it did not declare, or whose entries cannot load, or whose module
-# resolution duplicates the runtime-sdk singleton, fails to build here
-# rather than booting a wrong substrate in production.
+# shape it did not declare, or ones the registry does not mark as shipped,
+# or a bundle that inlined the runtime kit rather than leaving it external,
+# or entries the catalog loader refuses, or module resolution that
+# duplicates the runtime-sdk singleton, fails to build here rather than
+# booting a wrong substrate in production.
 #
 # The dispatch fixture is removed in the same step, so nothing running in
 # the container can mistake it for an installed integration. It is a

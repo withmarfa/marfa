@@ -61,6 +61,15 @@ on:
       - "packages/server/scripts/**"
       - "packages/server/installed-integrations.txt"
       - "packages/server/integrations-ref.txt"
+      # The two source files the in-image verification imports out of
+      # `dist/`. Everything else under `src/` is deliberately absent, per
+      # the note above, and these two are not like everything else: the
+      # verification reaches into them by name, nothing typechecks or lints
+      # the `.mjs` that does it, and the only place the two are ever
+      # compared is this build. Renaming a field on either result type is
+      # green across the whole matrix and throws at the next image build.
+      - "packages/server/src/integrations/load-manifests.ts"
+      - "packages/server/src/integrations/client-manifests.ts"
       # The dispatch fixture the in-image verification runs through. The
       # image builds and stages it exactly as it does an integration entry,
       # so a change to it changes the image the same way one does. Broader
@@ -114,6 +123,39 @@ jobs:
           ssh-key: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
           persist-credentials: false
           path: integrations-src
+      # The half of the registry check that belongs to this repository
+      # rather than to the image.
+      #
+      # The in-image verification asserts that everything the declaration
+      # names is listed and marked shipped, which is true of any build of
+      # this Dockerfile. It deliberately does not assert the reverse,
+      # because installing a subset is a supported shape and a self-hosted
+      # build would then fail on names in a repository its operator did not
+      # write.
+      #
+      # The reverse is still worth asserting about *our* set, and this is
+      # where only our builds run. A registry entry marked shipped with no
+      # declaration line is otherwise silent all the way through: the pull
+      # request merges there, the listing offers the integration, and the
+      # image does not carry it. Moving the pin is what would ship that, and
+      # moving the pin triggers this workflow.
+      - name: The declaration covers everything the registry marks shipped
+        run: |
+          set -euo pipefail
+          node packages/server/scripts/read-installed-integrations.mjs \
+            packages/server/installed-integrations.txt | sort > declared.txt
+          node -e '
+            const { integrations } = require("./integrations-src/registry.json");
+            for (const e of integrations) if (e.shippedByMarfa) console.log(e.name);
+          ' | sort > shipped.txt
+          missing="$(comm -13 declared.txt shipped.txt)"
+          if [ -n "$missing" ]; then
+            echo "::error::The registry marks these shippedByMarfa and packages/server/installed-integrations.txt does not declare them:"
+            echo "$missing" | sed 's/^/  /'
+            echo "The image would not carry them and the listing would offer them. Declare them, or set shippedByMarfa false."
+            exit 1
+          fi
+          echo "All $(wc -l < shipped.txt | tr -d ' ') integrations the registry marks shipped are declared."
       - uses: docker/setup-buildx-action@v4
       # The whole image, not `--target build`. Stopping at the build stage
       # skips the runtime stage's file layout, which is the last of the four

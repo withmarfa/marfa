@@ -2,10 +2,10 @@
  * Types for the declaration parser.
  *
  * The parser itself is plain Node ESM because the in-image verification
- * imports it inside the runtime image, where there is no TypeScript and no
- * monorepo. This is what lets the suite import the same module without
- * casting its way past the type checker, which is how a wrong shape would
- * otherwise reach a test.
+ * imports it inside the runtime image, where there is no TypeScript. This
+ * is what lets the suite import the same module without casting its way
+ * past the type checker, which is how a wrong shape would otherwise reach
+ * a test.
  */
 
 /** One line of the declaration. */

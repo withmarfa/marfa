@@ -228,6 +228,19 @@ function image(options: {
     // The misfiled shape stages an entry whose manifest names an
     // integration other than the directory holding it.
     const declaresName = shape === "misfiled" ? `other/${name ?? raw}` : name;
+    if (shape === "split") {
+      // What esbuild emits once a package has more than one entry: the
+      // imports move into a chunk and the entry becomes a re-export.
+      writeFileSync(
+        join(dist, "chunk-ABCDEFGH.js"),
+        manifestSource(name ?? raw, { kit: "bare" }),
+      );
+      writeFileSync(
+        join(dist, "local.js"),
+        'export { manifest } from "./chunk-ABCDEFGH.js";\n',
+      );
+      continue;
+    }
     writeFileSync(
       join(dist, manifestOnly ? "manifest.js" : "local.js"),
       bare
@@ -423,7 +436,7 @@ describe("the in-image integration verification", () => {
     );
     expect(run.output).toContain("2 declared integrations all installed");
     expect(run.output).toContain("1 dispatchable");
-    expect(run.output).toContain("the registry and the declaration agree on 2");
+    expect(run.output).toContain("all 2 declared integrations are listed");
     expect(run.output).toContain("runtime kit is external to all 2");
     expect(run.output).toContain("all 2 staged manifests load and validate");
     expect(run.output).toContain("PASSED");
@@ -651,10 +664,12 @@ describe("the in-image integration verification", () => {
 
   // Check 2: the declaration and the registry, which live in different
   // repositories and until now agreed only by attention.
-  it("fails when the registry marks something shipped that is not declared", () => {
-    // The contributor trap. The pull request merges, the listing renders
-    // the integration as installable, the image does not carry it, and
-    // nothing anywhere is red.
+  it("passes an image that installs a subset of what the registry ships", () => {
+    // Installing a subset is a supported shape and the declaration's own
+    // header says so, so a build of this Dockerfile that is not ours must
+    // not fail on names in a repository its operator did not write. The
+    // reverse direction, that our own declaration is complete, is asserted
+    // in the image-build workflow where only our builds run.
     const run = verify(
       image({
         declared: ["acme/alpha"],
@@ -666,10 +681,26 @@ describe("the in-image integration verification", () => {
         ],
       }),
     );
+    expect(run.output).toContain("out of 2 the registry marks");
+    expect(run.code).toBe(0);
+  });
+
+  it("fails when a registry lists one identifier twice", () => {
+    // Two entries for one identifier disagree about everything else in the
+    // object, and a membership test cannot see which one it answered from.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: [
+          { name: "acme/alpha", shippedByMarfa: true },
+          { name: "acme/alpha", shippedByMarfa: false },
+        ],
+      }),
+    );
     expect(run.code).toBe(1);
-    expect(run.output).toContain("marks these shippedByMarfa");
-    expect(run.output).toContain("acme/beta");
-    expect(run.output).not.toContain("acme/alpha,");
+    expect(run.output).toContain('lists "acme/alpha" more than once');
   });
 
   it("fails when the declaration installs something the registry does not stand behind", () => {
@@ -700,7 +731,7 @@ describe("the in-image integration verification", () => {
         ],
       }),
     );
-    expect(run.output).toContain("agree on 1 integrations Marfa ships");
+    expect(run.output).toContain("all 1 declared integrations are listed");
     expect(run.code).toBe(0);
   });
 
@@ -727,7 +758,7 @@ describe("the in-image integration verification", () => {
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("no registry at");
-    expect(run.output).toContain("did not travel with them");
+    expect(run.output).toContain("carried no registry");
   });
 
   it("fails on a registry it cannot read as a listing", () => {
@@ -788,6 +819,22 @@ describe("the in-image integration verification", () => {
     expect(run.code).toBe(1);
     expect(run.output).toContain("other than a bare import specifier");
     expect(run.output).toContain("acme/beta");
+  });
+
+  it("accepts an entry whose kit import moved into a chunk", () => {
+    // esbuild splits an ESM build the moment a package grows a second
+    // entry, and the entry file then carries no specifier at all. Judging
+    // the entry alone would refuse a correctly built integration and send
+    // its author looking for an inlined kit that is not there.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!split"],
+        fixture: true,
+      }),
+    );
+    expect(run.output).toContain("runtime kit is external to all 1");
+    expect(run.code).toBe(0);
   });
 
   it("does not ask a manifest-only entry to import the kit", () => {

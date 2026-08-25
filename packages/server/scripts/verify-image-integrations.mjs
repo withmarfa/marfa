@@ -9,9 +9,13 @@
  * here. What stops that being an accident is the declaration itself, which
  * refuses to read as empty unless it says `none` in so many words.
  *
- * Plain Node, ESM, node: builtins only, and one sibling module. It runs
- * inside the runtime image, where there is no tsx and no monorepo;
- * everything it needs must resolve from the image's own filesystem.
+ * Plain Node and ESM, running inside the runtime image where there is no
+ * tsx and no monorepo, so everything it needs must resolve from the
+ * image's own filesystem. Beyond node: builtins that means one sibling
+ * module, `@withmarfa/shared` through it, and two of the server's own
+ * built entries, `dist/load-manifests.js` and `dist/client-manifests.js`.
+ * All of them are there because the deploy prune keeps the server's
+ * production dependencies and the build emits those entries by name.
  *
  * Six checks, in order:
  *
@@ -29,17 +33,18 @@
  *      an integration losing its handler, which shrinks the dispatchable
  *      set without changing how many directories there are.
  *
- *   2. The declared set is what the registry says Marfa ships. The image
- *      build has withmarfa/integrations checked out, so it holds both
- *      halves of a coupling that otherwise agrees only by attention: the
- *      registry lists what is installable and marks the shorter set hosted
- *      Marfa stands behind, and this declaration says what this image
- *      actually stages. A contributor who adds a registry entry and no
- *      declaration line ships nothing, with nothing red anywhere, and the
- *      first report is somebody asking why an integration they can see
- *      does not install. It also makes `shippedByMarfa` a checked claim
+ *   2. Everything installed is listed, and marked as something Marfa
+ *      stands behind. The image build has withmarfa/integrations checked
+ *      out, so it holds both halves of a coupling that otherwise agrees
+ *      only by attention, and it makes `shippedByMarfa` a checked claim
  *      rather than an assertion about a repository the registry cannot
  *      see.
+ *
+ *      One direction, deliberately. Installing a subset is a supported
+ *      shape, so an entry marked shipped that this image does not install
+ *      is not a fault here. That the set is complete is a property of the
+ *      Marfa repository rather than of the image, and `image-build.yml`
+ *      checks it where only our own builds run.
  *
  *   3. The runtime kit stayed external to every staged bundle. Each entry
  *      must resolve `@withmarfa/runtime-sdk` and `@withmarfa/shared` upward
@@ -278,22 +283,29 @@ info(
       : ""),
 );
 
-// Check 2: the declared set is what the registry says Marfa ships.
+// Check 2: everything this image installs is listed, and marked as
+// something Marfa stands behind.
 //
 // The registry lists everything installable and marks the shorter set
 // hosted Marfa stands behind. This image stages the declaration's set. The
 // two are maintained in different repositories and agree today by
 // attention, which is the arrangement this replaces.
 //
-// Equality in both directions, because each direction is a different
-// mistake. A registry entry marked shipped with no declaration line is the
-// contributor trap: the pull request merges, the listing renders, and the
-// image simply does not carry it. A declared name the registry does not
-// mark shipped is the mirror: the image installs something the listing
-// says Marfa does not stand behind.
+// One direction only, and the direction is the whole design. Every declared
+// name has to be listed and marked shipped, because an image installing
+// something the listing does not stand behind is wrong whoever built it.
+//
+// The other direction, that every entry marked shipped is declared, is
+// **not** checked here and must not be. Installing a subset is a supported
+// shape: the declaration's own header tells an operator that removing a
+// line is how they do it, and a self-hosted build of this Dockerfile would
+// then fail on thirteen names in a repository they did not write, with
+// advice they cannot act on. That direction is Marfa's own set being
+// complete, which is a property of this repository rather than of the
+// image, so `image-build.yml` checks it where only our builds run.
 //
 // An entry marked `shippedByMarfa: false` is an ordinary thing to be:
-// listed and nothing more. It belongs in neither set and is not a finding.
+// listed and nothing more. It is not something this image may install.
 function readRegistry(path) {
   let parsed;
   try {
@@ -310,7 +322,8 @@ function readRegistry(path) {
         `what the registry lists.`,
     );
   }
-  const shipped = [];
+  const shipped = new Set();
+  const seen = new Set();
   for (const entry of listed) {
     if (typeof entry?.name !== "string") {
       fail(`${path} holds an entry with no string "name"`);
@@ -321,9 +334,16 @@ function readRegistry(path) {
           `whether this image should install it is unanswerable.`,
       );
     }
-    if (entry.shippedByMarfa) shipped.push(entry.name);
+    // A duplicate is refused rather than deduplicated. Two entries for one
+    // identifier disagree about everything else in the object, and a
+    // membership test cannot see which one it answered from.
+    if (seen.has(entry.name)) {
+      fail(`${path} lists "${entry.name}" more than once`);
+    }
+    seen.add(entry.name);
+    if (entry.shippedByMarfa) shipped.add(entry.name);
   }
-  return shipped.sort();
+  return shipped;
 }
 
 if (!existsSync(REGISTRY)) {
@@ -335,33 +355,24 @@ if (!existsSync(REGISTRY)) {
     fail(
       `no registry at ${REGISTRY}, yet the declaration names ` +
         `${String(declared.length)} integrations. The build staged them from ` +
-        `a checkout whose registry did not travel with them.`,
+        `a checkout that carried no registry.`,
     );
   }
   info(`no integrations checkout and nothing declared; no registry to hold`);
 } else {
   const shipped = readRegistry(REGISTRY);
-  const listedNotDeclared = shipped.filter((name) => !declared.includes(name));
-  if (listedNotDeclared.length > 0) {
-    fail(
-      `the registry marks these shippedByMarfa and ${DECLARATION} does not ` +
-        `declare them: ${listedNotDeclared.join(", ")}. The image would not ` +
-        `carry them, the listing would offer them, and nothing else would ` +
-        `say so. Declare them, or set shippedByMarfa false.`,
-    );
-  }
-  const declaredNotListed = declared.filter((name) => !shipped.includes(name));
-  if (declaredNotListed.length > 0) {
+  const unlisted = declared.filter((name) => !shipped.has(name));
+  if (unlisted.length > 0) {
     fail(
       `${DECLARATION} declares these and the registry does not mark them ` +
-        `shippedByMarfa: ${declaredNotListed.join(", ")}. This image would ` +
-        `install something the listing says Marfa does not stand behind. ` +
-        `Add the registry entry, or stop declaring it.`,
+        `shippedByMarfa: ${unlisted.join(", ")}. This image would install ` +
+        `something the listing says Marfa does not stand behind. Add the ` +
+        `registry entry, or stop declaring it.`,
     );
   }
   info(
-    `the registry and the declaration agree on ${String(shipped.length)} ` +
-      `integrations Marfa ships`,
+    `all ${String(declared.length)} declared integrations are listed and ` +
+      `marked shipped, out of ${String(shipped.size)} the registry marks`,
   );
 }
 
@@ -382,51 +393,79 @@ if (!existsSync(REGISTRY)) {
 //
 // The specifier is what survives. `@withmarfa/runtime-sdk` can appear in
 // emitted JavaScript only as an import or export specifier, so inlining
-// does not mangle it, it removes it.
-const bareSpecifier = (pkg) =>
-  new RegExp(`from\\s*["']${pkg.replaceAll("/", "\\/")}["']`);
-const KIT_PACKAGES = ["@withmarfa/runtime-sdk", "@withmarfa/shared"];
+// does not mangle it, it removes it. Both spellings count, because a
+// dynamic import resolves upward exactly as a static one does.
+const RUNTIME_KIT = "@withmarfa/runtime-sdk";
+const SHARED_KIT = "@withmarfa/shared";
+const bareSpecifier = (pkg) => {
+  const quoted = `["']${pkg.replaceAll("/", "\\/")}["']`;
+  return new RegExp(`(?:from\\s*${quoted}|import\\s*\\(\\s*${quoted})`);
+};
+
+// Every emitted file, not the entry alone. tsup leaves a single-entry
+// package as one file today, and esbuild splits an ESM build the moment a
+// package grows a second entry: the imports move into a chunk and the entry
+// becomes a re-export carrying no specifier at all. Judging the entry alone
+// would then refuse a correctly built integration and send its author
+// looking for an inlined kit that is not there.
+function emittedFiles(dir) {
+  const files = [];
+  for (const entry of readdirSync(dir, {
+    withFileTypes: true,
+    recursive: true,
+  })) {
+    if (entry.isFile() && entry.name.endsWith(".js")) {
+      files.push(resolve(entry.parentPath, entry.name));
+    }
+  }
+  return files;
+}
 
 for (const staged of [
-  ...entries.map((e) => ({
-    name: e.name,
-    file: e.localJs,
-    dispatchable: true,
-  })),
-  ...manifestOnly.map((e) => ({
-    name: e.name,
-    file: e.entryJs,
-    dispatchable: false,
-  })),
+  ...entries.map((e) => ({ name: e.name, dispatchable: true })),
+  ...manifestOnly.map((e) => ({ name: e.name, dispatchable: false })),
 ]) {
-  const text = readFileSync(staged.file, "utf8");
+  const dist = resolve(INTEGRATIONS_ROOT, staged.name, "dist");
+  // At least one, because check 1 has already required an entry file by
+  // name for whichever shape this is.
+  const files = emittedFiles(dist);
+  const texts = files.map((file) => ({
+    file,
+    text: readFileSync(file, "utf8"),
+  }));
 
-  // A dispatchable entry registers handlers, and the only way to register
-  // one is through the kit, so the specifier missing means the kit was
-  // inlined rather than that the entry had no use for it. An entry that
-  // genuinely registers nothing is a manifest-only integration that did not
-  // say so, which the declaration has a marker for and this refuses in the
-  // same breath.
-  if (staged.dispatchable && !bareSpecifier(KIT_PACKAGES[0]).test(text)) {
+  // A dispatchable integration registers handlers, and the only way to
+  // register one is through the kit, so the specifier missing from every
+  // emitted file means the kit was inlined rather than that the package had
+  // no use for it. One that genuinely registers nothing is a manifest-only
+  // integration that did not say so, which the declaration has a marker for
+  // and this refuses in the same breath.
+  if (
+    staged.dispatchable &&
+    !texts.some(({ text }) => bareSpecifier(RUNTIME_KIT).test(text))
+  ) {
     fail(
-      `${staged.name} staged a dispatchable ${basename(staged.file)} with no ` +
-        `bare "${KIT_PACKAGES[0]}" import. Either its build inlined the kit, ` +
-        `in which case its handlers register into a copy nothing dispatches ` +
-        `from, or it registers no handlers at all and is manifest-only.`,
+      `${staged.name} staged a dispatchable dist/ with no bare ` +
+        `"${RUNTIME_KIT}" import in any of its ${String(files.length)} ` +
+        `emitted files. Either its build inlined the kit, in which case its ` +
+        `handlers register into a copy nothing dispatches from, or it ` +
+        `registers no handlers at all and is manifest-only.`,
     );
   }
 
-  // And whichever of the two a bundle mentions, it mentions as a bare
-  // specifier. This is the weaker half: a kit package inlined cleanly
-  // leaves nothing behind to catch, so what this refuses is the partial
-  // case, where the name survives somewhere the import statement did not.
-  for (const pkg of KIT_PACKAGES) {
-    if (text.includes(pkg) && !bareSpecifier(pkg).test(text)) {
-      fail(
-        `${staged.name}'s ${basename(staged.file)} names "${pkg}" in some ` +
-          `form other than a bare import specifier, which is what a ` +
-          `partially inlined kit looks like from outside.`,
-      );
+  // And whichever of the two a file mentions, it mentions as a specifier.
+  // This is the weaker half: a kit package inlined cleanly leaves nothing
+  // behind to catch, so what this refuses is the partial case, where the
+  // name survives somewhere the import statement did not.
+  for (const { file, text } of texts) {
+    for (const pkg of [RUNTIME_KIT, SHARED_KIT]) {
+      if (text.includes(pkg) && !bareSpecifier(pkg).test(text)) {
+        fail(
+          `${staged.name}'s ${basename(file)} names "${pkg}" in some form ` +
+            `other than a bare import specifier, which is what a partially ` +
+            `inlined kit looks like from outside.`,
+        );
+      }
     }
   }
 }
