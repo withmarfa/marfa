@@ -256,7 +256,15 @@ describe.skipIf(!isPg || !url)("pg CoordinationStore endpoint choice", () => {
       // outlive the client that took it. Then the holder is an orphan no
       // release will ever reach, and a job elected once per process — the
       // reactive-run drainer — never starts on any later instance.
-      expect(sessionReserves).toBe(1);
+      //
+      // The count is deliberately not pinned. A reservation can be destroyed
+      // rather than queued, so `reserveWithin` gives the first ask a short
+      // probe and the rest of the budget to a second one, and an ordinary
+      // busy moment is enough to reach that second ask. Which endpoint was
+      // asked is the property under test; how many times it took is the
+      // machine's mood, and asserting it fails a correct branch on a loaded
+      // runner.
+      expect(sessionReserves).toBeGreaterThanOrEqual(1);
       expect(pooledReserves).toBe(0);
     } finally {
       await pooled.close();
