@@ -34,6 +34,33 @@ interface SignInLinkFailedParams {
    *  or timed out). `signup_closed` is the magic-link plugin refusing to
    *  create an account on an instance that has sign-up switched off. */
   reason?: "expired" | "signup_closed";
+  /**
+   * The host this instance answers as, named in the sign-up-closed copy.
+   *
+   * Taken from the configured base URL rather than the request, because the
+   * request's host is whatever the client sent and this string is rendered
+   * back to them. Omitted when that is not configured, and the copy then
+   * reads as it did before rather than naming a host it is guessing at.
+   */
+  host?: string;
+}
+
+/**
+ * The host this instance answers as, or undefined when it is not configured.
+ *
+ * Read from the configured base URL rather than the request, because the
+ * request's host is client-supplied and this value is rendered back to the
+ * client. A malformed value yields nothing rather than throwing on an error
+ * page, which is the one place a second failure is least welcome.
+ */
+export function configuredHost(): string | undefined {
+  const raw = process.env.MARFA_AUTH_BASE_URL;
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).host || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Renders the dead-sign-in-link page as a full HTML document. */
@@ -42,12 +69,23 @@ export function renderSignInLinkFailedPage(
 ): string {
   if (params.reason === "signup_closed") {
     const title = "This space isn't open for new accounts";
+    // Naming the host is the whole of this copy's job beyond the refusal.
+    // The refusal itself stays deliberately silent about whether the address
+    // has an account, so that sign-in cannot be used to discover which
+    // addresses exist, and naming the host leaks nothing the address bar does
+    // not already show. What it fixes is the reading: an account holder on
+    // another instance sees a message that appears to be about their account
+    // rather than about which server they are on, and goes looking for a
+    // problem that is not theirs.
+    const where = params.host
+      ? `Sign-in links on ${escapeHtml(params.host)} only work for accounts that already exist there`
+      : "Sign-in links only work for accounts that already exist here";
     return renderAuthLayout({
       title,
       bodyHtml: `
     ${confirmIcon("alert")}
     <h1 class="title">${title}</h1>
-    <p class="sub" role="alert">Sign-in links only work for accounts that already exist here, and this space isn't accepting new ones. If you should have an account, ask whoever runs this space.</p>
+    <p class="sub" role="alert">${where}, and this space isn't accepting new ones. An account on a different Marfa server won't work here. If you should have an account, ask whoever runs this space.</p>
   `,
       centered: true,
     });

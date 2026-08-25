@@ -12,7 +12,7 @@
  * via the `renderAuthLayout` helper.
  */
 
-import type { ParsedScope } from "@withmarfa/shared";
+import type { OidcScope, ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { capabilityLabel } from "./capability-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
@@ -49,15 +49,40 @@ const ERROR_MESSAGES: Record<string, string> = {
 /**
  * Friendly, second-person labels for the standard OIDC literals. The OIDC
  * spec carries no human description, and a raw `openid` literal reads as
- * noise on a consent screen — so the device renderer owns this mapping
- * rather than depending on the caller threading one in. Kept short and
- * plain to match the tone of the type-registry descriptions.
+ * noise on a consent screen, so the device renderer owns this mapping rather
+ * than depending on the caller threading one in. Kept short and plain to
+ * match the tone of the type-registry descriptions.
+ *
+ * Keyed by `OidcScope` rather than by `string`, so a literal added to the
+ * union without a label here fails the build. As a `Record<string, string>`
+ * it silently fell back to the raw literal, and `offline_access` sat on the
+ * device-approval screen between two sentences reading exactly like that:
+ * "Confirm who you are", "offline_access", "See your basic profile". The
+ * test that was meant to catch it asserted on the two literals somebody
+ * thought of, which is why a type is doing this job now instead.
  */
-const OIDC_FRIENDLY_LABELS: Record<string, string> = {
+const OIDC_FRIENDLY_LABELS: Record<OidcScope, string> = {
   openid: "Confirm who you are",
   profile: "See your basic profile",
   email: "See your email address",
+  // The refresh token. Named for what it buys the person rather than what
+  // it is, since nobody approving a sign-in is deciding about token
+  // lifetimes; they are deciding whether this stays signed in.
+  offline_access: "Stay signed in",
 };
+
+/**
+ * The label for an OIDC literal, or undefined for a string that is not one.
+ *
+ * The map is keyed by the union so the build catches a missing entry, but a
+ * parsed scope carries a plain string, and asserting it into the union here
+ * would trade the runtime fallback for a lie. Widening on read keeps both:
+ * the completeness check above, and a caller that still handles a literal
+ * this build does not know.
+ */
+function oidcLabel(literal: string): string | undefined {
+  return (OIDC_FRIENDLY_LABELS as Record<string, string | undefined>)[literal];
+}
 
 /**
  * Resolve the human-readable description for a parsed scope, deduped across
@@ -87,7 +112,7 @@ function describeCapabilities(
         : `${s.typePattern}:${s.operation}`;
     const human =
       s.kind === "oidc"
-        ? (OIDC_FRIENDLY_LABELS[s.oidcScope ?? s.typePattern] ?? literal)
+        ? (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
         : s.kind === "capability"
           ? (capabilityLabel(s.typePattern) ?? literal)
           : (descriptions?.[s.typePattern] ?? literal);

@@ -156,6 +156,28 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).not.toContain("openid:none");
   });
 
+  it("labels every OIDC literal, not only the ones anyone thought to test", () => {
+    // The earlier version of the test above named `openid` and `email`, so
+    // `offline_access` shipped with no label and rendered as itself on the
+    // approval screen, in a list otherwise made of sentences. The map is
+    // keyed by the union now, so the build catches a missing entry, and this
+    // covers the rendering rather than the map.
+    const literals = ["openid", "profile", "email", "offline_access"] as const;
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      scopes: literals.map((l) => ({
+        typePattern: l,
+        operation: "none" as const,
+        kind: "oidc" as const,
+        oidcScope: l,
+      })),
+    });
+    for (const literal of literals) {
+      expect(html).not.toContain(`>${literal}<`);
+    }
+    expect(html).toContain("Stay signed in");
+  });
+
   it("dedupes human labels across multiple scopes (no repeated lines)", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,

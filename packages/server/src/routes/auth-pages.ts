@@ -40,7 +40,10 @@ import {
 } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
-import { renderSignInLinkFailedPage } from "./sign-in-link-page.js";
+import {
+  renderSignInLinkFailedPage,
+  configuredHost,
+} from "./sign-in-link-page.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
 import { renderKeysPage, type KeysPageKey } from "./keys-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
@@ -866,6 +869,7 @@ export function authRoutes(
             verifyError === "new_user_signup_disabled"
               ? "signup_closed"
               : "expired",
+          host: configuredHost(),
         }),
         400,
       );
