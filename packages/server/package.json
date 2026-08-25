@@ -31,7 +31,8 @@
     "smoke:worker-entry": "tsx scripts/smoke-worker-entry.ts",
     "smoke:boot": "bash scripts/with-temp-pg.sh tsx scripts/smoke-boot.ts",
     "ui:viewer": "tsx scripts/ui-viewer.ts",
-    "manifest-lock:generate": "tsx scripts/generate-manifest-lock.ts"
+    "manifest-lock:generate": "tsx scripts/generate-manifest-lock.ts",
+    "surface-lock:generate": "tsx scripts/generate-surface-lock.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1113.0",
