@@ -32,7 +32,7 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
 export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   name: "google/calendar",
-  version: "0.3.0",
+  version: "0.4.0",
   manifest_schema_version: "2.0.0",
   configuration_schema: {
     write_family: {
@@ -57,7 +57,7 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
         "Push-notification receipt URL the watch channel registers against.",
     },
   },
-  publisher: "google",
+  publisher: "marfa",
   description:
     "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",

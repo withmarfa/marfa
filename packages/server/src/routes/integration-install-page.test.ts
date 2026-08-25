@@ -22,7 +22,7 @@ const BASE_PARAMS = {
   integrationId: "intg_123",
   manifestName: "Google Calendar",
   manifestVersion: "1.0.0",
-  publisher: "withmarfa",
+  publisher: "marfa",
   summary: "Keep your events in sync.",
   direction: "both" as const,
   manifest: BASE_MANIFEST,

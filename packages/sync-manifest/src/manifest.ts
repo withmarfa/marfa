@@ -36,9 +36,9 @@ import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
   name: "marfa/sync",
-  version: "0.2.0",
+  version: "0.3.0",
   manifest_schema_version: "2.0.0",
-  publisher: "withmarfa",
+  publisher: "marfa",
   description:
     "Local file-sync client. Watches configured roots on disk; the items it writes belong to you and are editable like anything you create. Installs as a connection so it gets credentials, configuration, and observability the same way integrations do.",
   direction: "both",
