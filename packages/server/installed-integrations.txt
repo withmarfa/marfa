@@ -41,6 +41,14 @@
 # withmarfa/integrations can see what that repository holds, so the build
 # is where the two are held in agreement.
 #
+# The same build holds this list to that repository's registry, which is
+# the other half of the same problem. The registry lists what is
+# installable and marks the shorter set hosted Marfa stands behind, and
+# this file has to name exactly that set. Adding a registry entry marked
+# shipped and forgetting this file is otherwise silent: the pull request
+# merges there, the listing offers the integration, and the image simply
+# does not carry it.
+#
 # The scaffold there is absent deliberately. It is a starting point for
 # authors rather than an integration, and nothing installs it.
 #

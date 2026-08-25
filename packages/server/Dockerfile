@@ -140,6 +140,30 @@ RUN set -euf; \
       cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
       echo "staged $name"; \
     done
+# The registry the staged integrations came from, so the verification can
+# hold the declaration and `shippedByMarfa` to each other. Both halves of
+# that coupling exist only here: the registry lives in the other repository
+# and cannot see this declaration, and this declaration cannot see the
+# registry. The image keeps the file alongside the declaration and the pin,
+# where it is also a record of what the build was listing.
+#
+# Staged into a directory rather than copied to a path of its own, because
+# a deployment declaring `none` has no checkout and so no registry, and the
+# runtime stage's COPY has to work either way: an absent file fails a COPY
+# and an empty directory does not.
+# Guarded on the checkout rather than on the file, so the two causes stay
+# apart: no checkout is the `none` deployment and is fine, while a checkout
+# that carries no registry is a repository that moved the file and is a
+# fault worth naming here rather than three steps later.
+RUN set -eu; \
+    mkdir -p /integrations-meta; \
+    if [ -d integrations-src ]; then \
+      if [ ! -f integrations-src/registry.json ]; then \
+        echo "ERROR: integrations-src has no registry.json" >&2; \
+        exit 1; \
+      fi; \
+      cp integrations-src/registry.json /integrations-meta/registry.json; \
+    fi
 # The dispatch fixture, staged outside the integrations root because it is
 # not something a deployment installed: what is in that root is the
 # declared set, and this is the fixture the in-image verification
@@ -188,6 +212,10 @@ COPY --from=build --chown=node:node /repo/packages/server/installed-integrations
 # And the commit they were built from, so a running container is traceable
 # to its source rather than only to its own set of names.
 COPY --from=build --chown=node:node /repo/packages/server/integrations-ref.txt ./integrations-ref.txt
+# And the registry that commit listed, which is what makes `shippedByMarfa`
+# a checked claim rather than an assertion about a repository nothing here
+# can read.
+COPY --from=build --chown=node:node /integrations-meta ./integrations-meta
 COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
 COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs
@@ -198,9 +226,11 @@ RUN printf '{"sha":"%s"}\n' "$VERSION_SHA" > version.json \
   && chown -R node:node /app
 USER node
 # An image carrying integrations other than the ones it declares, or in a
-# shape it did not declare, or whose entries cannot load, or whose module
-# resolution duplicates the runtime-sdk singleton, fails to build here
-# rather than booting a wrong substrate in production.
+# shape it did not declare, or ones the registry does not mark as shipped,
+# or a bundle that inlined the runtime kit rather than leaving it external,
+# or entries the catalog loader refuses, or module resolution that
+# duplicates the runtime-sdk singleton, fails to build here rather than
+# booting a wrong substrate in production.
 #
 # The dispatch fixture is removed in the same step, so nothing running in
 # the container can mistake it for an installed integration. It is a

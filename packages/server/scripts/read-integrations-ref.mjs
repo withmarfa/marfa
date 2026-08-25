@@ -10,8 +10,12 @@
  *
  * So this refuses everything that is not exactly one full commit SHA. The
  * sibling declaration parser exists for the same reason and this file is
- * shaped after it: plain Node, ESM, node: builtins only, printing its one
- * result so a workflow step can consume it.
+ * shaped after it: plain Node, ESM, printing its one result so a workflow
+ * step can consume it.
+ *
+ * This one really is builtins-only, and unlike its sibling it has to be: a
+ * workflow step runs it before `pnpm install`, so nothing but Node is there
+ * to resolve an import against.
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";

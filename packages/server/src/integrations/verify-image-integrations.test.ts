@@ -44,13 +44,57 @@ afterEach(() => {
  * The smallest export the verification accepts as a manifest, which is the
  * same three fields the server's catalog loader requires. Writing less than
  * this would make every fixture fail for the wrong reason.
+ *
+ * A dispatchable entry also carries the bare kit import a real bundle
+ * carries, because a real one always does: registering a handler is the
+ * only thing a `dist/local.js` is for, and the only way to register one is
+ * through the kit. An entry written without it is the inlined-bundle case
+ * rather than a smaller version of the same thing.
  */
-function manifestSource(name: string): string {
-  return `export const manifest = ${JSON.stringify({
+function manifestSource(
+  name: string,
+  options: { kit?: "bare" | "none" | "partial" } = {},
+): string {
+  const manifest = `export const manifest = ${JSON.stringify({
     manifest_schema_version: "2.0.0",
     name,
     version: "1.0.0",
   })};\n`;
+  switch (options.kit ?? "none") {
+    case "bare":
+      // Resolves upward to the scratch root's node_modules, which is the
+      // arrangement the image has and the whole reason the specifier must
+      // stay bare.
+      return `import { registerScheduleHandler } from "@withmarfa/runtime-sdk";\nregisterScheduleHandler(() => ({ ok: true }));\n${manifest}`;
+    case "partial":
+      // The name survives somewhere the import statement did not, which is
+      // what a half-inlined bundle looks like from outside.
+      return `// bundled from node_modules/@withmarfa/runtime-sdk/dist/index.js\nconst registerScheduleHandler = () => {};\nregisterScheduleHandler();\n${manifest}`;
+    default:
+      return manifest;
+  }
+}
+
+/**
+ * The kit packages, written into the scratch root so a staged entry's bare
+ * specifier resolves upward the way it does from `/app/integrations` to
+ * `/app/node_modules`. Staging a copy beside an entry instead is the
+ * failure that arrangement exists to prevent, so the fixture has to have
+ * the arrangement for the entries to mean anything.
+ */
+function writeKitPackages(root: string): void {
+  for (const pkg of ["runtime-sdk", "shared"]) {
+    const dir = join(root, "node_modules", "@withmarfa", pkg);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "package.json"),
+      `{"name":"@withmarfa/${pkg}","type":"module","main":"index.js"}\n`,
+    );
+    writeFileSync(
+      join(dir, "index.js"),
+      "export const registerScheduleHandler = () => {};\n",
+    );
+  }
 }
 
 /** How the stand-in worker answers a dispatch. */
@@ -62,6 +106,27 @@ interface Image {
   fixtureRoot: string;
   workerEntry: string;
   clientManifests: string;
+  registry: string;
+  loadManifests: string;
+}
+
+/** A registry entry, as `registry.json` in the integrations repository
+ *  carries it. `shippedByMarfa` is the field the declaration is held to. */
+interface RegistryEntry {
+  name: string;
+  shippedByMarfa: boolean;
+}
+
+/**
+ * The names a declaration line list actually declares, which is what the
+ * default registry mirrors. Written the way the parser reads it rather than
+ * assumed, so a case passing a marker or a comment still gets a registry
+ * that agrees with it.
+ */
+function declaredNames(lines: string[]): string[] {
+  return lines
+    .map((line) => line.replace(/#.*$/, "").trim().split(/\s+/)[0] ?? "")
+    .filter((name) => name.length > 0 && name !== "none");
 }
 
 /**
@@ -112,6 +177,23 @@ function image(options: {
   clientsUnresolvable?: boolean;
   /** The entry loads but exports no CLIENT_MANIFESTS. */
   clientsBare?: boolean;
+  /**
+   * The registry the integrations were staged from. Defaults to one entry
+   * per declared name, all `shippedByMarfa`, so a case that says nothing
+   * about the registry still runs the check rather than skipping it.
+   * `null` writes no registry at all, which is what a build with no
+   * integrations checkout leaves behind.
+   */
+  registry?: RegistryEntry[] | null;
+  /** Written verbatim in place of the registry, for the malformed cases. */
+  registryText?: string;
+  /** Manifest names the stand-in loader refuses, as the real one refuses a
+   *  manifest that fails validation. */
+  invalidManifests?: string[];
+  /** The loader entry imports a package that is not installed. */
+  loaderUnresolvable?: boolean;
+  /** The loader entry loads and exports nothing callable. */
+  loaderBare?: boolean;
 }): Image {
   scratchRoot = mkdtempSync(join(tmpdir(), "marfa-verify-image-"));
   // The staged entries are ESM `.js`, which in a real image resolves
@@ -119,6 +201,7 @@ function image(options: {
   // than renaming the fixtures, so the import path under test is the one
   // the image takes.
   writeFileSync(join(scratchRoot, "package.json"), '{"type":"module"}\n');
+  writeKitPackages(scratchRoot);
 
   const integrationsRoot = join(scratchRoot, "integrations");
   mkdirSync(integrationsRoot, { recursive: true });
@@ -129,11 +212,44 @@ function image(options: {
     if (shape === "empty") continue;
     const dist = join(dir, "dist");
     mkdirSync(dist, { recursive: true });
-    const manifestOnly = shape === "manifest" || shape === "bare-manifest";
+    const manifestOnly =
+      shape === "manifest" ||
+      shape === "bare-manifest" ||
+      shape === "manifest-partial";
     const bare = shape === "bare" || shape === "bare-manifest";
+    // A manifest-only entry imports nothing: its source is a manifest and
+    // a type-only import, and the type is erased before the bundler runs.
+    const kit =
+      shape === "manifest-partial"
+        ? "partial"
+        : manifestOnly || shape === "inlined"
+          ? "none"
+          : "bare";
+    // The misfiled shape stages an entry whose manifest names an
+    // integration other than the directory holding it.
+    const declaresName = shape === "misfiled" ? `other/${name ?? raw}` : name;
+    if (shape === "split") {
+      // What esbuild emits once a package has more than one entry: the
+      // imports move into a chunk and the entry becomes a re-export.
+      writeFileSync(
+        join(dist, "chunk-ABCDEFGH.js"),
+        manifestSource(name ?? raw, { kit: "bare" }),
+      );
+      writeFileSync(
+        join(dist, "local.js"),
+        'export { manifest } from "./chunk-ABCDEFGH.js";\n',
+      );
+      continue;
+    }
     writeFileSync(
       join(dist, manifestOnly ? "manifest.js" : "local.js"),
-      bare ? "export const somethingElse = 1;\n" : manifestSource(name ?? raw),
+      bare
+        ? `${
+            manifestOnly
+              ? ""
+              : 'import { registerScheduleHandler } from "@withmarfa/runtime-sdk";\nregisterScheduleHandler(() => ({ ok: true }));\n'
+          }export const somethingElse = 1;\n`
+        : manifestSource(declaresName ?? raw, { kit }),
     );
   }
 
@@ -149,7 +265,7 @@ function image(options: {
     mkdirSync(dist, { recursive: true });
     writeFileSync(
       join(dist, "local.js"),
-      manifestSource("acme/dispatch-fixture"),
+      manifestSource("acme/dispatch-fixture", { kit: "bare" }),
     );
   }
 
@@ -192,12 +308,88 @@ parentPort.on("message", () => {
         : clientManifestsSource(options.clients ?? ["marfa/sync"]),
   );
 
+  // The registry the build staged from, which in an image is copied out of
+  // the integrations checkout. Absent when the build had no checkout.
+  const registry = join(scratchRoot, "registry.json");
+  if (options.registryText !== undefined) {
+    writeFileSync(registry, options.registryText);
+  } else if (options.registry !== null) {
+    const entries =
+      options.registry ??
+      declaredNames(options.declared).map((name) => ({
+        name,
+        shippedByMarfa: true,
+      }));
+    writeFileSync(registry, `${JSON.stringify({ integrations: entries })}\n`);
+  }
+
+  // A stand-in for the built dist/load-manifests.js, mirroring the real
+  // loader's shape: the same entry candidates, the same duck-typed export
+  // search, the same skip-with-a-reason rather than a throw. What it does
+  // not do is validate, which is the one thing a scratch tree cannot
+  // exercise cheaply; `invalidManifests` stands in for a validation
+  // refusal, and load-manifests.test.ts covers the real one.
+  const loadManifests = join(scratchRoot, "load-manifests.js");
+  const invalid = JSON.stringify(options.invalidManifests ?? []);
+  writeFileSync(
+    loadManifests,
+    options.loaderUnresolvable === true
+      ? 'export { loadInTreeManifests } from "@withmarfa/not-installed";\n'
+      : options.loaderBare === true
+        ? "export const somethingElse = 1;\n"
+        : `import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+const INVALID = new Set(${invalid});
+const looksLikeManifest = (v) =>
+  typeof v === "object" && v !== null &&
+  "manifest_schema_version" in v && "name" in v && "version" in v;
+export async function loadInTreeManifests({ integrationsRoot, integrationDirs }) {
+  const manifests = [];
+  const skipped = [];
+  for (const dirName of integrationDirs) {
+    let entryPath;
+    for (const candidate of ["local.js", "manifest.js"]) {
+      const p = resolve(integrationsRoot, dirName, "dist", candidate);
+      if (existsSync(p)) { entryPath = p; break; }
+    }
+    if (!entryPath) {
+      skipped.push({ dirName, reason: "no built manifest entry" });
+      continue;
+    }
+    let mod;
+    try {
+      mod = await import(pathToFileURL(entryPath).href);
+    } catch (err) {
+      skipped.push({ dirName, reason: \`import failed: \${String(err)}\` });
+      continue;
+    }
+    const raw = looksLikeManifest(mod.manifest)
+      ? mod.manifest
+      : Object.values(mod).find(looksLikeManifest);
+    if (raw === undefined) {
+      skipped.push({ dirName, reason: "no manifest export found" });
+      continue;
+    }
+    if (INVALID.has(raw.name)) {
+      skipped.push({ dirName, reason: "manifest failed validation: publisher: Required" });
+      continue;
+    }
+    manifests.push({ name: raw.name, dirName, manifest: raw });
+  }
+  return { manifests, skipped };
+}
+`,
+  );
+
   return {
     integrationsRoot,
     declaration,
     fixtureRoot,
     workerEntry,
     clientManifests,
+    registry,
+    loadManifests,
   };
 }
 
@@ -218,6 +410,8 @@ function verify(img: Image, overrides: Record<string, string> = {}): Run {
         MARFA_VERIFY_FIXTURE_ROOT: img.fixtureRoot,
         MARFA_VERIFY_WORKER_ENTRY: img.workerEntry,
         MARFA_VERIFY_CLIENT_MANIFESTS: img.clientManifests,
+        MARFA_VERIFY_INTEGRATIONS_REGISTRY: img.registry,
+        MARFA_VERIFY_LOAD_MANIFESTS: img.loadManifests,
         ...overrides,
       },
     });
@@ -242,7 +436,9 @@ describe("the in-image integration verification", () => {
     );
     expect(run.output).toContain("2 declared integrations all installed");
     expect(run.output).toContain("1 dispatchable");
-    expect(run.output).toContain("all entries import and export manifests");
+    expect(run.output).toContain("all 2 declared integrations are listed");
+    expect(run.output).toContain("runtime kit is external to all 2");
+    expect(run.output).toContain("all 2 staged manifests load and validate");
     expect(run.output).toContain("PASSED");
     expect(run.code).toBe(0);
   });
@@ -375,7 +571,8 @@ describe("the in-image integration verification", () => {
       }),
     );
     expect(run.code).toBe(1);
-    expect(run.output).toContain("exports no usable manifest");
+    expect(run.output).toContain("the catalog loader refused 1 of 1");
+    expect(run.output).toContain("acme/beta (no manifest export found)");
   });
 
   it("fails when a staged entry exports no manifest", () => {
@@ -387,7 +584,7 @@ describe("the in-image integration verification", () => {
       }),
     );
     expect(run.code).toBe(1);
-    expect(run.output).toContain("exports no usable manifest");
+    expect(run.output).toContain("acme/alpha (no manifest export found)");
   });
 
   it("passes an image that declares it installs nothing", () => {
@@ -463,6 +660,246 @@ describe("the in-image integration verification", () => {
     expect(run.code).toBe(1);
     expect(run.output).toContain("dispatch returned not-ok");
     expect(run.output).toContain("duplicate copy");
+  });
+
+  // Check 2: the declaration and the registry, which live in different
+  // repositories and until now agreed only by attention.
+  it("passes an image that installs a subset of what the registry ships", () => {
+    // Installing a subset is a supported shape and the declaration's own
+    // header says so, so a build of this Dockerfile that is not ours must
+    // not fail on names in a repository its operator did not write. The
+    // reverse direction, that our own declaration is complete, is asserted
+    // in the image-build workflow where only our builds run.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: [
+          { name: "acme/alpha", shippedByMarfa: true },
+          { name: "acme/beta", shippedByMarfa: true },
+        ],
+      }),
+    );
+    expect(run.output).toContain("out of 2 the registry marks");
+    expect(run.code).toBe(0);
+  });
+
+  it("fails when a registry lists one identifier twice", () => {
+    // Two entries for one identifier disagree about everything else in the
+    // object, and a membership test cannot see which one it answered from.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: [
+          { name: "acme/alpha", shippedByMarfa: true },
+          { name: "acme/alpha", shippedByMarfa: false },
+        ],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain('lists "acme/alpha" more than once');
+  });
+
+  it("fails when the declaration installs something the registry does not stand behind", () => {
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: [{ name: "acme/alpha", shippedByMarfa: false }],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("does not mark them shippedByMarfa");
+    expect(run.output).toContain("acme/alpha");
+  });
+
+  it("passes a registry entry that is listed and not shipped", () => {
+    // Listed and nothing more is an ordinary thing for an integration to
+    // be, so it belongs in neither set and is not a finding.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: [
+          { name: "acme/alpha", shippedByMarfa: true },
+          { name: "acme/community-thing", shippedByMarfa: false },
+        ],
+      }),
+    );
+    expect(run.output).toContain("all 1 declared integrations are listed");
+    expect(run.code).toBe(0);
+  });
+
+  it("accepts no registry when the deployment installs nothing", () => {
+    // A declaration reading `none` needs no integrations checkout, so
+    // there is no registry to have copied.
+    const run = verify(
+      image({ declared: ["none"], installed: [], registry: null }),
+    );
+    expect(run.output).toContain(
+      "no integrations checkout and nothing declared",
+    );
+    expect(run.code).toBe(0);
+  });
+
+  it("fails on a missing registry when something was declared", () => {
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registry: null,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("no registry at");
+    expect(run.output).toContain("carried no registry");
+  });
+
+  it("fails on a registry it cannot read as a listing", () => {
+    const run = verify(
+      image({
+        declared: ["none"],
+        installed: [],
+        registryText: '{"entries":[]}\n',
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain('has no "integrations" array');
+  });
+
+  it("fails on a registry entry that does not say whether Marfa ships it", () => {
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        registryText: '{"integrations":[{"name":"acme/alpha"}]}\n',
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain('no boolean "shippedByMarfa"');
+    expect(run.output).toContain("acme/alpha");
+  });
+
+  // Check 3: the runtime kit stayed external. Both kit packages hold
+  // module-singleton state, so an inlined copy registers handlers into a
+  // table nothing dispatches from, silently and for one integration only.
+  it("fails when a dispatchable bundle inlined the runtime kit", () => {
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!inlined"],
+        fixture: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain('no bare "@withmarfa/runtime-sdk" import');
+    expect(run.output).toContain("acme/alpha");
+  });
+
+  it("fails when a bundle names the kit somewhere other than an import", () => {
+    // The half-inlined case, and the only shape the weaker of the two
+    // rules has to catch on its own: a dispatchable entry missing the
+    // specifier is already refused by the rule above, so this reaches a
+    // manifest-only entry, which is not required to import anything and so
+    // is judged only on what it does mention. A cleanly inlined package
+    // leaves nothing behind at all, which neither rule can see.
+    const run = verify(
+      image({
+        declared: ["acme/beta manifest-only"],
+        installed: ["acme/beta!manifest-partial"],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("other than a bare import specifier");
+    expect(run.output).toContain("acme/beta");
+  });
+
+  it("accepts an entry whose kit import moved into a chunk", () => {
+    // esbuild splits an ESM build the moment a package grows a second
+    // entry, and the entry file then carries no specifier at all. Judging
+    // the entry alone would refuse a correctly built integration and send
+    // its author looking for an inlined kit that is not there.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!split"],
+        fixture: true,
+      }),
+    );
+    expect(run.output).toContain("runtime kit is external to all 1");
+    expect(run.code).toBe(0);
+  });
+
+  it("does not ask a manifest-only entry to import the kit", () => {
+    // Its source is a manifest and a type-only import, and the type is
+    // erased before the bundler runs, so a real one imports nothing.
+    const run = verify(
+      image({
+        declared: ["acme/beta manifest-only"],
+        installed: ["acme/beta!manifest"],
+      }),
+    );
+    expect(run.output).toContain("runtime kit is external to all 1");
+    expect(run.code).toBe(0);
+  });
+
+  // Check 4: the catalog loader, which at boot skips what it cannot read
+  // and here is not allowed to skip anything.
+  it("fails on a manifest the catalog loader would refuse", () => {
+    // At boot this is one warn line and an integration missing from the
+    // catalog. In an image we build it is the defect.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha"],
+        fixture: true,
+        invalidManifests: ["acme/alpha"],
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("the catalog loader refused 1 of 1");
+    expect(run.output).toContain("manifest failed validation");
+    expect(run.output).toContain("a warn line and an integration missing");
+  });
+
+  it("fails when a manifest names an integration other than its directory", () => {
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!misfiled"],
+        fixture: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("not the manifest's own name");
+    expect(run.output).toContain('acme/alpha declares "other/acme/alpha"');
+  });
+
+  it("fails when the catalog loader cannot be loaded at all", () => {
+    const run = verify(
+      image({
+        declared: ["none"],
+        installed: [],
+        loaderUnresolvable: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("catalog manifest loader could not be loaded");
+  });
+
+  it("fails when the loader entry exports no loadInTreeManifests", () => {
+    const run = verify(
+      image({ declared: ["none"], installed: [], loaderBare: true }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("exports no loadInTreeManifests function");
   });
 
   it("fails when the declaration is not there to read", () => {
