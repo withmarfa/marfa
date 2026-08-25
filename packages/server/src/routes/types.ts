@@ -3,6 +3,7 @@ import {
   MarfaError,
   ErrorCode,
   getTypeSchema,
+  directChildrenOf,
   listTypes,
   TYPE_REGISTRY,
   validateTypeSchema,
@@ -59,7 +60,10 @@ function validateParentChain(
     tooDeep: (maxDepth) =>
       `Inheritance chain exceeds maximum depth of ${String(maxDepth)}`,
     circular: () => "Circular inheritance detected",
-    unknownParent: (parent) => `Parent type "${parent}" not found`,
+    unknownParent: (unresolved, parent) =>
+      unresolved === parent
+        ? `Parent type "${parent}" not found`
+        : `Parent type "${parent}" resolves, but its own ancestor "${unresolved}" does not`,
   });
 }
 
@@ -292,7 +296,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a custom type",
   description:
-    "Removes a custom type registration. Admin-only — core types are immutable. Deletion is rejected if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
+    "Removes a custom type registration. Admin-only — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -302,7 +306,9 @@ const deleteTypeRoute = createRoute({
       force: z
         .enum(["true", "false"])
         .optional()
-        .describe("Delete and orphan existing items when `true`."),
+        .describe(
+          "Delete and orphan existing items when `true`. Has no effect on the subtype check.",
+        ),
     }),
   },
   responses: {
@@ -333,10 +339,10 @@ const deleteTypeRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_in_use"]),
+          schema: makeErrorResponseSchema(["type_in_use", "type_has_subtypes"]),
         },
       },
-      description: "Type in use",
+      description: "Type still has subtypes, or items",
     },
   },
 });
@@ -618,6 +624,30 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     const existing = getTypeSchema(id, spaceId);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+    }
+
+    // Checked before the items refusal, and outside `force`, because this
+    // one cannot be forced past. Reporting the forcible obstruction first
+    // would send a caller round again to meet the one that stops them.
+    //
+    // Refusing rather than repairing the children is the deliberate choice.
+    // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
+    // subtree query finds its items. Flattening the inherited fields down
+    // would keep the field names and lose that, changing the child's meaning
+    // as a side effect of a command naming a different type, and it would
+    // have to either bypass or silently satisfy the version bump that
+    // `PUT /types/:id` requires for a parent change.
+    const subtypes = directChildrenOf(id, spaceId);
+    if (subtypes.length > 0) {
+      throw new MarfaError(
+        ErrorCode.TYPE_HAS_SUBTYPES,
+        `Type "${id}" cannot be deleted while ${subtypes
+          .map((subtype) => `"${subtype}"`)
+          .join(
+            ", ",
+          )} ${subtypes.length === 1 ? "inherits" : "inherit"} from it. Delete ${subtypes.length === 1 ? "it" : "them"} first, or give ${subtypes.length === 1 ? "it" : "each"} a different parent with PUT /types/{id}. This is not what ?force=true covers, which is existing items.`,
+        { subtype_ids: subtypes },
+      );
     }
 
     const { force } = c.req.valid("query");

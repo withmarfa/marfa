@@ -906,3 +906,223 @@ describe("POST /types — publisher-tier handle ownership", () => {
     expect(res.status).toBe(201);
   });
 });
+
+/**
+ * Deleting a type used to ask only whether items of it existed. A type that
+ * another type inherited from went quietly: the parent left the registry, the
+ * child kept a `parent` pointing at nothing, and every later read of the child
+ * returned fewer fields than the day before. Nothing threw, because the
+ * upward walk stops at an ancestor that does not resolve rather than
+ * erroring, so the only visible event was a successful delete.
+ */
+describe("DELETE /types/:id — a type another type inherits from", () => {
+  // Each case builds its own pair under its own ids. Sharing one across the
+  // block would make every case after the first depend on the refusal in the
+  // one before it, so running any of them alone, or reordering them, would
+  // fail on the fixture rather than on the thing it pins.
+  async function pair(
+    suffix: string,
+  ): Promise<{ parent: string; child: string }> {
+    const parent = `acme.del_parent_${suffix}`;
+    const child = `acme.del_child_${suffix}`;
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: parent, ...baseType },
+    });
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: child,
+        version: 1,
+        parent,
+        fields: { extra: { type: "string" } },
+      },
+    });
+    return { parent, child };
+  }
+
+  async function resolvedFieldNames(id: string): Promise<string[]> {
+    const res = await request(ctx.app, "GET", `/types/${id}`, {
+      key: ctx.adminKey,
+    });
+    const body = (await res.json()) as { fields?: Record<string, unknown> };
+    return Object.keys(body.fields ?? {}).sort();
+  }
+
+  it("refuses, names the subtype, and leaves the subtype resolving as before", async () => {
+    const { parent, child } = await pair("plain");
+    const before = await resolvedFieldNames(child);
+    expect(before).toContain("name");
+
+    const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: {
+        code: string;
+        message: string;
+        details?: { subtype_ids?: string[] };
+      };
+    };
+    expect(body.error.code).toBe("type_has_subtypes");
+    expect(body.error.details?.subtype_ids).toEqual([child]);
+
+    // The message has to carry the way out, not only the obstruction.
+    expect(body.error.message).toContain(child);
+    expect(body.error.message).toContain("PUT /types/{id}");
+
+    // The whole point of the refusal: nothing about the child moved.
+    expect(await resolvedFieldNames(child)).toEqual(before);
+  });
+
+  it("is not what force covers, and says so", async () => {
+    const { parent } = await pair("forced");
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      `/types/${parent}?force=true`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_has_subtypes");
+  });
+
+  // Ordering matters: the items refusal can be forced past and this one
+  // cannot, so reporting the forcible one first costs a round trip.
+  it("is reported ahead of the items refusal when both apply", async () => {
+    const { parent } = await pair("both");
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: parent, properties: { name: "an item" } },
+    });
+    const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_has_subtypes");
+  });
+
+  // The remedy the message actually advertises: a different parent, not none.
+  it("goes through once the subtype is given a different parent", async () => {
+    const { parent, child } = await pair("repointed");
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: "acme.del_new_parent", ...baseType },
+    });
+
+    const repoint = await request(ctx.app, "PUT", `/types/${child}`, {
+      key: ctx.adminKey,
+      body: {
+        version: 2,
+        parent: "acme.del_new_parent",
+        fields: { extra: { type: "string" } },
+      },
+    });
+    expect(repoint.status).toBe(200);
+
+    const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+
+    const gone = await request(ctx.app, "GET", `/types/${parent}`, {
+      key: ctx.adminKey,
+    });
+    expect(gone.status).toBe(404);
+
+    // The child followed its new parent rather than being left behind.
+    const moved = await request(ctx.app, "GET", `/types/${child}`, {
+      key: ctx.adminKey,
+    });
+    const body = (await moved.json()) as { parent?: string };
+    expect(body.parent).toBe("acme.del_new_parent");
+  });
+
+  // A grandchild's own chain survives its grandparent, so it is the child
+  // that blocks the delete and only the child that gets named.
+  it("names the immediate subtype and not the one below it", async () => {
+    const { parent, child } = await pair("deep");
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "acme.del_grandchild",
+        version: 1,
+        parent: child,
+        fields: {},
+      },
+    });
+
+    const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { details?: { subtype_ids?: string[] } };
+    };
+    expect(body.error.details?.subtype_ids).toEqual([child]);
+  });
+
+  it("deletes a leaf type with no subtypes", async () => {
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: "acme.del_leaf", ...baseType },
+    });
+    const res = await request(ctx.app, "DELETE", "/types/acme.del_leaf", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * A compiled Zod schema is built from a type's RESOLVED fields, so a change
+ * to a parent invalidates every descendant's compiled schema as well as its
+ * own. Nothing evicted those, and a stale one goes on validating writes
+ * against a shape the type no longer has. Reached here through the write
+ * path, which is what compiles and caches them.
+ */
+describe("a parent's change reaches its descendants' validation", () => {
+  it("stops accepting a write the parent no longer allows", async () => {
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: "acme.cache_parent", version: 1, fields: {} },
+    });
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "acme.cache_child",
+        version: 1,
+        parent: "acme.cache_parent",
+        fields: {},
+      },
+    });
+
+    // Compiles and caches the child's schema, inherited fields and all.
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "acme.cache_child", properties: {} },
+    });
+    expect(first.status).toBe(201);
+
+    // The parent gains a required field. The child inherits it, so a write
+    // omitting it must now be refused rather than served from the schema
+    // compiled a moment ago.
+    const update = await request(ctx.app, "PUT", "/types/acme.cache_parent", {
+      key: ctx.adminKey,
+      body: {
+        version: 2,
+        fields: { mandatory: { type: "string", required: true } },
+      },
+    });
+    expect(update.status).toBe(200);
+
+    const second = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "acme.cache_child", properties: {} },
+    });
+    expect(second.status).toBe(400);
+  });
+});

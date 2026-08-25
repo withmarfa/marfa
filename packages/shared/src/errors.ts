@@ -63,6 +63,16 @@ export enum ErrorCode {
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
   /**
+   * A type cannot be deleted while another type declares it as a parent.
+   * Details carry `subtype_ids`.
+   *
+   * Distinct from `TYPE_IN_USE`, which is about items and can be forced
+   * past. This one cannot: the remedy is to delete the subtype or point it
+   * at a different parent, and a caller told `type_in_use` would reasonably
+   * retry with `force` and meet the same refusal.
+   */
+  TYPE_HAS_SUBTYPES = "type_has_subtypes",
+  /**
    * A credential cannot be removed while a connection that is not
    * revoked still references it. Details carry `connection_ids`.
    */
@@ -334,6 +344,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
+  [ErrorCode.TYPE_HAS_SUBTYPES]: 409,
   [ErrorCode.CREDENTIAL_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
