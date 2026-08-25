@@ -147,19 +147,6 @@ const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * Standard OIDC scope literals surfaced on the consent screen so
- * end-users see what the third-party app is asking for. Mirrors what
- * `/oauth/userinfo` actually returns when each scope is granted. The
- * literal `openid` is the OIDC marker that indicates the client wants an
- * ID token / userinfo lookup; `profile` and `email` gate the field set.
- */
-const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  openid: "Confirm your identity",
-  profile: "Your username, name, bio, and avatar",
-  email: "Your email address",
-};
-
-/**
  * Plain-English descriptions for wildcard patterns. The registry cannot
  * describe these — a wildcard matches types at check time rather than
  * naming one — and the grant covers types that may not exist yet, which
@@ -2455,10 +2442,13 @@ export function authRoutes(
       if (typeEntry?.description) {
         descriptions[s.typePattern] = typeEntry.description;
       } else {
+        // OIDC literals are deliberately absent. `describeCapabilities` in
+        // `device-pages.ts` resolves them from `oidc-labels.ts` and never
+        // reads this map for one, so the entry that used to sit here — the
+        // one claiming `profile` hands over a username and a bio — was
+        // written into a map and then discarded on every render.
         const fallback =
           METADATA_SCOPE_DESCRIPTIONS[s.typePattern] ??
-          // OIDC literals (openid / profile / email).
-          OIDC_SCOPE_DESCRIPTIONS[s.typePattern] ??
           WILDCARD_SCOPE_DESCRIPTIONS[s.typePattern];
         if (fallback) descriptions[s.typePattern] = fallback;
       }

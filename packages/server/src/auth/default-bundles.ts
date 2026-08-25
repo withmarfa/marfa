@@ -203,7 +203,12 @@ export function buildDefaultPermissionBundles(
     {
       id: "profile",
       label: "Your profile",
-      description: "Your name and email.",
+      // Shown only when the group renders no rows of its own; `summarize`
+      // builds the sentence from the toggles otherwise. It still has to
+      // agree with them, and it did not: it said "name and email" while the
+      // toggles said name, picture and email. `profile` returns `name` and
+      // `picture`, `email` returns the address.
+      description: "Your name, picture and email address.",
       scopes: ["openid", "profile", "email"],
       default_on: true,
     },

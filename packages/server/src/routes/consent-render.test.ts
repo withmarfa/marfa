@@ -1,13 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import {
-  renderConsentScreen,
-  SCOPE_LABELS,
-  OIDC_LABELS,
-  SENTENCE_LABELS,
-  humanizeType,
-} from "./consent.js";
+import { renderConsentScreen, SCOPE_LABELS, humanizeType } from "./consent.js";
+import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import {
   CAPABILITY_LABELS,
@@ -183,7 +178,10 @@ describe("renderConsentScreen — soft-tile groups", () => {
         // exact collision `CAPABILITY_LABELS` exists to prevent.
         const label =
           parsed.kind === "oidc"
-            ? OIDC_LABELS[parsed.oidcScope ?? parsed.typePattern]
+            ? OIDC_LABELS[
+                (parsed.oidcScope ??
+                  parsed.typePattern) as keyof typeof OIDC_LABELS
+              ]
             : parsed.kind === "capability"
               ? capabilityLabel(parsed.typePattern)
               : (SCOPE_LABELS[parsed.typePattern] ??
@@ -259,7 +257,12 @@ describe("renderConsentScreen — soft-tile groups", () => {
       ],
     });
     expect(html).toContain("Your profile");
-    expect(html).toContain("<span>Your name</span>");
+    // "Your name and picture", not "Your name". Changed deliberately: the
+    // `profile` scope returns `name` AND `picture`, so this label
+    // understated what was being granted. A different map overstated it as
+    // a username and a bio, on a path nothing rendered. Both are one entry
+    // now, matching what `customUserInfoClaims` actually returns.
+    expect(html).toContain("<span>Your name and picture</span>");
     expect(html).toContain("<span>Your email address</span>");
     // openid is submitted but not shown as a row.
     expect(html).toMatch(
@@ -317,6 +320,29 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toMatch(
       /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks</,
     );
+  });
+
+  /**
+   * The one place an OIDC literal still reached `humanizeType`.
+   *
+   * "No longer needed" resolved its labels through capabilities, then
+   * `SCOPE_LABELS`, then the last-dotted-segment fallback — never through
+   * the OIDC copy. So a client that dropped `profile` rendered "Profile"
+   * here while the granted row above it said "Your name and picture", and
+   * dropping `offline_access` rendered "Offline access". The raw-literal
+   * class this whole change exists to remove, surviving in the same file.
+   */
+  it("resolves a dropped OIDC literal to its label, not its dotted segment", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [{ kind: "type", typePattern: "core.note", operation: "read" }],
+      priorScopes: ["core.note:read", "profile"],
+    });
+    expect(html).toContain(">No longer needed<");
+    expect(html).toMatch(
+      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Your name and picture</,
+    );
+    expect(html).not.toContain(">Profile<");
   });
 
   it("omits a diff section when its set is empty", () => {
@@ -751,16 +777,21 @@ describe("renderConsentScreen — a scope in two bundles", () => {
 /**
  * Every label that reaches a joined sentence needs a sentence form.
  *
- * `summarize` resolves OIDC scopes through SENTENCE_LABELS and capabilities
- * through CAPABILITY_SHORT, both of which are separate maps from the toggle
- * labels. Two maps with the same keys and no compile-time link is exactly
- * how the capitalization bug this replaced got in: adding a toggle label
- * without its sentence form breaks nothing that anything notices.
+ * `summarize` resolves OIDC scopes through `OIDC_SHORT` and capabilities
+ * through `CAPABILITY_SHORT`, both separate maps from the toggle labels.
+ * Two maps with the same keys and no compile-time link is exactly how the
+ * capitalization bug this replaced got in: adding a toggle label without
+ * its sentence form breaks nothing that anything notices.
+ *
+ * The four OIDC literals are now keyed on their union, so the compiler
+ * holds that half. The check stays as the thing that would fail if the
+ * union link were ever loosened back to `string`.
  */
 describe("sentence forms cover every label that can be joined into one", () => {
-  it("has a sentence form for every OIDC toggle label", () => {
+  it("has a short form for every OIDC literal", () => {
     for (const literal of Object.keys(OIDC_LABELS)) {
-      expect(SENTENCE_LABELS[literal]).toBeDefined();
+      const key = literal as keyof typeof OIDC_LABELS;
+      expect(OIDC_SHORT[key], `no short form for ${literal}`).toBeDefined();
     }
   });
 
@@ -772,10 +803,19 @@ describe("sentence forms cover every label that can be joined into one", () => {
     // only for commas, because it is the larger map and the one whose toggle
     // labels are full sentences.
     for (const value of [
-      ...Object.values(SENTENCE_LABELS),
+      ...Object.values(OIDC_SHORT),
       ...Object.values(CAPABILITY_SHORT),
     ]) {
       expect(value).not.toMatch(/,/);
+      // A conjunction is NOT checked here, deliberately. It looked like the
+      // same hazard as a comma — the joiner puts "and" between the last two
+      // items, so "your name and picture and your email address" reads as
+      // three things. But no regex separates that from "connect and
+      // disconnect services", where the conjunction is inside one verb
+      // phrase and reads correctly in a list. Two `CAPABILITY_SHORT` entries
+      // are of that shape and are right as they stand. The rendered
+      // snapshots are what caught the real instance and are the guard that
+      // can tell the two apart, because a person reads them.
       expect(value[0]).toBe(value[0]?.toLowerCase());
     }
   });

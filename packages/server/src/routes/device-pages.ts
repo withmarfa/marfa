@@ -15,6 +15,7 @@
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { capabilityLabel } from "./capability-labels.js";
+import { oidcLabel } from "./oidc-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface DevicePageParams {
@@ -47,19 +48,6 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 /**
- * Friendly, second-person labels for the standard OIDC literals. The OIDC
- * spec carries no human description, and a raw `openid` literal reads as
- * noise on a consent screen — so the device renderer owns this mapping
- * rather than depending on the caller threading one in. Kept short and
- * plain to match the tone of the type-registry descriptions.
- */
-const OIDC_FRIENDLY_LABELS: Record<string, string> = {
-  openid: "Confirm who you are",
-  profile: "See your basic profile",
-  email: "See your email address",
-};
-
-/**
  * Resolve the human-readable description for a parsed scope, deduped across
  * the full set. OIDC literals and capability scopes map to friendly labels;
  * everything else uses the caller-supplied description, falling back to the
@@ -87,7 +75,14 @@ function describeCapabilities(
         : `${s.typePattern}:${s.operation}`;
     const human =
       s.kind === "oidc"
-        ? (OIDC_FRIENDLY_LABELS[s.oidcScope ?? s.typePattern] ?? literal)
+        ? // The consent screen's own label, so one literal reads the same
+          // on both surfaces a person meets it on. That is the whole reason
+          // — and it is a trade, not a free win: the rows beside these come
+          // from the type registry's descriptions, which are sentences
+          // ("Text content you created."), so a noun phrase sits slightly
+          // apart from its neighbours here. Two screens disagreeing about
+          // what one grant means is the worse of the two.
+          (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
         : s.kind === "capability"
           ? (capabilityLabel(s.typePattern) ?? literal)
           : (descriptions?.[s.typePattern] ?? literal);

@@ -1414,20 +1414,6 @@ async function resolvePriorScopes(
 }
 
 /**
- * Built-in copy for the standard OIDC literals — the OIDC spec doesn't
- * carry plain-English descriptions, but the user needs to know what
- * they're approving. These strings are user-facing and intentionally
- * plain; mirror the language convention of the type-registry
- * descriptions.
- */
-const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  openid: "Confirm your identity.",
-  profile: "See your name and profile picture.",
-  email: "See your email address.",
-  offline_access: "Stay signed in even when you're not using the app.",
-};
-
-/**
  * User-facing copy for the consent screen, keyed by type id (core
  * types, system types) or edge type id. Intentionally separate from
  * the type registry's `description` field — those are written for
@@ -1577,7 +1563,8 @@ export async function resolveWildcardExpansions(
  *
  *  - **Type** scopes → `TYPE_REGISTRY.get(typeId)?.description`
  *  - **Edge** scopes → `EDGE_TYPE_REGISTRY.get(edgeType)?.description`
- *  - **OIDC** scopes → `OIDC_SCOPE_DESCRIPTIONS` built-in map
+ *  - **OIDC** scopes → skipped. `labelFor` resolves them from
+ *    `oidc-labels.ts` and never reads this map for one.
  *  - **Metadata** scopes → skipped (operator-tooling scopes; the literal
  *    `metadata:read` etc. is self-explanatory to the audience that
  *    requests them)
@@ -1589,12 +1576,11 @@ export function buildScopeDescriptions(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const s of scopes) {
-    if (s.kind === "oidc") {
-      const literal = s.oidcScope ?? s.typePattern;
-      const copy = OIDC_SCOPE_DESCRIPTIONS[literal];
-      if (copy) out[s.typePattern] = copy;
-      continue;
-    }
+    // OIDC literals are deliberately absent. `labelFor` in `consent.ts`
+    // resolves them through `oidc-labels.ts` and returns before it looks at
+    // this map, so anything written here for one was computed and discarded.
+    // A third register existed to fill it and is gone with it.
+    if (s.kind === "oidc") continue;
     if (s.kind === "edge") {
       // `edgeType` is optional on ParsedScope but always present when
       // kind === "edge"; guard for the type-checker.
