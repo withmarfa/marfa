@@ -1,0 +1,316 @@
+# Says when the integrations pin has fallen behind something the image
+# would ship.
+#
+# `packages/server/integrations-ref.txt` holds the withmarfa/integrations
+# commit the server image builds its integrations from. It is deliberately a
+# commit rather than a branch, so two builds of one server commit ship the
+# same integrations and moving it is a reviewed change. Nothing reported
+# that it had gone stale, and the only way to find out was to know the file
+# was there and go and look, which is the shape of a thing nobody does.
+#
+# **Scheduled rather than on push, because the pin being behind is usually
+# correct.** Most commits in that repository are documentation and the image
+# stages only `dist/`, so chasing its `main` on every merge would be churn
+# and would defeat the immutability the pin exists for. What is missing is
+# the signal, not the automation.
+#
+# **It compares built output rather than changed paths, and that is the
+# whole design.** esbuild discards ordinary comments unconditionally, so a
+# JSDoc-only edit to a manifest and a comment-only edit to a handler both
+# produce a byte-identical bundle. Those edits dominate: when this was
+# scoped the pin was six commits behind and every one of the six was
+# comment, description or lint configuration. Any path filter wide enough to
+# catch a real source change also catches those, so the obvious version of
+# this guard would have fired as noise on its very first run, which is
+# precisely the failure it exists to avoid. Paths are used only to decide
+# whether the comparison is worth doing.
+#
+# **Hosted, not the self-hosted pool.** It builds a fifteen-package
+# workspace twice, on a timer, unattended. The pool is one shared machine
+# that also serves every pull request in the estate, and several suites fail
+# on fixed time budgets, so a scheduled pair of builds landing there would
+# manufacture failures in whatever else happened to be running. Nothing
+# about comparing two refs of another repository wants the local pool.
+#
+# **One notifier, not a second one.** The estate already had a scheduled
+# guard that failed daily into silence for a week. The `notify` job below is
+# the same shape every other workflow here uses.
+name: Integrations pin drift
+
+on:
+  schedule:
+    # Early UTC, so a failure is waiting at the start of the day rather than
+    # landing in the middle of one. Offset from the OpenAPI guard's 07:17 so
+    # the two are not competing for a runner or for attention.
+    - cron: "42 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # The repository the comparison is mandatory on. A fork or a self-hoster's
+  # copy holds no deploy key, so it skips rather than failing on something it
+  # has no way to fix.
+  PIN_CANONICAL_REPO: withmarfa/marfa
+
+jobs:
+  drift:
+    name: The pin is level with what the image would ship
+    runs-on: ubuntu-latest
+    # A budget rather than the six-hour default: two installs and two builds
+    # is minutes, and anything an order of magnitude past that is wedged.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pin
+        name: Read the pin and the declared set
+        # The parser refuses anything that is not one full commit SHA, and it
+        # runs here before any install, which is why it imports nothing but
+        # node builtins.
+        #
+        # The key arrives through `env` rather than through `${{ }}` inside
+        # the script. The runner renders an expression into the script text
+        # before running it and echoes that text into the log, so an inline
+        # form puts a private key one masking rule away from the run log,
+        # and makes the rendered script the step's title when it has no
+        # name. The OpenAPI guard does the same thing the same way.
+        env:
+          DEPLOY_KEY: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_KEY:-}" ]; then
+            if [ "${GITHUB_REPOSITORY}" = "${PIN_CANONICAL_REPO}" ]; then
+              echo "::error title=Pin drift guard cannot run::INTEGRATIONS_DEPLOY_KEY is not set on ${GITHUB_REPOSITORY}, so the pin was never compared. Failing rather than passing: a guard that cannot run must not report green."
+              exit 1
+            fi
+            echo "::warning title=Cross-repo check skipped::INTEGRATIONS_DEPLOY_KEY is not set on ${GITHUB_REPOSITORY}, which is not ${PIN_CANONICAL_REPO}."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          node packages/server/scripts/read-installed-integrations.mjs \
+            packages/server/installed-integrations.txt > declared.txt
+          echo "Pin is $ref; the image installs $(wc -l < declared.txt | tr -d ' ') integrations."
+
+      # The whole history, so the pinned commit and `main` are both reachable
+      # from one clone and the diff between them is a local operation.
+      - uses: actions/checkout@v7
+        if: steps.pin.outputs.skip != 'true'
+        with:
+          repository: withmarfa/integrations
+          fetch-depth: 0
+          ssh-key: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: head
+
+      # A new integration is the one case the comparison below cannot see,
+      # and it is the case this guard most exists for. Its package is not in
+      # the declared set, so the loop never looks at it, and its registry
+      # entry is filtered out before the loop is even reached: the run would
+      # pay two builds and report the pin behind and correctly so.
+      #
+      # The condition is caught eventually, by the image build, but only
+      # when somebody moves the pin, which is the thing nobody was doing.
+      # Both inputs are already here, so ask now. Against `main`'s registry
+      # rather than the pinned one, because a merge there is what starts the
+      # clock.
+      - name: The declaration covers everything main's registry marks shipped
+        if: steps.pin.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          sort declared.txt > declared.sorted
+          node -e '
+            const { integrations } = require("./head/registry.json");
+            for (const e of integrations) if (e.shippedByMarfa) console.log(e.name);
+          ' | sort > shipped.txt
+          missing="$(comm -13 declared.sorted shipped.txt)"
+          if [ -n "$missing" ]; then
+            echo "::error::withmarfa/integrations marks these shippedByMarfa on main and packages/server/installed-integrations.txt does not declare them:"
+            echo "$missing" | sed 's/^/  /'
+            echo "The image would not carry them and the listing would offer them. Declare them, or set shippedByMarfa false."
+            exit 1
+          fi
+          echo "All $(wc -l < shipped.txt | tr -d ' ') integrations main marks shipped are declared."
+
+      - id: behind
+        if: steps.pin.outputs.skip != 'true'
+        name: Is there anything between the pin and main that could reach a bundle
+        env:
+          PIN: ${{ steps.pin.outputs.ref }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git -C head rev-parse HEAD)"
+          if [ "$head_sha" = "$PIN" ]; then
+            echo "The pin is main. Nothing to compare."
+            echo "compare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git -C head merge-base --is-ancestor "$PIN" HEAD; then
+            echo "::error title=Pin is not on main::$PIN is not an ancestor of withmarfa/integrations main. The image is built from a commit that repository's main does not contain."
+            exit 1
+          fi
+          count="$(git -C head rev-list --count "$PIN"..HEAD)"
+
+          # An exclude list rather than an include list, so a path nobody has
+          # thought about yet sends the run on to the comparison and gets a
+          # truthful answer rather than a quiet pass.
+          #
+          # Everything named here is something no package's `dist/` can
+          # carry, which is not the same as saying the image never sees it:
+          # the image does copy `registry.json`, and the step above is what
+          # asks about that. What the comparison below answers is narrower,
+          # and it is what a bundle contains.
+          #
+          # A package the declaration does not name is excluded too. The
+          # comparison only walks declared names, so a commit touching the
+          # scaffold alone would otherwise buy two builds and report
+          # nothing.
+          # Narrow to paths that could reach a bundle this image stages:
+          # a declared package's own files, or anything outside `packages/`,
+          # which is where the lockfile, the workspace file and the shared
+          # tsconfig live and which therefore affects every build. A package
+          # nobody declared cannot reach the image at all, and dropping it
+          # here is what stops a commit touching only the scaffold buying
+          # two builds to report nothing.
+          git -C head diff --name-only "$PIN"..HEAD > changed.txt
+          reaching="$(awk '
+              NR == FNR { declared["packages/" $0 "/"] = 1; next }
+              $0 !~ /^packages\// { print; next }
+              { for (prefix in declared) if (index($0, prefix) == 1) { print; break } }
+            ' declared.txt changed.txt \
+            | grep -Ev '(^|/)[^/]*\.md$' \
+            | grep -Ev '(^|/)[^/]*\.test\.ts$' \
+            | grep -Ev '(^|/)vitest\.config\.ts$' \
+            | grep -Ev '(^|/)eslint\.config\.(js|ts)$' \
+            | grep -Ev '(^|/)\.prettier' \
+            | grep -Ev '^\.github/' \
+            | grep -Ev '^(registry|manifest-lock)\.json$' \
+            | grep -Ev '^test/' \
+            | grep -Ev '/email-worker/' \
+            | grep -Ev '(^|/)(LICENSE|\.gitignore|\.editorconfig|CLAUDE\.md)$' \
+            || true)"
+
+          if [ -z "$reaching" ]; then
+            echo "The pin is $count commits behind, and none of it is a path the image can carry."
+            echo "compare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "The pin is $count commits behind. These paths could reach a bundle:"
+          echo "$reaching" | sed 's/^/  /'
+          echo "compare=true" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+        if: steps.behind.outputs.compare == 'true'
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+          # The version comes from the repository being installed, not from
+          # this one. They agree today and they are released independently,
+          # so a bump on either side would otherwise fail here against a
+          # lockfile format the wrong pnpm cannot read, and say so about
+          # the integrations repository rather than about this coupling.
+          package_json_file: head/package.json
+      - uses: actions/setup-node@v7
+        if: steps.behind.outputs.compare == 'true'
+        with:
+          node-version: 22
+          # Unlike every sibling here, this job is hosted, so the pnpm
+          # store does not survive between runs and the cache does pay.
+          # Those siblings turn it off because the self-hosted pool keeps a
+          # store the cache would tar on every run, and they say to restore
+          # it for exactly this case.
+          cache: pnpm
+          cache-dependency-path: head/pnpm-lock.yaml
+
+      - name: Build both refs and compare what the image would stage
+        if: steps.behind.outputs.compare == 'true'
+        env:
+          PIN: ${{ steps.pin.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # A second working tree at the pinned commit, from the clone already
+          # here. Its own install, because the lockfile is one of the things
+          # that can differ between the two and a shared store entry is not a
+          # shared resolution.
+          git -C head worktree add ../pinned "$PIN"
+
+          # The heap ceiling is carried over from the image build rather
+          # than rediscovered. Generating declarations for this workspace
+          # went out of memory there under the container's default
+          # old-space size, and a hosted runner having more headroom is not
+          # a reason to find out again in a job nobody has a model for.
+          for tree in pinned head; do
+            (
+              cd "$tree"
+              pnpm install --frozen-lockfile
+              NODE_OPTIONS=--max-old-space-size=6144 pnpm run build
+            )
+          done
+
+          differing=""
+          while read -r name; do
+            if ! diff -r -q "pinned/packages/$name/dist" "head/packages/$name/dist" >/dev/null 2>&1; then
+              differing="$differing $name"
+            fi
+          done < declared.txt
+
+          if [ -z "$differing" ]; then
+            echo "Every installed integration builds byte-identically at both refs. The pin is behind and correctly so."
+            exit 0
+          fi
+          echo "::error title=The pin is behind something the image would ship::These integrations build differently at withmarfa/integrations main than at the pinned commit:$differing"
+          echo "Move packages/server/integrations-ref.txt to a newer commit, or decide deliberately not to."
+          for name in $differing; do
+            echo "--- $name"
+            diff -r -q "pinned/packages/$name/dist" "head/packages/$name/dist" || true
+          done
+          exit 1
+
+  notify:
+    # Reports this run's outcome to aic-alerts, hosted like every other
+    # notifier here. The drift job is hosted too, so this is not the
+    # pool-cannot-report-on-itself case the others carry; it is hosted
+    # because that is what every notifier in this repository is, and a
+    # notifier that follows its job onto whatever runner is convenient is one
+    # more thing to reason about.
+    #
+    # A dispatch of `main` reports as well as the schedule, for the reason
+    # the OpenAPI guard records: when this fails it prints what to do, and
+    # re-running it is how anybody establishes the repair worked. Reporting
+    # only on the schedule leaves the alert open until the next morning.
+    #
+    # `cancelled` and `skipped` open an alert rather than staying silent. A
+    # guard that did not run is not a guard that ran green.
+    needs: [drift]
+    if: >-
+      always() && (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report outcome to aic-alerts
+        env:
+          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
+          WORKFLOW: ${{ github.workflow }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case ",$RESULTS," in
+            *,failure,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
+            *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
+            *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
+          esac
+          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
+                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
+            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+              fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
+          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
+              -H "Authorization: Bearer $ALERTS_SECRET" \
+              -H "Content-Type: application/json" --data @- \
+          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
