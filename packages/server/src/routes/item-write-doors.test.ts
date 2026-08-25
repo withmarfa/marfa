@@ -174,8 +174,157 @@ interface Door {
    * action over thousands of rows the caller legitimately can write.
    */
   refuses: "status" | "narrowing";
+  /**
+   * The door's write, naming a type that is NOT the row's wherever it can.
+   *
+   * **The misdeclaration is load-bearing and was nearly lost.** The
+   * claim-side gates run on the type the body names, and the row-side
+   * gates on the type the row is; naming the row's own type fires the
+   * claim-side one first and the write never reaches the gates these
+   * tests are measuring. Every refusal below then passes for the wrong
+   * reason, and this file stops speaking for the doors it names.
+   *
+   * That is not hypothetical. Changing these to `system.activity` — which
+   * looked like the honest fix once a misdeclaration became refusable —
+   * left `requireTypeAccess`, both `requireActivityAttribution` calls and
+   * `requireMirrorProtection` deletable on two doors with the whole file
+   * still green.
+   */
   write(w: DoorWrite): Promise<Response>;
+  /**
+   * The same write naming the row's real type, for the success case.
+   *
+   * Separate from `write` because the success case is the one place a
+   * misdeclaration can no longer be used: the gates pass, so nothing
+   * refuses until the type-claim guard does. Identical to `write` on the
+   * doors that never misdeclare.
+   */
+  writeTruthful(w: DoorWrite): Promise<Response>;
+  /**
+   * A write naming a type that is not the row's, for the type-claim test.
+   *
+   * Usually the same call as `write`, because the misdeclaration `write`
+   * already makes IS the mismatch. `PATCH` is the exception: its gates
+   * all run on the resolved row, so it needs no misdeclaration to isolate
+   * them, and its type-claim guard runs ahead of them — so a misdeclaring
+   * `write` there would refuse first and mask every gate below it.
+   *
+   * Required unless the door is named in `CANNOT_MISDECLARE`, and the
+   * coverage check at the bottom enforces that rather than letting an
+   * absent hook read as a deliberate exemption.
+   */
+  misdeclareType?: (w: DoorWrite) => Promise<Response>;
 }
+
+/**
+ * Doors whose `write` names the row's own type, so they cannot express a
+ * mismatch and are exempt from the type-claim test.
+ *
+ * Named rather than left to an absent field: an optional hook makes a
+ * door added without one a silently skipped test, indistinguishable from
+ * a deliberate exemption, which is the failure the coverage check at the
+ * bottom of this file exists to prevent.
+ */
+const CANNOT_MISDECLARE: Record<string, string> = {
+  "POST /items (create)":
+    "resolves no row, so the type it names IS the row — nothing to disagree with",
+  "POST /items/bulk-actions (update_properties)":
+    "selects by filter, where a type is a selector: it cannot disagree with the rows it selected on",
+};
+
+/**
+ * The door writes, parameterized by the type they declare.
+ *
+ * Written once each and called twice rather than spelled out per variant:
+ * the misdeclaring write and the truthful one have to be the same request
+ * in every respect but the type, or the pair stops isolating the type.
+ */
+/**
+ * The rule that refused a write, or null if it was not refused.
+ *
+ * The refusal tests below assert this rather than a bare status, and the
+ * reason is the whole point. Asserting "refused, and the row is
+ * unchanged" is satisfied by ANY refusal, so the day a new guard is added
+ * upstream of the gates this file measures, every test here keeps passing
+ * while the gates underneath can be deleted one by one. That is not
+ * hypothetical: adding the type-claim guard did exactly that, and
+ * `requireTypeAccess`, both `requireActivityAttribution` calls and
+ * `requireMirrorProtection` were all individually deletable with the
+ * whole file green.
+ *
+ * Unwraps `bulk_atomic_rollback`, which is the envelope the bulk door
+ * puts a per-entry refusal in rather than a reason of its own.
+ */
+async function refusalCode(res: Response): Promise<string | null> {
+  if (res.status < 400) return null;
+  const body = (await res.clone().json()) as {
+    error?: { code?: string; details?: { code?: string } };
+  };
+  const code = body.error?.code ?? null;
+  if (code === "bulk_atomic_rollback") {
+    return body.error?.details?.code ?? code;
+  }
+  return code;
+}
+
+const bulkActionWrite = async ({
+  key,
+  properties,
+}: DoorWrite): Promise<Response> => {
+  // Filter-in rather than id-in, so one call reaches every activity row
+  // in the space without knowing a single id — the widest of the doors.
+  // `runBulkActionAsync` drains the worker, so the write really lands or
+  // really does not rather than stopping at a queued job that nothing
+  // in-process would ever pick up.
+  const { initialStatus } = await runBulkActionAsync(
+    ctx,
+    {
+      action: "update_properties",
+      filter: { type: "system.activity" },
+      patch: properties,
+    },
+    key,
+  );
+  return new Response(null, { status: initialStatus });
+};
+
+const createWrite = ({ key, properties }: DoorWrite): Promise<Response> =>
+  request(ctx.app, "POST", "/items", {
+    key,
+    body: { type: "system.activity", properties },
+  });
+
+const naturalKeyWrite =
+  (type: string) =>
+  ({ key, target, properties }: DoorWrite): Promise<Response> =>
+    request(ctx.app, "POST", "/items", {
+      key,
+      body: { type, source_id: target.source_id, properties },
+    });
+
+const patchWrite =
+  (type: string | undefined) =>
+  ({ key, target, properties }: DoorWrite): Promise<Response> =>
+    request(ctx.app, "PATCH", `/items/${target.id}`, {
+      key,
+      body: type === undefined ? { properties } : { type, properties },
+    });
+
+const bulkByIdWrite =
+  (type: string) =>
+  ({ key, target, properties }: DoorWrite): Promise<Response> =>
+    request(ctx.app, "POST", "/items/bulk", {
+      key,
+      body: { items: [{ id: target.id, type, properties }] },
+    });
+
+const bulkNaturalKeyWrite =
+  (type: string) =>
+  ({ key, target, properties }: DoorWrite): Promise<Response> =>
+    request(ctx.app, "POST", "/items/bulk", {
+      key,
+      body: { items: [{ source_id: target.source_id, type, properties }] },
+    });
 
 const DOORS: Door[] = [
   {
@@ -184,82 +333,58 @@ const DOORS: Door[] = [
     refuses: "status",
     // No `target`: the row this lands on is the one the body describes,
     // which is also why there is no type here to misdeclare.
-    write: ({ key, properties }) =>
-      request(ctx.app, "POST", "/items", {
-        key,
-        body: { type: "system.activity", properties },
-      }),
+    write: createWrite,
+    writeTruthful: createWrite,
   },
   {
     name: "POST /items (natural-key upsert)",
     route: "POST /items",
     refuses: "status",
     // `core.note` is a type this credential genuinely holds write on, so
-    // the claim passes every gate that reads it — and the update ignores
-    // it, landing on whatever type the resolved row already is.
-    write: ({ key, target, properties }) =>
-      request(ctx.app, "POST", "/items", {
-        key,
-        body: { type: "core.note", source_id: target.source_id, properties },
-      }),
+    // the claim passes every gate that reads it — leaving only the gates
+    // keyed on the resolved row able to refuse, which is the point.
+    write: naturalKeyWrite("core.note"),
+    writeTruthful: naturalKeyWrite("system.activity"),
+    misdeclareType: naturalKeyWrite("core.note"),
   },
   {
     name: "PATCH /items/{id}",
     route: "PATCH /items/:id",
     refuses: "status",
-    // The body carries no type at all, which is why this door has never
-    // been the one that broke.
-    write: ({ key, target, properties }) =>
-      request(ctx.app, "PATCH", `/items/${target.id}`, {
-        key,
-        body: { properties },
-      }),
+    // Every gate on this door runs on the resolved row, so there is no
+    // claim-side gate to keep out of the way and `write` carries no type
+    // at all. It must not carry one: the type-claim guard here runs ahead
+    // of the attribution gates, so a misdeclaring `write` would refuse
+    // first and leave them untested.
+    write: patchWrite(undefined),
+    writeTruthful: patchWrite(undefined),
+    misdeclareType: patchWrite("core.note"),
   },
   {
     name: "POST /items/bulk (by id)",
     route: "POST /items/bulk",
     refuses: "status",
-    write: ({ key, target, properties }) =>
-      request(ctx.app, "POST", "/items/bulk", {
-        key,
-        body: { items: [{ id: target.id, type: "core.note", properties }] },
-      }),
+    write: bulkByIdWrite("core.note"),
+    writeTruthful: bulkByIdWrite("system.activity"),
+    misdeclareType: bulkByIdWrite("core.note"),
   },
   {
     name: "POST /items/bulk (natural key)",
     route: "POST /items/bulk",
     refuses: "status",
-    write: ({ key, target, properties }) =>
-      request(ctx.app, "POST", "/items/bulk", {
-        key,
-        body: {
-          items: [
-            { source_id: target.source_id, type: "core.note", properties },
-          ],
-        },
-      }),
+    write: bulkNaturalKeyWrite("core.note"),
+    writeTruthful: bulkNaturalKeyWrite("system.activity"),
+    misdeclareType: bulkNaturalKeyWrite("core.note"),
   },
   {
     name: "POST /items/bulk-actions (update_properties)",
     route: "POST /items/bulk-actions",
     refuses: "narrowing",
-    write: async ({ key, properties }) => {
-      // Filter-in rather than id-in, so one call reaches every activity
-      // row in the space without knowing a single id — the widest of
-      // the doors. `runBulkActionAsync` drains the worker, so the write
-      // really lands or really does not rather than stopping at a
-      // queued job that nothing in-process would ever pick up.
-      const { initialStatus } = await runBulkActionAsync(
-        ctx,
-        {
-          action: "update_properties",
-          filter: { type: "system.activity" },
-          patch: properties,
-        },
-        key,
-      );
-      return new Response(null, { status: initialStatus });
-    },
+    // The `type` here selects rather than claims, so this door is the one
+    // place `write` and `writeTruthful` are the same call for a reason
+    // other than "it carries no type".
+    write: bulkActionWrite,
+    writeTruthful: bulkActionWrite,
   },
 ];
 
@@ -325,6 +450,10 @@ describe.each(DOORS)("$name", (door) => {
 
     if (door.refuses === "status") {
       expect(res.status).toBeGreaterThanOrEqual(400);
+      // Not merely refused: refused by an attribution rule. Without this
+      // the type-claim guard answers for every door and the gates below
+      // could all be removed unnoticed.
+      expect(await refusalCode(res)).not.toBe("type_mismatch");
     }
     // The outcome every door has to agree on, whatever it returns: no row
     // written under this credential's provenance speaks for a Connection
@@ -349,11 +478,12 @@ describe.each(DOORS)("$name", (door) => {
     // only the properties it was handed would let this through.
     const target = await activityRow(sibling, `sib-${String(seq++)}`);
 
-    await door.write({
+    const res = await door.write({
       key: mine.key,
       target,
       properties: { severity: "action_required", summary: "hijacked" },
     });
+    expect(await refusalCode(res)).not.toBe("type_mismatch");
 
     const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
@@ -371,7 +501,7 @@ describe.each(DOORS)("$name", (door) => {
     // has to agree on.
     const target = await activityRow(sibling, `claim-${String(seq++)}`);
 
-    await door.write({
+    const res = await door.write({
       key: mine.key,
       target,
       properties: {
@@ -380,6 +510,7 @@ describe.each(DOORS)("$name", (door) => {
         summary: "actually mine",
       },
     });
+    expect(await refusalCode(res)).not.toBe("type_mismatch");
 
     const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
@@ -394,7 +525,11 @@ describe.each(DOORS)("$name", (door) => {
     const target = await activityRow(mine, `ok-${String(seq++)}`);
     const summary = `sync complete (${String(seq)} items)`;
 
-    const res = await door.write({
+    // `writeTruthful`, not `write`: this is the one case where the gates
+    // all pass, so a misdeclared type would be the only thing left to
+    // refuse it and the test would be measuring the type-claim guard
+    // instead of the gate it is named for.
+    const res = await door.writeTruthful({
       key: mine.key,
       target,
       properties: {
@@ -403,7 +538,7 @@ describe.each(DOORS)("$name", (door) => {
         summary,
       },
     });
-    expect(res.status).toBeLessThan(400);
+    expect(res.status, await res.clone().text()).toBeLessThan(400);
 
     const landed = (await activityRows()).filter(
       (row) =>
@@ -412,6 +547,62 @@ describe.each(DOORS)("$name", (door) => {
     );
     expect(landed.length).toBeGreaterThan(0);
   });
+
+  it.skipIf(door.name in CANNOT_MISDECLARE)(
+    "refuses a write that names a type the row is not",
+    async () => {
+      // The ordinary `write`, which already names a type the row is not.
+      // Nothing extra is needed to express the mismatch: the gates above
+      // are measured with badly-attributed properties, and this is the
+      // same request with good ones, so the declared type is the only
+      // thing left that can refuse it.
+      //
+      // Everything here is the credential's own: its row, its
+      // `connection_id`, and `core.note` is a type its manifest declares
+      // and it genuinely holds write on. So every gate above passes and
+      // the declared type is the only thing left that can refuse it.
+      //
+      // The test immediately above is the other half of the pair: the
+      // same key, the same row and the same shape, declaring the type the
+      // row really is, and it must succeed. One difference between them,
+      // one difference in outcome.
+      //
+      // Worth a row of its own because moving the gates onto the resolved
+      // row closed the escalation and left the claim merely meaningless
+      // rather than refused — a body naming one type while resolving a
+      // row of another was merged in, 200, nothing said. Reachable from
+      // both directions the moment a person can map a source onto a type:
+      // adding a mapping re-types on the way in, removing it re-types on
+      // the way back. No integration reads the type of the row it writes,
+      // and five hold no item id they could read it by, so the door is
+      // the only place it can be caught.
+      const target = await activityRow(mine, `type-${String(seq++)}`);
+
+      const misdeclare = door.misdeclareType;
+      /* v8 ignore next */
+      if (!misdeclare) throw new Error("guarded by skipIf");
+      const res = await misdeclare({
+        key: mine.key,
+        target,
+        properties: {
+          connection_id: mine.connectionId,
+          severity: "action_required",
+          summary: "re-typed",
+        },
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(await refusalCode(res)).toBe("type_mismatch");
+
+      // The status is not the property. A door that answered an error
+      // after writing would satisfy the line above and still have
+      // corrupted the row, which is the failure this whole file exists
+      // to catch.
+      const after = await ctx.storage.items.get(target.id, spaceId);
+      expect(after?.type).toBe("system.activity");
+      expect(after?.properties.severity).toBe("info");
+      expect(after?.properties.summary).toBe("sync complete");
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -449,6 +640,28 @@ describe("every route that can write an item is accounted for", () => {
     }
     for (const route of covered) {
       expect(registered.has(route), `stale door: ${route}`).toBe(true);
+    }
+  });
+
+  it("states why a door cannot express a type mismatch, rather than skipping quietly", () => {
+    // The type-claim test skips a door named in `CANNOT_MISDECLARE`. Left
+    // to an optional field instead, a door added without one would skip
+    // for no stated reason and read exactly like a deliberate exemption —
+    // which is the shape this whole file exists to refuse.
+    const names = new Set(DOORS.map((d) => d.name));
+    for (const name of Object.keys(CANNOT_MISDECLARE)) {
+      expect(names.has(name), `stale exemption: ${name}`).toBe(true);
+    }
+
+    // And the exemption has to be earned: every other door's `write` must
+    // actually name a type that is not the row's, or its type-claim test
+    // is passing on something else.
+    for (const door of DOORS) {
+      if (door.name in CANNOT_MISDECLARE) continue;
+      expect(
+        door.misdeclareType !== undefined,
+        `${door.name}: needs a misdeclareType, or a stated reason in CANNOT_MISDECLARE`,
+      ).toBe(true);
     }
   });
 });

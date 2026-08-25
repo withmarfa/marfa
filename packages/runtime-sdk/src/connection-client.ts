@@ -73,6 +73,34 @@ export interface CreateItemInput {
   source_id?: string;
 }
 
+/**
+ * What `PATCH /items/{id}` accepts: `CreateItemInput` without the one
+ * field that route refuses.
+ *
+ * Deliberately not `UpdateItemInput` from `@withmarfa/shared`, which
+ * looks like the obvious choice and is the wrong one — that is the
+ * storage layer's input. It carries `null_clears`, which the server sets
+ * for an owning integration's re-sync and a caller must never send, and
+ * it lacks `source_id` and `edges`, which this route does accept.
+ *
+ * `type` is absent because this route does not re-type an item. It was
+ * reachable here only because this patch was typed
+ * `Partial<CreateItemInput>`: the signature invited a field the endpoint
+ * discarded, so an author reading the types could send a re-type,
+ * receive a 200, and move nothing. The server now holds the claim to the
+ * row's own type instead of dropping it.
+ *
+ * Note what this does and does not buy. It stops a fresh object literal
+ * naming `type` at the call site, and nothing else — TypeScript's
+ * excess-property check does not fire for a variable, and the fleet's
+ * habit is to build one `CreateItemInput` and hand it to either
+ * `createItem` or `updateItem`. Those calls still compile and still send
+ * `type` on the wire, which is why the server holds it to the row rather
+ * than refusing it: a signature cannot be the enforcement point when the
+ * language lets the value through.
+ */
+export type UpdateItemPatch = Omit<CreateItemInput, "type">;
+
 export interface ItemResource {
   id: string;
   type: string;
@@ -233,10 +261,7 @@ export class ConnectionClient {
     }
   }
 
-  async updateItem(
-    id: string,
-    patch: Partial<CreateItemInput>,
-  ): Promise<ItemResource> {
+  async updateItem(id: string, patch: UpdateItemPatch): Promise<ItemResource> {
     const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
       "PATCH",
       `/items/${id}`,

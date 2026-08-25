@@ -594,8 +594,11 @@ describe("ConnectionClient — server-response unwrap", () => {
         captured,
       ),
     });
+    // No `type` here, and it will not compile with one. This call used to
+    // carry `type: "core.task"` and pass, which is the whole defect in
+    // miniature: the signature invited the field, the route dropped it,
+    // and the test asserted the 200 that came back.
     const item = await client.updateItem("task_1", {
-      type: "core.task",
       properties: { title: "Buy oat milk" },
     });
     expect(item.id).toBe("task_1");

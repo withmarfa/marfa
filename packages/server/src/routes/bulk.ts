@@ -37,6 +37,7 @@ import {
   requireEdgePermission,
   requireActivityAttribution,
   requireMirrorProtection,
+  requireDeclaredTypeMatches,
   permitsActivityAttribution,
   permitsMirrorWrite,
   itemProvenanceSource,
@@ -230,7 +231,14 @@ const bulkRoute = createRoute({
           ]),
         },
       },
-      description: "Validation error or atomic rollback",
+      description:
+        "Validation error, or an atomic rollback. `atomic` defaults to " +
+        "true, so a single refused entry aborts the whole page and the " +
+        "per-entry reason travels in `details.code` — `type_mismatch` " +
+        "among them, when an entry declares a `type` that is not the " +
+        "type of the row its natural key or id resolved. Send " +
+        "`atomic: false` to have each entry reported on its own instead; " +
+        "the runtime SDK's bulk helper does exactly that.",
     },
     401: {
       content: {
@@ -486,14 +494,22 @@ async function processBulkItem(
      * Authorization for the update half of an upsert, against the row
      * being overwritten rather than the entry describing it.
      *
-     * An entry that carries an `id` addresses a row directly, and the
-     * update ignores the entry's `type` entirely — the write lands on
-     * whatever type that row already is. Authorizing the claim therefore
-     * checks a type nothing is about to be written to: naming a type the
-     * credential does hold write on admits an update to a row of any
-     * other type, and skips every gate keyed on the real one. `PATCH
-     * /items/{id}` has no type in its body and so cannot make that
-     * mistake; this is what makes the two doors agree.
+     * An entry that carries an `id` addresses a row directly, and so
+     * does one that carries a natural key: neither resolution consults
+     * the entry's `type`, so the write lands on whatever type that row
+     * already is. Authorizing the claim therefore checks a type nothing
+     * is about to be written to: naming a type the credential does hold
+     * write on admits an update to a row of any other type, and skips
+     * every gate keyed on the real one. `PATCH /items/{id}` accepts a
+     * `type` too, but never authorizes against it — there it is checked
+     * for agreement with the row and otherwise ignored, which is what
+     * makes the doors agree.
+     *
+     * Authorizing against the row closes the escalation. It does not make
+     * the entry's `type` meaningful, and a claim that disagrees with the
+     * row used to be merged in regardless — so the caller is separately
+     * held to the type it named, by `requireDeclaredTypeMatches` at the
+     * call site below.
      */
     checkUpdate: (
       existing: Item,
@@ -602,9 +618,27 @@ async function processBulkItem(
   // optionally reconciling edges.
   if (existing) {
     // Authorize against the row about to be overwritten. The entry's own
-    // `type` was cleared for a create that is no longer happening.
+    // `type` is not what is being written — it describes a create that is
+    // no longer happening — so it is checked for agreement rather than
+    // used.
     try {
       checkUpdate(existing, { properties: raw.properties });
+      // Both resolutions above land here, and neither used the entry's
+      // `type` to get here: the natural key ignores it, and the id
+      // fallback ignores it too. Declaring one type and resolving another
+      // was merged in silently, per entry, inside a page of thousands.
+      // Same guard the single-item door runs.
+      //
+      // Blast radius differs from the single-item doors and it is worth
+      // knowing which mode you are in. `atomic` defaults to true, so one
+      // refused entry rolls the page back as `bulk_atomic_rollback`, a
+      // 400 carrying this refusal in `details.code` rather than the 409
+      // the other doors answer with. That is this route's established
+      // answer to any per-entry refusal rather than something new here.
+      // The runtime SDK's bulk helper sends `atomic: false` deliberately,
+      // so the integrations that batch get a per-entry outcome and one
+      // bad record does not hold a page of thousands hostage.
+      requireDeclaredTypeMatches(raw.type, existing);
     } catch (err) {
       if (err instanceof MarfaError) {
         return {

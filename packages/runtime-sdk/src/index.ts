@@ -28,6 +28,7 @@ export {
 export type {
   ConnectionClientOptions,
   CreateItemInput,
+  UpdateItemPatch,
   ItemResource,
   ItemState,
   ListItemsQuery,

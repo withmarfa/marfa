@@ -166,3 +166,96 @@ describe("an ordinary re-sync", () => {
     expect(item.item.properties.title).toBe("After");
   });
 });
+
+/**
+ * The type in the body plays no part in resolving the row — the natural key
+ * does that on `POST /items`, and the id does it on `PATCH`. So the claim
+ * used to be dropped, and a caller that declared one type while landing on
+ * another was reinterpreted rather than refused.
+ *
+ * The rule is agreement, not absence, and the difference is not cosmetic.
+ * Refusing any `type` on `PATCH` was the tidier rule to describe and would
+ * have broken most of the fleet on its first request: the handlers build one
+ * input object and hand it to either `createItem` or `updateItem`, so a type
+ * rides along on nearly every reactive update and matches the row every
+ * time. Only a disagreement means anything.
+ */
+describe("the type a write declares", () => {
+  it("is accepted on PATCH when it is the item's own", async () => {
+    // The shape the fleet actually sends: one `{ type, properties }` object
+    // built for create and reused for update.
+    const id = await seed("claim-agrees", { title: "Standup" });
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: RUNTIME_KEY,
+      body: { type: "core.event", properties: { title: "Standup, moved" } },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+
+    const read = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const item = (await read.json()) as {
+      item: { type: string; properties: { title?: unknown } };
+    };
+    expect(item.item.type).toBe("core.event");
+    expect(item.item.properties.title).toBe("Standup, moved");
+  });
+
+  it("is refused on PATCH when it is not", async () => {
+    const id = await seed("claim-disagrees-patch", { title: "Standup" });
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: RUNTIME_KEY,
+      body: { type: "core.note", properties: { title: "Re-typed" } },
+    });
+    expect(res.status).toBe(409);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("type_mismatch");
+
+    const read = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const item = (await read.json()) as {
+      item: { type: string; properties: { title?: unknown } };
+    };
+    expect(item.item.type).toBe("core.event");
+    // The refusal has to land before the write, not after it.
+    expect(item.item.properties.title).toBe("Standup");
+  });
+
+  it("is refused on PATCH when it is not even a string", async () => {
+    // `type` is absent from the schema, so nothing upstream has checked
+    // its shape by the time the claim is read out of the raw body.
+    const id = await seed("claim-nonsense", { title: "Standup" });
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: RUNTIME_KEY,
+      body: { type: { nested: true }, properties: { title: "Re-typed" } },
+    });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("validation_error");
+  });
+
+  it("is refused on a natural-key re-sync when it is not the row's", async () => {
+    const id = await seed("claim-disagrees-upsert", { title: "Standup" });
+    const res = await request(ctx.app, "POST", "/items", {
+      key: RUNTIME_KEY,
+      body: {
+        type: "core.note",
+        properties: { title: "Re-typed" },
+        source_id: "claim-disagrees-upsert",
+      },
+    });
+    expect(res.status).toBe(409);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("type_mismatch");
+
+    const read = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const item = (await read.json()) as {
+      item: { type: string; properties: { title?: unknown } };
+    };
+    expect(item.item.type).toBe("core.event");
+    expect(item.item.properties.title).toBe("Standup");
+  });
+});

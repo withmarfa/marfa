@@ -150,7 +150,7 @@
         },
         "responses": {
           "200": {
-            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve an item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry. When the resolved item has been trashed the response carries `acknowledged: true` and nothing is written: the deletion stands, and the re-sync is accepted rather than refused forever.",
+            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve an item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry. When the resolved item has been trashed the response carries `acknowledged: true` and nothing is written: the deletion stands, and the re-sync is accepted rather than refused forever. The resolved item's `type` decides the shape written, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -640,6 +640,45 @@
                             "forbidden",
                             "type_not_permitted",
                             "edge_permission_denied"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `(source, source_id)` natural key resolved an existing item whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "type_mismatch"
                           ]
                         },
                         "message": {
@@ -2283,7 +2322,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values while tier and timestamp replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve.",
+        "description": "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values while tier and timestamp replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped.",
         "security": [
           {
             "bearerAuth": []
@@ -2312,6 +2351,9 @@
                     "additionalProperties": {
                       "nullable": true
                     }
+                  },
+                  "type": {
+                    "type": "string"
                   },
                   "version": {
                     "type": "integer",
@@ -2667,7 +2709,7 @@
             }
           },
           "409": {
-            "description": "Version conflict (optimistic-concurrency mismatch on `properties`) or `source_id_conflict` (target natural key already in use by another item under the item's `source`).",
+            "description": "Version conflict (optimistic-concurrency mismatch on `properties`), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2778,7 +2820,8 @@
                             "code": {
                               "type": "string",
                               "enum": [
-                                "source_id_conflict"
+                                "source_id_conflict",
+                                "type_mismatch"
                               ]
                             },
                             "message": {
@@ -4961,7 +5004,7 @@
             }
           },
           "400": {
-            "description": "Validation error or atomic rollback",
+            "description": "Validation error, or an atomic rollback. `atomic` defaults to true, so a single refused entry aborts the whole page and the per-entry reason travels in `details.code` — `type_mismatch` among them, when an entry declares a `type` that is not the type of the row its natural key or id resolved. Send `atomic: false` to have each entry reported on its own instead; the runtime SDK's bulk helper does exactly that.",
             "content": {
               "application/json": {
                 "schema": {
