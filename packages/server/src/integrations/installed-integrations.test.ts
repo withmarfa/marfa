@@ -164,6 +164,51 @@ describe("the name shape", () => {
     expect(() => parse("acme/_thing\n")).toThrow(/never loads/);
   });
 
+  // Everything past the two local rules is the platform's grammar, reached
+  // through isValidIntegrationIdentifier rather than restated here. These
+  // three shapes are the ones the restated subset used to admit: each
+  // parsed, staged into the image, and was then refused by the loader that
+  // validates the manifest, leaving the catalog an integration short.
+  it("refuses a name the platform's own identifier grammar rejects", () => {
+    for (const name of [
+      // Uppercase, against the lowercase grammar on both halves.
+      "Acme/Calendar",
+      // Namespace under the three-character floor.
+      "ab/x",
+      // Doubled hyphen in the namespace.
+      "acme--corp/x",
+      // Hyphen at either end of the namespace.
+      "-acme/thing",
+      "acme-/thing",
+      // The name half has to start with a letter.
+      "acme/9lives",
+    ]) {
+      expect(() => parse(`${name}\n`), name).toThrow(DeclarationError);
+      expect(() => parse(`${name}\n`), name).toThrow(
+        /not a valid integration identifier/,
+      );
+    }
+  });
+
+  it("accepts the shapes the grammar allows, including a dotted name", () => {
+    // The name half is dot-joined segments, so a family can carry a
+    // sub-namespace the way a type does. Nothing declares one today and the
+    // parser must not be the reason nothing can.
+    expect(parse("acme/calendar.events\nacme/a_b-c9\n")).toEqual([
+      { name: "acme/a_b-c9", manifestOnly: false },
+      { name: "acme/calendar.events", manifestOnly: false },
+    ]);
+  });
+
+  it("keeps the two local rules ahead of the grammar", () => {
+    // Both shapes are also refused by the platform's validator, so the
+    // order is what decides whether the message says which of the two local
+    // reasons applied or only that the name was wrong. The local reasons
+    // are the actionable ones.
+    expect(() => parse("acme/..\n")).toThrow(/resolve somewhere other than/);
+    expect(() => parse("_acme/thing\n")).toThrow(/discovery skips/);
+  });
+
   it("still refuses these when the line also carries the marker", () => {
     // The shape is checked after the field arithmetic, so a name that is
     // wrong on a well-formed line is still caught rather than waved past.

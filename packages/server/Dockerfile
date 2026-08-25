@@ -140,6 +140,22 @@ RUN set -euf; \
       cp -R "$dir/dist" "/integrations-staged/$name/dist"; \
       echo "staged $name"; \
     done
+# The registry the staged integrations came from, so the verification can
+# hold the declaration and `shippedByMarfa` to each other. Both halves of
+# that coupling exist only here: the registry lives in the other repository
+# and cannot see this declaration, and this declaration cannot see the
+# registry. The image keeps the file alongside the declaration and the pin,
+# where it is also a record of what the build was listing.
+#
+# Staged into a directory rather than copied to a path of its own, because
+# a deployment declaring `none` has no checkout and so no registry, and the
+# runtime stage's COPY has to work either way: an absent file fails a COPY
+# and an empty directory does not.
+RUN set -eu; \
+    mkdir -p /integrations-meta; \
+    if [ -f integrations-src/registry.json ]; then \
+      cp integrations-src/registry.json /integrations-meta/registry.json; \
+    fi
 # The dispatch fixture, staged outside the integrations root because it is
 # not something a deployment installed: what is in that root is the
 # declared set, and this is the fixture the in-image verification
@@ -188,6 +204,10 @@ COPY --from=build --chown=node:node /repo/packages/server/installed-integrations
 # And the commit they were built from, so a running container is traceable
 # to its source rather than only to its own set of names.
 COPY --from=build --chown=node:node /repo/packages/server/integrations-ref.txt ./integrations-ref.txt
+# And the registry that commit listed, which is what makes `shippedByMarfa`
+# a checked claim rather than an assertion about a repository nothing here
+# can read.
+COPY --from=build --chown=node:node /integrations-meta ./integrations-meta
 COPY --from=build --chown=node:node /verify-fixtures ./verify-fixtures
 COPY --from=build --chown=node:node /repo/packages/server/scripts/verify-image-integrations.mjs ./verify-image-integrations.mjs
 COPY --from=build --chown=node:node /repo/packages/server/scripts/read-installed-integrations.mjs ./read-installed-integrations.mjs

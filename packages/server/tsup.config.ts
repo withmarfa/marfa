@@ -28,6 +28,14 @@ export default defineConfig({
     // It costs a bundle pass and no dts pass: `dts` names its entries
     // explicitly, which is what keeps the heap ceiling above this.
     "client-manifests": "src/integrations/client-manifests.ts",
+    // The catalog's manifest loader, as its own entry for the same reason
+    // and on the same terms. The in-image verification runs it against the
+    // integrations the image staged, so that what the build accepts is the
+    // loader that runs at boot rather than a second opinion about validity
+    // written beside it. Its graph is the loader, the directory walk and
+    // the validator; `@withmarfa/shared` is external, so nothing of the
+    // route tree or the storage layer comes with it.
+    "load-manifests": "src/integrations/load-manifests.ts",
   },
   format: ["esm"],
   // Declarations for the one entry anything imports. `exports` exposes

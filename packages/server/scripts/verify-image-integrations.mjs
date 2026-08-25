@@ -13,7 +13,7 @@
  * inside the runtime image, where there is no tsx and no monorepo;
  * everything it needs must resolve from the image's own filesystem.
  *
- * Four checks, in order:
+ * Six checks, in order:
  *
  *   1. The installed set is the declared set, in the declared shape.
  *      installed-integrations.txt says what this image installs; the
@@ -29,11 +29,43 @@
  *      an integration losing its handler, which shrinks the dispatchable
  *      set without changing how many directories there are.
  *
- *   2. Main-process import. The server's loader imports each entry on
- *      boot to read its manifest; this repeats that read and fails on a
- *      missing or shapeless manifest export.
+ *   2. The declared set is what the registry says Marfa ships. The image
+ *      build has withmarfa/integrations checked out, so it holds both
+ *      halves of a coupling that otherwise agrees only by attention: the
+ *      registry lists what is installable and marks the shorter set hosted
+ *      Marfa stands behind, and this declaration says what this image
+ *      actually stages. A contributor who adds a registry entry and no
+ *      declaration line ships nothing, with nothing red anywhere, and the
+ *      first report is somebody asking why an integration they can see
+ *      does not install. It also makes `shippedByMarfa` a checked claim
+ *      rather than an assertion about a repository the registry cannot
+ *      see.
  *
- *   3. The client manifests resolve from the image. A client's code runs
+ *   3. The runtime kit stayed external to every staged bundle. Each entry
+ *      must resolve `@withmarfa/runtime-sdk` and `@withmarfa/shared` upward
+ *      to the server's own copies, because both hold module-singleton
+ *      state: a bundle carrying its own copy registers its handlers into a
+ *      table nothing dispatches from, with no error anywhere. Check 6
+ *      proves the image resolves a single copy, and proves it through one
+ *      fixture; this is what says the same of each real integration, and
+ *      it costs a file read apiece rather than fifteen worker spawns and
+ *      fifteen calls to somebody's API with a synthetic credential.
+ *
+ *   4. Every staged entry loads and its manifest validates, through the
+ *      server's own catalog loader rather than a duck-type standing in for
+ *      it. That loader is what runs at boot, and a manifest it refuses is
+ *      *skipped*: pushed onto a list that produces one warn line and
+ *      nothing else, leaving the catalog quietly short. Nothing about that
+ *      is wrong at runtime, where a deployment may install whatever it
+ *      likes and one bad integration must not take the server down. It is
+ *      wrong in an image we build, so here the skip is fatal.
+ *
+ *      Running the real loader rather than restating it is the point. A
+ *      reimplementation is a second opinion about validity, and the
+ *      failure it cannot catch is the one where the two opinions differ,
+ *      which is exactly the case that reaches production.
+ *
+ *   5. The client manifests resolve from the image. A client's code runs
  *      on the user's machine, so nothing about it is installed into the
  *      integrations root and checks 1 and 2 cannot see it: its manifest is
  *      a workspace dependency of the server, kept by the deploy prune and
@@ -55,7 +87,7 @@
  *      that whatever the build claims to ship still resolves and parses
  *      once the image has been pruned to production dependencies.
  *
- *   4. Worker-thread dispatch. Spawns dist/worker-entry.js with the
+ *   6. Worker-thread dispatch. Spawns dist/worker-entry.js with the
  *      dispatch fixture's local.js and runs one schedule dispatch against
  *      a stub HTTP server. This is the module-singleton proof: if
  *      @withmarfa/runtime-sdk resolves to a second copy inside the image,
@@ -71,8 +103,8 @@
  *      installing nothing dispatchable has nothing to prove and skips
  *      this; anything else needs the fixture and fails without it.
  */
-import { readdirSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
@@ -87,9 +119,20 @@ const WORKER_ENTRY =
 const DECLARATION =
   process.env.MARFA_INSTALLED_INTEGRATIONS ??
   resolve(HERE, "installed-integrations.txt");
+const LOAD_MANIFESTS_ENTRY =
+  process.env.MARFA_VERIFY_LOAD_MANIFESTS ??
+  resolve(HERE, "dist", "load-manifests.js");
 const CLIENT_MANIFESTS_ENTRY =
   process.env.MARFA_VERIFY_CLIENT_MANIFESTS ??
   resolve(HERE, "dist", "client-manifests.js");
+// The registry the staged integrations came from, carried into the image
+// alongside the declaration and the pin. A directory rather than a bare
+// file because a deployment declaring `none` has no integrations checkout
+// and so no registry, and a COPY of an absent file fails a build where a
+// COPY of an empty directory does not.
+const REGISTRY =
+  process.env.MARFA_VERIFY_INTEGRATIONS_REGISTRY ??
+  resolve(HERE, "integrations-meta", "registry.json");
 // Outside the integrations root deliberately: what is in that root is what
 // the deployment installed, and the dispatch fixture is not that.
 const FIXTURE_ROOT =
@@ -235,28 +278,247 @@ info(
       : ""),
 );
 
-// Check 2: every staged entry imports and exports a manifest. Both shapes,
-// not only the dispatchable ones: the catalog reconcile imports a
-// manifest-only entry at boot exactly as the runtime loader imports a
-// handler entry, so a truncated one is a boot failure this is the last
-// chance to refuse. Importing also runs each handler entry's
+// Check 2: the declared set is what the registry says Marfa ships.
+//
+// The registry lists everything installable and marks the shorter set
+// hosted Marfa stands behind. This image stages the declaration's set. The
+// two are maintained in different repositories and agree today by
+// attention, which is the arrangement this replaces.
+//
+// Equality in both directions, because each direction is a different
+// mistake. A registry entry marked shipped with no declaration line is the
+// contributor trap: the pull request merges, the listing renders, and the
+// image simply does not carry it. A declared name the registry does not
+// mark shipped is the mirror: the image installs something the listing
+// says Marfa does not stand behind.
+//
+// An entry marked `shippedByMarfa: false` is an ordinary thing to be:
+// listed and nothing more. It belongs in neither set and is not a finding.
+function readRegistry(path) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    fail(
+      `the integrations registry at ${path} could not be read: ${String(err)}`,
+    );
+  }
+  const listed = parsed?.integrations;
+  if (!Array.isArray(listed)) {
+    fail(
+      `${path} has no "integrations" array, so the verification cannot tell ` +
+        `what the registry lists.`,
+    );
+  }
+  const shipped = [];
+  for (const entry of listed) {
+    if (typeof entry?.name !== "string") {
+      fail(`${path} holds an entry with no string "name"`);
+    }
+    if (typeof entry.shippedByMarfa !== "boolean") {
+      fail(
+        `${path}: "${entry.name}" has no boolean "shippedByMarfa", so ` +
+          `whether this image should install it is unanswerable.`,
+      );
+    }
+    if (entry.shippedByMarfa) shipped.push(entry.name);
+  }
+  return shipped.sort();
+}
+
+if (!existsSync(REGISTRY)) {
+  // No registry means the build had no integrations checkout, which is
+  // coherent only for a deployment that installs nothing. Anything else
+  // would already have failed in the staging loop; saying so here names
+  // the reason rather than leaving a later check to fail obscurely.
+  if (declared.length > 0) {
+    fail(
+      `no registry at ${REGISTRY}, yet the declaration names ` +
+        `${String(declared.length)} integrations. The build staged them from ` +
+        `a checkout whose registry did not travel with them.`,
+    );
+  }
+  info(`no integrations checkout and nothing declared; no registry to hold`);
+} else {
+  const shipped = readRegistry(REGISTRY);
+  const listedNotDeclared = shipped.filter((name) => !declared.includes(name));
+  if (listedNotDeclared.length > 0) {
+    fail(
+      `the registry marks these shippedByMarfa and ${DECLARATION} does not ` +
+        `declare them: ${listedNotDeclared.join(", ")}. The image would not ` +
+        `carry them, the listing would offer them, and nothing else would ` +
+        `say so. Declare them, or set shippedByMarfa false.`,
+    );
+  }
+  const declaredNotListed = declared.filter((name) => !shipped.includes(name));
+  if (declaredNotListed.length > 0) {
+    fail(
+      `${DECLARATION} declares these and the registry does not mark them ` +
+        `shippedByMarfa: ${declaredNotListed.join(", ")}. This image would ` +
+        `install something the listing says Marfa does not stand behind. ` +
+        `Add the registry entry, or stop declaring it.`,
+    );
+  }
+  info(
+    `the registry and the declaration agree on ${String(shipped.length)} ` +
+      `integrations Marfa ships`,
+  );
+}
+
+// Check 3: the runtime kit stayed external to every staged bundle.
+//
+// Both kit packages hold module-singleton state, so a bundle that inlined
+// one registers its handlers into a table the dispatcher never reads. There
+// is no error: the dispatch comes back reporting no handler, and only for
+// that one integration.
+//
+// Read from the emitted bytes, because the emitted bytes are all the image
+// has. A bundler config would say this more directly and neither
+// `tsup.config.ts` nor `package.json` is staged, so there is nothing here
+// to read but the output. That turns out to be the better place anyway:
+// tsup externalizes `dependencies` and `peerDependencies` before it reads
+// an `external` list at all, so the config states the rule in two places
+// and the output states the result once.
+//
+// The specifier is what survives. `@withmarfa/runtime-sdk` can appear in
+// emitted JavaScript only as an import or export specifier, so inlining
+// does not mangle it, it removes it.
+const bareSpecifier = (pkg) =>
+  new RegExp(`from\\s*["']${pkg.replaceAll("/", "\\/")}["']`);
+const KIT_PACKAGES = ["@withmarfa/runtime-sdk", "@withmarfa/shared"];
+
+for (const staged of [
+  ...entries.map((e) => ({
+    name: e.name,
+    file: e.localJs,
+    dispatchable: true,
+  })),
+  ...manifestOnly.map((e) => ({
+    name: e.name,
+    file: e.entryJs,
+    dispatchable: false,
+  })),
+]) {
+  const text = readFileSync(staged.file, "utf8");
+
+  // A dispatchable entry registers handlers, and the only way to register
+  // one is through the kit, so the specifier missing means the kit was
+  // inlined rather than that the entry had no use for it. An entry that
+  // genuinely registers nothing is a manifest-only integration that did not
+  // say so, which the declaration has a marker for and this refuses in the
+  // same breath.
+  if (staged.dispatchable && !bareSpecifier(KIT_PACKAGES[0]).test(text)) {
+    fail(
+      `${staged.name} staged a dispatchable ${basename(staged.file)} with no ` +
+        `bare "${KIT_PACKAGES[0]}" import. Either its build inlined the kit, ` +
+        `in which case its handlers register into a copy nothing dispatches ` +
+        `from, or it registers no handlers at all and is manifest-only.`,
+    );
+  }
+
+  // And whichever of the two a bundle mentions, it mentions as a bare
+  // specifier. This is the weaker half: a kit package inlined cleanly
+  // leaves nothing behind to catch, so what this refuses is the partial
+  // case, where the name survives somewhere the import statement did not.
+  for (const pkg of KIT_PACKAGES) {
+    if (text.includes(pkg) && !bareSpecifier(pkg).test(text)) {
+      fail(
+        `${staged.name}'s ${basename(staged.file)} names "${pkg}" in some ` +
+          `form other than a bare import specifier, which is what a ` +
+          `partially inlined kit looks like from outside.`,
+      );
+    }
+  }
+}
+info(
+  `the runtime kit is external to all ` +
+    `${String(entries.length + manifestOnly.length)} staged bundles`,
+);
+
+// Check 4: every staged entry loads, and its manifest is one the catalog
+// will accept. Both shapes, not only the dispatchable ones: the catalog
+// reconcile imports a manifest-only entry at boot exactly as the runtime
+// loader imports a handler entry, so a truncated one is a boot failure this
+// is the last chance to refuse. Loading also runs each handler entry's
 // registerHandlers() against this process's registry; that registry is
 // throwaway here, so the overwrites are harmless.
 //
-// Duck-typed on the export rather than keyed to a name, because a handler
-// entry exports `manifest` and a manifest-only package exports its own
-// constant. The server's own loader does the same and for the same reason.
-function manifestFrom(mod) {
-  const named = mod.manifest ?? mod.default?.manifest;
-  if (usableManifest(named)) return named;
-  return Object.values(mod).find(usableManifest);
+// Through the server's own loader, not a duck-type shaped like it. That
+// loader is the one that runs at boot, it finds the manifest export the
+// same duck-typed way, and it validates what it finds. Restating any of
+// that here would be a second opinion about validity whose only
+// interesting case is the one where the two disagree.
+//
+// The declared names are handed in rather than discovered, so a failure
+// names the declaration's own name. Check 1 has already proved the two
+// agree.
+let loadInTreeManifests;
+try {
+  ({ loadInTreeManifests } = await import(
+    pathToFileURL(LOAD_MANIFESTS_ENTRY).href
+  ));
+} catch (err) {
+  fail(
+    `the catalog manifest loader could not be loaded from ` +
+      `${LOAD_MANIFESTS_ENTRY}: ${String(err)}`,
+  );
+}
+if (typeof loadInTreeManifests !== "function") {
+  fail(`${LOAD_MANIFESTS_ENTRY} exports no loadInTreeManifests function`);
 }
 
-// Deliberately the same three fields the server's own catalog loader
-// requires before it will even attempt validation. A weaker test here would
-// pass an entry the catalog then skips at boot, which is precisely the
-// failure this check exists to refuse, and it would also let the search
-// below settle on a different export than the loader would pick.
+const loaded = await loadInTreeManifests({
+  integrationsRoot: INTEGRATIONS_ROOT,
+  integrationDirs: declared,
+});
+
+// A skip is fatal here and is not at boot, and the difference is
+// deliberate. At runtime a deployment installs what it likes and one
+// unreadable integration must not take the server down, so the loader
+// records the reason and the catalog comes up short by one. In an image we
+// build, coming up short by one is the defect: the reconcile would log a
+// line nobody reads and the integration would simply not be installable.
+if (loaded.skipped.length > 0) {
+  fail(
+    `the catalog loader refused ${String(loaded.skipped.length)} of ` +
+      `${String(declared.length)} staged integrations: ` +
+      loaded.skipped
+        .map((skip) => `${skip.dirName} (${skip.reason})`)
+        .join("; ") +
+      `. At boot each of these is a warn line and an integration missing ` +
+      `from the catalog.`,
+  );
+}
+
+// A manifest naming an integration other than the directory it was staged
+// into. The loader tolerates it, because a deployment may install into
+// whatever directory it likes; the image may not. Everything that stages,
+// declares and installs here keys on the identifier being the path.
+const misfiled = loaded.manifests.filter(
+  (entry) => entry.name !== entry.dirName,
+);
+if (misfiled.length > 0) {
+  fail(
+    `staged under a directory that is not the manifest's own name: ` +
+      misfiled
+        .map((entry) => `${entry.dirName} declares "${entry.name}"`)
+        .join(", ") +
+      `. The declaration, the staging path and the catalog all key on the ` +
+      `identifier, so these would disagree about which integration this is.`,
+  );
+}
+
+info(
+  `all ${String(loaded.manifests.length)} staged manifests load and validate`,
+);
+
+// The three fields the server's own catalog loader requires before it will
+// even attempt validation, and all check 5 needs. A client manifest is a
+// typed constant in this repository rather than something read off a disk,
+// and the boot reconcile hands it straight to registration without
+// validating it, so what is in question is whether the prune left it
+// resolvable rather than whether it is well formed. The installed set is
+// the other way round and runs the real validator; see check 4.
 function usableManifest(value) {
   return (
     typeof value === "object" &&
@@ -267,23 +529,7 @@ function usableManifest(value) {
   );
 }
 
-for (const entry of [
-  ...entries.map((e) => ({ name: e.name, entryJs: e.localJs })),
-  ...manifestOnly,
-]) {
-  let mod;
-  try {
-    mod = await import(pathToFileURL(entry.entryJs).href);
-  } catch (err) {
-    fail(`${entry.name} failed to import ${entry.entryJs}: ${String(err)}`);
-  }
-  if (!usableManifest(manifestFrom(mod))) {
-    fail(`${entry.name} exports no usable manifest from ${entry.entryJs}`);
-  }
-}
-info(`all entries import and export manifests`);
-
-// Check 3: the client manifests this build ships resolve from the image.
+// Check 5: the client manifests this build ships resolve from the image.
 //
 // Ahead of the dispatch check rather than after it, because that one exits
 // early when nothing dispatchable is installed. A deployment that installs
@@ -327,7 +573,7 @@ info(
         `parse from the image (${clientNames})`,
 );
 
-// Check 4: worker-thread dispatch through the dispatch fixture.
+// Check 6: worker-thread dispatch through the dispatch fixture.
 if (entries.length === 0) {
   info(
     `nothing dispatchable installed; the dispatch check has nothing to prove`,

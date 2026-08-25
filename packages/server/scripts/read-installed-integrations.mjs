@@ -7,8 +7,13 @@
  * a second reader agrees with this one only by attention. Anything that
  * needs the declaration imports this or runs it.
  *
- * Plain Node, ESM, node: builtins only, because the verification imports it
- * inside the runtime image where there is no monorepo and no TypeScript.
+ * Plain Node, ESM, and no TypeScript, because the verification imports it
+ * inside the runtime image where there is no monorepo and no compiler.
+ * Its one non-builtin import is `@withmarfa/shared`, which resolves from
+ * the image's own node_modules: the server declares it a production
+ * dependency, so the deploy prune keeps it, and the in-image verification
+ * already loads it transitively. See `assertNameShape` for why a copied
+ * grammar was the worse option.
  * Run it directly and it prints one name per line, which is what the
  * Dockerfile's loop consumes.
  *
@@ -18,6 +23,7 @@
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { isValidIntegrationIdentifier } from "@withmarfa/shared";
 
 /** A name is dispatchable unless the declaration says otherwise. */
 const MANIFEST_ONLY = "manifest-only";
@@ -53,6 +59,21 @@ export class DeclarationError extends Error {}
  * pass the verification, which deliberately skips nothing. The result is a
  * catalog quietly one integration short with nothing saying so, which is
  * the silent shrink this declaration exists to make impossible.
+ *
+ * Everything past those two rules is the platform's grammar rather than
+ * this file's, so it delegates to `isValidIntegrationIdentifier` instead of
+ * restating it. Restating it is what was here before, and the subset drifted:
+ * `Acme/Calendar`, `ab/x` and `acme--corp/x` all parsed, staged into the
+ * image, and were then refused by the loader that validates the manifest.
+ * A declaration that admits a name the platform rejects ships an
+ * integration the catalog drops at boot with a log line, which is the same
+ * silent shrink one paragraph up, arrived at from the other direction.
+ *
+ * The two local rules stay local and run first. They exist for reasons the
+ * platform has no view on, one about the staging path and one about
+ * discovery, and running them first is what keeps their messages, which
+ * say which of those two things went wrong rather than only that the name
+ * was refused.
  */
 function assertNameShape(name, lineNo) {
   const segments = name.split("/");
@@ -85,6 +106,16 @@ function assertNameShape(name, lineNo) {
           `image that the runtime then never loads.`,
       );
     }
+  }
+  if (!isValidIntegrationIdentifier(name)) {
+    throw new DeclarationError(
+      `line ${String(lineNo)}: "${name}" is not a valid integration ` +
+        `identifier. The namespace is 3 to 32 lowercase characters, digits ` +
+        `and single hyphens, and the name is lowercase, starts with a ` +
+        `letter, and may carry dots. This is the platform's own grammar, ` +
+        `so a name refused here would stage into the image and then be ` +
+        `refused by the catalog at boot.`,
+    );
   }
 }
 
