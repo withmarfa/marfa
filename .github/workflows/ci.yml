@@ -18,15 +18,9 @@ on:
   # but nothing owes one: the freshness jobs run on the pull request itself,
   # gated on the paths that can stale each artifact.
   #
-  # Every job here runs on the pool the project already owns. The three
-  # Postgres jobs used to be the exception, billed to the hosted allowance and
-  # switched off by default, because a `services:` container is the obvious way
-  # to get a database and the Actions runner only performs container operations
-  # on Linux. That is a limit of the `services:` feature, not of the runner's
-  # host: an ordinary `docker run` from a step works anywhere Docker does. Each
-  # of the three now boots its own throwaway `postgres:17` through the same
-  # script a contributor runs locally, so the coverage is back on every pull
-  # request and costs nothing.
+  # Jobs normally use CI_RUNNER. CI (Postgres) can use a dedicated runner for
+  # pushes to main via CI_POSTGRES_RUNNER; pull requests continue to use the
+  # normal CI runner.
   workflow_dispatch:
 
 concurrency:
@@ -385,7 +379,7 @@ jobs:
     name: CI (Postgres)
     needs: changes
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -409,14 +403,10 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         with:
           node-version: 22
-          # No `cache: pnpm`. On the self-hosted pool the store at
-          # ~/Library/pnpm/store already persists between jobs, so the cache
-          # restores nothing — but its post step still tars the whole store,
-          # and that store is 12 GB. Several jobs finishing together put
-          # concurrent multi-gigabyte tars on one machine, which is what made
-          # runs take about an hour with every visible step green. Restore
-          # this if the repository moves back to hosted runners, where the
-          # store does not survive between jobs and the cache does pay.
+          # A self-hosted runner keeps its pnpm store between jobs; an
+          # ephemeral runner needs the Actions cache. This repeats the
+          # runs-on selection so an absent override follows CI_RUNNER safely.
+          cache: ${{ (github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest') != 'self-hosted' && 'pnpm' || '' }}
 
       - name: Configure registry auth
         if: needs.changes.outputs.code == 'true'
