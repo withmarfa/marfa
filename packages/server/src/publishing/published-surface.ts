@@ -33,6 +33,16 @@
  * a legitimate thing. Only the surface-moved-and-version-did-not case is an
  * error, which is the asymmetry the manifest lock does not have and this one
  * needs.
+ *
+ * **What it cannot see, stated so nobody assumes otherwise.** This compares
+ * the tree against the committed lock. It does not know which versions are
+ * on the registry, deliberately — reaching npm would make the ordinary
+ * suite network-dependent and fail closed on an outage. So regenerating the
+ * lock at an unchanged version silences it, and that is legitimate for a
+ * version nobody has published and wrong for one somebody has. The guard
+ * holds the repository to "a surface change moves a version"; whether the
+ * standing version is already out there is a fact only a person has, and
+ * regenerating without bumping is a decision rather than a shortcut.
  */
 import { createHash } from "node:crypto";
 

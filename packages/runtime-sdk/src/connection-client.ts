@@ -24,15 +24,12 @@ import {
 } from "./types.js";
 
 /**
- * Headers that propagate the cycle metadata from an integration reaction
- * back to the Marfa server. Mirror the server's
- * `middleware/cycle.ts:CYCLE_HEADERS` constant. Cross-package contract —
- * change in lockstep.
+ * Re-exported rather than declared. `@withmarfa/shared` owns these names
+ * because both ends of the exchange need them and neither owns them; it
+ * stays on the kit's surface because an integration reads it from here.
  */
-export const CYCLE_HEADERS = {
-  ORIGIN: "X-Marfa-Cycle-Origin",
-  HOP: "X-Marfa-Cycle-Hop",
-} as const;
+import { CYCLE_HEADERS } from "@withmarfa/shared";
+export { CYCLE_HEADERS };
 
 export interface ConnectionClientOptions {
   /** Base URL of the Marfa server (e.g. `https://marfa.so`). */
