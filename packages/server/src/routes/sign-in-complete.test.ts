@@ -168,6 +168,88 @@ describe("GET /auth/sign-in/complete", () => {
     expect(body).not.toContain("already been used");
   });
 
+  /**
+   * The renderer's own tests prove it names a host it is given. This one
+   * proves the route gives it one, from the instance's resolved config
+   * rather than from the request — a distinction that matters because the
+   * request's host is whatever the client sent and this string is rendered
+   * straight back to them. The call site had no coverage at all until this
+   * test; both halves were tested and the wire between them was not.
+   */
+  it("names the server the refusal came from, taken from config", async () => {
+    ctx = await createTestContext({ authBaseUrl: "https://staging.marfa.so" });
+    const res = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/sign-in/complete?error=new_user_signup_disabled&next=${encodeNext("/")}`,
+        { headers: { origin: ORIGIN } },
+      ),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("Sign-in links on staging.marfa.so");
+    expect(body).toContain("only work for accounts that already exist here");
+  });
+
+  /**
+   * A host in the request cannot reach the page. Someone following a link
+   * to a Marfa instance must not be shown a hostname an attacker chose.
+   */
+  it("ignores a host supplied by the request", async () => {
+    // `Host` and `X-Forwarded-Host` both, because the second is the usual
+    // vector for this class of bug and the handler reads neither. Node's
+    // Request does not strip a manually-set Host, so these genuinely reach
+    // the handler rather than being dropped before it.
+    for (const headers of [
+      { origin: ORIGIN, host: "evil.example.com" },
+      { origin: ORIGIN, "x-forwarded-host": "evil.example.com" },
+    ]) {
+      ctx = await createTestContext({
+        authBaseUrl: "https://staging.marfa.so",
+      });
+      const res = await ctx.app.fetch(
+        new Request(
+          `${ORIGIN}/auth/sign-in/complete?error=new_user_signup_disabled&next=${encodeNext("/")}`,
+          { headers },
+        ),
+      );
+      expect(res.status).toBe(400);
+      const body = await res.text();
+      expect(body).toContain("staging.marfa.so");
+      expect(body).not.toContain("evil.example.com");
+      await ctx.cleanup();
+      ctx = undefined;
+    }
+  });
+
+  /**
+   * The deployment that has not configured its public identity.
+   *
+   * `config.authBaseUrl` falls back to a localhost URL when
+   * `MARFA_AUTH_BASE_URL` is unset, and naming that to somebody who
+   * reached this page at a real domain is worse than naming nothing. The
+   * renderer's own tests cover the rule; this covers that the route is
+   * subject to it rather than routing around it.
+   */
+  it("names no host when the instance has only the localhost fallback", async () => {
+    ctx = await createTestContext({ authBaseUrl: "http://localhost:8600" });
+    const res = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/sign-in/complete?error=new_user_signup_disabled&next=${encodeNext("/")}`,
+        { headers: { origin: ORIGIN } },
+      ),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain("isn&#39;t open for new accounts");
+    // Scoped to the message rather than the whole document. Asserting no
+    // "localhost" anywhere would also fail the day the layout emits an
+    // absolute asset URL derived from the same config value, and would
+    // read as a regression in this page rather than in the layout.
+    const message = /<p class="sub"[^>]*>([\s\S]*?)<\/p>/.exec(body)?.[1] ?? "";
+    expect(message).not.toContain("Sign-in links on ");
+    expect(message).not.toContain("localhost");
+  });
+
   it("refuses to forward somewhere off-origin", async () => {
     ctx = await createTestContext();
     for (const hostile of [

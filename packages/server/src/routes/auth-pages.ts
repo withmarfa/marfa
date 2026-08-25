@@ -40,7 +40,10 @@ import {
 } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
-import { renderSignInLinkFailedPage } from "./sign-in-link-page.js";
+import {
+  renderSignInLinkFailedPage,
+  hostFromBaseUrl,
+} from "./sign-in-link-page.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
 import { renderKeysPage, type KeysPageKey } from "./keys-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
@@ -866,6 +869,16 @@ export function authRoutes(
             verifyError === "new_user_signup_disabled"
               ? "signup_closed"
               : "expired",
+          // From the resolved config rather than the request: the request's
+          // host is client-supplied and this value is rendered back to the
+          // client. Always present rather than optional, on two facts
+          // together: `createApp` registers the config middleware ahead of
+          // every route, so it runs before any handler, and `authRoutes` is
+          // mounted only there and not re-exported from the package entry,
+          // so there is no way in that skips it. `hostFromBaseUrl` decides
+          // whether the value is one worth naming; a localhost fallback is
+          // not.
+          host: hostFromBaseUrl(c.var.config.authBaseUrl),
         }),
         400,
       );
