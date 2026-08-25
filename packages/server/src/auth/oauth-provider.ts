@@ -918,6 +918,28 @@ async function narrowAuthorizeScopes(
     }
   }
 
+  // Both tests below are exact membership, and both stay that way even
+  // though the consent comparisons one file over now understand breadth.
+  //
+  // This hook rewrites `query.scope` and hands it straight back to the
+  // vendored provider, which re-validates what it receives against the very
+  // same values: `new Set(client.scopes ?? opts.scopes)` and `.has(scope)`,
+  // exact, with no pattern matching anywhere in it. So a literal waved
+  // through here on the grounds that a wildcard in the ceiling covers it is
+  // refused a moment later — and refused as `invalid_scope` on the WHOLE
+  // request, riding a redirect the app may never render. That is a worse
+  // outcome than the narrowing this loop performs, and it is the dead end
+  // the hook exists to prevent.
+  //
+  // The repair that works on this path is above rather than here: the
+  // stale-ceiling catch-up writes the requested literal INTO the stored row,
+  // so the plugin's exact test then passes. Breadth belongs in what gets
+  // written, not in what gets compared.
+  //
+  // `mint-ceiling.ts` records the same conclusion from the other direction,
+  // about admitting the session scopes at the point of reading a ceiling.
+  // Two attempts, one rule: both readers of a ceiling stay a plain
+  // membership test against what the row says.
   const granted: string[] = [];
   const unknownToServer: string[] = [];
   const outsideClientCeiling: string[] = [];

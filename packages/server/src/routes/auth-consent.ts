@@ -83,6 +83,7 @@ import {
   parseScope,
   isValidScope,
   isReservedRoot,
+  grantCoversScope,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -383,12 +384,27 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           clientId,
           session.user.id,
         );
-        const priorSet =
-          priorScopes !== undefined ? new Set(priorScopes) : undefined;
+        // Coverage, not membership. A standing grant of `core.*:read`
+        // genuinely answers a later request for `core.note:read`, and the
+        // set test this replaced said otherwise — so a person who had
+        // granted everything was asked again the first time a client named
+        // a type under it.
+        //
+        // This is now the more permissive of the two skips on the platform,
+        // and deliberately. The vendored provider has its own
+        // already-consented check and it is exact membership, so a request
+        // this route waves through would be re-prompted had it reached
+        // `/oauth2/authorize` directly. Nothing depends on the two agreeing:
+        // the provider's runs on a path Marfa's `consentPage` config
+        // redirects away from, and the direction of the difference is a
+        // screen shown rather than a screen skipped. Worth knowing before
+        // reading a re-prompt on one surface as a bug on the other.
         const alreadyGranted =
-          priorSet !== undefined &&
+          priorScopes !== undefined &&
           scopeLiterals.length > 0 &&
-          scopeLiterals.every((literal) => priorSet.has(literal));
+          scopeLiterals.every((literal) =>
+            grantCoversScope(priorScopes, literal),
+          );
         if (promptSet.has("consent") || !alreadyGranted) {
           return { skipped: false, priorScopes };
         }
@@ -417,10 +433,13 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         // So the standing grant has to be put back on every outcome, not
         // just the successful one — a refusal must not be able to shrink a
         // grant as a side effect.
+        // No `?? []` here: reaching this line means `alreadyGranted` held,
+        // and that now tests `priorScopes` itself rather than a `Set` built
+        // from it, so the compiler carries the narrowing all the way down.
         await preserveBroaderGrant(deps.storage, {
           authUserId: session.user.id,
           clientId,
-          priorScopes: priorScopes ?? [],
+          priorScopes,
           requestedScopes: scopeLiterals,
         });
         return { skipped: true, priorScopes, proxyResp };
@@ -1114,6 +1133,18 @@ async function preserveBroaderGrant(
     requestedScopes: readonly string[];
   },
 ): Promise<void> {
+  // Literal, deliberately, and the one comparison on this path that stays
+  // that way.
+  //
+  // The others ask a permission question — is the app reaching anything new,
+  // is the user giving anything up — and a permission question has to
+  // understand that `core.*:read` covers `core.note:read`. This one asks
+  // whether the plugin's rewrite changed the ARRAY, because what it restores
+  // is the record of what the user approved, verbatim. Coverage here would
+  // decline to restore whenever the narrowed row granted the same access by
+  // fewer literals, and the record would quietly lose a scope the user
+  // ticked, with nobody having asked for that. Same access, different
+  // record, and the record is the thing this function exists to keep.
   const requested = new Set(opts.requestedScopes);
   const narrowed = opts.priorScopes.some((s) => !requested.has(s));
   if (!narrowed) return;
@@ -1260,8 +1291,11 @@ async function projectGrantOnConsent(
     // describing access the user no longer has while that access still
     // works. The caller turns this into a failed request rather than a
     // code-bearing redirect that claims otherwise.
-    const newSet = new Set(opts.scopes);
-    if (priorScopes.some((s) => !newSet.has(s))) {
+    // Coverage, and this is the site where getting it wrong is
+    // destructive rather than annoying: a widening misread as a narrowing
+    // revokes every live access token the client holds. `core.note:read`
+    // is not lost when the new grant says `core.*:read`.
+    if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {
         throw new NarrowingNotEnforced(

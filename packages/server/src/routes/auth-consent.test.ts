@@ -1274,6 +1274,110 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(after).not.toBeNull();
   });
 
+  /**
+   * The destructive half of comparing scopes as text.
+   *
+   * A narrowing is a promise: the access the user took away stops working,
+   * so the client's live tokens are revoked. Reading a WIDENING as a
+   * narrowing keeps that promise about access nobody gave up — a user who
+   * upgrades an app from "your notes" to "all your content" has every one
+   * of that app's tokens revoked as the reward.
+   *
+   * There was no test for this direction, which is why it survived. The two
+   * F4 cases beside it cover a real narrowing and an unchanged set, and both
+   * pass either way.
+   */
+  it("F4: re-consent that widens a grant leaves access tokens alone", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f4-widen@example.com");
+
+    const narrowQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.note:read",
+    );
+    const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: narrowQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(r1.status).toBe(302);
+
+    const items1 = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    const authUserId = items1.data[0]!.properties.user_id as string;
+
+    if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
+    const schemaModule =
+      ctx.storage.betterAuthDialect === "pg"
+        ? await import("../storage/pg/schema.js")
+        : await import("../storage/sqlite/schema.js");
+    const db = ctx.storage.betterAuthDb as unknown as {
+      insert: (table: unknown) => {
+        values: (v: Record<string, unknown>) => {
+          run?: () => Promise<unknown>;
+          execute?: () => Promise<unknown>;
+        };
+      };
+    };
+    const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+    const heldScopes = ["openid", "core.note:read"];
+    const op = db.insert(schemaModule.auth_oauth_access_token).values({
+      id: `at_${Math.random().toString(36).slice(2)}`,
+      token: tokenHash,
+      clientId,
+      userId: authUserId,
+      referenceId: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      createdAt: new Date(),
+      scopes:
+        ctx.storage.betterAuthDialect === "pg"
+          ? heldScopes
+          : JSON.stringify(heldScopes),
+    });
+    await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+
+    // The token has to be live before the widening, or `not.toBeNull()`
+    // after it proves nothing: a dialect branch that silently failed to
+    // insert would leave this test green either way.
+    const before =
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
+    expect(before).not.toBeNull();
+    expect(before).toBeDefined();
+
+    // Re-consent to a STRICTLY WIDER set. The form can only narrow against
+    // the signed query, so the widening arrives by the client asking for
+    // more in a freshly signed request — which is what an app does when a
+    // release adds a feature.
+    const wideQuery = await buildSignedOauthQuery(
+      clientId,
+      "openid core.*:read",
+    );
+    const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: wideQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.*:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(r2.status).toBe(302);
+
+    // `core.*:read` covers `core.note:read`, so nothing was given up and
+    // the token that carries it is still good.
+    const after =
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
+    expect(after).not.toBeNull();
+    expect(after).toBeDefined();
+  });
+
   it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
