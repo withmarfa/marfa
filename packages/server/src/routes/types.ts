@@ -4,6 +4,7 @@ import {
   ErrorCode,
   getTypeSchema,
   directChildrenOf,
+  maxDescendantDepth,
   listTypes,
   TYPE_REGISTRY,
   validateTypeSchema,
@@ -50,21 +51,38 @@ function isLockedPlatformType(id: string): boolean {
   return TYPE_REGISTRY.has(id);
 }
 
-/** How `POST /types` and `PUT /types/:id` phrase a rejected chain. */
+/**
+ * How `POST /types` and `PUT /types/:id` phrase a rejected chain.
+ *
+ * `descendantDepth` is what a re-parent has to declare. The cap bounds the
+ * chain the write produces, and a type with subtypes carries them with it,
+ * so the message says which half ran out of room. A caller told only that
+ * the chain is too deep, when the chain they submitted plainly is not, has
+ * been given the fact and not the reason.
+ */
 function validateParentChain(
   typeId: string,
   parentId: string,
   spaceId?: string,
+  descendantDepth = 0,
 ): void {
-  assertParentChain(typeId, parentId, spaceId, {
-    tooDeep: (maxDepth) =>
-      `Inheritance chain exceeds maximum depth of ${String(maxDepth)}`,
-    circular: () => "Circular inheritance detected",
-    unknownParent: (unresolved, parent) =>
-      unresolved === parent
-        ? `Parent type "${parent}" not found`
-        : `Parent type "${parent}" resolves, but its own ancestor "${unresolved}" does not`,
-  });
+  assertParentChain(
+    typeId,
+    parentId,
+    spaceId,
+    {
+      tooDeep: (maxDepth) =>
+        descendantDepth > 0
+          ? `Inheritance chain exceeds maximum depth of ${String(maxDepth)}: this type carries ${String(descendantDepth)} level(s) of subtypes, which count toward the limit`
+          : `Inheritance chain exceeds maximum depth of ${String(maxDepth)}`,
+      circular: () => "Circular inheritance detected",
+      unknownParent: (unresolved, parent) =>
+        unresolved === parent
+          ? `Parent type "${parent}" not found`
+          : `Parent type "${parent}" resolves, but its own ancestor "${unresolved}" does not`,
+    },
+    descendantDepth,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +168,7 @@ const getTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and space-registered custom types.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and space-registered custom types.\n\nA type whose stored inheritance chain cannot be resolved — circular, or deeper than any resolution walk follows — answers `409 type_chain_unresolvable` rather than a server fault. Correcting it through `PUT /types/{id}` still works, because that route reads the stored schema directly instead of resolving it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -181,6 +199,14 @@ const getTypeRoute = createRoute({
         },
       },
       description: "Type not found",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_chain_unresolvable"]),
+        },
+      },
+      description: "Stored inheritance chain cannot be resolved",
     },
   },
 });
@@ -567,7 +593,14 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     const schema = result.data;
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent, spaceId);
+      // Measured on the type as it stands, before the update lands, which is
+      // the subtree that would move with it.
+      validateParentChain(
+        schema.id,
+        schema.parent,
+        spaceId,
+        maxDescendantDepth(schema.id, spaceId),
+      );
     }
 
     // Server-side semver diff via a structural classifier: no-op

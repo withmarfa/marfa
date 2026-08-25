@@ -27,10 +27,13 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * bound on what one checked registration may produce, and it sits well below
  * the backstop deliberately.
  *
- * It does not bound a chain's final depth. Re-parenting through
- * `PUT /types/:id` walks upward from the type being changed and revalidates
- * none of its descendants, so a chain can be grown past this cap, and past
- * the backstop above it, in steps that each pass.
+ * On its own it bounds only the chain above the type being written, which
+ * is not the same as the chain the write produces. Re-parenting a type that
+ * has subtypes lengthens every one of their chains without any of them being
+ * submitted, so ten updates that each pass can take a chain past a cap that
+ * would have refused building it directly. `descendantDepth` is what closes
+ * that: the caller measures what sits below and the two halves are bounded
+ * together.
  */
 export const MAX_REGISTRATION_CHAIN_DEPTH = 10;
 
@@ -64,12 +67,18 @@ export function assertParentChain(
   parentId: string,
   spaceId: string | undefined,
   messages: ParentChainMessages,
+  /**
+   * How many levels of subtype sit below `typeId`, which the resulting chain
+   * carries as surely as the ancestors above it. Zero for a type nothing
+   * inherits from, which is every registration of a new type.
+   */
+  descendantDepth = 0,
 ): void {
   let current = parentId;
   let depth = 0;
   while (current) {
     depth += 1;
-    if (depth > MAX_REGISTRATION_CHAIN_DEPTH) {
+    if (depth + descendantDepth > MAX_REGISTRATION_CHAIN_DEPTH) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         messages.tooDeep(MAX_REGISTRATION_CHAIN_DEPTH),

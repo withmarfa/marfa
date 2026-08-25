@@ -9,7 +9,7 @@
 // shipped parent never passes through codegen, so a role flattened at build
 // time would be a role only in-tree types could hold.
 
-import { MAX_RESOLUTION_DEPTH } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, MAX_RESOLUTION_DEPTH } from "@withmarfa/shared";
 import type {
   DisplayHints,
   FieldDefinition,
@@ -69,6 +69,13 @@ export function resolveMergePolicy(
  * looks like a real answer, so the two sides of a rule can silently disagree —
  * `roles` here says a type is a container while `typeHasRole` throws under the
  * edge check. A wrong answer is worse than a loud one.
+ *
+ * Loud, but coded. A bare throw here reached the caller as a 500, which says
+ * the server broke rather than that this type's stored chain did, and left
+ * nothing to act on. The same code the registry's walkers raise makes the
+ * state nameable, and correcting it through `PUT /types/{id}` stays open
+ * because that route reads the stored schema directly rather than resolving
+ * it.
  */
 function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
   const chain: TypeSchema[] = [];
@@ -76,8 +83,10 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
   const seen = new Set<string>();
   while (current) {
     if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
-      throw new Error(
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
         `Inheritance cycle or excessive depth detected resolving type "${typeId}" (at "${current.id}")`,
+        { type_id: typeId, at: current.id },
       );
     }
     seen.add(current.id);

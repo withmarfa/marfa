@@ -6,6 +6,11 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { TypeSchema } from "@withmarfa/shared";
+import {
+  MAX_RESOLUTION_DEPTH,
+  registerTypeSchema,
+  unregisterTypeSchema,
+} from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
@@ -1124,5 +1129,127 @@ describe("a parent's change reaches its descendants' validation", () => {
       body: { type: "acme.cache_child", properties: {} },
     });
     expect(second.status).toBe(400);
+  });
+});
+
+/**
+ * The registration cap bounds the chain ABOVE the type being written, which
+ * is the right thing for it to bound and is not a bound on the chain the
+ * write produces. Moving a type that has subtypes under a new parent
+ * lengthens every one of their chains without any of them being submitted,
+ * so a sequence of individually legal updates could take a chain past the cap
+ * that would have refused building it directly.
+ */
+describe("PUT /types/:id — re-parenting counts what hangs below", () => {
+  async function makeType(id: string, parent?: string): Promise<Response> {
+    return request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id, version: 1, fields: {}, ...(parent ? { parent } : {}) },
+    });
+  }
+
+  // `rp.a` carries two levels below it, so it may sit under eight ancestors
+  // and no more: eight above plus the two below is the cap exactly. The
+  // boundary is asserted on both sides, because an off-by-one here either
+  // refuses a legal move or admits the thing being closed.
+  const chainLength = 10;
+
+  beforeAll(async () => {
+    await makeType("rp.c0");
+    for (let n = 1; n < chainLength; n += 1) {
+      await makeType(`rp.c${String(n)}`, `rp.c${String(n - 1)}`);
+    }
+    await makeType("rp.a");
+    await makeType("rp.b", "rp.a");
+    await makeType("rp.c", "rp.b");
+  });
+
+  async function reparent(parent: string, version: number): Promise<Response> {
+    return request(ctx.app, "PUT", "/types/rp.a", {
+      key: ctx.adminKey,
+      body: { version, parent, fields: {} },
+    });
+  }
+
+  it("accepts a move whose resulting chain sits on the cap", async () => {
+    expect((await reparent("rp.c7", 2)).status).toBe(200);
+  });
+
+  it("refuses the move one level deeper, and says which half ran out", async () => {
+    const res = await reparent("rp.c8", 3);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    // The submitted chain is well inside the cap. A message naming only the
+    // depth would state a fact the caller can see is not the whole reason.
+    expect(body.error.message).toContain("subtypes");
+  });
+
+  it("still accepts the same move for a type carrying nothing", async () => {
+    await makeType("rp.leaf");
+    const res = await request(ctx.app, "PUT", "/types/rp.leaf", {
+      key: ctx.adminKey,
+      body: { version: 2, parent: "rp.c8", fields: {} },
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * A type whose stored chain is past the backstop answered 500 to everything,
+ * including the read a caller needs to correct it. The state is built here
+ * through the registry directly, because every write path now refuses to
+ * produce it.
+ */
+describe("a type whose stored chain cannot be resolved", () => {
+  const link = (n: number): string => `broken.n${String(n)}`;
+  const LENGTH = MAX_RESOLUTION_DEPTH + 3;
+
+  beforeAll(async () => {
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: { id: "broken.victim", version: 1, fields: {} },
+    });
+    registerTypeSchema({ id: link(0), version: 1, fields: {} });
+    for (let n = 1; n < LENGTH; n += 1) {
+      registerTypeSchema({
+        id: link(n),
+        version: 1,
+        parent: link(n - 1),
+        fields: {},
+      });
+    }
+    registerTypeSchema({
+      id: "broken.victim",
+      version: 1,
+      parent: link(LENGTH - 1),
+      fields: {},
+    });
+  });
+
+  afterAll(() => {
+    for (let n = LENGTH - 1; n >= 0; n -= 1) unregisterTypeSchema(link(n));
+  });
+
+  it("answers a coded refusal rather than a server fault", async () => {
+    const res = await request(ctx.app, "GET", "/types/broken.victim", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).not.toBe(500);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_chain_unresolvable");
+  });
+
+  it("can still be corrected, which is the way back", async () => {
+    const fixed = await request(ctx.app, "PUT", "/types/broken.victim", {
+      key: ctx.adminKey,
+      body: { version: 2, fields: {} },
+    });
+    expect(fixed.status).toBe(200);
+
+    const res = await request(ctx.app, "GET", "/types/broken.victim", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
   });
 });

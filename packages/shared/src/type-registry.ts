@@ -26,6 +26,7 @@ import type {
   TypeSchemaValidationResult,
   VersionPolicy,
 } from "@withmarfa/types";
+import { ErrorCode, MarfaError } from "./errors.js";
 import type { EnforcementSettings, SpaceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
 
@@ -564,8 +565,10 @@ export function getResolvedFields(
   let current: TypeSchema | undefined = schema;
   while (current) {
     if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
-      throw new Error(
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
         `Inheritance cycle or excessive depth detected resolving fields for type "${typeId}" (at "${current.id}")`,
+        { type_id: typeId, at: current.id },
       );
     }
     seen.add(current.id);
@@ -647,8 +650,10 @@ export function isSubtypeOf(
   let current = resolveSchema(typeId, spaceId);
   while (current?.parent) {
     if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
-      throw new Error(
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
         `Inheritance cycle or excessive depth detected classifying type "${typeId}" (at "${current.id}")`,
+        { type_id: typeId, at: current.id },
       );
     }
     seen.add(current.id);
@@ -684,8 +689,10 @@ export function typeHasRole(
     if (current.roles?.includes(role)) return true;
     if (!current.parent) return false;
     if (seen.has(current.id) || seen.size >= MAX_RESOLUTION_DEPTH) {
-      throw new Error(
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
         `Inheritance cycle or excessive depth detected resolving roles for type "${typeId}" (at "${current.id}")`,
+        { type_id: typeId, at: current.id },
       );
     }
     seen.add(current.id);
@@ -748,6 +755,57 @@ export function directChildrenOf(
   return listTypes(spaceId)
     .filter((schema) => schema.parent === typeId)
     .map((schema) => schema.id);
+}
+
+/**
+ * How many levels of subtype sit below `typeId`, counted in edges: a type
+ * nothing inherits from answers 0, one with a child answers 1.
+ *
+ * The number a re-parent has to account for. Registration bounds the chain
+ * ABOVE the type being written, which is the right thing for it to bound and
+ * is not a bound on the chain's final depth: moving a type with subtypes
+ * under a new parent lengthens every one of their chains without any of them
+ * being submitted. Ten legal updates can therefore take a chain past a cap
+ * that refused every step of building it directly.
+ *
+ * Walks the declared parent of every type in the space, so a subtype named
+ * outside its parent's namespace counts exactly like one named under it.
+ */
+export function maxDescendantDepth(
+  typeId: string,
+  spaceId?: string | null,
+): number {
+  const byParent = new Map<string, string[]>();
+  for (const schema of listTypes(spaceId)) {
+    if (!schema.parent) continue;
+    const siblings = byParent.get(schema.parent);
+    if (siblings) siblings.push(schema.id);
+    else byParent.set(schema.parent, [schema.id]);
+  }
+
+  // Iterative rather than recursive, and carrying the path rather than a
+  // visited set: a node reachable by two routes is legitimately measured
+  // twice, while a node already on this path is a cycle and stops the
+  // descent. A cycle cannot reach the registry through any checked door,
+  // but a walk that spins takes the request thread with it.
+  let deepest = 0;
+  const stack: { id: string; depth: number; path: ReadonlySet<string> }[] = [
+    { id: typeId, depth: 0, path: new Set([typeId]) },
+  ];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) break;
+    if (current.depth > deepest) deepest = current.depth;
+    for (const child of byParent.get(current.id) ?? []) {
+      if (current.path.has(child)) continue;
+      stack.push({
+        id: child,
+        depth: current.depth + 1,
+        path: new Set([...current.path, child]),
+      });
+    }
+  }
+  return deepest;
 }
 
 // ---------------------------------------------------------------------------
