@@ -22,6 +22,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # Reading this commit's ci.yml result needs the Actions API.
+      actions: read
     steps:
       - uses: actions/checkout@v7
 
@@ -37,13 +39,35 @@ jobs:
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
+      # A tag points at a commit that already went through `ci.yml` on main:
+      # build, typecheck, lint, format, the SQLite and Postgres suites,
+      # fresh-migrate and the smoke tests. Re-running any of that here
+      # recomputes a known answer on the slowest runner in the estate, because
+      # this job is pinned to the hosted lane for OIDC. On v11.0.0 that cost
+      # over 26 minutes for a suite the self-hosted pool finishes in about one,
+      # with every publish step still queued behind it.
+      #
+      # So verify the result instead of recomputing it. That is strictly
+      # stronger than what it replaces: nothing previously stopped a tag being
+      # cut on a commit CI had never seen, because the checks here ran against
+      # the tag's own tree and would pass either way.
+      - name: Require a green CI run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            --jq '.total_count')
+          if [ "${runs:-0}" -lt 1 ]; then
+            echo "::error::No successful ci.yml run for $GITHUB_SHA. Publish refuses a commit CI has not passed. Push the commit to main, let CI go green, then tag it."
+            exit 1
+          fi
+          echo "ci.yml is green for $GITHUB_SHA"
+
       - run: pnpm install --frozen-lockfile
 
+      # Still needed: `pnpm pack` packs whatever is in each package's dist/.
       - run: pnpm build
-
-      - run: pnpm typecheck
-
-      - run: pnpm test
 
       # Pack + publish pattern: pnpm pack resolves workspace:* specifiers
       # to actual versions in the resulting tarball; npm publish gives us
