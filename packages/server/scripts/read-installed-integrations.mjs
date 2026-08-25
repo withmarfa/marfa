@@ -7,15 +7,17 @@
  * a second reader agrees with this one only by attention. Anything that
  * needs the declaration imports this or runs it.
  *
- * Plain Node, ESM, and no TypeScript, because the verification imports it
- * inside the runtime image where there is no monorepo and no compiler.
- * Its one non-builtin import is `@withmarfa/shared`, which resolves from
- * the image's own node_modules: the server declares it a production
- * dependency, so the deploy prune keeps it, and the in-image verification
- * already loads it transitively. See `assertNameShape` for why a copied
- * grammar was the worse option.
+ * Plain Node, ESM, node: builtins only, because the verification imports it
+ * inside the runtime image where there is no monorepo and no TypeScript.
  * Run it directly and it prints one name per line, which is what the
  * Dockerfile's loop consumes.
+ *
+ * **Builtins only is a hard constraint, not a preference.** A workflow step
+ * runs this on a bare runner before `pnpm install`, so there is nothing but
+ * Node there to resolve an import against. Importing `@withmarfa/shared`
+ * for the grammar below resolved in the image, in the Docker build and
+ * under vitest, and failed on the first step added after it, which is the
+ * shape of a constraint worth stating rather than rediscovering.
  *
  * Being the one parser, it is also the one place that settles what a name
  * may look like, and the loop consuming its output is the reason that is
@@ -23,7 +25,6 @@
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { isValidIntegrationIdentifier } from "@withmarfa/shared";
 
 /** A name is dispatchable unless the declaration says otherwise. */
 const MANIFEST_ONLY = "manifest-only";
@@ -43,6 +44,39 @@ const NONE = "none";
 export class DeclarationError extends Error {}
 
 /**
+ * The platform's integration-identifier grammar, restated.
+ *
+ * Kept line for line with `isValidIntegrationIdentifier` in
+ * `@withmarfa/shared`, which this file cannot import.
+ * `installed-integrations.test.ts` runs both over a corpus and fails on any
+ * name the two disagree about, so a change to either that is not made to
+ * both is caught by a test rather than by an image.
+ *
+ * **Complete rather than trimmed, and that is deliberate.** Its only
+ * caller has already settled the slash arithmetic by the time it runs, so
+ * two of the guards below can never fire from here. They stay because the
+ * value of a mirrored implementation is that it diffs cleanly against the
+ * thing it mirrors, and a copy with lines missing has to be reasoned about
+ * instead of read. Do not tidy them out.
+ */
+const HANDLE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+const NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
+
+function matchesIntegrationGrammar(value) {
+  if (typeof value !== "string") return false;
+  if (value.length > 128) return false;
+  const slash = value.indexOf("/");
+  if (slash === -1) return false;
+  if (value.slice(slash + 1).includes("/")) return false;
+  const handle = value.slice(0, slash);
+  const name = value.slice(slash + 1);
+  if (handle.length < 3 || handle.length > 32) return false;
+  if (handle.includes("--")) return false;
+  if (!HANDLE.test(handle)) return false;
+  return NAME.test(name);
+}
+
+/**
  * Hold a name to `<namespace>/<name>`, the manifest identifier.
  *
  * This is a boundary rather than a format preference. The image build
@@ -60,20 +94,23 @@ export class DeclarationError extends Error {}
  * catalog quietly one integration short with nothing saying so, which is
  * the silent shrink this declaration exists to make impossible.
  *
- * Everything past those two rules is the platform's grammar rather than
- * this file's, so it delegates to `isValidIntegrationIdentifier` instead of
- * restating it. Restating it is what was here before, and the subset drifted:
+ * Everything past those two rules is the platform's grammar. This file
+ * cannot import it, for the reason the header gives, so it restates it and
+ * a test holds the two to each other over a corpus rather than to a handful
+ * of examples. That test is the whole of what keeps this honest: the rules
+ * here were once a subset by hand, and the subset drifted, so
  * `Acme/Calendar`, `ab/x` and `acme--corp/x` all parsed, staged into the
  * image, and were then refused by the loader that validates the manifest.
- * A declaration that admits a name the platform rejects ships an
- * integration the catalog drops at boot with a log line, which is the same
- * silent shrink one paragraph up, arrived at from the other direction.
+ * A declaration admitting a name the platform rejects ships an integration
+ * the catalog drops at boot with a log line, which is the same silent
+ * shrink one paragraph up, arrived at from the other direction.
  *
- * The two local rules stay local and run first. They exist for reasons the
- * platform has no view on, one about the staging path and one about
- * discovery, and running them first is what keeps their messages, which
- * say which of those two things went wrong rather than only that the name
- * was refused.
+ * **The two local rules change the message and never the verdict.** Every
+ * name they refuse the platform's grammar also refuses: a `..` segment and
+ * a leading `_` or `.` all fail its character classes. They run first
+ * because their messages say which of the two things went wrong, which is
+ * the actionable half, and the equivalence test is what states that they
+ * cost nothing else.
  */
 function assertNameShape(name, lineNo) {
   const segments = name.split("/");
@@ -107,14 +144,14 @@ function assertNameShape(name, lineNo) {
       );
     }
   }
-  if (!isValidIntegrationIdentifier(name)) {
+  if (!matchesIntegrationGrammar(name)) {
     throw new DeclarationError(
       `line ${String(lineNo)}: "${name}" is not a valid integration ` +
         `identifier. The namespace is 3 to 32 lowercase characters, digits ` +
-        `and single hyphens, and the name is lowercase, starts with a ` +
-        `letter, and may carry dots. This is the platform's own grammar, ` +
-        `so a name refused here would stage into the image and then be ` +
-        `refused by the catalog at boot.`,
+        `and single hyphens, neither leading nor trailing; the name is ` +
+        `dot-joined segments each starting with a letter. This is the ` +
+        `platform's own grammar, so a name refused here would stage into ` +
+        `the image and then be refused by the catalog at boot.`,
     );
   }
 }
