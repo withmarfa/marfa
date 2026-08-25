@@ -116,8 +116,9 @@ jobs:
           path: integrations-src
       - uses: docker/setup-buildx-action@v4
       # The whole image, not `--target build`. Stopping at the build stage
-      # skips the runtime stage's file layout and the verification that the
-      # staged integrations can load, which are two of the four things above.
+      # skips the runtime stage's file layout, which is the last of the four
+      # things above, and the verification that the staged integrations can
+      # load, which is not on that list at all.
       # They are four layers over an already-pulled base plus one `node` run,
       # so they cost seconds.
       #

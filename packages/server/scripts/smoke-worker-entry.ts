@@ -38,7 +38,7 @@ import { Worker } from "node:worker_threads";
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Both paths are the server package's own. The fixture used to be the
 // integrations scaffold, which put half of this script's inputs in a
-// directory that is on its way out of this repository; the property under
+// directory that has since left this repository; the property under
 // test is this package's bundling, so the fixture is this package's too.
 const SERVER_ROOT = resolve(HERE, "..");
 const WORKER_ENTRY = resolve(SERVER_ROOT, "dist/worker-entry.js");
@@ -56,10 +56,11 @@ function info(msg: string): void {
   console.log(`[smoke-worker-entry] ${msg}`);
 }
 
-// Assertion 1 — catches §3 in isolation. The Worker constructor doesn't
-// probe the path, but Node's worker_thread init throws MODULE_NOT_FOUND
-// once the thread starts. Pre-flighting the existence here gives a
-// clearer error message than waiting for the worker `error` event.
+// Assertion 1 — catches failure mode 1 in isolation. The Worker
+// constructor doesn't probe the path, but Node's worker_thread init
+// throws MODULE_NOT_FOUND once the thread starts. Pre-flighting the
+// existence here gives a clearer error message than waiting for the
+// worker `error` event.
 if (!existsSync(WORKER_ENTRY)) {
   fail(
     `dist/worker-entry.js does not exist. tsup must emit it as a named entry — see packages/server/tsup.config.ts.`,

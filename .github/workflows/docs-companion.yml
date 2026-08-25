@@ -50,8 +50,7 @@ jobs:
             const MARKER = '<!-- docs-companion-check -->';
 
             // Documented surfaces — mirrors the freshness trigger set in
-            // packages/server/CLAUDE.md plus the SDK and the shipped
-            // manifests.
+            // the root CLAUDE.md plus the SDK and the shipped manifests.
             // No trailing slash on the openapi entry: the generator is a pair
             // of files (`openapi.ts`, `openapi-finalize.ts`), not a directory,
             // so a `openapi/` prefix could never match anything.
