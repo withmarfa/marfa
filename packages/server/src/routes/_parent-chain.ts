@@ -39,10 +39,13 @@ export interface ParentChainMessages {
   tooDeep: (maxDepth: number) => string;
   circular: () => string;
   /**
-   * Receives the first ancestor that failed to resolve, which is the parent
-   * the caller supplied only when the chain is one link long.
+   * Receives the first ancestor that failed to resolve AND the parent the
+   * caller supplied. They are the same id only when the chain is one link
+   * long, and a message phrased on the first alone tells a caller their
+   * parent is missing when it resolves perfectly well and its own parent is
+   * the problem.
    */
-  unknownParent: (unresolvedId: string) => string;
+  unknownParent: (unresolvedId: string, parentId: string) => string;
 }
 
 /**
@@ -79,7 +82,7 @@ export function assertParentChain(
     if (!parent) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        messages.unknownParent(current),
+        messages.unknownParent(current, parentId),
       );
     }
     if (!parent.parent) break;

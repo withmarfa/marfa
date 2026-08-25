@@ -395,11 +395,13 @@ export function isPublisherType(id: string): boolean {
 }
 
 /**
- * Registers a custom type schema into the space's overlay and clears that
- * space's cached Zod schema for the id. Core/system types are never
- * registered here (they live in the global map); callers filter them out
- * before calling. `spaceId` is the owning space — omit it only for the
- * null-space bucket (single-space self-host / platform).
+ * Registers a custom type schema into the space's overlay and clears the
+ * compiled schemas it invalidates: this id always, and every descendant when
+ * an existing registration is being replaced.
+ *
+ * Core/system types are never registered here (they live in the global map);
+ * callers filter them out before calling. `spaceId` is the owning space —
+ * omit it only for the null-space bucket (single-space self-host / platform).
  */
 export function registerTypeSchema(
   schema: TypeSchema,
@@ -411,25 +413,92 @@ export function registerTypeSchema(
     bucket = new Map<string, TypeSchema>();
     _customBySpace.set(key, bucket);
   }
+  // Read before the write: on an update the descendants are the same either
+  // way, but the flag is what keeps the walk off the boot path, where every
+  // registration is a first one and the cache is empty anyway.
+  const replacing = bucket.has(schema.id);
   bucket.set(schema.id, schema);
-  // The Zod cache is keyed per space, so clearing only this space's entry is
-  // both sufficient and necessary — two spaces may hold different schemas
-  // under the same id.
-  zodSchemaCache.delete(zodCacheKey(schema.id, spaceId));
-  zodSchemaStrictCache.delete(zodCacheKey(schema.id, spaceId));
+  evictCompiledSchema(schema.id, spaceId);
+  if (replacing) {
+    for (const descendant of declaredDescendants(schema.id, spaceId)) {
+      evictCompiledSchema(descendant, spaceId);
+    }
+  }
 }
 
 /**
- * Removes a custom type schema from the space's overlay and clears its cached
- * Zod schema for that space.
+ * Removes a custom type schema from the space's overlay and clears the
+ * compiled schemas its removal invalidates.
  */
 export function unregisterTypeSchema(
   id: string,
   spaceId?: string | null,
 ): void {
+  // Every descendant's compiled schema carries fields this type contributes,
+  // so removing it invalidates all of them and not only its own.
+  const invalidated = declaredDescendants(id, spaceId);
   _customBySpace.get(spaceKey(spaceId))?.delete(id);
+  evictCompiledSchema(id, spaceId);
+  for (const descendant of invalidated) {
+    evictCompiledSchema(descendant, spaceId);
+  }
+}
+
+/**
+ * Drop a type's compiled Zod schemas for one space.
+ *
+ * The cache is keyed per space, so clearing only this space's entry is both
+ * sufficient and necessary: two spaces may hold different schemas under the
+ * same id.
+ */
+function evictCompiledSchema(id: string, spaceId?: string | null): void {
   zodSchemaCache.delete(zodCacheKey(id, spaceId));
   zodSchemaStrictCache.delete(zodCacheKey(id, spaceId));
+}
+
+/**
+ * Every type in the space whose declared parent chain reaches `rootId`,
+ * excluding `rootId` itself.
+ *
+ * A compiled Zod schema is built from a type's RESOLVED fields, so changing
+ * or removing a type invalidates every compiled schema below it as well as
+ * its own. Nothing else evicts those, and a stale one goes on validating
+ * writes against a shape the type no longer has.
+ *
+ * Downward, unlike every other walk here, and by declared parent alone. This
+ * is not {@link declaredDescendantsOutsideNamespace}, which deliberately
+ * omits descendants sitting under the root's own namespace because its caller
+ * unions it with a name-prefix match. A short answer there is correct; a
+ * short answer here leaves a cache entry nobody clears.
+ */
+function declaredDescendants(
+  rootId: string,
+  spaceId?: string | null,
+): string[] {
+  const byParent = new Map<string, string[]>();
+  for (const schema of listTypes(spaceId)) {
+    if (!schema.parent) continue;
+    const siblings = byParent.get(schema.parent);
+    if (siblings) siblings.push(schema.id);
+    else byParent.set(schema.parent, [schema.id]);
+  }
+
+  const out: string[] = [];
+  const seen = new Set<string>([rootId]);
+  const queue: string[] = [rootId];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === undefined) break;
+    for (const child of byParent.get(current) ?? []) {
+      // A cycle that reached the registry cannot spin this: an id already
+      // seen is never queued twice.
+      if (seen.has(child)) continue;
+      seen.add(child);
+      out.push(child);
+      queue.push(child);
+    }
+  }
+  return out;
 }
 
 /**
@@ -659,6 +728,26 @@ export function declaredDescendantsOutsideNamespace(
     if (isSubtypeOf(schema.id, rootId, spaceId)) out.push(schema.id);
   }
   return out;
+}
+
+/**
+ * The types in the space that name `typeId` as their immediate parent.
+ *
+ * Direct children only, because the question it answers is whether deleting
+ * this type would leave a chain pointing at nothing, and a grandchild's chain
+ * stays intact as long as its own parent does.
+ *
+ * A pass over the space's types, which is a few dozen entries: the platform
+ * ships about forty-five and a space adds a handful. An index on the declared
+ * parent would carry more cost in keeping it true than the scan does.
+ */
+export function directChildrenOf(
+  typeId: string,
+  spaceId?: string | null,
+): string[] {
+  return listTypes(spaceId)
+    .filter((schema) => schema.parent === typeId)
+    .map((schema) => schema.id);
 }
 
 // ---------------------------------------------------------------------------

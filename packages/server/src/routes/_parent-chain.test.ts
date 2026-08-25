@@ -31,7 +31,8 @@ const link = (n: number): string => `acme.a${String(n)}`;
 const MESSAGES = {
   tooDeep: (maxDepth: number) => `too-deep:${String(maxDepth)}`,
   circular: () => "circular",
-  unknownParent: (parentId: string) => `unknown:${parentId}`,
+  unknownParent: (unresolvedId: string, parentId: string) =>
+    `unknown:${unresolvedId} given:${parentId}`,
 };
 
 beforeAll(() => {
@@ -99,10 +100,14 @@ describe("a parent that does not resolve", () => {
   it("names the ancestor that could not be found", () => {
     expect(() => {
       assertParentChain("acme.new", "acme.absent", SPACE, MESSAGES);
-    }).toThrow("unknown:acme.absent");
+    }).toThrow("unknown:acme.absent given:acme.absent");
   });
 
-  it("names the first unresolvable ancestor, not the parent given", () => {
+  // Changed deliberately. The message used to carry the first unresolvable
+  // ancestor alone, so a broken grandparent produced a sentence about the
+  // parent, which resolves perfectly well. Each door now has both ids and
+  // phrases the two cases apart.
+  it("carries the unresolvable ancestor and the parent it was given", () => {
     registerTypeSchema(
       { id: "acme.orphan", version: 1, parent: "acme.absent", fields: {} },
       SPACE,
@@ -110,7 +115,7 @@ describe("a parent that does not resolve", () => {
     try {
       expect(() => {
         assertParentChain("acme.new", "acme.orphan", SPACE, MESSAGES);
-      }).toThrow("unknown:acme.absent");
+      }).toThrow("unknown:acme.absent given:acme.orphan");
     } finally {
       unregisterTypeSchema("acme.orphan", SPACE);
     }
@@ -121,7 +126,7 @@ describe("the space a parent resolves in", () => {
   it("does not see a type registered by another space", () => {
     expect(() => {
       assertParentChain("acme.new", link(0), OTHER_SPACE, MESSAGES);
-    }).toThrow(`unknown:${link(0)}`);
+    }).toThrow(`unknown:${link(0)} given:${link(0)}`);
   });
 });
 
@@ -135,8 +140,7 @@ describe("the registration cap against the registry's own backstop", () => {
     // A type registered on top of the deepest legal parent walks one more
     // node than the cap itself, which is the deepest a single checked
     // registration produces. It is not the deepest a chain can get: a
-    // re-parent grows one without ever registering past the cap, and
-    // manifest registration runs no check at all.
+    // re-parent grows one without ever registering past the cap.
     const deepest = "acme.deepest";
     registerTypeSchema(
       {

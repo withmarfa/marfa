@@ -113,9 +113,10 @@ function validateDeclaredTypes(
  * holding the type individually the way a `POST /types` caller is, so every
  * message names the manifest and the schema it declared.
  *
- * `unknownParent` says "ancestor" rather than "parent" deliberately. The
- * check only runs once a schema's immediate parent resolves, so the id it
- * reports is always something further up the chain.
+ * `unknownParent` names the ancestor and the parent separately. This door
+ * only reaches it for an ancestor further up, since the check runs once the
+ * immediate parent resolves, and that happens when the registry already
+ * holds a chain pointing at nothing.
  */
 function assertDeclaredParentChain(
   manifestName: string,
@@ -128,8 +129,8 @@ function assertDeclaredParentChain(
       `${manifestName} declares type "${typeId}" with an inheritance chain deeper than ${String(maxDepth)}`,
     circular: () =>
       `${manifestName} declares a circular parent chain for type "${typeId}"`,
-    unknownParent: (ancestor) =>
-      `${manifestName} declares type "${typeId}" under an ancestor that resolves to no registered type: "${ancestor}"`,
+    unknownParent: (unresolved, parent) =>
+      `${manifestName} declares type "${typeId}" under "${parent}", whose own ancestor "${unresolved}" resolves to no registered type`,
   });
 }
 

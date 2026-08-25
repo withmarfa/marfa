@@ -68,8 +68,12 @@ function assertParentChainResolves(
     tooDeep: (maxDepth) =>
       `Archive type "${typeId}" has an inheritance chain deeper than ${String(maxDepth)}`,
     circular: () => `Archive type "${typeId}" declares a circular parent chain`,
-    unknownParent: (parent) =>
-      `Archive type "${typeId}" names an unknown parent "${parent}"`,
+    // The caller checks that the immediate parent resolves before reaching
+    // this, so the id reported here is always further up the chain and the
+    // two are never the same. A branch on that would never take its other
+    // side.
+    unknownParent: (unresolved, parent) =>
+      `Archive type "${typeId}" names parent "${parent}", whose own ancestor "${unresolved}" is unknown`,
   });
 }
 

@@ -10302,7 +10302,7 @@
           "Types"
         ],
         "summary": "Delete a custom type",
-        "description": "Removes a custom type registration. Admin-only — core types are immutable. Deletion is rejected if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
+        "description": "Removes a custom type registration. Admin-only — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -10326,10 +10326,10 @@
                 "true",
                 "false"
               ],
-              "description": "Delete and orphan existing items when `true`."
+              "description": "Delete and orphan existing items when `true`. Has no effect on the subtype check."
             },
             "required": false,
-            "description": "Delete and orphan existing items when `true`.",
+            "description": "Delete and orphan existing items when `true`. Has no effect on the subtype check.",
             "name": "force",
             "in": "query"
           }
@@ -10435,7 +10435,7 @@
             }
           },
           "409": {
-            "description": "Type in use",
+            "description": "Type still has subtypes, or items",
             "content": {
               "application/json": {
                 "schema": {
@@ -10447,7 +10447,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "type_in_use"
+                            "type_in_use",
+                            "type_has_subtypes"
                           ]
                         },
                         "message": {

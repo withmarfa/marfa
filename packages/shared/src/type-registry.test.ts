@@ -5,6 +5,7 @@ import {
   getTypeSchema,
   getResolvedFields,
   isSubtypeOf,
+  directChildrenOf,
   registerTypeSchema,
   unregisterTypeSchema,
   validateProperties,
@@ -1334,6 +1335,171 @@ describe("validateTypeSchema — merge_policy", () => {
           e.field.startsWith("merge_policy.fields.nonexistent"),
         ),
       ).toBe(true);
+    }
+  });
+});
+
+describe("directChildrenOf", () => {
+  const SPACE = "01a02000-0000-7000-8000-0000000000d1";
+
+  beforeEach(() => {
+    registerTypeSchema({ id: "acme.root", version: 1, fields: {} }, SPACE);
+    registerTypeSchema(
+      { id: "acme.branch", version: 1, parent: "acme.root", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "acme.sibling", version: 1, parent: "acme.root", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "acme.leaf", version: 1, parent: "acme.branch", fields: {} },
+      SPACE,
+    );
+  });
+
+  afterEach(() => {
+    for (const id of [
+      "acme.leaf",
+      "acme.sibling",
+      "acme.branch",
+      "acme.root",
+    ]) {
+      unregisterTypeSchema(id, SPACE);
+    }
+  });
+
+  it("names every type declaring this one as its parent", () => {
+    expect(directChildrenOf("acme.root", SPACE).sort()).toEqual([
+      "acme.branch",
+      "acme.sibling",
+    ]);
+  });
+
+  // A grandchild's own chain survives its grandparent, so it is not what
+  // stops the delete. Including it would refuse for something already
+  // covered by the child that does.
+  it("stops at the immediate children", () => {
+    expect(directChildrenOf("acme.root", SPACE)).not.toContain("acme.leaf");
+  });
+
+  it("answers nothing for a leaf", () => {
+    expect(directChildrenOf("acme.leaf", SPACE)).toEqual([]);
+  });
+
+  // Custom types resolve only inside their own space, so a child in another
+  // space is not a child here. Answering otherwise would refuse a delete on
+  // the strength of a type this caller cannot see.
+  it("does not see a child registered by another space", () => {
+    expect(
+      directChildrenOf("acme.root", "01a02000-0000-7000-8000-0000000000d2"),
+    ).toEqual([]);
+  });
+
+  it("names a child of a platform type the space registered itself", () => {
+    registerTypeSchema(
+      { id: "acme.note_subtype", version: 1, parent: "core.note", fields: {} },
+      SPACE,
+    );
+    try {
+      expect(directChildrenOf("core.note", SPACE)).toContain(
+        "acme.note_subtype",
+      );
+    } finally {
+      unregisterTypeSchema("acme.note_subtype", SPACE);
+    }
+  });
+});
+
+/**
+ * A compiled Zod schema is built from a type's RESOLVED fields, so removing a
+ * type invalidates every compiled schema below it, not only its own. Nothing
+ * cleared those, and a stale entry goes on validating writes against a shape
+ * the type no longer has.
+ *
+ * `DELETE /types/:id` refuses this case now, so the route no longer reaches
+ * it. The function's contract is still that it clears what it invalidates,
+ * and it has other callers.
+ */
+describe("unregisterTypeSchema and the schemas it invalidates", () => {
+  const SPACE = "01a02000-0000-7000-8000-0000000000d3";
+
+  it("stops a descendant validating against its removed ancestor's fields", () => {
+    registerTypeSchema(
+      {
+        id: "acme.cache_root",
+        version: 1,
+        fields: { inherited: { type: "string", required: true } },
+      },
+      SPACE,
+    );
+    registerTypeSchema(
+      {
+        id: "acme.cache_mid",
+        version: 1,
+        parent: "acme.cache_root",
+        fields: {},
+      },
+      SPACE,
+    );
+    registerTypeSchema(
+      {
+        id: "acme.cache_leaf",
+        version: 1,
+        parent: "acme.cache_mid",
+        fields: {},
+      },
+      SPACE,
+    );
+
+    try {
+      // Compiles and caches the leaf, inherited requirement and all.
+      expect(
+        validateProperties("acme.cache_leaf", {}, { spaceId: SPACE }).success,
+      ).toBe(false);
+      expect(
+        validateProperties(
+          "acme.cache_leaf",
+          { inherited: "present" },
+          { spaceId: SPACE },
+        ).success,
+      ).toBe(true);
+
+      unregisterTypeSchema("acme.cache_root", SPACE);
+
+      // The requirement came from a type that is gone, so it cannot still be
+      // enforced two levels down. A stale cache entry is what would.
+      expect(
+        validateProperties("acme.cache_leaf", {}, { spaceId: SPACE }).success,
+      ).toBe(true);
+    } finally {
+      unregisterTypeSchema("acme.cache_leaf", SPACE);
+      unregisterTypeSchema("acme.cache_mid", SPACE);
+      unregisterTypeSchema("acme.cache_root", SPACE);
+    }
+  });
+
+  // Every registration door refuses a cycle, so one can only reach the
+  // registry through a path that runs no check. The downward walk is
+  // breadth-first over a visited set rather than a recursive descent, which
+  // is what makes it terminate anyway. Asserted rather than reasoned about,
+  // because a walk that hangs takes the request thread with it.
+  it("terminates on a cycle that reached the registry", () => {
+    registerTypeSchema(
+      { id: "cyc.a", version: 1, parent: "cyc.b", fields: {} },
+      SPACE,
+    );
+    registerTypeSchema(
+      { id: "cyc.b", version: 1, parent: "cyc.a", fields: {} },
+      SPACE,
+    );
+    try {
+      expect(() => {
+        unregisterTypeSchema("cyc.a", SPACE);
+      }).not.toThrow();
+    } finally {
+      unregisterTypeSchema("cyc.a", SPACE);
+      unregisterTypeSchema("cyc.b", SPACE);
     }
   });
 });
