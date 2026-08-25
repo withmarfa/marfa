@@ -20,7 +20,11 @@ export type {
   ItemEventHandler,
 } from "./handlers.js";
 
-export { ConnectionClient, MarfaApiError } from "./connection-client.js";
+export {
+  ConnectionClient,
+  MarfaApiError,
+  CYCLE_HEADERS,
+} from "./connection-client.js";
 export type {
   ConnectionClientOptions,
   CreateItemInput,

@@ -10,4 +10,5 @@ export * from "./query-parser.js";
 export * from "./diff-type-schemas.js";
 export * from "./integration-manifest.js";
 export * from "./connection-mapping.js";
+export * from "./cycle-headers.js";
 export * from "./time-zones.js";

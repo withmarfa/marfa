@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/runtime-sdk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "SDK that Connections integrations import. Typed handler API, per-connection state, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",
   "license": "Apache-2.0",
@@ -24,13 +24,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@withmarfa/shared": "workspace:*",
     "cron-parser": "^5.10.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260821.1",
+    "@withmarfa/shared": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "@withmarfa/shared": "workspace:^"
   }
 }

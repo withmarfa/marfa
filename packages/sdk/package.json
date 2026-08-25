@@ -35,7 +35,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@withmarfa/shared": "workspace:*",
+    "@withmarfa/shared": "workspace:^",
     "oauth4webapi": "^3.8.7"
   },
   "devDependencies": {

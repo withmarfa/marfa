@@ -10,7 +10,11 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
-import { cycleMiddleware } from "./cycle.js";
+import {
+  cycleMiddleware,
+  CYCLE_HEADERS as SERVER_CYCLE_HEADERS,
+} from "./cycle.js";
+import { CYCLE_HEADERS as KIT_CYCLE_HEADERS } from "@withmarfa/runtime-sdk";
 import { cycleRequestContext } from "../cycle-context.js";
 import type { AppEnv } from "./auth.js";
 import type { ApiKey } from "@withmarfa/shared";
@@ -270,5 +274,46 @@ describe("cycleMiddleware", () => {
         hopCount: 2,
       });
     });
+  });
+});
+
+describe("the header names the kit stamps and this middleware reads", () => {
+  /**
+   * The crossing test. Both ends held their own copy of these names and
+   * both docblocks claimed to be the one place they were kept; the server
+   * additionally read a third, lowercase pair that the constant it exported
+   * for the kit did not feed. A rename therefore needed three edits, and
+   * nothing failed if you made two.
+   *
+   * Asserting the constants match each other would be circular now they
+   * share a declaration. What this asserts is the thing that actually has
+   * to hold: a request carrying what the kit stamps resolves here.
+   */
+  it("a request stamped by the kit's client resolves to the parent chain", async () => {
+    const app = new Hono();
+    app.use("*", cycleMiddleware());
+    app.get("/echo", (c) => c.json({ cycle: cycleRequestContext.getStore() }));
+
+    // Built the way ConnectionClient.request builds them, keyed off the
+    // kit's own exported constant rather than a literal repeated here.
+    const stamped: Record<string, string> = {};
+    stamped[KIT_CYCLE_HEADERS.ORIGIN] = "conn-parent";
+    stamped[KIT_CYCLE_HEADERS.HOP] = "3";
+
+    const res = await app.request("/echo", { headers: stamped });
+
+    expect(await res.json()).toEqual({
+      cycle: { originatingConnectionId: "conn-parent", hopCount: 3 },
+    });
+  });
+
+  it("both ends resolve to one object, so a second copy cannot creep back", () => {
+    // Guards the single declaration, not the values. It deliberately does
+    // not catch a rename: both ends derive from the same constant, so a
+    // rename moves them together and this stays true. What catches an
+    // unintended rename is the hardcoded header literals in the tests
+    // above, which is the right division — this asserts the wiring, those
+    // assert the names.
+    expect(KIT_CYCLE_HEADERS).toBe(SERVER_CYCLE_HEADERS);
   });
 });

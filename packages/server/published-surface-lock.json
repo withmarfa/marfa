@@ -1,11 +1,11 @@
 {
   "@withmarfa/runtime-sdk": {
-    "version": "1.1.0",
-    "hash": "c6fe1890d1131b2c0f8f948c71abfe5a8599173a547762156a089dbb89928ae9",
-    "exports": 58
+    "version": "1.2.0",
+    "hash": "f98ff7ef161a126128f0a58a4fb38fcf4244d6e7d27d28d4947c2f3f89850443",
+    "exports": 59
   },
   "@withmarfa/runtime-test": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "hash": "1fe282ac1d837a1a465b66dd3f29e2b71e52ba704df16efb38a84911cc3704d0",
     "exports": 9
   },
@@ -16,8 +16,8 @@
   },
   "@withmarfa/shared": {
     "version": "6.0.0",
-    "hash": "e3d5ced1d812bedac6ac72939b7d0129078e0a771c228133472e049b4459177a",
-    "exports": 235
+    "hash": "ade007abd94dfcd8c4798b11c1792cc39e67c4ad43f01906971b280327fff37f",
+    "exports": 236
   },
   "@withmarfa/webhooks": {
     "version": "1.1.1",

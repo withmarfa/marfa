@@ -1,3 +1,4 @@
+import { CYCLE_HEADERS } from "@withmarfa/shared";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
 
@@ -19,8 +20,14 @@ import type { AppEnv } from "./auth.js";
  * head shape rather than rejecting the request — the cycle metadata is
  * advisory (the hop budget is enforced at publish time regardless).
  */
-const CYCLE_ORIGIN_HEADER = "x-marfa-cycle-origin";
-const CYCLE_HOP_HEADER = "x-marfa-cycle-hop";
+// Derived from the shared constant rather than written out again. These
+// were a third copy: the exported `CYCLE_HEADERS` below existed for the
+// kit's benefit and this middleware read its own lowercase pair, so a
+// rename needed three edits and the two the server held were in different
+// cases. Hono lowercases header lookups, hence the transform rather than a
+// second literal.
+const CYCLE_ORIGIN_HEADER = CYCLE_HEADERS.ORIGIN.toLowerCase();
+const CYCLE_HOP_HEADER = CYCLE_HEADERS.HOP.toLowerCase();
 
 /**
  * Maximum hop count we accept off the wire. The hop budget is enforced
@@ -150,11 +157,8 @@ function resolveCycle(c: Context<AppEnv>): {
 }
 
 /**
- * Constants exported for the SDK (cross-package contract). Header names
- * MUST match between the SDK's `ConnectionClient.request()` and this
- * middleware — kept in one place to avoid drift.
+ * Re-exported rather than declared. `@withmarfa/shared` owns these names.
+ * Both this middleware and the runtime kit's `ConnectionClient` used to
+ * hold their own copy, and both said they were the one place it was kept.
  */
-export const CYCLE_HEADERS = {
-  ORIGIN: "X-Marfa-Cycle-Origin",
-  HOP: "X-Marfa-Cycle-Hop",
-} as const;
+export { CYCLE_HEADERS };
