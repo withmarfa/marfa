@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { createEchoSuppression } from "./echo-suppression.js";
+import {
+  createEchoSuppression,
+  expiredEchoMarkerKeys,
+  settleEchoMarkers,
+  ECHO_MARKER_PREFIX,
+} from "./echo-suppression.js";
 import { createInMemoryStorage } from "./in-memory-storage.js";
 
 describe("echo suppression", () => {
@@ -120,5 +125,132 @@ describe("echo suppression", () => {
     for (const id of ids) {
       expect(await storage.get(`pending_write:${id}`)).toBeUndefined();
     }
+  });
+});
+
+describe("markers survive the gap between being written and being visible", () => {
+  it("a marker from a long dispatch is still live once it commits", async () => {
+    // The defect: a handler runs in a worker thread whose writes are
+    // journalled and applied when the dispatch returns. A marker written
+    // at minute one of a ten-minute run is unreadable until minute ten,
+    // and stamped from the write clock it is expired on arrival — so the
+    // first echo webhook goes straight through, deleting the record as it
+    // goes.
+    let clock = 1_000_000;
+    const storage = createInMemoryStorage();
+    const echo = createEchoSuppression(
+      storage,
+      { echo_ttl_seconds: 60 },
+      () => clock,
+    );
+
+    await echo.trackOutboundWrite("ext_1", "hash_a");
+
+    // The journalled write, as the substrate would hand it over.
+    const updates: Record<string, unknown> = {
+      [`${ECHO_MARKER_PREFIX}ext_1`]: await storage.get(
+        `${ECHO_MARKER_PREFIX}ext_1`,
+      ),
+    };
+
+    // Ten minutes of dispatch, then the commit.
+    clock += 10 * 60_000;
+    settleEchoMarkers(updates, clock);
+    await storage.put(
+      `${ECHO_MARKER_PREFIX}ext_1`,
+      updates[`${ECHO_MARKER_PREFIX}ext_1`],
+    );
+
+    // The echo webhook, arriving a second after the commit.
+    clock += 1_000;
+    expect(await echo.shouldSkipReactive("ext_1", "hash_a")).toBe(true);
+  });
+
+  it("still expires, a TTL after it became visible", async () => {
+    // The control. Without it, a rebase that simply never expired would
+    // pass the test above and suppress genuine inbound changes forever.
+    let clock = 1_000_000;
+    const storage = createInMemoryStorage();
+    const echo = createEchoSuppression(
+      storage,
+      { echo_ttl_seconds: 60 },
+      () => clock,
+    );
+
+    await echo.trackOutboundWrite("ext_1", "hash_a");
+    const key = `${ECHO_MARKER_PREFIX}ext_1`;
+    const updates: Record<string, unknown> = { [key]: await storage.get(key) };
+
+    clock += 10 * 60_000;
+    settleEchoMarkers(updates, clock);
+    await storage.put(key, updates[key]);
+
+    // 61 seconds after the commit, not after the write.
+    clock += 61_000;
+    expect(await echo.shouldSkipReactive("ext_1", "hash_a")).toBe(false);
+  });
+
+  it("leaves a marker from an older build alone rather than reviving it", () => {
+    // A record with no `ttl_ms` predates the rebase. Expiring early is a
+    // missed suppression; inventing a TTL for it could suppress a real
+    // change indefinitely, so the conservative direction is to skip it.
+    const updates: Record<string, unknown> = {
+      [`${ECHO_MARKER_PREFIX}old`]: {
+        content_hash: "h",
+        expires_at_ms: 500,
+      },
+    };
+    settleEchoMarkers(updates, 1_000_000);
+    expect(updates[`${ECHO_MARKER_PREFIX}old`]).toEqual({
+      content_hash: "h",
+      expires_at_ms: 500,
+    });
+  });
+
+  it("does not touch cursor keys that merely sit alongside markers", () => {
+    // The cursor value deliberately carries BOTH fields the rebase reads.
+    // A plainer fixture is excluded by the shape guard whether or not the
+    // prefix is checked, so it would pin nothing: only a value the rebase
+    // would otherwise rewrite proves the prefix is what keeps it out.
+    // Contrived, but an integration's cursor is free-form JSON and this
+    // is the only input that can fail if the check is removed.
+    const cursorValue = { content_hash: "h", ttl_ms: 999, page: 3 };
+    const updates: Record<string, unknown> = { "cursor:main": cursorValue };
+    settleEchoMarkers(updates, 1_000_000);
+    expect(updates["cursor:main"]).toEqual(cursorValue);
+  });
+});
+
+describe("expired markers are swept rather than accumulating", () => {
+  it("names expired markers and leaves live ones and cursors alone", () => {
+    const cursors: Record<string, unknown> = {
+      [`${ECHO_MARKER_PREFIX}dead`]: {
+        content_hash: "h",
+        ttl_ms: 60_000,
+        expires_at_ms: 500,
+      },
+      [`${ECHO_MARKER_PREFIX}live`]: {
+        content_hash: "h",
+        ttl_ms: 60_000,
+        expires_at_ms: 2_000_000,
+      },
+      "cursor:main": { page: 3 },
+    };
+    expect(expiredEchoMarkerKeys(cursors, 1_000_000)).toEqual([
+      `${ECHO_MARKER_PREFIX}dead`,
+    ]);
+  });
+
+  it("returns nothing when every marker is live", () => {
+    // The floor. "No expired markers" and "no markers at all" are the
+    // same empty array, and only one of them means the sweep worked.
+    const cursors: Record<string, unknown> = {
+      [`${ECHO_MARKER_PREFIX}live`]: {
+        content_hash: "h",
+        ttl_ms: 60_000,
+        expires_at_ms: 2_000_000,
+      },
+    };
+    expect(expiredEchoMarkerKeys(cursors, 1_000_000)).toEqual([]);
   });
 });

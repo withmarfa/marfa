@@ -101,13 +101,21 @@ function makeGoneEnv(disarmed: string[]): ConsumerEnvironment {
       return Promise.resolve();
     },
     echo: { echo_ttl_seconds: 60 },
+    softLimitMs: 60_000,
+    enqueueContinuation: () =>
+      Promise.reject(
+        // No test here parks, so being handed a continuation means the
+        // suite has drifted from what it claims to cover. Rejecting says
+        // so; resolving would let it pass quietly.
+        new Error("orphaned-connection fixtures do not park"),
+      ),
   };
 }
 
 describe("orphaned connection", () => {
   beforeEach(() => {
     _resetHandlers();
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    registerScheduleHandler(() => Promise.resolve({ ok: true, done: true }));
   });
 
   it("disarms the schedule instead of retrying when the lease is gone", async () => {

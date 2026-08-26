@@ -20,13 +20,14 @@ import {
   ConnectionClient,
   createActivitySink,
   createCursorStore,
+  createBudget,
   createEchoSuppression,
   dispatchMessage,
   registerScheduleHandler,
   _resetHandlers,
   type ConnectionContext,
   type CursorStorageAdapter,
-  type HandlerResult,
+  type SweepResult,
   type ScheduleMessage,
   familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
@@ -203,11 +204,21 @@ function buildCursorRegistration(page: number): LocalIntegrationRegistration {
         echo: createEchoSuppression(adapter, request.echo),
         mapping: familyOnlyMappingResolver(),
         cycle: null,
+        // The real budget off the request's own numbers, not a stub that
+        // never yields. A fixed `shouldYield: false` here would let a
+        // handler's yield branch pass every test while never running.
+        budget: createBudget({
+          startedAtMs: request.startedAtMs,
+          softLimitMs: request.softLimitMs,
+        }).budget,
       };
       _resetHandlers();
       registerScheduleHandler(async (c: ConnectionContext) => {
         await c.cursor.write("main", { page });
-        const ok: HandlerResult = { ok: true };
+        // `done: true` — this fixture's handler writes one cursor and
+        // finishes. The race it exercises is about concurrent dispatch,
+        // not about resumption.
+        const ok: SweepResult = { ok: true, done: true };
         return ok;
       });
       const result = await dispatchMessage(connectionContext, request.message);

@@ -126,12 +126,141 @@ export function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/** Any value a cursor or a resume position can hold. */
+export type Json =
+  null | boolean | number | string | Json[] | { [key: string]: Json };
+
+/**
+ * What a handler hands back when it has more to do than one dispatch is
+ * allowed to do.
+ *
+ * `resume` is opaque: the runtime round-trips it into the next slice
+ * verbatim and never reads it. That is deliberate rather than lazy. A
+ * resume position that survives a third party changing its mind between
+ * slices is not a number — the estate already has one built by hand out
+ * of an anchor identity, a divergence flag and a run length, and a typed
+ * offset would be strictly weaker than what that cursor already holds.
+ *
+ * It rides the queue message rather than the cursor, because the
+ * per-connection lock is released between slices and an unrelated
+ * dispatch runs in the gap. The cursor holds durable watermarks; this
+ * holds where one run got to.
+ */
+export interface Continuation {
+  /**
+   * Correlation id the handler wants this chain to carry.
+   *
+   * Supplied by the handler rather than minted by the runtime, because a
+   * handler that tracks its own chain — `sweep()` records one in the
+   * cursor so it can reject a straggler from an abandoned chain — has to
+   * agree with the envelope about what that chain is called. Two ids for
+   * one chain means the check compares a value against itself under a
+   * different name, and every slice after the first is rejected.
+   *
+   * Omit it and the runtime mints one; a handler that never reads
+   * `chain_id` back has nothing to agree with.
+   */
+  sweepId?: string;
+  /** Opaque to the runtime, round-tripped into the next slice verbatim. */
+  resume: Json;
+  /**
+   * Evidence the chain advanced. The runtime compares it and never
+   * interprets it: a slice returning the same progress it was handed has
+   * not moved, which is a loop rather than slowness.
+   */
+  progress: {
+    /** Units handled in THIS slice. Zero is legitimate; unchanged is not. */
+    processed: number;
+    /** The author's own summary of where the run reached. */
+    watermark?: string;
+  };
+  /**
+   * Earliest the next slice should run, in milliseconds. Clamped by the
+   * runtime. This is the honest answer to a rate limit: park with the
+   * upstream's own retry delay rather than sleeping inside the budget and
+   * spending a whole slice on nothing.
+   */
+  notBefore?: number;
+}
+
+/**
+ * What a scheduled sweep reports back.
+ *
+ * `done` is required rather than optional, and that is the whole point of
+ * the shape. An additive variant would have been read as a success by
+ * both translations that consume it, so a handler saying "not finished"
+ * would have been acknowledged as finished and its continuation dropped —
+ * silently, and green in every test. A required discriminant makes that a
+ * compile error instead.
+ *
+ * Webhook and item-event handlers keep `HandlerResult`. A delivery and an
+ * item event have nothing to continue, and making them say so is ceremony
+ * that teaches nothing.
+ */
+export type SweepResult =
+  | { ok: true; done: true }
+  | { ok: true; done: false; continuation: Continuation }
+  | { ok: false; retry: boolean; reason: string };
+
+/**
+ * What a dispatch of any kind can return.
+ *
+ * The union exists so the substrate has one thing to hold, and it is a
+ * union rather than a widened `HandlerResult` so that reading `done`
+ * requires narrowing on `kind` upstream. Both arms answer `ok` and both
+ * failure arms answer `retry`, so the retry ladder and the dead-letter
+ * translation read it without narrowing at all — which is what stopped
+ * this change from reaching every consumer of a result.
+ */
+export type DispatchResult = HandlerResult | SweepResult;
+
+/**
+ * What the runtime hands a continuing slice.
+ *
+ * `kind` is preserved from whatever started the chain, so a continuation
+ * of a manual run is still `manual`. The operator surface cares that a
+ * person asked for this, and a fourth message kind would force a fourth
+ * branch into every handler including the ones that never continue.
+ */
+export interface ContinuationInput {
+  /** Verbatim from the previous slice. */
+  resume: Json;
+  /** Stable for the whole chain. A slice carrying a stale one is discarded. */
+  chain_id: string;
+  /** Zero for the run that started the chain. */
+  slice: number;
+  /** When the chain started, epoch ms. */
+  started_at_ms: number;
+  /**
+   * What the previous slice reported as progress, flattened.
+   *
+   * Carried so the runtime can compare one slice's progress against the
+   * last without keeping chain state of its own. A chain that stops
+   * advancing produces completed jobs and a stale `last_sync_at`, so
+   * nothing on the operator surface reports it — the comparison is the
+   * only thing that can.
+   */
+  progress_fingerprint?: string;
+  /**
+   * Fingerprints already seen on this chain, oldest first and capped.
+   *
+   * Two consecutive identical fingerprints catch a chain that has stopped
+   * dead. This catches the one that alternates — A, B, A, B — which the
+   * consecutive check never fires on because no two neighbours match. The
+   * cap is what keeps the envelope from growing with the chain; a loop
+   * longer than the window is left to the slice and wall-clock ceilings.
+   */
+  seen_fingerprints?: string[];
+}
+
 /** Produced by the schedule walker's fan-out when a scheduled poll is
  *  due. The handler's job is to advance the cursor and emit any
  *  resulting items. */
 export interface ScheduleMessage extends QueueEnvelopeBase {
   kind: "schedule";
   scheduled_for_ms: number;
+  /** Present only on a slice continuing a chain. */
+  continuation?: ContinuationInput;
 }
 
 /** Produced by the server-side reactive-run bridge when an
@@ -156,6 +285,8 @@ export interface ItemEventMessage extends QueueEnvelopeBase {
 export interface ManualMessage extends QueueEnvelopeBase {
   kind: "manual";
   requested_at_ms: number;
+  /** Present only on a slice continuing a chain. */
+  continuation?: ContinuationInput;
 }
 
 export type QueueMessage =

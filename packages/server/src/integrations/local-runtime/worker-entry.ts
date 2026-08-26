@@ -23,11 +23,12 @@ import {
   createActivitySink,
   createCursorStore,
   createEchoSuppression,
+  createBudget,
   createMappingResolver,
   dispatchMessage,
   type ConnectionContext,
   type CursorStorageAdapter,
-  type HandlerResult,
+  type DispatchResult,
 } from "@withmarfa/runtime-sdk";
 import type { WorkerDispatchRequest, WorkerDispatchResponse } from "./types.js";
 
@@ -86,10 +87,20 @@ function createInThreadCursorAdapter(snapshot: Record<string, unknown>): {
   return { adapter, updates, deletes };
 }
 
+/**
+ * Build the context a handler runs against, plus the two controls the
+ * dispatch needs to hold onto.
+ *
+ * `arm` is returned rather than called here because arming starts a timer,
+ * and a timer started by a builder is one nothing is responsible for
+ * clearing. The caller arms it immediately before the handler runs and
+ * cancels it in a `finally`, so a dispatch that finishes early leaves
+ * nothing behind.
+ */
 function buildContext(
   request: WorkerDispatchRequest,
   adapter: CursorStorageAdapter,
-): ConnectionContext {
+): { ctx: ConnectionContext; arm: () => () => void } {
   const { message, credential, apiUrl, echo } = request;
   const cycleParent = message.kind === "item-event" ? message.cycle : null;
   const client = new ConnectionClient({
@@ -98,16 +109,24 @@ function buildContext(
     refreshCredential: () => Promise.resolve(credential),
     cycleParent,
   });
+  const { budget, arm } = createBudget({
+    startedAtMs: request.startedAtMs,
+    softLimitMs: request.softLimitMs,
+  });
   return {
-    connection_id: message.connection_id,
-    integration_name: message.integration_name,
-    ...(message.space_id !== undefined && { space_id: message.space_id }),
-    marfa: client,
-    cursor: createCursorStore(adapter),
-    activity: createActivitySink(client, message.connection_id),
-    echo: createEchoSuppression(adapter, echo),
-    mapping: createMappingResolver(client, message.connection_id),
-    cycle: cycleParent,
+    ctx: {
+      connection_id: message.connection_id,
+      integration_name: message.integration_name,
+      ...(message.space_id !== undefined && { space_id: message.space_id }),
+      marfa: client,
+      cursor: createCursorStore(adapter),
+      activity: createActivitySink(client, message.connection_id),
+      echo: createEchoSuppression(adapter, echo),
+      mapping: createMappingResolver(client, message.connection_id),
+      cycle: cycleParent,
+      budget,
+    },
+    arm,
   };
 }
 
@@ -117,13 +136,16 @@ async function handleDispatch(
   const { adapter, updates, deletes } = createInThreadCursorAdapter(
     request.cursorSnapshot,
   );
-  let result: HandlerResult;
+  let result: DispatchResult;
   let threw = false;
   let thrownMessage: string | undefined;
   let thrownClassName: string | undefined;
-  let ctx: ReturnType<typeof buildContext> | null = null;
+  let ctx: ConnectionContext | null = null;
+  let disarm: (() => void) | null = null;
   try {
-    ctx = buildContext(request, adapter);
+    const built = buildContext(request, adapter);
+    ctx = built.ctx;
+    disarm = built.arm();
     result = await dispatchMessage(ctx, request.message);
   } catch (err) {
     threw = true;
@@ -136,6 +158,12 @@ async function handleDispatch(
       reason: `dispatch_threw: ${thrownMessage}`,
     };
   } finally {
+    // Every exit path, so a dispatch that finished well inside its
+    // allowance leaves no pending timer behind. Threads are pooled and
+    // outlive the dispatch, so an uncancelled timer per dispatch would
+    // accumulate for the life of the thread rather than being collected
+    // with the run that started it.
+    disarm?.();
     // Deliberate mapping skips surface as one summary row per run, and
     // this is the per-run boundary on this substrate. In the finally so
     // skips counted before a late handler throw still surface — the

@@ -16,16 +16,28 @@ import type {
   HandlerResult,
   ItemEventMessage,
   ScheduleMessage,
+  DispatchResult,
+  SweepResult,
   WebhookHandlerInput,
   QueueMessage,
 } from "./types.js";
 import { decodeBase64ToArrayBuffer } from "./types.js";
 import type { ConnectionContext } from "./connection-context.js";
 
+/**
+ * A scheduled sweep, which may report that it has not finished.
+ *
+ * Returns `SweepResult` rather than `HandlerResult`, so `done` is required
+ * and the old shape no longer compiles. That break is the point: an
+ * additive variant would have been read as a success by both translations
+ * that consume a result, so a handler saying "not finished" would have
+ * been acknowledged as finished and its continuation dropped, green in
+ * every test.
+ */
 export type ScheduleHandler = (
   ctx: ConnectionContext,
   message: ScheduleMessage,
-) => Promise<HandlerResult>;
+) => Promise<SweepResult>;
 
 /**
  * Webhook handlers receive a decoded `WebhookHandlerInput` — `body` is an
@@ -76,7 +88,7 @@ export function _resetHandlers(): void {
 export async function dispatchMessage(
   ctx: ConnectionContext,
   message: QueueMessage,
-): Promise<HandlerResult> {
+): Promise<DispatchResult> {
   switch (message.kind) {
     case "manual": {
       // A manual run is the integration's scheduled sweep, asked for now.
@@ -100,6 +112,14 @@ export async function dispatchMessage(
           ? { space_id: message.space_id }
           : {}),
         scheduled_for_ms: message.requested_at_ms,
+        // Carried through, or a manual run that parks loses its resume
+        // payload on the next slice and silently restarts from the
+        // watermark. The synthesis below already rewrites `kind` to
+        // `schedule`, so this is the only thing keeping a continued
+        // manual run pointed at where it stopped.
+        ...(message.continuation !== undefined
+          ? { continuation: message.continuation }
+          : {}),
       });
     }
     case "schedule": {
@@ -142,6 +162,24 @@ export async function dispatchMessage(
         };
       }
       return handler(ctx, message);
+    }
+    default: {
+      // Unreachable while `QueueMessage` is the four kinds above, and
+      // `message` narrows to `never` here so a fifth kind fails to compile
+      // rather than falling through.
+      //
+      // It is written out because the switch had no default and returned
+      // `undefined` against a `Promise<HandlerResult>` annotation. Nothing
+      // produced a fifth kind, so nothing noticed — but a continuation
+      // envelope built with an absent `kind` would have reached it, and
+      // the caller would have read a property off `undefined` a queue hop
+      // later, where the cause is no longer visible.
+      const unreachable: never = message;
+      return {
+        ok: false,
+        retry: false,
+        reason: `unknown_message_kind: ${String((unreachable as { kind?: unknown }).kind)}`,
+      };
     }
   }
 }

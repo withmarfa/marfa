@@ -43,6 +43,7 @@ import type {
 } from "./types.js";
 import {
   CONNECTION_RUNTIME_NAMESPACE,
+  applyCursorDelta,
   readConnectionRuntimeState,
 } from "./pg-cursor-store.js";
 import { dispatchMessage } from "@withmarfa/runtime-sdk";
@@ -50,8 +51,11 @@ import {
   ConnectionClient,
   createActivitySink,
   createCursorStore,
+  createBudget,
   createEchoSuppression,
+  ECHO_MARKER_PREFIX,
   type CursorStorageAdapter,
+  type SweepResult,
 } from "@withmarfa/runtime-sdk";
 
 let ctx: TestContext;
@@ -165,7 +169,7 @@ function buildRegistration(
   handler: (
     ctxCtx: ConnectionContext,
     message: ScheduleMessage,
-  ) => Promise<HandlerResult>,
+  ) => Promise<SweepResult>,
 ): LocalIntegrationRegistration {
   return {
     name: TEMPLATE_MANIFEST.name,
@@ -191,6 +195,13 @@ function buildRegistration(
         echo: createEchoSuppression(cursorAdapter, request.echo),
         mapping: familyOnlyMappingResolver(),
         cycle: null,
+        // The real budget off the request's own numbers, not a stub that
+        // never yields. A fixed `shouldYield: false` here would let a
+        // handler's yield branch pass every test while never running.
+        budget: createBudget({
+          startedAtMs: request.startedAtMs,
+          softLimitMs: request.softLimitMs,
+        }).budget,
       };
       // Register and dispatch via the SDK registry so the same code
       // path the worker thread uses is exercised.
@@ -222,7 +233,7 @@ describe("local-runtime supervisor", () => {
       } | null;
       const run_count = (previous?.run_count ?? 0) + 1;
       await cContext.cursor.write("main", { run_count });
-      return { ok: true };
+      return { ok: true, done: true };
     });
 
     const runtime = createSupervisor(ctx.storage, {
@@ -454,7 +465,7 @@ describe("local-runtime supervisor", () => {
           },
         });
         const response: WorkerDispatchResponse = {
-          result: { ok: true },
+          result: { ok: true, done: true },
           cursorUpdates: {},
           cursorDeletes: [],
           threw: false,
@@ -908,7 +919,9 @@ describe("local-runtime supervisor", () => {
     // Connection cannot mint a runtime credential and therefore cannot run.
     await ctx.storage.items.transition(connectionId, "revoked", undefined);
 
-    const registration = buildRegistration(() => Promise.resolve({ ok: true }));
+    const registration = buildRegistration(() =>
+      Promise.resolve({ ok: true, done: true }),
+    );
 
     const runtime = createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
@@ -959,7 +972,7 @@ describe("local-runtime supervisor", () => {
     let handlerRan = false;
     const registration = buildRegistration(() => {
       handlerRan = true;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
 
     const runtime = createSupervisor(ctx.storage, {
@@ -1005,7 +1018,7 @@ describe("local-runtime supervisor", () => {
     let handlerRan = false;
     const registration = buildRegistration(() => {
       handlerRan = true;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
 
     const runtime = createSupervisor(ctx.storage, {
@@ -1147,7 +1160,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
     const aborted = new AbortController();
     const registration = buildRegistration(() => {
       aborted.abort();
-      return Promise.resolve({ ok: true } satisfies HandlerResult);
+      return Promise.resolve({ ok: true, done: true } satisfies SweepResult);
     });
 
     const result = await runtimeFor(registration).dispatchForTest(
@@ -1179,7 +1192,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
     const aborted = new AbortController();
     const registration = buildRegistration(() => {
       aborted.abort();
-      return Promise.resolve({ ok: true } satisfies HandlerResult);
+      return Promise.resolve({ ok: true, done: true } satisfies SweepResult);
     });
 
     await runtimeFor(registration).dispatchForTest(
@@ -1206,7 +1219,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
     const aborted = new AbortController();
     const registration = buildRegistration(() => {
       aborted.abort();
-      return Promise.resolve({ ok: true } satisfies HandlerResult);
+      return Promise.resolve({ ok: true, done: true } satisfies SweepResult);
     });
 
     await runtimeFor(registration).dispatchForTest(
@@ -1266,7 +1279,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
 
     const live = new AbortController();
     const registration = buildRegistration(() =>
-      Promise.resolve({ ok: true } satisfies HandlerResult),
+      Promise.resolve({ ok: true, done: true } satisfies SweepResult),
     );
 
     const result = await runtimeFor(registration).dispatchForTest(
@@ -1275,7 +1288,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
       live.signal,
     );
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, done: true });
 
     const timings = await readTimings(connectionId);
     expect(timings.last_sync_at ?? null).not.toBeNull();
@@ -1297,7 +1310,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
     let dispatched = 0;
     const registration = buildRegistration(() => {
       dispatched += 1;
-      return Promise.resolve({ ok: true } satisfies HandlerResult);
+      return Promise.resolve({ ok: true, done: true } satisfies SweepResult);
     });
 
     // Only the surface `start()` touches. `work` captures the dispatch
@@ -1398,7 +1411,7 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
     const registration = buildRegistration(async (handlerCtx) => {
       await handlerCtx.cursor.write("main", { page: 7 });
       aborted.abort();
-      return { ok: true };
+      return { ok: true, done: true };
     });
 
     await runtimeFor(registration).dispatchForTest(
@@ -1409,5 +1422,600 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
 
     const state = await readConnectionRuntimeState(ctx.storage, connectionId);
     expect(state.cursors["cursor:main"]).toEqual({ page: 7 });
+  });
+  /**
+   * The supervisor's half of the resumption contract.
+   *
+   * The SDK can say "not finished"; these cover what this process does about
+   * it. Every fixture here is a SCHEDULE dispatch deliberately: an
+   * item-event never stamps `last_sync_at` in the first place, so a park
+   * test built on one would pass with the guard deleted and prove nothing.
+   */
+  describe("continuation chains", () => {
+    interface SentJob {
+      name: string;
+      envelope: {
+        integration_name: string;
+        message: {
+          kind: string;
+          continuation?: { resume: unknown; slice: number };
+        };
+      };
+      options?: { priority?: number };
+    }
+
+    function bossRecording(sent: SentJob[]) {
+      return {
+        createQueue: () => Promise.resolve(),
+        schedule: () => Promise.resolve(),
+        unschedule: () => Promise.resolve(),
+        getSchedules: () => Promise.resolve([]),
+        send: (name: string, envelope: unknown, options?: unknown) => {
+          sent.push({
+            name,
+            envelope: envelope as SentJob["envelope"],
+            options: options as SentJob["options"],
+          });
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+        work: () => Promise.resolve(),
+      } as unknown as PgBoss;
+    }
+
+    function runtimeWithBoss(
+      registration: LocalIntegrationRegistration,
+      boss: PgBoss,
+    ): LocalRuntime {
+      return createSupervisor(ctx.storage, {
+        apiUrl: "http://test.local",
+        apiKeySalt: TEST_API_KEY_SALT,
+        authMode: "keys" as const,
+        registrations: [registration],
+        executor: {
+          dispatch: (reg, request) => reg.directDispatch!(request),
+          terminate: () => Promise.resolve(),
+        },
+        boss,
+      });
+    }
+
+    it("enqueues the next slice, carrying the resume payload", async () => {
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: {
+            resume: { page: 4 },
+            progress: { processed: 10, watermark: "w4" },
+          },
+        } satisfies SweepResult),
+      );
+
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest(scheduleEnvelope(connectionId));
+
+      expect(result).toEqual({
+        ok: true,
+        done: false,
+        continuation: {
+          resume: { page: 4 },
+          progress: { processed: 10, watermark: "w4" },
+        },
+      });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.name).toBe(QUEUE_NAME);
+      const envelope = sent[0]!.envelope;
+      expect(envelope.message.kind).toBe("schedule");
+      expect(envelope.message.continuation?.resume).toEqual({ page: 4 });
+      expect(envelope.message.continuation?.slice).toBe(1);
+      // Below the default, so a chain never overtakes a fresh webhook.
+      expect(sent[0]?.options?.priority).toBe(-1);
+    });
+
+    it("does not stamp a sync success for a slice that did not finish", async () => {
+      // The fixture is a schedule dispatch that RETURNS ok. Without the
+      // `done` check in postProcess this stamps `last_sync_at` and the
+      // connection reports a healthy sync it never completed — the exact
+      // defect the reclaim work removed, reintroduced through a new shape.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 1 } },
+        } satisfies SweepResult),
+      );
+
+      await runtimeWithBoss(registration, bossRecording([])).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      const timings = await readTimings(connectionId);
+      expect(timings.last_sync_at ?? null).toBeNull();
+    });
+
+    it("stamps a sync success for the slice that does finish", async () => {
+      // The control for the test above. Without it, a postProcess that
+      // never stamped anything would pass that one too.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const registration = buildRegistration(() =>
+        Promise.resolve({ ok: true, done: true } satisfies SweepResult),
+      );
+
+      await runtimeWithBoss(registration, bossRecording([])).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      const timings = await readTimings(connectionId);
+      expect(timings.last_sync_at ?? null).not.toBeNull();
+    });
+
+    it("abandons a chain that has run too many slices, and says so", async () => {
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 0 } },
+        } satisfies SweepResult),
+      );
+
+      const envelope = scheduleEnvelope(connectionId);
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          continuation: {
+            resume: null,
+            chain_id: "chain_x",
+            slice: 500,
+            started_at_ms: Date.now(),
+          },
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      // The title claims it says so, so the reason is asserted rather
+      // than left to the two sibling tests to cover.
+      expect(!result.ok && result.reason).toContain("500 continuations");
+      // Nothing enqueued: the chain stops rather than continuing forever.
+      expect(sent).toHaveLength(0);
+      // And it is visible, because a chain that keeps parking looks like
+      // health on every other surface.
+      const timings = await readTimings(connectionId);
+      expect(timings.last_error_at ?? null).not.toBeNull();
+    });
+
+    it("abandons a chain that has run too long in wall clock", async () => {
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 0 } },
+        } satisfies SweepResult),
+      );
+
+      const envelope = scheduleEnvelope(connectionId);
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          continuation: {
+            resume: null,
+            chain_id: "chain_y",
+            // One slice in, but started a day ago: only the wall-clock
+            // ceiling can catch this one, so it fails if the two guards
+            // were collapsed into a single slice count.
+            slice: 1,
+            started_at_ms: Date.now() - 24 * 60 * 60 * 1000,
+          },
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(sent).toHaveLength(0);
+    });
+
+    it("rebases an echo marker onto the commit clock", async () => {
+      // The worker's writes are invisible until the dispatch returns, so
+      // a marker stamped from the handler's own clock arrives expired.
+      // The handler here writes with a clock an hour in the past, which
+      // is the same shape as a long run and gives the assertion a gap it
+      // can actually see — milliseconds apart would prove nothing.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const anHourAgo = Date.now() - 60 * 60_000;
+
+      const registration: LocalIntegrationRegistration = {
+        name: TEMPLATE_MANIFEST.name,
+        handlerModulePath: null,
+        directDispatch: async (request: WorkerDispatchRequest) => {
+          const { cursorAdapter, updates, deletes } = inMemoryCursor(
+            request.cursorSnapshot,
+          );
+          const echo = createEchoSuppression(
+            cursorAdapter,
+            request.echo,
+            () => anHourAgo,
+          );
+          await echo.trackOutboundWrite("ext_1", "hash_a");
+          return Promise.resolve({
+            result: { ok: true, done: true },
+            cursorUpdates: updates,
+            cursorDeletes: Array.from(deletes),
+            threw: false,
+          });
+        },
+        echo: { echo_ttl_seconds: 60 },
+        triggerKinds: new Set(["schedule" as const]),
+        manifest: TEMPLATE_MANIFEST,
+      } as unknown as LocalIntegrationRegistration;
+
+      await runtimeFor(registration).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+      const marker = state.cursors[`${ECHO_MARKER_PREFIX}ext_1`] as {
+        expires_at_ms: number;
+      };
+      // Written an hour ago with a 60s TTL, so without the rebase this is
+      // ~59 minutes in the past. Rebased, it is a minute in the future.
+      expect(marker.expires_at_ms).toBeGreaterThan(Date.now());
+    });
+
+    it("sweeps an expired marker nothing will ever read again", async () => {
+      // Both read paths delete a marker they find expired, so anything an
+      // integration keeps asking about is already bounded. This covers
+      // what it STOPS asking about: an external id written once and never
+      // seen again leaves a record no read path will ever reach, and
+      // therefore never deletes. Seeded directly, because the only way to
+      // produce one honestly is to wait out a TTL.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      await applyCursorDelta(
+        ctx.storage,
+        connectionId,
+        {
+          [`${ECHO_MARKER_PREFIX}forgotten`]: {
+            content_hash: "h",
+            ttl_ms: 60_000,
+            expires_at_ms: Date.now() - 60 * 60_000,
+          },
+          [`${ECHO_MARKER_PREFIX}still_live`]: {
+            content_hash: "h",
+            ttl_ms: 60_000,
+            expires_at_ms: Date.now() + 60 * 60_000,
+          },
+        },
+        [],
+      );
+
+      const registration = buildRegistration(() =>
+        Promise.resolve({ ok: true, done: true } satisfies SweepResult),
+      );
+      await runtimeFor(registration).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+      expect(state.cursors[`${ECHO_MARKER_PREFIX}forgotten`]).toBeUndefined();
+      // The live one stays. Without this, a sweep that deleted every
+      // marker would pass.
+      expect(state.cursors[`${ECHO_MARKER_PREFIX}still_live`]).toBeDefined();
+    });
+
+    it("abandons a chain whose slices report the same position twice", async () => {
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: {
+            resume: null,
+            progress: { processed: 3, watermark: "w7" },
+          },
+        } satisfies SweepResult),
+      );
+
+      const envelope = scheduleEnvelope(connectionId);
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          continuation: {
+            resume: null,
+            chain_id: "chain_stall",
+            // Well inside both ceilings, so only the progress check can
+            // refuse this — the ceilings would let it straight through.
+            slice: 2,
+            started_at_ms: Date.now() - 30_000,
+            progress_fingerprint: "3@w7",
+            seen_fingerprints: ["3@w7"],
+          },
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.reason).toContain("stopped making progress");
+      expect(sent).toHaveLength(0);
+      const timings = await readTimings(connectionId);
+      expect(timings.last_error_at ?? null).not.toBeNull();
+    });
+
+    it("abandons a chain that returns to a position it had already left", async () => {
+      // The alternating loop. No two neighbouring slices match, so the
+      // consecutive check never fires; only the seen-set catches it.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: {
+            resume: null,
+            progress: { processed: 1, watermark: "A" },
+          },
+        } satisfies SweepResult),
+      );
+
+      const envelope = scheduleEnvelope(connectionId);
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          continuation: {
+            resume: null,
+            chain_id: "chain_flip",
+            slice: 4,
+            started_at_ms: Date.now() - 30_000,
+            // Immediately previous slice was B, so the consecutive check
+            // passes. A is in the history, so the loop is caught anyway.
+            progress_fingerprint: "1@B",
+            seen_fingerprints: ["1@A", "1@B"],
+          },
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.reason).toContain("looping");
+      expect(sent).toHaveLength(0);
+    });
+
+    it("lets a chain that is advancing carry on", async () => {
+      // The control. Without it, a check that refused every continuation
+      // would pass both tests above.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: {
+            resume: null,
+            progress: { processed: 9, watermark: "w9" },
+          },
+        } satisfies SweepResult),
+      );
+
+      const envelope = scheduleEnvelope(connectionId);
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest({
+        ...envelope,
+        message: {
+          ...envelope.message,
+          continuation: {
+            resume: null,
+            chain_id: "chain_ok",
+            slice: 2,
+            started_at_ms: Date.now() - 30_000,
+            progress_fingerprint: "3@w7",
+            seen_fingerprints: ["1@w1", "3@w7"],
+          },
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(sent).toHaveLength(1);
+    });
+
+    it("keeps a marker the same dispatch just rewrote, while sweeping its neighbour", async () => {
+      // The sweep reads the PRE-dispatch snapshot, and `applyCursorDelta`
+      // applies updates before deletes — so a key in both is deleted. A
+      // handler rewriting an external id whose previous marker had just
+      // expired would end the dispatch with no marker at all, and the
+      // next echo webhook would re-ingest its own write. The expired
+      // neighbour is in the fixture so a fix that simply stopped sweeping
+      // would fail this too.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const stale = {
+        content_hash: "h",
+        ttl_ms: 60_000,
+        expires_at_ms: Date.now() - 60 * 60_000,
+      };
+      await applyCursorDelta(
+        ctx.storage,
+        connectionId,
+        {
+          [`${ECHO_MARKER_PREFIX}rewritten`]: stale,
+          [`${ECHO_MARKER_PREFIX}neighbour`]: stale,
+        },
+        [],
+      );
+
+      const registration: LocalIntegrationRegistration = {
+        name: TEMPLATE_MANIFEST.name,
+        handlerModulePath: null,
+        directDispatch: async (request: WorkerDispatchRequest) => {
+          const { cursorAdapter, updates, deletes } = inMemoryCursor(
+            request.cursorSnapshot,
+          );
+          const echo = createEchoSuppression(cursorAdapter, request.echo);
+          await echo.trackOutboundWrite("rewritten", "hash_new");
+          return Promise.resolve({
+            result: { ok: true, done: true },
+            cursorUpdates: updates,
+            cursorDeletes: Array.from(deletes),
+            threw: false,
+          });
+        },
+        echo: { echo_ttl_seconds: 60 },
+        triggerKinds: new Set(["schedule" as const]),
+        manifest: TEMPLATE_MANIFEST,
+      } as unknown as LocalIntegrationRegistration;
+
+      await runtimeFor(registration).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+      expect(state.cursors[`${ECHO_MARKER_PREFIX}rewritten`]).toBeDefined();
+      expect(state.cursors[`${ECHO_MARKER_PREFIX}neighbour`]).toBeUndefined();
+    });
+
+    it("does not enqueue a successor for a slice whose job was reclaimed", async () => {
+      // A reclaimed job has already been redelivered, so the redelivery
+      // will re-run this slice and produce its own successor. Enqueuing
+      // one here as well forks the chain, and both forks carry the same
+      // id, so neither looks stale to the straggler check.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const sent: SentJob[] = [];
+      const aborted = new AbortController();
+      const registration = buildRegistration(() => {
+        aborted.abort();
+        return Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 1 } },
+        } satisfies SweepResult);
+      });
+
+      const result = await runtimeWithBoss(
+        registration,
+        bossRecording(sent),
+      ).dispatchForTest(scheduleEnvelope(connectionId), 0, aborted.signal);
+
+      expect(sent).toHaveLength(0);
+      expect(result.ok).toBe(false);
+    });
+
+    it("retries the slice rather than losing the chain when the enqueue fails", async () => {
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 1 } },
+        } satisfies SweepResult),
+      );
+      const failingBoss = {
+        createQueue: () => Promise.resolve(),
+        schedule: () => Promise.resolve(),
+        unschedule: () => Promise.resolve(),
+        getSchedules: () => Promise.resolve([]),
+        send: () => Promise.reject(new Error("queue unreachable")),
+        stop: () => Promise.resolve(),
+        work: () => Promise.resolve(),
+      } as unknown as PgBoss;
+
+      const result = await runtimeWithBoss(
+        registration,
+        failingBoss,
+      ).dispatchForTest(scheduleEnvelope(connectionId));
+
+      // Retryable, so pg-boss redelivers and the slice repeats. Repeating
+      // a slice is the right trade against losing the rest of the sweep.
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.retry).toBe(true);
+    });
+
+    it("refuses a scheduled result that does not say whether it finished", async () => {
+      // A handler built against the previous contract, which is what the
+      // deployed integrations are until their pin moves. Treating this as
+      // finished is exactly what the required discriminant exists to
+      // prevent, so it fails loudly instead.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const registration: LocalIntegrationRegistration = {
+        name: TEMPLATE_MANIFEST.name,
+        handlerModulePath: null,
+        directDispatch: () =>
+          Promise.resolve({
+            result: { ok: true },
+            cursorUpdates: {},
+            cursorDeletes: [],
+            threw: false,
+          }),
+        echo: { echo_ttl_seconds: 60 },
+        triggerKinds: new Set(["schedule" as const]),
+        manifest: TEMPLATE_MANIFEST,
+      } as unknown as LocalIntegrationRegistration;
+
+      const result = await runtimeFor(registration).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.reason).toContain("did not say whether");
+      // And it must not have stamped a sync success on its way past.
+      const timings = await readTimings(connectionId);
+      expect(timings.last_sync_at ?? null).toBeNull();
+    });
+
+    it("refuses to schedule a continuation when the runtime has no queue", async () => {
+      // `runtime.enqueue`'s no-boss fallback dispatches synchronously, so a
+      // chain there would recurse into itself. Refusing is the behaviour;
+      // this pins it rather than leaving a hang to be discovered.
+      const integrationId = await createIntegrationItem();
+      const connectionId = await createActiveConnection(integrationId);
+      const registration = buildRegistration(() =>
+        Promise.resolve({
+          ok: true,
+          done: false,
+          continuation: { resume: null, progress: { processed: 1 } },
+        } satisfies SweepResult),
+      );
+
+      const result = await runtimeFor(registration).dispatchForTest(
+        scheduleEnvelope(connectionId),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.reason).toContain("no queue");
+    });
   });
 });
