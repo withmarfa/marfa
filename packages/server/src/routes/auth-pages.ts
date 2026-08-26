@@ -20,6 +20,7 @@ import {
 import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  isReservedCredentialSource,
   requireSpaceAdmin,
   hashApiKey,
   stampOAuthGrantLastUsed,
@@ -1313,6 +1314,33 @@ export function authRoutes(
           email: gated.session.user.email,
           keys,
           notice: { kind: "error", text: "A label is required." },
+        }),
+      );
+    }
+    // The label becomes the key's `source`, and a `source` is not inert:
+    // `oauth:<connection-id>` is read as proof that a caller IS that
+    // connection's own credential, by the connection proxy and by the
+    // inbound-webhook routes alike. Both treat it as an alternative to
+    // space-admin rank, so a member who could name one here would be
+    // handed the connection's upstream access token to proxy through and
+    // the ability to mint its webhook secrets, for any connection in their
+    // own space.
+    //
+    // The two sibling mint routes both call this. This one did not, and
+    // the reserved list is the whole defense — nothing legitimate is
+    // turned away, because genuine integration credentials are minted at
+    // the storage layer by the install pipeline and never through an HTTP
+    // route.
+    if (isReservedCredentialSource(label)) {
+      const keys = await listSpaceKeys(spaceId);
+      return c.html(
+        renderKeysPage({
+          email: gated.session.user.email,
+          keys,
+          notice: {
+            kind: "error",
+            text: 'That label is reserved. Labels cannot start with "oauth:", "integration:" or "runtime-" — those name a connection\'s own credential.',
+          },
         }),
       );
     }

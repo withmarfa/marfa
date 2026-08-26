@@ -103,12 +103,55 @@ interface MintDoor {
    *  those are pinned in PINNED_HONO_MINT_ROUTES instead. */
   specRoute: string | null;
   ceiling: () => Promise<void>;
+  /**
+   * The door refuses a `source` naming a connection's own credential.
+   *
+   * A second axis, because the census had the right scope and exercised
+   * the wrong one. Every row asserted the role ceiling and the platform
+   * flag; none asserted `source`, so `POST /auth/keys` writing its label
+   * verbatim into the column sat inside an enumerated door and read as
+   * covered.
+   *
+   * `source` is not a description. `oauth:<connection-id>` is read as
+   * proof that a caller IS that connection, by the connection proxy and
+   * by the inbound-webhook routes, both as an alternative to
+   * space-admin rank. A member who could name one was handed the
+   * connection's upstream token and its webhook secrets.
+   *
+   * `undefined` where a door takes no caller-supplied source at all, and
+   * that has to be stated rather than left off — an absent hook and a
+   * deliberate exemption must not look the same.
+   */
+  forgedSource?: () => Promise<void>;
 }
+
+/** Doors that never take a caller-supplied `source`, with the reason. */
+const NO_CALLER_SOURCE: Record<string, string> = {
+  "POST /connections/{id}/lease-tokens — claims are bounded in shape":
+    "mints a lease token against a connection it resolves, taking no source",
+  "POST /auth/oauth2/register — an omitted scope is not the allowlist":
+    "registers a client, mints no credential row and takes no source",
+  "POST /auth/device/token — nothing mints without an approved grant":
+    "issues against an approved device grant; the source is the grant's",
+};
 
 const DOORS: MintDoor[] = [
   {
     name: "POST /keys — role travels down the lattice, space is inherited",
     specRoute: "post /keys",
+    forgedSource: async () => {
+      const spaceId = `t-forge-${Math.random().toString(36).slice(2, 10)}`;
+      const caller = await mintSpaceAdmin(spaceId);
+      const res = await request(ctx.app, "POST", "/keys", {
+        key: caller,
+        body: {
+          label: "forged",
+          source: `oauth:${"c".repeat(8)}`,
+          role: "member",
+        },
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    },
     ceiling: async () => {
       const spaceId = `t-mint-${Math.random().toString(36).slice(2, 10)}`;
       const spaceAdmin = await mintSpaceAdmin(spaceId);
@@ -159,6 +202,28 @@ const DOORS: MintDoor[] = [
   {
     name: "POST /admin/spaces/{id}/keys — platform mints space-confined authority",
     specRoute: "post /admin/spaces/{id}/keys",
+    forgedSource: async () => {
+      const created = await request(ctx.app, "POST", "/admin/spaces", {
+        key: ctx.adminKey,
+        body: { name: `forged-${Math.random().toString(36).slice(2, 8)}` },
+      });
+      expect(created.status).toBe(201);
+      const spaceId = ((await created.json()) as { id: string }).id;
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/admin/spaces/${spaceId}/keys`,
+        {
+          key: ctx.adminKey,
+          body: {
+            label: "forged",
+            source: `integration:${"c".repeat(8)}`,
+            role: "member",
+          },
+        },
+      );
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    },
     ceiling: async () => {
       const created = await request(ctx.app, "POST", "/admin/spaces", {
         key: ctx.adminKey,
@@ -214,6 +279,29 @@ const DOORS: MintDoor[] = [
   {
     name: "POST /auth/keys — the console form mints at the owner's rank, never platform",
     specRoute: null,
+    forgedSource: async () => {
+      // The console form writes its label into `source`, so the label is
+      // where a connection identity would be forged. It answers 200 with
+      // an error page rather than a status, so the row is the assertion:
+      // nothing may be minted carrying a reserved source.
+      const email = `mint-forge-${Math.random().toString(36).slice(2, 8)}@example.com`;
+      const cookie = await signInAndCookie(email);
+      const label = `oauth:${"c".repeat(8)}`;
+      await ctx.app.fetch(
+        new Request(`${ORIGIN}/auth/keys`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin: ORIGIN,
+            cookie,
+          },
+          body: new URLSearchParams({ label, full_access: "on" }).toString(),
+        }),
+      );
+      const rows = await ctx.storage.keys.list();
+      expect(rows.some((k) => k.source === label)).toBe(false);
+      expect(rows.some((k) => k.label === label)).toBe(false);
+    },
     ceiling: async () => {
       const email = `mint-door-${Math.random().toString(36).slice(2, 8)}@example.com`;
       const cookie = await signInAndCookie(email);
@@ -301,10 +389,48 @@ const DOORS: MintDoor[] = [
   },
 ];
 
+describe("the source axis is asserted or exempted, never merely absent", () => {
+  it("gives every door a forged-source case or a stated reason", () => {
+    // An optional hook makes a door added without one indistinguishable
+    // from a deliberate exemption, which is exactly how the console form
+    // sat inside an enumerated door reading as covered.
+    for (const door of DOORS) {
+      if (door.name in NO_CALLER_SOURCE) {
+        expect(
+          door.forgedSource,
+          `${door.name}: exempt, so it must not also carry a case`,
+        ).toBeUndefined();
+        continue;
+      }
+      expect(
+        door.forgedSource,
+        `${door.name}: needs a forgedSource case, or a reason in NO_CALLER_SOURCE`,
+      ).toBeDefined();
+    }
+  });
+
+  it("names only doors that exist", () => {
+    const names = new Set(DOORS.map((d) => d.name));
+    for (const name of Object.keys(NO_CALLER_SOURCE)) {
+      expect(names.has(name), `stale exemption: ${name}`).toBe(true);
+    }
+  });
+});
+
 describe.each(DOORS)("$name", (door) => {
   it("holds its ceiling in both directions", async () => {
     await door.ceiling();
   });
+
+  it.skipIf(door.name in NO_CALLER_SOURCE)(
+    "refuses a source naming a connection's own credential",
+    async () => {
+      const forged = door.forgedSource;
+      /* v8 ignore next */
+      if (!forged) throw new Error("guarded by skipIf");
+      await forged();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
