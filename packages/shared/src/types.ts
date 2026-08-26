@@ -790,9 +790,6 @@ export interface ConnectionInstallInput {
   /** id of the `system.integration` item (a manifest registered via
    *  `POST /integrations`) the new connection binds to. */
   integration_id: string;
-  /** Display label for the connection and seed credential. Defaults
-   *  server-side to `${manifest_name} ${manifest_version}` when omitted. */
-  label?: string;
   /** Optional id of an existing `system.credential` (kind `oauth_token` or
    *  `api_token`) to reference instead of provisioning a fresh provider
    *  credential. Lets multiple integrations of the same upstream (e.g.

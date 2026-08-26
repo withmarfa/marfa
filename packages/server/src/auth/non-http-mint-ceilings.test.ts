@@ -101,7 +101,6 @@ describe("install-pipeline — the space fence outlives the mint it guarded", ()
         authMode: "hosted",
         integrationItemId: integrationId,
         manifest: manifest(name),
-        label: "spaceless fixture",
       }),
     ).rejects.toThrow();
 

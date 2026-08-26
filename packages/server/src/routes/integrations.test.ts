@@ -390,7 +390,6 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 
     const formBody = new URLSearchParams({
       decision: "approve",
-      label: "My Calendar",
     }).toString();
 
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
@@ -825,7 +824,6 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     const formBody = new URLSearchParams({
       decision: "approve",
-      label: "authority-install",
     }).toString();
 
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
@@ -1033,7 +1031,6 @@ describe("/integrations/:id/install — browser session auth", () => {
 
     const formBody = new URLSearchParams({
       decision: "approve",
-      label: "Browser-Installed",
     }).toString();
 
     const res = await sessionCtx.app.request(

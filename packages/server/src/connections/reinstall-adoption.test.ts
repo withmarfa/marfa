@@ -71,7 +71,6 @@ async function install(): Promise<string> {
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: MANIFEST,
-    label: "readopt",
     clientIp: null,
   });
   return result.connection_id;
@@ -129,7 +128,6 @@ describe("install refuses configuration outside the declared contract", () => {
       authMode: "keys",
       integrationItemId: integration.id,
       manifest,
-      label: "cfg-test",
       clientIp: null,
       configuration,
     });

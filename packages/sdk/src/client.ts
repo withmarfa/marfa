@@ -1775,8 +1775,7 @@ export class MarfaClient {
      * into their own space scope.
      *
      * `integration_id` references a `system.integration` item (registered
-     * via `POST /integrations`). `label` is optional — the server
-     * defaults to `${manifest_name} ${manifest_version}` when omitted.
+     * via `POST /integrations`).
      * `credential_ref` lets multiple integrations of the same upstream
      * share one existing `system.credential` instead of provisioning a
      * fresh one per install; `configuration` seeds the new connection's

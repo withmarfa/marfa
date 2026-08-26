@@ -74,15 +74,6 @@ export interface InstallInput {
   /** The manifest blob (already validated on registration). Drives
    *  permission translation and trigger persistence. */
   manifest: Record<string, unknown> | IntegrationManifest;
-  /** Display label, falling back to `${manifest_name} ${manifest_version}`
-   *  at the route layer.
-   *
-   *  Nothing reads it today. Its only consumer was the seed runtime
-   *  credential's label, and the install no longer mints one; the
-   *  Connection item carries no label field of its own. Kept because it
-   *  is a public request field on `POST /connections/install`, so
-   *  retiring it is its own change rather than part of this one. */
-  label: string;
   /** Resolved client IP of the caller. Threaded into the audit row so
    *  installs are attributable. Null when the install runs outside a
    *  Hono request (e.g. one-shot CLI scripts). */

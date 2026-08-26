@@ -108,7 +108,6 @@ function installRequest(integrationId: string, key: string): Request {
     },
     body: new URLSearchParams({
       decision: "approve",
-      label: "authority-probe",
     }).toString(),
   });
 }

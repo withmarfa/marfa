@@ -143,7 +143,6 @@ async function install(
     authMode: "hosted",
     integrationItemId,
     manifest: m,
-    label: m.name,
     clientIp: null,
   });
   return result.connection_id;
@@ -1062,7 +1061,6 @@ describe("the single-space self-host shape", () => {
         authMode: "keys",
         integrationItemId: row.id,
         manifest: m,
-        label: m.name,
         clientIp: null,
       });
       return result.connection_id;

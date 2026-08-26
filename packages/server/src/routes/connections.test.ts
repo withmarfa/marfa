@@ -92,7 +92,6 @@ async function installFresh(): Promise<{
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifest(integrationName),
-    label: integrationName,
   });
 
   return {
@@ -236,11 +235,10 @@ describe("POST /connections/install — happy path", () => {
   });
 
   // A case here used to prove `label` did something by reading it back
-  // off the seed credential it named. There is no seed credential now,
-  // and a `system.connection` carries no label of its own, so the field
-  // has nothing left to observe. Restoring an assertion means first
-  // deciding whether the label should name the Connection or leave the
-  // wire; see `InstallInput.label`.
+  // off the seed credential it named. The credential went first, because
+  // nothing could present it, and the field followed: a
+  // `system.connection` declares no label, so there was nowhere to put
+  // the value. Naming a Connection means giving the type a field first.
 });
 
 describe("POST /connections/install — error mapping", () => {
@@ -532,7 +530,6 @@ async function installItemEventConnection(): Promise<{
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifestWithItemEventTrigger(integrationName),
-    label: integrationName,
   });
   return { connectionId: result.connection_id };
 }

@@ -11,7 +11,7 @@
  * Distinct from OAuth consent because the granted scopes come from the
  * manifest, not OAuth client registration, and there's no PKCE round-trip —
  * the install posts straight back to the same path with a `decision` field
- * (approve | deny) plus an optional connection-label override.
+ * (approve | deny).
  *
  * The app tile is deliberately neutral: the manifest carries no icon or
  * brand-color field, so a soft tile with a dark glyph is the honest
@@ -224,7 +224,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
       <span class="logo" aria-hidden="true">${escapeHtml(glyph)}</span>
       <div>
         <div class="row__title">${escapeHtml(params.manifestName)}</div>
-        <div class="row__meta">Marfa integration</div>
+        <div class="row__meta">Marfa integration, version ${escapeHtml(params.manifestVersion)}</div>
       </div>
     </div>
     <p class="sub">${escapeHtml(params.summary)}</p>
@@ -254,10 +254,6 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
 
     <form method="POST" action="/integrations/${escapeHtml(params.integrationId)}/install">
       ${renderCredentialRefInput(params)}
-      <label class="field" style="margin-top:16px">
-        <span class="field__label">Connection label</span>
-        <input type="text" name="label" value="${escapeHtml(`${params.manifestName} ${params.manifestVersion}`)}">
-      </label>
       ${renderInstallConfiguration(params)}
       <div class="actions">
         <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>

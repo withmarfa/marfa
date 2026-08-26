@@ -418,8 +418,6 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
 
     const formData = await c.req.parseBody();
     const decision = formData.decision;
-    const labelOverride =
-      typeof formData.label === "string" ? formData.label : "";
     const credentialRefOverride =
       typeof formData.credential_ref === "string" &&
       formData.credential_ref.length > 0
@@ -431,8 +429,8 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
     }
 
     // The form's configuration fields carry a prefix so a manifest key can
-    // never collide with `label` / `decision` / `credential_ref`; strip it
-    // and coerce the strings back to the declared types.
+    // never collide with `decision` / `credential_ref`; strip it and
+    // coerce the strings back to the declared types.
     const manifestShape = props.manifest as {
       configuration_schema?: Record<string, ConfigurationFieldSpec>;
     };
@@ -458,9 +456,6 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
         clientIp: c.get("clientIp") ?? null,
         integrationItemId: id,
         manifest: props.manifest,
-        label:
-          labelOverride.trim() ||
-          `${props.manifest_name} ${props.manifest_version}`,
         configuration,
         ...(credentialRefOverride !== undefined
           ? { credentialRef: credentialRefOverride }
