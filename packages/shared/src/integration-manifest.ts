@@ -281,6 +281,30 @@ export type WriteFamilies = z.infer<typeof WriteFamiliesSchema>;
 export const IntegrationManifestSchema = z
   .object({
     name: ManifestNameSchema,
+    /**
+     * Human-readable label for surfaces that show the integration to a
+     * person — manifest 2.1.0 additive field. Publisher-authored and fixed
+     * at publish time: it travels in the manifest, so it is a property of
+     * the release rather than something an installer chooses.
+     *
+     * Optional, and deliberately not unique. `name` stays the identifier
+     * and the dedupe key, so nothing resolves by this field, and two
+     * publishers picking the same words leaves neither install ambiguous.
+     * A manifest omitting it is shown under `name`, which is what every
+     * manifest predating this field does.
+     *
+     * Trimmed before the non-empty check, so whitespace-only is refused.
+     * That check is a floor and not a bound, and it is the whole of what
+     * this field constrains: a zero-width space is neither whitespace nor
+     * empty and passes. Surfaces therefore keep the identifier visible
+     * beside a label rather than trusting this field to be legible, which
+     * is the guarantee that actually holds.
+     */
+    display_name: z
+      .string()
+      .trim()
+      .min(1, "display_name cannot be blank")
+      .optional(),
     version: SemverSchema,
     publisher: z.string().min(1, "publisher is required"),
     description: z.string().min(1, "description is required"),

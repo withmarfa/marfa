@@ -5,6 +5,10 @@
     "name": {
       "type": "string"
     },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
     "version": {
       "type": "string",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"

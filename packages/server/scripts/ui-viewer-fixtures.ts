@@ -957,6 +957,27 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
           }),
       },
       {
+        id: "consent-display-name",
+        label: "With display name",
+        // The manifest declares a label, so the heading is the label and
+        // the meta line carries the identifier. Worth looking at beside
+        // the plain variant: the identifier is what tells this apart from
+        // anyone else publishing under the same words.
+        render: () =>
+          renderInstallConsentScreen({
+            integrationId: "01999a3f-0000-4ec1-b378-000000000004",
+            manifestName: "acme/calendar-sync",
+            manifestVersion: "2.1.0",
+            publisher: "Acme",
+            summary: "Two-way sync between Acme Calendar and your events.",
+            direction: "both",
+            manifest: {
+              ...INSTALL_MANIFEST,
+              display_name: "Acme Calendar Sync",
+            },
+          }),
+      },
+      {
         id: "consent-configuration",
         label: "With configuration",
         render: () =>
@@ -1123,6 +1144,33 @@ const CONNECTION_SCREENS: GalleryScreen[] = [
               },
             } as never,
             { include_highlights: true, since_days: 30 },
+          ),
+      },
+      {
+        id: "generic-form-display-name",
+        label: "Generic form, labeled",
+        // The other half of the labeled branch. This screen leads with the
+        // label and carries the identifier nowhere, which is a decision
+        // worth being able to look at rather than infer: it is post-consent
+        // and grants nothing, where the install screen is neither.
+        render: () =>
+          renderGenericConfigureForm(
+            CONNECTION_ID,
+            {
+              name: "acme/calendar-sync",
+              display_name: "Acme Calendar Sync",
+              version: "2.1.0",
+              publisher: "Acme",
+              direction: "both",
+              target_types: ["core.event"],
+              configuration_schema: {
+                since_days: {
+                  type: "number",
+                  description: "How far back to look on the first run.",
+                },
+              },
+            } as never,
+            { since_days: 30 },
           ),
       },
       {

@@ -212,3 +212,163 @@ describe("renderInstallConsentScreen — configuration fields", () => {
     expect(html).toContain('value="https://example.com/feed.xml"');
   });
 });
+
+/**
+ * The heading name. `display_name` is publisher-authored manifest metadata,
+ * so the screen reads it off the manifest rather than taking it from anyone
+ * approving the install. A manifest that declares none keeps rendering under
+ * its identifier, which is what every manifest registered before the field
+ * existed does.
+ */
+describe("renderInstallConsentScreen — display name", () => {
+  const IDENTIFIER_PARAMS = {
+    ...BASE_PARAMS,
+    manifestName: "acme/calendar-sync",
+  };
+
+  it("renders the manifest display_name as the heading when declared", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: "Calendar Sync" },
+    });
+    expect(html).toContain(`<div class="row__title">Calendar Sync</div>`);
+    expect(html).not.toContain(
+      `<div class="row__title">acme/calendar-sync</div>`,
+    );
+  });
+
+  it("renders the identifier unchanged when the manifest declares none", () => {
+    const html = renderInstallConsentScreen(IDENTIFIER_PARAMS);
+    expect(html).toContain(`<div class="row__title">acme/calendar-sync</div>`);
+  });
+
+  it("falls back to the identifier for a non-string or blank display_name", () => {
+    for (const value of [42, null, "", "   "]) {
+      const html = renderInstallConsentScreen({
+        ...IDENTIFIER_PARAMS,
+        manifest: { ...BASE_MANIFEST, display_name: value },
+      });
+      expect(html).toContain(
+        `<div class="row__title">acme/calendar-sync</div>`,
+      );
+    }
+  });
+
+  it("escapes a display_name", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: {
+        ...BASE_MANIFEST,
+        display_name: `<script>alert(1)</script>`,
+      },
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  /**
+   * The load-bearing one. Every other line above the Install button is free
+   * text its publisher wrote, and that button grants write on every declared
+   * target type. If a label could replace the identifier outright, a
+   * manifest registered as `mallory/calendar-sync` declaring itself "Google
+   * Calendar" would render a screen a space admin could not tell from the
+   * real one.
+   */
+  it("keeps the identifier on the page when a display_name is shown", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: "Definitely Not A Fake" },
+    });
+    expect(html).toContain("Definitely Not A Fake");
+    expect(html).toContain("acme/calendar-sync");
+  });
+
+  it("puts the identifier in the meta line beside the version", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: "Calendar Sync" },
+    });
+    expect(html).toContain(
+      `<div class="row__meta">Marfa integration acme/calendar-sync, version 1.0.0</div>`,
+    );
+  });
+
+  /**
+   * Showing the identifier is not enough on its own. `display_name` carries
+   * no character class, so a publisher may declare one shaped exactly like
+   * an identifier: a manifest actually named `mallory/sync` can call itself
+   * `google/calendar`. The screen then holds two identifier-shaped strings,
+   * and without a lead-in the authoritative one is merely the smaller and
+   * lower of the two.
+   */
+  it("names the identifier line, so two identifier-shaped names cannot be confused", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifestName: "mallory/sync",
+      manifest: { ...BASE_MANIFEST, display_name: "google/calendar" },
+    });
+    expect(html).toContain(`<div class="row__title">google/calendar</div>`);
+    expect(html).toContain(
+      `<div class="row__meta">Marfa integration mallory/sync, version 1.0.0</div>`,
+    );
+  });
+
+  // A blank-looking label the schema's length check cannot refuse still
+  // leaves the identifier on the page. That is the guarantee, rather than
+  // any claim that a declared label always renders as something.
+  it("still shows the identifier for a zero-width display_name", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: "\u200b" },
+    });
+    expect(html).toContain("acme/calendar-sync");
+  });
+
+  // The version line answers which version is being approved. Only the
+  // lead-in beside it moves, and only when there is a label to disambiguate.
+  it("leaves the meta line exactly as it was when no display_name is declared", () => {
+    const html = renderInstallConsentScreen(IDENTIFIER_PARAMS);
+    expect(html).toContain(
+      `<div class="row__meta">Marfa integration, version 1.0.0</div>`,
+    );
+    // The exact match above is the "not twice" check: with no label there
+    // is nothing to tell apart, so the identifier stays out of this line.
+  });
+
+  it("takes the tile glyph and the document title from the shown name", () => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: "Zephyr Sync" },
+    });
+    expect(html).toMatch(/class="logo"[^>]*>Z</);
+    expect(html).toContain("Install Zephyr Sync");
+  });
+
+  // `charAt(0)` was safe only while the identifier grammar was the sole
+  // input. A label has no character class, and several of the characters a
+  // label opens with are more than one codepoint each.
+  it.each([
+    ["an astral character", "\u{1F600} Calendar Sync", "\u{1F600}"],
+    [
+      "a flag, which is two regional indicators",
+      "\u{1F1EC}\u{1F1E7} Sync",
+      "\u{1F1EC}\u{1F1E7}",
+    ],
+    [
+      "a family, joined by zero-width joiners",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467} Team",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",
+    ],
+    ["a skin-tone modifier", "\u{1F44D}\u{1F3FF} Sync", "\u{1F44D}\u{1F3FF}"],
+    ["a decomposed accent", "e\u0301co Sync", "E\u0301"],
+    ["a character that lengthens when upper-cased", "\u00DFeta", "S"],
+  ])("renders one whole character for %s", (_label, name, expected) => {
+    const html = renderInstallConsentScreen({
+      ...IDENTIFIER_PARAMS,
+      manifest: { ...BASE_MANIFEST, display_name: name },
+    });
+    expect(html).toContain(
+      `<span class="logo" aria-hidden="true">${expected}</span>`,
+    );
+  });
+});
