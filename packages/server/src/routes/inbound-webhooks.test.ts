@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 import type { CreatedInboundWebhook, InboundWebhook } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -596,5 +597,67 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The credential a running integration actually holds
+// ---------------------------------------------------------------------------
+
+/**
+ * This route admits a Connection acting on itself as an alternative to
+ * space-admin rank, and the shape that reaches it in production is a
+ * runtime credential rather than an admin key. Nothing here covered
+ * that, so the identity arm of the gate was carried entirely by the
+ * proxy and leased-token suites while this route shared the predicate
+ * with them.
+ *
+ * Minted through the real path rather than hand-built: a fixture given
+ * a `source` of the author's choosing can satisfy a gate that reads
+ * one, which is how a gate came to admit only a credential no caller
+ * could present.
+ */
+describe("inbound webhooks — integration runtime credential", () => {
+  it("creates a subscription with the connection's own runtime credential", async () => {
+    const connectionId = await createConnection();
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionId,
+      "keys",
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      {
+        key: credential.api_key,
+        body: { events: ["thing.created"] },
+      },
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("refuses a runtime credential bound to a different connection", async () => {
+    const connectionA = await createConnection();
+    const connectionB = await createConnection();
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionA,
+      "keys",
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionB}/inbound-webhooks`,
+      {
+        key: credential.api_key,
+        body: { events: ["thing.created"] },
+      },
+    );
+    expect(res.status).toBe(403);
   });
 });

@@ -10,6 +10,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
+  actsAsConnection,
   hasSpaceAdminAuthority,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
@@ -70,9 +71,10 @@ function rowToWire(
  * for the given connection. The caller must be authenticated AND match
  * either:
  *   1. An admin credential whose space scope covers the connection.
- *   2. The integration's own credential — a credential whose `source` is
- *      `oauth:${connectionId}` (the OAuth-token synthetic credential
- *      pattern from the auth middleware).
+ *   2. The Connection's own credential, as `actsAsConnection` in
+ *      `middleware/auth.ts` defines it: an OAuth-token synthetic
+ *      credential sourced `oauth:${connectionId}`, or a runtime
+ *      credential stamped with this `connection_id`.
  *
  * `c` is typed via the Hono Context import to avoid a self-referencing
  * router type — we don't need OpenAPI-specific context here, just the
@@ -91,12 +93,10 @@ async function requireConnectionAccess(
   connectionSpaceId: string | undefined;
 }> {
   const key = requireAuth(c);
-  // Same widening as `requireConnectionProxyAccess` in
-  // `routes/connection-proxy.ts` — accept runtime credentials minted
-  // for this connection alongside the OAuth-app-grant shape.
-  const isIntegration =
-    key.source === `oauth:${connectionId}` ||
-    (key.is_runtime_credential === true && key.connection_id === connectionId);
+  // Shared with the connection-proxy and leased-token routes: the
+  // caller is the Connection itself, either as an OAuth grant or as a
+  // runtime credential stamped with this `connection_id`.
+  const isIntegration = actsAsConnection(key, connectionId);
   // Defense-in-depth, matching the leased-tokens sibling: a credential
   // that resolves to an undefined spaceId below reads "any space" at the
   // storage call sites, and since subscription rows land in the

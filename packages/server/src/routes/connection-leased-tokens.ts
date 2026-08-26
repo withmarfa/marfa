@@ -11,6 +11,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
+  actsAsConnection,
   hasSpaceAdminAuthority,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
@@ -50,34 +51,6 @@ function hashLease(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-/**
- * A credential source string that scopes the credential to a specific
- * connection. Two prefixes mint connection-scoped credentials:
- *
- *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
- *     auth middleware for an OAuth `marfa_at_*` access token. The token
- *     was minted via the `/auth/authorize` consent flow and the
- *     consenting user authorized the connection.
- *   - `integration:<connectionId>` — the runtime credential the
- *     install pipeline mints for the per-Connection Worker (see
- *     `connections/install-pipeline.ts`).
- *
- * Either source identifies "the integration itself" for the purpose of
- * managing leased tokens on this connection. Both `oauth:` and the
- * runtime credential's `integration:` source must pass — the design is
- * "the integration requests a short-TTL bearer for direct calls", and the
- * runtime credential is a legitimate integration.
- */
-function isConnectionScopedSource(
-  source: string,
-  connectionId: string,
-): boolean {
-  return (
-    source === `oauth:${connectionId}` ||
-    source === `integration:${connectionId}`
-  );
-}
-
 function rowToWire(
   row: ConnectionLeasedTokenRow,
   rawLease?: string,
@@ -114,7 +87,10 @@ async function requireConnectionAccess(
   // routes: leased tokens belong to a connection, and a connection
   // belongs to a space.
   const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
-  const isIntegration = isConnectionScopedSource(key.source, connectionId);
+  // Shared with the connection-proxy and inbound-webhook routes: the
+  // caller is the Connection itself, either as an OAuth grant or as a
+  // runtime credential stamped with this `connection_id`.
+  const isIntegration = actsAsConnection(key, connectionId);
   // Defense-in-depth: any credential that would resolve to an undefined
   // spaceId below must be entitled to cross-space reach, because the
   // storage call sites treat `undefined` as "any space". The test is

@@ -12,7 +12,7 @@ import type {
   LeaseTokenIntrospection,
 } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 
 let ctx: TestContext;
 /** Registered system.integration id pointing at VALID_MANIFEST. */
@@ -247,28 +247,72 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Runtime credential (integration: source) can manage own leases
+// The credential a running integration actually holds
 // ---------------------------------------------------------------------------
 
-describe("integration runtime credential — integration: source", () => {
-  it("issues a lease when called with the connection's runtime credential", async () => {
+/** One space holding two installed connections, so a credential minted
+ *  for one is space-legal against the other and only the identity
+ *  binding separates them. */
+async function spaceWithTwoConnections(): Promise<{
+  connectionA: string;
+  connectionB: string;
+}> {
+  if (!ctx.storage.spaces) {
+    throw new Error("hosted identity test needs a spaces store");
+  }
+  const space = await ctx.storage.spaces.create(
+    `lease-identity-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const rawKey = `marfa_k1_test_lease_ident_${suffix}`;
+  await ctx.storage.keys.create(
+    {
+      label: `lease-ident-${suffix}`,
+      source: `lease-ident-${suffix}`,
+      role: "space_admin",
+      default_tier: "library",
+      is_platform: false,
+    },
+    hashApiKey(rawKey, TEST_API_KEY_SALT),
+    space.id,
+  );
+  const install = async (): Promise<string> => {
+    const res = await request(ctx.app, "POST", "/connections/install", {
+      key: rawKey,
+      body: { integration_id: integrationId },
+    });
+    if (res.status !== 201) {
+      throw new Error(
+        `install failed: ${String(res.status)} ${await res.text()}`,
+      );
+    }
+    const body = (await res.json()) as { connection_id: string };
+    return body.connection_id;
+  };
+  return { connectionA: await install(), connectionB: await install() };
+}
+
+/**
+ * These mint through `mintLocalRuntimeCredential`, the only path that
+ * produces a credential a dispatch can present, rather than building a
+ * row by hand and keeping the raw key.
+ *
+ * The distinction is the whole point of the cases. A hand-built fixture
+ * can be given any `source` the author likes, so it will satisfy a gate
+ * that tests one, and it proved a permissive behavior no caller could
+ * reach: the real mint stamps `source: local-runtime:<id>:<suffix>` with
+ * a random suffix, and the credential is `role: "member"` with
+ * `is_platform: false`, so neither a fixed source string nor the admin
+ * bypass admits it.
+ */
+describe("integration runtime credential", () => {
+  it("issues a lease when called with the connection's own runtime credential", async () => {
     const connectionId = await createConnection();
-    const rawKey = `marfa_k1_runtime_test_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "test-runtime-cred",
-        source: `integration:${connectionId}`,
-        role: "member",
-        type_permissions: { "*": "write" },
-        extension_permissions: {},
-        edge_permissions: {},
-        connection_id: connectionId,
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
-      },
-      keyHash,
-      undefined,
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionId,
+      "keys",
     );
 
     const res = await request(
@@ -276,34 +320,42 @@ describe("integration runtime credential — integration: source", () => {
       "POST",
       `/connections/${connectionId}/lease-tokens`,
       {
-        key: rawKey,
+        key: credential.api_key,
         body: { capability_id: "drive.upload" },
       },
     );
     expect(res.status).toBe(201);
   });
 
+  it("revokes a lease on its own connection with its own runtime credential", async () => {
+    const connectionId = await createConnection();
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionId,
+      "keys",
+    );
+    const created = (await (
+      await issueLease(connectionId)
+    ).json()) as CreatedConnectionLeasedToken;
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-tokens/${created.id}/revoke`,
+      { key: credential.api_key },
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("refuses a runtime credential bound to a different connection", async () => {
     const connectionA = await createConnection();
     const connectionB = await createConnection();
-
-    // Runtime credential bound to connection A.
-    const rawKey = `marfa_k1_runtime_otherconn_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "test-runtime-cred-other",
-        source: `integration:${connectionA}`,
-        role: "member",
-        type_permissions: { "*": "write" },
-        extension_permissions: {},
-        edge_permissions: {},
-        connection_id: connectionA,
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
-      },
-      keyHash,
-      undefined,
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionA,
+      "keys",
     );
 
     const res = await request(
@@ -311,11 +363,57 @@ describe("integration runtime credential — integration: source", () => {
       "POST",
       `/connections/${connectionB}/lease-tokens`,
       {
-        key: rawKey,
+        key: credential.api_key,
         body: { capability_id: "drive.upload" },
       },
     );
     expect(res.status).toBe(403);
+    // Both refusals in this handler are FORBIDDEN, so the status alone
+    // does not say which one fired. These fixtures are space-less, so
+    // this one is the space fence rather than the identity gate. The
+    // hosted case below is the one that reaches the identity gate.
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("Space scope required");
+  });
+
+  /**
+   * The identity gate on its own, with the space fence satisfied.
+   *
+   * The case above cannot reach it: a space-less credential is refused
+   * by the defense-in-depth block before the gate is consulted, so it
+   * would still pass with the whole `!isAdmin && !isIntegration` branch
+   * deleted. Here both connections live in one space and the credential
+   * carries that space, so the fence does not fire and the only thing
+   * left that can refuse is the `connection_id` binding.
+   */
+  it("refuses a hosted runtime credential reaching a sibling connection in its own space", async () => {
+    const { connectionA, connectionB } = await spaceWithTwoConnections();
+    const credential = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionA,
+      "hosted",
+    );
+
+    const own = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionA}/lease-tokens`,
+      { key: credential.api_key, body: { capability_id: "drive.upload" } },
+    );
+    expect(own.status).toBe(201);
+
+    const sibling = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionB}/lease-tokens`,
+      { key: credential.api_key, body: { capability_id: "drive.upload" } },
+    );
+    expect(sibling.status).toBe(403);
+    const body = (await sibling.json()) as { error: { message: string } };
+    expect(body.error.message).toContain(
+      "Caller cannot manage leased tokens on this connection",
+    );
   });
 });
 
