@@ -67,6 +67,10 @@ import {
   startPgBossSchedules,
   type ScheduledJobSpec,
 } from "./scheduled/pg-boss-schedules.js";
+import {
+  setScheduledJobsReporter,
+  surveyScheduledJobs,
+} from "./scheduled/job-metrics.js";
 import type { PgBoss } from "pg-boss";
 import {
   log,
@@ -795,6 +799,18 @@ async function main() {
         bulkActionGc.start();
       },
     );
+  }
+
+  // What `GET /metrics` reports the jobs as having done. Installed in every
+  // role that has a queue, not only the one that runs the ticks: execution
+  // is pinned to the worker but the endpoint lives on the web role, and both
+  // build the same spec list above. Driven by that list rather than by the
+  // queue table, because an absent row and an absent job read identically
+  // there and "registered, never ticked" is the case this exists to name.
+  if (boss && storage.pgDb !== undefined) {
+    const jobNames = scheduledJobs.map((job) => job.name);
+    const jobMetricsDb = storage.pgDb as PgDb;
+    setScheduledJobsReporter(() => surveyScheduledJobs(jobMetricsDb, jobNames));
   }
 
   // Register the queue workers and seed the chains once every job above

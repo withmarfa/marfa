@@ -131,9 +131,26 @@ describe("GET /metrics", () => {
     expect(body.keys.runtime_credentials.active).toBe(1);
   });
 
+  it("omits scheduled_jobs where there is no queue substrate", async () => {
+    // Nothing installs a reporter in a test context, which is the shape of
+    // a deployment with no queue: SQLite runs the same jobs on in-process
+    // timers and writes no equivalent record. The section has to be absent
+    // rather than a list of jobs that have never ticked, so its absence
+    // reads as "no queue substrate" instead of "nothing ran".
+    const res = await request(ctx.app, "GET", "/metrics", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    // Assert the payload is the one we think it is before concluding
+    // anything from a missing key.
+    expect(body).toHaveProperty("connections");
+    expect(body).not.toHaveProperty("scheduled_jobs");
+  });
+
   it("refuses a space-bound credential", async () => {
-    // Four of the five counters this route reports (blobs, keys, webhooks,
-    // custom types) are instance-wide; only `items` is space-scoped. That
+    // Only `items` is space-scoped; blobs, keys, webhooks, custom types,
+    // connection drift and scheduled-job ticks are all instance-wide. That
     // makes the whole response platform-operator data, so the gate is
     // platform-only and a credential confined to a space is refused
     // whatever its role — closing the read rather than partially scoping it.

@@ -94,9 +94,11 @@ export interface PgBossSchedulesOptions {
   /**
    * Worker poll cadence override, for tests that need a short-interval
    * chain to tick inside a test budget. Production leaves it unset and
-   * each queue polls in proportion to its own interval — thirteen queues
-   * on pg-boss's two-second default is a steady stream of fetch queries
-   * against a deliberately small pool, for jobs that mostly run hourly.
+   * each queue polls in proportion to its own interval: a queue per job,
+   * all on pg-boss's two-second default, is a steady stream of fetch
+   * queries against a deliberately small pool, for jobs that mostly run
+   * hourly. The number of them used to be spelled out here and had
+   * already drifted by two, so it is not any more.
    */
   pollingIntervalSeconds?: number;
   /**
