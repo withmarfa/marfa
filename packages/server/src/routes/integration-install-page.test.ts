@@ -42,12 +42,6 @@ describe("renderInstallConsentScreen — POST contract", () => {
     expect(html).toContain(`name="decision" value="deny"`);
   });
 
-  it("carries the label override input", () => {
-    expect(html).toContain(`name="label"`);
-    // Default value is "<name> <version>".
-    expect(html).toContain(`value="Google Calendar 1.0.0"`);
-  });
-
   it("omits the hidden credential_ref input when no pre-arm hint", () => {
     expect(html).not.toContain(`name="credential_ref"`);
     expect(html).not.toContain("Reusing existing OAuth credential");
@@ -75,6 +69,31 @@ describe("renderInstallConsentScreen — POST contract", () => {
       `<input type="hidden" name="credential_ref" value="sysc_cred_42">`,
     );
     expect(armed).toContain("sysc_cred_42");
+  });
+});
+
+describe("renderInstallConsentScreen — the retired label field", () => {
+  const html = renderInstallConsentScreen(BASE_PARAMS);
+
+  // The screen used to render an editable "Connection label" input.
+  // Nothing stored what a person typed into it: its only consumer was the
+  // seed runtime credential's label, and the install stopped minting one.
+  // A `system.connection` declares no label field, so there was nowhere
+  // left to put the value. An input whose value is discarded is worse
+  // than a missing one, because a person reads it as a thing they get to
+  // name.
+  // The removed input's prefilled value was the only place the version
+  // appeared, so taking it out took the version off the screen with it.
+  // A person approving an install is consenting to a specific version:
+  // the upgrade-consent flow exists precisely because a later one can ask
+  // for more. The version is text now rather than an editable field.
+  it("still names the version being approved", () => {
+    expect(html).toContain("Marfa integration, version 1.0.0");
+  });
+
+  it("renders no label input", () => {
+    expect(html).not.toContain('name="label"');
+    expect(html).not.toContain("Connection label");
   });
 });
 
@@ -170,7 +189,7 @@ describe("renderInstallConsentScreen — configuration fields", () => {
       manifest: manifestWithConfig,
     });
     // The prefix is what keeps a manifest key from colliding with the
-    // form's own label / decision / credential_ref fields.
+    // form's own decision / credential_ref fields.
     expect(html).toContain('name="config_feed_url"');
     expect(html).toContain("The Atom or RSS feed to poll.");
     expect(html).toContain("Configuration");

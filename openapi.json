@@ -18525,9 +18525,6 @@
                   "integration_id": {
                     "type": "string"
                   },
-                  "label": {
-                    "type": "string"
-                  },
                   "credential_ref": {
                     "type": "string"
                   },

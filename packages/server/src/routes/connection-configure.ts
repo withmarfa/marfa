@@ -230,9 +230,8 @@ export function renderConfigurationFields(
   options?: {
     /**
      * Prepended to every input's `name`. The install form embeds these
-     * rows beside its own `label` / `decision` / `credential_ref`
-     * fields, and a manifest is free to declare a key with any of those
-     * names — the prefix is what keeps the two namespaces from
+     * rows beside its own `decision` / `credential_ref` fields, and a
+     * manifest is free to declare a key with either of those names — the prefix is what keeps the two namespaces from
      * colliding. The configure page, whose form carries nothing else,
      * passes none.
      */

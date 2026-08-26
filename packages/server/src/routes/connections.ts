@@ -77,9 +77,6 @@ const InstallRequestSchema = z.object({
    *  `POST /integrations`). The install pipeline reads its manifest and
    *  binds the new connection's `integration_ref` to this id. */
   integration_id: z.string(),
-  /** Display label for the connection and seed credential. Defaults
-   *  server-side to `${manifest_name} ${manifest_version}` when omitted. */
-  label: z.string().optional(),
   /** Optional id of an existing `system.credential` (kind `oauth_token`)
    *  to reference instead of provisioning a fresh provider credential.
    *  Lets multiple integrations of the same upstream (e.g.
@@ -820,7 +817,6 @@ export function connectionRoutes(
     const apiKey = requireSpaceAdmin(c);
     const {
       integration_id,
-      label,
       credential_ref: credentialRef,
       configuration,
     } = c.req.valid("json");
@@ -848,19 +844,12 @@ export function connectionRoutes(
     }
     const props = integration.properties as unknown as IntegrationProperties;
 
-    const trimmed = label?.trim();
-    const effectiveLabel =
-      trimmed && trimmed.length > 0
-        ? trimmed
-        : `${props.manifest_name} ${props.manifest_version}`;
-
     const result = await performInstall(storage, {
       apiKeyId: apiKey.id,
       spaceId,
       authMode: c.get("config").authMode,
       integrationItemId: integration.id,
       manifest: props.manifest,
-      label: effectiveLabel,
       clientIp,
       ...(credentialRef !== undefined ? { credentialRef } : {}),
       ...(configuration !== undefined ? { configuration } : {}),

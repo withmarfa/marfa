@@ -52,10 +52,7 @@ describe("client.connections.install", () => {
           string,
           unknown
         >;
-        expect(body).toEqual({
-          integration_id: "itm_int_42",
-          label: "Acme Slack",
-        });
+        expect(body).toEqual({ integration_id: "itm_int_42" });
         return Promise.resolve(makeJsonResponse(201, fakeResult));
       },
     );
@@ -63,32 +60,10 @@ describe("client.connections.install", () => {
     const client = makeClient(mockFetch);
     const result = await client.connections.install({
       integration_id: "itm_int_42",
-      label: "Acme Slack",
     });
 
     expect(result).toEqual(fakeResult);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("omits the optional label when not provided", async () => {
-    const mockFetch = vi.fn(
-      (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        const body = JSON.parse(init?.body as string) as Record<
-          string,
-          unknown
-        >;
-        expect(body).toEqual({ integration_id: "itm_int_43" });
-        return Promise.resolve(
-          makeJsonResponse(201, {
-            connection_id: "x",
-            activity_id: "z",
-          }),
-        );
-      },
-    );
-
-    const client = makeClient(mockFetch);
-    await client.connections.install({ integration_id: "itm_int_43" });
   });
 
   it("forwards credential_ref and configuration when provided", async () => {

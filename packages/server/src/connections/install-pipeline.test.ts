@@ -121,7 +121,6 @@ describe("performInstall — happy path", () => {
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
-      label: "direct install",
     });
 
     expect(result.connection_id).toMatch(/^[0-9a-f-]+$/);
@@ -161,7 +160,6 @@ describe("performInstall — happy path", () => {
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
-      label: "mints nothing",
     });
 
     const bound = await ctx.storage.keys.listByConnectionId(
@@ -224,7 +222,6 @@ describe("performInstall — the manifest's declared defaults are written in", (
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: withDefaults,
-      label: "defaults install",
       ...(configuration ? { configuration } : {}),
     });
     const connection = await ctx.storage.items.get(result.connection_id);
@@ -335,7 +332,6 @@ describe("performInstall — compensating writes on activity failure", () => {
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
-          label: "rollback test",
         },
       ),
     ).rejects.toThrow(/forced activity failure/);
@@ -447,7 +443,6 @@ describe("performInstall — compensating writes on activity failure", () => {
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
-          label: "audit-failure test",
         },
       ),
     ).rejects.toThrow(/audit DB unavailable/);
@@ -553,7 +548,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
-      label: "with-credential-ref",
       credentialRef: credentialId,
     });
 
@@ -585,7 +579,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
-        label: "bad-credential-ref",
         credentialRef: "itm_credref_does_not_exist",
       }),
     ).rejects.toThrow(/does not resolve/);
@@ -613,7 +606,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
-        label: "wrong-kind-credential-ref",
         credentialRef: wrongKindCredential.id,
       }),
     ).rejects.toThrow(/expected 'oauth_token' or 'api_token'/);
@@ -646,7 +638,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
-      label: "with-api-token-credential",
       credentialRef: apiTokenCredential.id,
     });
 
@@ -670,7 +661,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
-      label: "no-credential-ref",
     });
 
     const connection = await ctx.storage.items.get(result.connection_id);
@@ -742,7 +732,6 @@ describe("performInstall — the state a rolled-back install leaves", () => {
         authMode: "hosted",
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.rollback-${stamp}` },
-        label: `rollback state ${stamp}`,
       }),
     ).rejects.toThrow(/has no space/);
 
@@ -823,7 +812,6 @@ describe("performInstall — an unaudited install does not stand", () => {
         authMode: "keys",
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.audit-${stamp}` },
-        label: `audit failure ${stamp}`,
       }),
     ).rejects.toThrow();
 

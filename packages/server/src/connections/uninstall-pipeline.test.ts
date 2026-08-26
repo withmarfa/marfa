@@ -82,7 +82,6 @@ async function installFresh(): Promise<{
       ...manifest(),
       name: `acme.uninstall-${Date.now().toString()}`,
     },
-    label: `direct uninstall test ${Date.now().toString()}`,
   });
 
   return {
@@ -381,7 +380,6 @@ async function installWithCredential(credentialRef: string): Promise<{
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: { ...manifest(), name: `acme.upstream-${stamp}` },
-    label: `upstream credential test ${stamp}`,
     credentialRef,
   });
 
@@ -584,7 +582,6 @@ describe("performUninstall — a connection inside a space", () => {
       authMode: "hosted",
       integrationItemId: integration.id,
       manifest: { ...manifest(), name: `acme.hosted-${stamp}` },
-      label: `hosted uninstall test ${stamp}`,
     });
 
     return {
