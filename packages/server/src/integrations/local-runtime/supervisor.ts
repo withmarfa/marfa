@@ -80,10 +80,34 @@ export interface SupervisorConfig {
   /** Optional pg-boss handle. Tests omit this and call
    *  `dispatchForTest` to drive messages without booting the queue. */
   boss?: PgBoss | null;
-  /** Worker concurrency hint for pg-boss. Defaults to a small value;
-   *  per-Connection serialization is enforced via the advisory lock
-   *  regardless. */
-  workerBatchSize?: number;
+  /** How many dispatches this process runs at once. Defaults to 2.
+   *
+   *  Sized against the session connection pool rather than against
+   *  throughput. A dispatch takes `connection-dispatch:<id>` and holds a
+   *  reserved session connection for its whole run, which is tens of
+   *  seconds rather than the milliseconds a job tick holds one.
+   *
+   *  **That pool holds at most five connections and no setting raises it.**
+   *  It is built as `Math.min(maxPoolSize ?? 10, 5)`, so `MARFA_DB_POOL_SIZE`
+   *  can only ever lower it; there is no lever that buys more. Five is also
+   *  shared with streaming reads, the consent lock and every other job lock,
+   *  and one of those is on a request path that turns a lost reservation
+   *  into a user-visible refusal. Two is a standing claim of two of the five
+   *  for up to the dispatch bound, which leaves room for the rest.
+   *
+   *  Raising this is therefore a decision about who else goes without, not
+   *  a throughput dial with a matching pool setting. Past three, dispatches
+   *  start losing the reservation budget and are acked and dropped at a
+   *  lock nobody holds.
+   *
+   *  Per-Connection serialization does not depend on this: the advisory
+   *  lock still admits one dispatch per connection whatever the number.
+   *
+   *  It should also not exceed `MARFA_INTEGRATION_WORKER_THREADS`, which
+   *  defaults to 2. Two dispatches of the same integration need two threads
+   *  in its pool; with one thread the second is rejected outright rather
+   *  than queued, and surfaces as a handler throw on a healthy connection. */
+  dispatchConcurrency?: number;
   /** When `false`, `start()` creates the queues but registers no
    *  pg-boss workers and seeds no schedule crons — the enqueue-only
    *  shape the web role runs, keeping dispatch pinned to the worker
@@ -575,7 +599,53 @@ export function createSupervisor(
       // web role uses this to keep the webhook receipt route and the
       // reactive bridge's enqueue side without ever executing a handler.
       if (config.registerWorkers === false) return;
-      const batchSize = config.workerBatchSize ?? 4;
+      // One job per fetch, and several fetchers rather than one fetcher
+      // taking several jobs.
+      //
+      // A pg-boss batch is settled as a unit, and both halves of that bit.
+      // It arms ONE expiry timer for the batch and, on timeout, fails every
+      // job id in it — so three dispatches that had already finished were
+      // re-queued and re-run because a fourth was still going. And the
+      // handler ran the batch as a plain `for ... await`, so one job's
+      // throw aborted the loop: the jobs behind it were never attempted,
+      // and every one of them was failed carrying the thrower's error.
+      // That reached the operator surface, where two dead-letter rows for
+      // different connections both named the first connection, sending
+      // anyone reading the alert to investigate a healthy one.
+      //
+      // A batch of one has no siblings to take down, so both disappear
+      // rather than being handled. pg-boss's own per-job settlement
+      // (`perJobResults`) fixes the throw half but not the timeout half —
+      // its own contract says throwing from the handler still fails the
+      // whole batch, and a batch timing out is a throw.
+      //
+      // There IS a throughput cost to a smaller batch, and it is not the
+      // fetch round-trip. pg-boss sleeps once per fetch regardless of how
+      // many jobs that fetch returned, so a batch of four amortised the
+      // poll delay over four jobs and a batch of one does not. Its own
+      // remedy is unavailable here: `burstWhenBatchFull` is documented as
+      // ignored when `batchSize` is 1, and NOTIFY wake-ups are off.
+      //
+      // The interval is halved to pay for it, which makes the new shape no
+      // slower than the old one at any dispatch duration. Per worker a
+      // cycle is `max(duration, interval)` and returns one job, so:
+      //
+      //   before   4 / max(4d, 2000ms)      one worker, four jobs a fetch
+      //   after    2 / max(d, 1000ms)       two workers, one job a fetch
+      //
+      // At d below the interval both settle at two jobs a second; above it
+      // the new shape pulls ahead, because the old one served four jobs
+      // strictly one after another. The cost is polling frequency: two
+      // workers at one second rather than one at two, so four times the
+      // queries against an idle queue. That is the trade, and it is worth
+      // it for what it buys — `localConcurrency` defaulted to 1, so a
+      // single slow dispatch was fifteen minutes of no dispatch for every
+      // integration on the process, not just for its own connection.
+      //
+      // The durable fix for the polling cost is NOTIFY wake-ups, which
+      // this deployment does not enable anywhere yet. Worth doing on its
+      // own rather than smuggled in here.
+      const dispatchConcurrency = config.dispatchConcurrency ?? 2;
       // `includeMetadata` carries `retryCount`, which the throw-retry rule
       // needs to tell a first delivery from a redelivery.
       //
@@ -590,8 +660,20 @@ export function createSupervisor(
       // annotation, which lets both infer.
       await boss.work(
         QUEUE_NAME,
-        { batchSize, pollingIntervalSeconds: 2, includeMetadata: true },
+        {
+          batchSize: 1,
+          localConcurrency: dispatchConcurrency,
+          pollingIntervalSeconds: 1,
+          includeMetadata: true,
+        },
         async (jobs: JobWithMetadata<SchedulerEnvelope>[]) => {
+          // `batchSize: 1` makes this a single job, and the loop is kept
+          // rather than indexed so that raising the batch size can never
+          // silently drop the jobs past the first. It stays a `for ...
+          // await`: with one job there is nothing to isolate, and running
+          // a batch concurrently here would put several dispatches on one
+          // shared expiry timer, which is the arrangement this moved away
+          // from.
           for (const job of jobs) {
             await dispatchForQueue(job.data, job.retryCount, job.signal);
           }

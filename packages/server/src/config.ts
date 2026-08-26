@@ -386,6 +386,21 @@ export interface AppConfig {
    */
   integrationWorkerThreads?: number;
   /**
+   * How many integration dispatches this process runs at once on the local
+   * substrate (`MARFA_INTEGRATION_DISPATCH_CONCURRENCY`). Optional: unset
+   * keeps the supervisor's default of 2.
+   *
+   * Sized against the session connection pool, not against throughput. A
+   * dispatch holds a reserved session connection for its whole run, and
+   * **that pool holds at most five connections whatever anything is set
+   * to**: it is `Math.min(maxPoolSize ?? 10, 5)`, so `MARFA_DB_POOL_SIZE`
+   * can only lower it. Those five are shared with streaming reads, the
+   * consent lock and every other job lock, so raising this is a decision
+   * about who else goes without rather than a dial with a matching pool
+   * setting. It should also not exceed `MARFA_INTEGRATION_WORKER_THREADS`.
+   */
+  integrationDispatchConcurrency?: number;
+  /**
    * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
    * environment directly because it must run before `loadConfig` (and
@@ -1025,6 +1040,10 @@ export function loadConfig(): AppConfig {
     integrationWorkerThreads: parseIntegrationWorkerThreads(
       process.env.MARFA_INTEGRATION_WORKER_THREADS,
     ),
+    integrationDispatchConcurrency: parsePositiveIntegerEnv(
+      process.env.MARFA_INTEGRATION_DISPATCH_CONCURRENCY,
+      "MARFA_INTEGRATION_DISPATCH_CONCURRENCY",
+    ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,
@@ -1069,6 +1088,26 @@ export function parseSseMaxViewers(raw: string | undefined): number {
 }
 
 /**
+ * Parse a positive-integer environment variable. Unset or empty → undefined,
+ * which keeps the consumer's own default. Anything else that is not a
+ * positive integer throws at boot rather than warning.
+ *
+ * Plain digits only, not `Number()`'s grammar: "1e2" parses to 100, and a
+ * sizing knob silently taking a hundred is the surprise this refuses.
+ */
+export function parsePositiveIntegerEnv(
+  raw: string | undefined,
+  name: string,
+): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed) || Number(trimmed) < 1) {
+    throw new Error(`${name} must be a positive integer, got "${raw}".`);
+  }
+  return Number(trimmed);
+}
+
+/**
  * Parse `MARFA_INTEGRATION_WORKER_THREADS`. Unset → undefined, which
  * keeps the executor's own default. Anything that is not a positive
  * integer throws at boot rather than warning: a NaN or zero pool size
@@ -1079,23 +1118,7 @@ export function parseSseMaxViewers(raw: string | undefined): number {
 export function parseIntegrationWorkerThreads(
   raw: string | undefined,
 ): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  // Plain digits only, not Number()'s grammar: "1e2" parses to 100 and
-  // would silently pre-warm a hundred threads per integration, each with
-  // its own memory budget — the surprise this parser exists to refuse.
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(
-      `MARFA_INTEGRATION_WORKER_THREADS must be a positive integer, got "${raw}".`,
-    );
-  }
-  const n = Number(trimmed);
-  if (n < 1) {
-    throw new Error(
-      `MARFA_INTEGRATION_WORKER_THREADS must be a positive integer, got "${raw}".`,
-    );
-  }
-  return n;
+  return parsePositiveIntegerEnv(raw, "MARFA_INTEGRATION_WORKER_THREADS");
 }
 
 /**

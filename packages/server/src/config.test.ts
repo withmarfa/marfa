@@ -3,6 +3,7 @@ import {
   envNumber,
   parseDbPoolMode,
   parseIntegrationWorkerThreads,
+  parsePositiveIntegerEnv,
   parseOtelSampleRatio,
   parseOtelHeaders,
   loadConfig,
@@ -165,6 +166,30 @@ describe("parseDbPoolMode", () => {
     // resolve a typo to the permissive mode, which is precisely the silent
     // downgrade this knob exists to prevent.
     expect(() => parseDbPoolMode("transacton")).toThrow(/MARFA_DB_POOL_MODE/);
+  });
+});
+
+describe("parsePositiveIntegerEnv", () => {
+  it("returns undefined when unset or empty, keeping the consumer default", () => {
+    expect(parsePositiveIntegerEnv(undefined, "SOME_VAR")).toBeUndefined();
+    expect(parsePositiveIntegerEnv("", "SOME_VAR")).toBeUndefined();
+  });
+
+  it("honors a positive integer", () => {
+    expect(parsePositiveIntegerEnv("1", "SOME_VAR")).toBe(1);
+    expect(parsePositiveIntegerEnv("5", "SOME_VAR")).toBe(5);
+  });
+
+  it("refuses anything that is not plain digits, naming the variable", () => {
+    // Number()'s grammar is wider than an env value ever means to be:
+    // "1e2" is 100 and a plausible typo. A sizing knob silently taking a
+    // hundred is what this refuses, and the refusal has to name the
+    // variable or an operator cannot find it.
+    for (const raw of ["0", "-2", "two", "2.5", "1e2", "0x4", "+4"]) {
+      expect(() => parsePositiveIntegerEnv(raw, "SOME_VAR")).toThrow(
+        /SOME_VAR/,
+      );
+    }
   });
 });
 
