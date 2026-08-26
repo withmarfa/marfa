@@ -20,6 +20,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "../connections/install-pipeline.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -85,7 +86,7 @@ async function installFresh(): Promise<{
     undefined,
   );
 
-  const result = await performInstall(ctx.storage, "test-salt", {
+  const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: undefined,
     authMode: "keys",
@@ -96,13 +97,32 @@ async function installFresh(): Promise<{
 
   return {
     connectionId: result.connection_id,
-    credentialId: result.credential_id,
+    // Installing mints nothing, so the credential the uninstall route
+    // revokes is the one a dispatch would have left behind.
+    credentialId: await mintRuntimeCredentialId(result.connection_id),
   };
+}
+
+/** Mint a runtime credential the way a dispatch does, and resolve the row
+ *  id the mint does not return. */
+async function mintRuntimeCredentialId(connectionId: string): Promise<string> {
+  await mintLocalRuntimeCredential(
+    ctx.storage,
+    TEST_API_KEY_SALT,
+    connectionId,
+    "keys",
+  );
+  const bound = await ctx.storage.keys.listByConnectionId(
+    connectionId,
+    undefined,
+  );
+  const runtime = bound.find((k) => k.is_runtime_credential);
+  if (!runtime) throw new Error("runtime credential did not resolve");
+  return runtime.id;
 }
 
 interface InstallResponse {
   connection_id: string;
-  credential_id: string;
   activity_id: string;
 }
 
@@ -182,7 +202,6 @@ describe("POST /connections/install — happy path", () => {
 
     const body = (await res.json()) as InstallResponse;
     expect(body.connection_id).toMatch(/^[0-9a-f-]+$/);
-    expect(body.credential_id).toMatch(/^[0-9a-f-]+$/);
     expect(body.activity_id).toMatch(/^[0-9a-f-]+$/);
 
     const conn = await ctx.storage.items.get(body.connection_id, undefined);
@@ -216,32 +235,12 @@ describe("POST /connections/install — happy path", () => {
     });
   });
 
-  it("uses the explicit label on the seed credential when provided, falling back to manifest name + version otherwise", async () => {
-    const integration = await createIntegration();
-
-    const labeled = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
-      body: { integration_id: integration.id, label: "Custom label" },
-    });
-    expect(labeled.status).toBe(201);
-    const labeledBody = (await labeled.json()) as InstallResponse;
-    const labeledCred = (await ctx.storage.keys.list()).find(
-      (k) => k.id === labeledBody.credential_id,
-    );
-    expect(labeledCred?.label).toBe("Custom label");
-
-    const integration2 = await createIntegration();
-    const defaulted = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
-      body: { integration_id: integration2.id },
-    });
-    expect(defaulted.status).toBe(201);
-    const defaultedBody = (await defaulted.json()) as InstallResponse;
-    const defaultedCred = (await ctx.storage.keys.list()).find(
-      (k) => k.id === defaultedBody.credential_id,
-    );
-    expect(defaultedCred?.label).toBe(`${integration2.manifestName} 1.0.0`);
-  });
+  // A case here used to prove `label` did something by reading it back
+  // off the seed credential it named. There is no seed credential now,
+  // and a `system.connection` carries no label of its own, so the field
+  // has nothing left to observe. Restoring an assertion means first
+  // deciding whether the label should name the Connection or leave the
+  // wire; see `InstallInput.label`.
 });
 
 describe("POST /connections/install — error mapping", () => {
@@ -527,7 +526,7 @@ async function installItemEventConnection(): Promise<{
     },
     undefined,
   );
-  const result = await performInstall(ctx.storage, "test-salt", {
+  const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: undefined,
     authMode: "keys",

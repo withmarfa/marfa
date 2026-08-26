@@ -227,11 +227,7 @@ function toResponse(item: {
   };
 }
 
-export function integrationRoutes(
-  storage: Storage,
-  salt: string,
-  auth?: MarfaAuth,
-) {
+export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
   // Split: apiRouter (OpenAPI JSON CRUD) and htmlRouter (HTML install flow, plain Hono).
   // Mixing the two on one OpenAPIHono instance was observed to misroute bodies in tests.
   const apiRouter = createOpenAPIRouter<AppEnv>();
@@ -455,7 +451,7 @@ export function integrationRoutes(
 
     let installed;
     try {
-      installed = await performInstall(storage, salt, {
+      installed = await performInstall(storage, {
         apiKeyId: caller.apiKeyId,
         spaceId: caller.spaceId,
         authMode: c.get("config").authMode,

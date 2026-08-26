@@ -191,6 +191,41 @@ describe("mintLocalRuntimeCredential — direction is not an access level", () =
   );
 });
 
+describe("mintLocalRuntimeCredential — the ceiling on rank and tier", () => {
+  // Rank and platform tier used to be asserted against the install
+  // pipeline's mint, in `auth/non-http-mint-ceilings.test.ts`. That mint
+  // is gone, and this is the only path left that creates a runtime
+  // credential, so the assertions belong here or nowhere. A runtime
+  // credential is machine-minted with nobody to consent to a widening,
+  // which is exactly the shape that must never carry rank or the
+  // platform flag.
+  it("mints member rank, never platform, always expiring", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    const cred = await mintLocalRuntimeCredential(
+      ctx.storage,
+      TEST_API_KEY_SALT,
+      connectionId,
+      "keys",
+    );
+
+    const credId = await credentialIdByHash(cred.api_key);
+    const row = (await ctx.storage.keys.list()).find((k) => k.id === credId);
+    if (!row) throw new Error("minted credential did not resolve");
+    expect(row.role).toBe("member");
+    expect(row.is_platform).toBe(false);
+    // Machine-minted means expiring: the substrate cannot refresh
+    // mid-dispatch, so an unstamped credential would outlive every
+    // dispatch that could replace it.
+    expect(row.expires_at).toBeTruthy();
+    // Exactly the manifest's declared reach plus the substrate's status
+    // channel, never a wildcard.
+    const granted = Object.keys(row.type_permissions).sort();
+    expect(granted).toEqual(["core.note", "system.activity"]);
+    expect(granted).not.toContain("*");
+  });
+});
+
 describe("mintLocalRuntimeCredential — own-connection read", () => {
   it("reads its own Connection without a system.connection grant", async () => {
     const integrationId = await createIntegrationItem();

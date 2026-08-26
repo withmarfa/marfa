@@ -1780,9 +1780,8 @@ export class MarfaClient {
      * `credential_ref` lets multiple integrations of the same upstream
      * share one existing `system.credential` instead of provisioning a
      * fresh one per install; `configuration` seeds the new connection's
-     * `properties.configuration` bag. Returns the new connection id, the
-     * seed runtime credential id, and the `system.activity` row id from
-     * the install pipeline.
+     * `properties.configuration` bag. Returns the new connection id and
+     * the `system.activity` row id from the install pipeline.
      */
     install: async (
       input: ConnectionInstallInput,

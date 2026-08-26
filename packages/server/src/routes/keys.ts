@@ -31,10 +31,10 @@ function generateRawKey(): string {
  *
  * `source` is otherwise free text, but three prefixes are read elsewhere
  * as proof that a credential IS a particular connection's integration —
- * see `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Genuine integration
- * credentials are minted at the storage layer by the install pipeline and
- * the runtime broker, never through an HTTP mint route, so nothing
- * legitimate is turned away here.
+ * see `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Genuine runtime credentials
+ * are minted at the storage layer by the per-dispatch mint, never
+ * through an HTTP mint route, so nothing legitimate is turned away
+ * here.
  *
  * Shared by `POST /keys` and `POST /admin/spaces/{id}/keys`: both write
  * `source` straight from the body, so a check on only one of them is no
@@ -44,7 +44,7 @@ export function assertUnreservedSource(source: string): void {
   if (!isReservedCredentialSource(source)) return;
   throw new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes identify a connection's own integration credential and are issued by the install pipeline, not by this route.`,
+    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes identify a connection's own integration credential and are issued by the runtime, not by this route.`,
   );
 }
 

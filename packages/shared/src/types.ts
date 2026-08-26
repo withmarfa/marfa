@@ -809,14 +809,11 @@ export interface ConnectionInstallInput {
 }
 
 /**
- * Wire shape returned by `POST /connections/install`. Returns the
- * connection id, the seed runtime credential id, and the system.activity
- * row id from the install pipeline.
+ * Wire shape returned by `POST /connections/install`: the connection id
+ * and the `system.activity` row id from the install pipeline.
  */
 export interface ConnectionInstallResult {
   connection_id: string;
-  /** id of the seed runtime credential minted bound to the new connection. */
-  credential_id: string;
   /** id of the system.activity row emitted by the pipeline. */
   activity_id: string;
 }

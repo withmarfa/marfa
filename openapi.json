@@ -18547,7 +18547,7 @@
         },
         "responses": {
           "201": {
-            "description": "Connection installed. Returns the new connection id, seed credential id, and activity id.",
+            "description": "Connection installed. Returns the new connection id and activity id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18556,16 +18556,12 @@
                     "connection_id": {
                       "type": "string"
                     },
-                    "credential_id": {
-                      "type": "string"
-                    },
                     "activity_id": {
                       "type": "string"
                     }
                   },
                   "required": [
                     "connection_id",
-                    "credential_id",
                     "activity_id"
                   ]
                 }

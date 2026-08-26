@@ -1,14 +1,16 @@
 /**
  * Installing an integration is space-admin work on the bearer path.
  *
- * An install mints a runtime credential whose permission maps come from the
- * installed integration's manifest, not from the caller's own key
- * (`connections/install-pipeline.ts` → `createRuntimeCredential` with
- * `buildTypePermissions(manifest)`). That is a credential created with
- * authority the caller may not itself hold, which is the axis
- * `auth/mint-ceiling.ts` states explicitly: no minting path may issue a
- * credential whose authority exceeds the principal that authorized the
- * mint.
+ * An install commits a space to running the integration's code, and every
+ * credential the Connection is later minted takes its permission maps from
+ * that manifest rather than from the caller's own key
+ * (`connections/manifest-permissions.ts`). The install is where a caller
+ * chooses the manifest, so it is where authority the caller may not itself
+ * hold gets committed to, which is the axis `auth/mint-ceiling.ts` states:
+ * no minting path may issue a credential whose authority exceeds the
+ * principal that authorized it. Installing mints nothing itself; it decides
+ * what every later mint may reach, which is the same authority one step
+ * earlier.
  *
  * Every sibling operation agrees — `POST /connections/install`,
  * `POST /connections/:id/configure` and `POST /connections/:id/uninstall`
@@ -50,8 +52,9 @@ function manifest(name: string) {
     description: "Fixture manifest for the install authority gate.",
     direction: "read" as const,
     triggers: [{ type: "schedule" as const, config: { cron: "*/15 * * * *" } }],
-    // Deliberately wider than the installing key's own permissions: the
-    // credential this mints could write types the member cannot.
+    // Deliberately wider than the installing key's own permissions: a
+    // credential minted for this Connection could write types the member
+    // cannot.
     target_types: ["core.note", "core.task"],
     bidirectional_handling: {
       echo_ttl_seconds: 60,

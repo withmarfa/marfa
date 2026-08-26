@@ -4,14 +4,21 @@
  * Owns the multi-step install of an Integration manifest into a space:
  *   1. Insert a `system.connection.integration` item bound
  *      to the Integration's id (via `integration_ref`).
- *   2. Mint a runtime credential bound to the new connection id (apiKeys
- *      row stamped with `is_runtime_credential: true` and `connection_id`).
+ *   2. Confirm the new Connection is one a runtime credential may later
+ *      be minted for, and refuse the install if it is not.
  *   3. Emit a `system.activity` row referencing the connection.
  *
- * Order matters — the runtime credential mint stamps `connection_id`, so
- * the connection id must exist first. Execution order is
- * connection-first because the credential needs the id to bind to:
- * no orphan credentials, no half-installed state.
+ * Order matters: step 2 reads the row step 1 wrote, so the connection
+ * must exist first, and a refusal there rolls step 1 back rather than
+ * leaving a Connection nobody asked for.
+ *
+ * Installing mints no credential. It used to, and nothing could ever
+ * present the result: the plaintext was discarded at the end of this
+ * function and no route can reveal it. A Connection with no credential
+ * is fully dispatchable, because the supervisor mints per dispatch
+ * without consulting what is already there, and that mint revokes
+ * whatever it finds. The row's only visible effect was a key in the
+ * space's list that a space admin did not create and could not use.
  *
  * Atomicity — `storage.runInTransaction` is genuinely transactional on
  * both dialects, but install spans multiple storage stores and
@@ -20,18 +27,14 @@
  * writes**: each step records what to undo on failure, and the catch-all
  * reverses them in reverse order. The compensations are idempotent.
  *
- * Internal-call bypass — the runtime credential mint at step 2 calls
- * `storage.keys.createRuntimeCredential` directly; there is no HTTP
- * mint route. At install time the caller is the better-auth
- * session user (a human approving a connection), not a machine mint
- * path. Documented here so future readers don't read the
- * bypass as an oversight.
- *
- * Only the caller check is bypassed. What a minted credential may reach,
- * and whether it may be minted at all, are properties of the credential
- * rather than of the transport, so step 2 takes the Connection lifecycle
- * lock and applies the space fence exactly as the other two mint paths
- * do. A rule enforced on two of three doors is not a rule.
+ * Step 2 survives the mint it used to guard, and deliberately. Whether a
+ * Connection may produce a platform-tier credential is a property of the
+ * Connection rather than of any one mint, and this is the third of three
+ * doors enforcing it: a space-less Connection on a hosted deployment
+ * must not exist in an installable state at all. Checking it here means
+ * the install fails loudly, naming the missing space, instead of
+ * succeeding and leaving the first dispatch to discover it. A rule
+ * enforced on two of three doors is not a rule.
  *
  * Manifest version compatibility — the install binds the connection to
  * a specific `integration_ref` at the manifest's exact version. When a
@@ -39,7 +42,6 @@
  * connections keep pointing at the old version's item id; an explicit
  * upgrade flow would re-bind. This is intentionally out of scope here.
  */
-import { randomBytes } from "node:crypto";
 import {
   applyConfigurationDefaults,
   ErrorCode,
@@ -47,28 +49,13 @@ import {
   validateConnectionConfiguration,
   type IntegrationManifest,
 } from "@withmarfa/shared";
-import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
-  buildEdgePermissions,
-  buildExtensionPermissions,
-  buildTypePermissions,
-} from "./manifest-permissions.js";
-import {
-  runtimeCredentialItemSource,
   withConnectionLifecycleLock,
   withConnectionLifecycleLockInTransaction,
 } from "./lifecycle-lock.js";
 import { assertMintableSpaceScope } from "./runtime-credential-lifecycle.js";
 import { writeRevokedConnectionState } from "./revoked-connection.js";
-
-const KEY_PREFIX = "marfa_k1_";
-
-/** TTL for the seed runtime credential the install mints. The
- *  supervisor re-mints per dispatch, so this only needs to outlast
- *  the gap between install and first scheduled poll — 1 hour is comfortable
- *  for any realistic schedule cadence. */
-const INSTALL_CREDENTIAL_TTL_SECONDS = 3600;
 
 export interface InstallInput {
   /** The api_keys row id of the caller (audit trail). */
@@ -76,10 +63,10 @@ export interface InstallInput {
   /** Space scope for every row written. */
   spaceId?: string;
   /**
-   * The deployment's `AUTH_MODE`, for the space fence on the credential
-   * mint below. Required rather than defaulted: the permissive value is
-   * the one that reopens the hole, so a caller that has not thought about
-   * it should not compile.
+   * The deployment's `AUTH_MODE`, for the space fence at step 2.
+   * Required rather than defaulted: the permissive value is the one that
+   * reopens the hole, so a caller that has not thought about it should
+   * not compile.
    */
   authMode: "hosted" | "keys";
   /** id of the system.integration item the connection binds to. */
@@ -87,8 +74,14 @@ export interface InstallInput {
   /** The manifest blob (already validated on registration). Drives
    *  permission translation and trigger persistence. */
   manifest: Record<string, unknown> | IntegrationManifest;
-  /** Display label for the credential and connection. Falls back to
-   *  `${manifest_name} ${manifest_version}` at the route layer. */
+  /** Display label, falling back to `${manifest_name} ${manifest_version}`
+   *  at the route layer.
+   *
+   *  Nothing reads it today. Its only consumer was the seed runtime
+   *  credential's label, and the install no longer mints one; the
+   *  Connection item carries no label field of its own. Kept because it
+   *  is a public request field on `POST /connections/install`, so
+   *  retiring it is its own change rather than part of this one. */
   label: string;
   /** Resolved client IP of the caller. Threaded into the audit row so
    *  installs are attributable. Null when the install runs outside a
@@ -120,8 +113,10 @@ export interface InstallInput {
    *     A mismatched or missing credential rejects the install with
    *     `INVALID_REQUEST` before any state is written.
    *
-   * The runtime credential (the api_key bound to the new connection_id)
-   * stays per-install — it's NOT reused. Only the provider credential is.
+   * This is the upstream provider credential, and the only credential an
+   * install touches. The per-Connection runtime credential is a separate
+   * thing entirely, minted per dispatch by the supervisor rather than
+   * here.
    */
   credentialRef?: string;
   /**
@@ -155,17 +150,11 @@ export interface InstallInput {
 
 export interface InstallResult {
   connection_id: string;
-  credential_id: string;
   activity_id: string;
-}
-
-function generateRawKey(): string {
-  return KEY_PREFIX + randomBytes(32).toString("hex");
 }
 
 export async function performInstall(
   storage: Storage,
-  salt: string,
   input: InstallInput,
 ): Promise<InstallResult> {
   const manifest = input.manifest as IntegrationManifest;
@@ -225,6 +214,13 @@ export async function performInstall(
   // place. Iterate via a downward index so the original push-order is
   // preserved; any code that re-reads `compensations` after rollback
   // sees the same sequence.
+  //
+  // Only one step registers a compensation now that the credential mint
+  // is gone, so the reverse walk has nothing to order and no test can
+  // observe it. The rule is kept because it is a property of the walker
+  // rather than of how many steps happen to use it. A second
+  // compensation must arrive with a test that pins the order, or this
+  // becomes a comment nothing enforces.
   const compensations: (() => Promise<void>)[] = [];
   const rollback = async (originalErr: unknown): Promise<never> => {
     for (let i = compensations.length - 1; i >= 0; i--) {
@@ -310,75 +306,44 @@ export async function performInstall(
   });
 
   // -------------------------------------------------------------------
-  // Step 2: mint runtime credential bound to the new connection id.
-  // Direct storage call — see the file docstring for rationale.
+  // Step 2: confirm the Connection is still one a runtime credential may
+  // be minted for. A precondition in its own right, not a side effect of
+  // minting one.
   // -------------------------------------------------------------------
-  const rawKey = generateRawKey();
-  const keyHash = hashApiKey(rawKey, salt);
-  const credentialLabel = input.label.slice(0, 200);
-  const credentialSource = `integration:${connection.id}`;
-  const credentialExpiresAt = new Date(
-    Date.now() + INSTALL_CREDENTIAL_TTL_SECONDS * 1000,
-  ).toISOString();
-
-  let credential;
   try {
-    // Second mint path, held to the same two rules as the supervisor's
-    // in-process mint. The lock is what makes the state
-    // read below mean anything — the Connection row is visible to a
-    // space admin the moment step 1 commits, so an uninstall can reach
-    // it before this pipeline gets to step 2, and a credential minted
-    // behind that sweep is live against a revoked Connection. The fence
-    // is the rule that a space-less credential is the platform tier
-    // rather than a narrow one; an admin installing without naming a
-    // space is exactly how one gets minted.
-    credential = await withConnectionLifecycleLock(
-      storage,
-      connection.id,
-      async () => {
-        const current = await storage.items.get(connection.id, input.spaceId);
-        if (current?.type !== "system.connection") {
-          throw new MarfaError(
-            ErrorCode.CONNECTION_NOT_FOUND,
-            `Connection ${connection.id} disappeared before its credential could be minted`,
-            { connection_id: connection.id },
-          );
-        }
-        if (current.state !== "active") {
-          throw new MarfaError(
-            ErrorCode.CONNECTION_NOT_ACTIVE,
-            `Connection ${connection.id} is ${current.state}; cannot mint runtime credential`,
-            { connection_id: connection.id },
-          );
-        }
-        assertMintableSpaceScope(current, input.authMode);
-
-        return storage.keys.createRuntimeCredential(
-          {
-            label: credentialLabel,
-            source: credentialSource,
-            role: "member",
-            type_permissions: buildTypePermissions(
-              manifest,
-              connection.properties,
-            ),
-            extension_permissions: buildExtensionPermissions(manifest),
-            edge_permissions: buildEdgePermissions(manifest),
-            connection_id: connection.id,
-            expires_at: credentialExpiresAt,
-            item_source: runtimeCredentialItemSource(manifest),
-          },
-          keyHash,
-          input.spaceId,
+    // The lock is what makes the state read below mean anything. The
+    // Connection row is visible to a space admin the moment step 1
+    // commits, so an uninstall can reach it before this line runs, and an
+    // install that completed behind that sweep would leave an active
+    // Connection the sweep believed it had revoked.
+    //
+    // The fence is the rule that a space-less credential is the platform
+    // tier rather than a narrow one; an admin installing without naming a
+    // space is exactly how one gets minted. Refusing here rather than at
+    // the first dispatch is what makes the failure legible: the install
+    // says which space is missing, while a dispatch-time refusal surfaces
+    // as an integration that installed cleanly and never ran.
+    await withConnectionLifecycleLock(storage, connection.id, async () => {
+      const current = await storage.items.get(connection.id, input.spaceId);
+      if (current?.type !== "system.connection") {
+        throw new MarfaError(
+          ErrorCode.CONNECTION_NOT_FOUND,
+          `Connection ${connection.id} disappeared during install`,
+          { connection_id: connection.id },
         );
-      },
-    );
+      }
+      if (current.state !== "active") {
+        throw new MarfaError(
+          ErrorCode.CONNECTION_NOT_ACTIVE,
+          `Connection ${connection.id} is ${current.state}; it cannot be installed`,
+          { connection_id: connection.id },
+        );
+      }
+      assertMintableSpaceScope(current, input.authMode);
+    });
   } catch (err) {
     return rollback(err);
   }
-  compensations.push(async () => {
-    await storage.keys.revoke(credential.id);
-  });
 
   // -------------------------------------------------------------------
   // Step 3: emit system.activity row.
@@ -396,7 +361,6 @@ export async function performInstall(
             integration_ref: input.integrationItemId,
             manifest_name: manifest.name,
             manifest_version: manifest.version,
-            credential_id: credential.id,
           },
         },
       },
@@ -407,9 +371,9 @@ export async function performInstall(
   }
 
   // -------------------------------------------------------------------
-  // Audit trail, through the propagating writer. An install hands a
-  // credential a share of the space's authority, so an unaudited one must
-  // not stand: a failure here rolls the install back.
+  // Audit trail, through the propagating writer. An install grants an
+  // integration a standing share of the space's authority, so an
+  // unaudited one must not stand: a failure here rolls the install back.
   //
   // `log` would not do it. It runs under a tracker that catches everything
   // and warns, so it cannot reject and the rollback below would never
@@ -426,11 +390,9 @@ export async function performInstall(
       resource_id: connection.id,
       details: {
         integration_ref: input.integrationItemId,
-        credential_id: credential.id,
         activity_id: activity.id,
         manifest_name: manifest.name,
         manifest_version: manifest.version,
-        ttl_seconds: INSTALL_CREDENTIAL_TTL_SECONDS,
         ...(input.credentialRef !== undefined
           ? { credential_ref: input.credentialRef }
           : {}),
@@ -442,9 +404,6 @@ export async function performInstall(
 
   return {
     connection_id: connection.id,
-    credential_id: credential.id,
     activity_id: activity.id,
   };
 }
-
-export { INSTALL_CREDENTIAL_TTL_SECONDS };

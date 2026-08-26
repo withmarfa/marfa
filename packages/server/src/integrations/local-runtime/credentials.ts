@@ -3,9 +3,9 @@
  * the supervisor calls `storage.keys.createRuntimeCredential` directly
  * for each dispatch it routes.
  *
- * Permissions are translated from the Integration manifest via the same
- * builders the hosted install pipeline uses (`manifest-permissions.ts`),
- * so a credential can only touch the types its manifest declares plus
+ * Permissions are translated from the Integration manifest via the
+ * shared builders (`manifest-permissions.ts`), so a credential can only
+ * touch the types its manifest declares plus
  * the edge and extension namespaces it asked for. Two substrate-contract
  * grants ride along because no integration can run without them:
  * `connection.runtime` write (its own state subtree) and
@@ -172,8 +172,7 @@ export async function mintLocalRuntimeCredential(
       assertMintableSpaceScope(connection, authMode);
 
       // Resolve the manifest so the credential carries exactly the reach the
-      // Integration declared at registration — the same translation the
-      // hosted install pipeline applies. No manifest means no reach beyond
+      // Integration declared at registration. No manifest means no reach beyond
       // the credential's own `connection.runtime` subtree: minting wide on a
       // resolution failure would silently hand out the whole space.
       const manifest = await resolveRuntimeCredentialManifest(

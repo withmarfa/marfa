@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { createTestContext, TEST_API_KEY_SALT } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
@@ -72,7 +73,7 @@ async function installFresh(): Promise<{
     undefined,
   );
 
-  const result = await performInstall(ctx.storage, "test-salt", {
+  const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: undefined,
     authMode: "keys",
@@ -87,8 +88,35 @@ async function installFresh(): Promise<{
   return {
     apiKeyId: adminKey.id,
     connectionId: result.connection_id,
-    credentialId: result.credential_id,
+    // Installing mints nothing, so the credential uninstall revokes is
+    // the one a dispatch would have left behind. Minted through the
+    // supervisor's own path rather than hand-built, so what uninstall
+    // sweeps is the shape it sweeps in production.
+    credentialId: await mintRuntimeCredentialId(result.connection_id),
   };
+}
+
+/** Mint a runtime credential for a Connection the way a dispatch does,
+ *  and resolve the row id the mint does not return. */
+async function mintRuntimeCredentialId(connectionId: string): Promise<string> {
+  return mintRuntimeCredentialIdIn(ctx.storage, connectionId, "keys");
+}
+
+async function mintRuntimeCredentialIdIn(
+  storage: TestContext["storage"],
+  connectionId: string,
+  authMode: "hosted" | "keys",
+): Promise<string> {
+  await mintLocalRuntimeCredential(
+    storage,
+    TEST_API_KEY_SALT,
+    connectionId,
+    authMode,
+  );
+  const bound = await storage.keys.listByConnectionId(connectionId, undefined);
+  const runtime = bound.find((k) => k.is_runtime_credential);
+  if (!runtime) throw new Error("runtime credential did not resolve");
+  return runtime.id;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +375,7 @@ async function installWithCredential(credentialRef: string): Promise<{
     undefined,
   );
 
-  const result = await performInstall(ctx.storage, "test-salt", {
+  const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: undefined,
     authMode: "keys",
@@ -550,7 +578,7 @@ describe("performUninstall — a connection inside a space", () => {
       undefined,
     );
 
-    const result = await performInstall(hosted.storage, "test-salt", {
+    const result = await performInstall(hosted.storage, {
       apiKeyId: adminKey.id,
       spaceId: space.id,
       authMode: "hosted",
@@ -563,7 +591,11 @@ describe("performUninstall — a connection inside a space", () => {
       apiKeyId: adminKey.id,
       spaceId: space.id,
       connectionId: result.connection_id,
-      credentialId: result.credential_id,
+      credentialId: await mintRuntimeCredentialIdIn(
+        hosted.storage,
+        result.connection_id,
+        "hosted",
+      ),
     };
   }
 

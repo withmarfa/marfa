@@ -96,7 +96,6 @@ const InstallRequestSchema = z.object({
 
 const InstallResultSchema = z.object({
   connection_id: z.string(),
-  credential_id: z.string(),
   activity_id: z.string(),
 });
 
@@ -120,7 +119,7 @@ const installRoute = createRoute({
     201: {
       content: { "application/json": { schema: InstallResultSchema } },
       description:
-        "Connection installed. Returns the new connection id, seed credential id, and activity id.",
+        "Connection installed. Returns the new connection id and activity id.",
     },
     400: {
       content: {
@@ -813,7 +812,6 @@ const previewEventRoute = createRoute({
 
 export function connectionRoutes(
   storage: Storage,
-  salt: string,
   localRuntime: LocalRuntime | null = null,
 ) {
   const r = createOpenAPIRouter<AppEnv>();
@@ -856,7 +854,7 @@ export function connectionRoutes(
         ? trimmed
         : `${props.manifest_name} ${props.manifest_version}`;
 
-    const result = await performInstall(storage, salt, {
+    const result = await performInstall(storage, {
       apiKeyId: apiKey.id,
       spaceId,
       authMode: c.get("config").authMode,

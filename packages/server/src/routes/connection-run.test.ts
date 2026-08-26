@@ -133,7 +133,7 @@ function appWith(runtime: LocalRuntime | null): OpenAPIHono<AppEnv> {
     c.set("clientIp", null as never);
     await next();
   });
-  app.route("/connections", connectionRoutes(ctx.storage, "salt", runtime));
+  app.route("/connections", connectionRoutes(ctx.storage, runtime));
   return app;
 }
 
