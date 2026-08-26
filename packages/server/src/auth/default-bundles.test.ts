@@ -77,12 +77,14 @@ describe("default permission bundles derive from the registry", () => {
   });
 
   it("extends the custom bundle with runtime handle namespaces", () => {
-    const custom = buildDefaultPermissionBundles([
-      "acme",
-      "google", // registry root — connected already covers it concretely
-      "user", // structural — never duplicated
-      "core", // reserved — cannot hold a custom type, filtered as a belt
-    ]).find((b) => b.id === "custom");
+    const custom = buildDefaultPermissionBundles({
+      own: [
+        "acme",
+        "google", // registry root — connected already covers it concretely
+        "user", // structural — never duplicated
+        "core", // reserved — cannot hold a custom type, filtered as a belt
+      ],
+    }).find((b) => b.id === "custom");
     expect(custom?.scopes).toEqual([
       "user.*:read",
       "user.*:write",
@@ -108,7 +110,71 @@ describe("runtime custom-namespace resolution", () => {
         expect(res.status).toBe(201);
       }
       const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
-      expect(roots).toEqual(["acme"]);
+      expect(roots.own).toEqual(["acme"]);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("offers the person's own roots and not a connected service's", async () => {
+    // The distinction the identifier cannot make. Both ids are
+    // publisher-tier by prefix, so the tier test admits each of them; only
+    // the stored origin says one arrived with an integration.
+    //
+    // It matters because these roots become a wildcard in the default
+    // grant, under a heading about the person's own types. A type a
+    // connected service published is in their space and is not theirs to
+    // be offered wholesale — it belongs to the service, and the service's
+    // own scopes are how it is reached.
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const baseType = {
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      } as const;
+      const space = await ctx.storage.spaces!.create("space-mixed");
+      await ctx.storage.types.create(
+        { id: "jonah.reading_item", ...baseType },
+        space.id,
+        { origin: "user" },
+      );
+      await ctx.storage.types.create(
+        { id: "acme.widget", ...baseType },
+        space.id,
+        {
+          origin: "integration",
+          family: "integration",
+          owner_integration: "acme/widgets",
+        },
+      );
+
+      const roots = await resolveRuntimeCustomNamespaces(ctx.storage, space.id);
+      expect(roots.own).toEqual(["jonah"]);
+      expect(roots.connected).toEqual(["acme"]);
+
+      // And both are offered, differently. Dropping the service's root
+      // from the person's bundle without putting it anywhere would leave
+      // its types in no default bundle at all, including the one named
+      // for them — a narrowing in appearance and an omission in fact.
+      const bundles = buildDefaultPermissionBundles(roots);
+      const scopesOf = (id: string) =>
+        bundles.find((b) => b.id === id)?.scopes ?? [];
+      expect(scopesOf("custom")).toContain("jonah.*:read");
+      expect(scopesOf("custom")).toContain("jonah.*:write");
+      expect(scopesOf("custom")).not.toContain("acme.*:read");
+      expect(scopesOf("custom")).not.toContain("acme.*:write");
+      expect(scopesOf("connected")).toContain("acme.*:read");
+      // Read-only: a mirror of an upstream record, and a third-party
+      // write forks it.
+      expect(scopesOf("connected")).not.toContain("acme.*:write");
+
+      // The allowlist is a different question and keeps both: a scope
+      // outside it cannot be granted at all, so the integration's own
+      // types have to be in it for the integration to reach them.
+      expect(await resolveAllRuntimeCustomNamespaces(ctx.storage)).toEqual([
+        "acme",
+        "jonah",
+      ]);
     } finally {
       await ctx.cleanup();
     }
@@ -138,13 +204,15 @@ describe("runtime custom-namespace resolution", () => {
       );
 
       expect(
-        await resolveRuntimeCustomNamespaces(ctx.storage, spaceA.id),
+        (await resolveRuntimeCustomNamespaces(ctx.storage, spaceA.id)).own,
       ).toEqual(["acme"]);
       expect(
-        await resolveRuntimeCustomNamespaces(ctx.storage, spaceB.id),
+        (await resolveRuntimeCustomNamespaces(ctx.storage, spaceB.id)).own,
       ).toEqual(["rivalco"]);
       // The space-less bucket sees neither space's registrations.
-      expect(await resolveRuntimeCustomNamespaces(ctx.storage)).toEqual([]);
+      expect((await resolveRuntimeCustomNamespaces(ctx.storage)).own).toEqual(
+        [],
+      );
       // The allowlist enumeration spans both — admission, not disclosure.
       expect(await resolveAllRuntimeCustomNamespaces(ctx.storage)).toEqual([
         "acme",
