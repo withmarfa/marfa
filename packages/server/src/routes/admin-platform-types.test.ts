@@ -11,6 +11,8 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setPlatformDrift } from "../storage/platform-drift.js";
 import type { TypeSchema } from "@withmarfa/shared";
+import { hashApiKey } from "../middleware/auth.js";
+import { TEST_API_KEY_SALT } from "../test-utils.js";
 
 const contexts: TestContext[] = [];
 
@@ -30,6 +32,33 @@ afterEach(async () => {
   }
 });
 
+/**
+ * A `role: "admin"` credential bound to one space.
+ *
+ * The distinction this exists to test: it authenticates, so a request
+ * carrying it never reaches the 401 an unauthenticated one gets. Only the
+ * platform-authority half of `requireAdmin` refuses it, and a test that
+ * sends no credential at all cannot tell the two apart: it would pass
+ * against `requireSpaceAdmin` just as happily.
+ */
+async function mintSpaceBoundAdmin(ctx: TestContext): Promise<string> {
+  const suffix = Math.random().toString(36).slice(2, 12);
+  const raw = `marfa_k1_platform_types_${suffix}`;
+  await ctx.storage.keys.create(
+    {
+      label: `space-admin-${suffix}`,
+      source: `space-admin-${suffix}`,
+      role: "admin",
+      default_tier: "library",
+      type_permissions: {},
+      is_platform: false,
+    },
+    hashApiKey(raw, TEST_API_KEY_SALT),
+    (await ctx.storage.spaces!.create("bound")).id,
+  );
+  return raw;
+}
+
 /** Registers a platform row the build does not ship, and reports it drifted. */
 async function seedDriftedType(ctx: TestContext): Promise<string> {
   const id = `core.retired_${Math.random().toString(36).slice(2, 8)}`;
@@ -47,10 +76,18 @@ async function seedDriftedType(ctx: TestContext): Promise<string> {
 }
 
 describe("GET /admin/platform-types/drift", () => {
-  it("refuses a caller who is not a platform admin", async () => {
+  it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift");
     expect(res.status).toBe(401);
+  });
+
+  it("refuses an admin bound to a space", async () => {
+    const ctx = await newContext();
+    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
+      key: await mintSpaceBoundAdmin(ctx),
+    });
+    expect(res.status).toBe(403);
   });
 
   it("lists the drifted rows with their live item counts", async () => {
@@ -62,9 +99,16 @@ describe("GET /admin/platform-types/drift", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      types: { id: string; item_count: number; removable: boolean }[];
+      types: {
+        id: string;
+        item_count: number;
+        child_types: string[];
+        removable: boolean;
+      }[];
     };
-    expect(body.types).toEqual([{ id, item_count: 0, removable: true }]);
+    expect(body.types).toEqual([
+      { id, item_count: 0, child_types: [], removable: true },
+    ]);
   });
 
   it("reports a row as not removable while items carry it", async () => {
@@ -89,7 +133,7 @@ describe("GET /admin/platform-types/drift", () => {
 });
 
 describe("POST /admin/platform-types/{id}/remove", () => {
-  it("refuses a caller who is not a platform admin", async () => {
+  it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
     const res = await request(
       ctx.app,
@@ -97,6 +141,17 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       "/admin/platform-types/core.anything/remove",
     );
     expect(res.status).toBe(401);
+  });
+
+  it("refuses an admin bound to a space", async () => {
+    const ctx = await newContext();
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/platform-types/core.anything/remove",
+      { key: await mintSpaceBoundAdmin(ctx) },
+    );
+    expect(res.status).toBe(403);
   });
 
   it("removes a drifted row", async () => {
@@ -211,6 +266,64 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     );
     expect(survivors).toHaveLength(1);
     expect(survivors[0]?.space_id).toBe(space);
+  });
+
+  it("declines while another type inherits from it", async () => {
+    // The guard the item count cannot stand in for. An abstract parent
+    // carries no items of its own, so it is the type most certain to
+    // report zero and the one whose removal costs the most: every child
+    // would resolve without the fields it inherits, silently, because
+    // ancestor collection degrades to a partial view rather than failing.
+    const ctx = await newContext();
+    const parent = await seedDriftedType(ctx);
+    const child = `${parent}.child`;
+    await ctx.storage.types.create(
+      {
+        id: child,
+        parent,
+        version: 1,
+        fields: { extra: { type: "string" } },
+      },
+      undefined,
+      { origin: "platform", family: "core" },
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/admin/platform-types/${parent}/remove`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(409);
+
+    const rows = await ctx.storage.types.loadCustomTypes();
+    expect(rows.map((r) => r.schema.id)).toContain(parent);
+  });
+
+  it("reports a parent as not removable in the listing", async () => {
+    const ctx = await newContext();
+    const parent = await seedDriftedType(ctx);
+    const child = `${parent}.child`;
+    await ctx.storage.types.create(
+      {
+        id: child,
+        parent,
+        version: 1,
+        fields: { extra: { type: "string" } },
+      },
+      undefined,
+      { origin: "platform", family: "core" },
+    );
+
+    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
+      key: ctx.adminKey,
+    });
+    const body = (await res.json()) as {
+      types: { id: string; child_types: string[]; removable: boolean }[];
+    };
+    const row = body.types.find((t) => t.id === parent);
+    expect(row?.child_types).toEqual([child]);
+    expect(row?.removable).toBe(false);
   });
 
   it("declines while items still carry the identifier", async () => {

@@ -56,6 +56,18 @@ describe("which shipped types an instance carries that the build does not", () =
     expect(drift).toEqual([]);
   });
 
+  it("ignores a platform row that is not in the space-less bucket", () => {
+    // The removal is scoped to `(space_id = '', origin = 'platform')`, so
+    // reporting a row outside that bucket would put an instance in a state
+    // it cannot leave: degraded forever, with the only remedy answering
+    // not-found. The report and the remedy have to agree on scope.
+    const inSpace: LoadedType = {
+      ...row("acme.stray", "platform"),
+      space_id: "space-1",
+    };
+    expect(computePlatformDrift([], [inSpace])).toEqual([]);
+  });
+
   it("is sorted and free of duplicates", () => {
     const drift = computePlatformDrift(
       [],

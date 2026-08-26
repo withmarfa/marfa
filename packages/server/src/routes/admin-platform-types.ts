@@ -39,7 +39,11 @@ const DriftedTypeSchema = z.object({
   id: z.string(),
   /** Items carrying this identifier, across every space. */
   item_count: z.number(),
-  /** Whether a delete would be declined because items still hold it. */
+  /** Types inheriting from this one. A parent supplies their fields, so a
+   *  removal is declined while any exist. */
+  child_types: z.array(z.string()),
+  /** Whether a delete would be accepted: no items carry it and nothing
+   *  inherits from it. */
   removable: z.boolean(),
 });
 
@@ -48,6 +52,7 @@ const listDriftRoute = createRoute({
   method: "get",
   path: "/platform-types/drift",
   summary: "Shipped types this instance carries that the build does not",
+  security: [{ bearerAuth: [] }],
   description:
     "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as the `platform_types` component; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Platform-admin only.",
   responses: {
@@ -58,6 +63,14 @@ const listDriftRoute = createRoute({
         },
       },
       description: "The drifted rows, with their live item counts",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
     },
     403: {
       content: {
@@ -75,6 +88,7 @@ const removeDriftedTypeRoute = createRoute({
   method: "post",
   path: "/platform-types/{id}/remove",
   summary: "Remove one shipped type the build no longer carries",
+  security: [{ bearerAuth: [] }],
   description:
     "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Platform-admin only.",
   request: {
@@ -88,6 +102,14 @@ const removeDriftedTypeRoute = createRoute({
         },
       },
       description: "The row is gone",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
     },
     403: {
       content: {
@@ -117,6 +139,33 @@ const removeDriftedTypeRoute = createRoute({
   },
 });
 
+/**
+ * Types that name `id` as their parent, across every space.
+ *
+ * **A parent supplies fields to its children, not items.** An abstract
+ * parent carries no items of its own by construction, so the item count is
+ * zero for exactly the types whose removal does the most damage: the
+ * shipped set has seven types under `core.media` alone. Removing one would
+ * leave every child resolving with the inherited half of its field set
+ * gone, silently, because ancestor collection degrades to a partial view
+ * on an unresolvable parent rather than failing.
+ *
+ * Read from the rows rather than the in-memory registry so a space's own
+ * registration that inherits from a platform type is counted too. It is
+ * that space's data, and a platform-admin action in another scope should
+ * not narrow it.
+ */
+async function declaredChildrenOf(
+  storage: Storage,
+  id: string,
+): Promise<string[]> {
+  const rows = await storage.types.loadCustomTypes();
+  return rows
+    .filter((row) => row.schema.parent === id)
+    .map((row) => row.schema.id)
+    .sort();
+}
+
 export function adminPlatformTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -126,7 +175,13 @@ export function adminPlatformTypeRoutes(storage: Storage) {
     const types = await Promise.all(
       ids.map(async (id) => {
         const itemCount = await storage.items.countByType(id);
-        return { id, item_count: itemCount, removable: itemCount === 0 };
+        const children = await declaredChildrenOf(storage, id);
+        return {
+          id,
+          item_count: itemCount,
+          child_types: children,
+          removable: itemCount === 0 && children.length === 0,
+        };
       }),
     );
     return c.json({ types }, 200);
@@ -159,12 +214,39 @@ export function adminPlatformTypeRoutes(storage: Storage) {
       );
     }
 
+    // Asked after the item count and before the write, because it is the
+    // guard the item count cannot stand in for: the types most certain to
+    // report zero items are the abstract parents.
+    const children = await declaredChildrenOf(storage, id);
+    if (children.length > 0) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `${String(children.length)} type(s) inherit from "${id}": ${children.join(", ")}. Removing it would leave them resolving without the fields they inherit.`,
+        { type: id, child_types: children },
+      );
+    }
+
     const removed = await storage.types.deletePlatformType(id);
     if (!removed) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `No platform row for "${id}"`, {
         type: id,
       });
     }
+
+    // Audited because it is irreversible and reaches every space. A space
+    // deleting its own type already writes a row, so an operator removing
+    // one instance-wide should not be the quieter of the two. Propagating
+    // rather than fire-and-forget: reporting a removal nothing recorded is
+    // worse than failing the request.
+    await storage.audit.logOrThrow({
+      space_id: null,
+      action: "platform_type.removed",
+      resource_type: "custom_type",
+      resource_id: id,
+      client_ip: c.get("clientIp") ?? null,
+      details: { type: id },
+    });
+
     return c.json({ removed: true as const, id }, 200);
   });
 

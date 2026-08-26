@@ -8,6 +8,7 @@ import {
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, sql } from "drizzle-orm";
+import { spaceBucketCondition } from "../space-condition.js";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -140,15 +141,12 @@ export class SqliteTypeStore implements TypeStore {
       .where(
         and(
           eq(customTypes.id, id),
-          // The shared fence reads an absent space as SQL NULL, and this
-          // table's space-less bucket is an empty string: the seed writes
-          // `''` and the primary key is `(space_id, id)`, so
-          // `spaceBucketCondition` would emit `IS NULL` and match nothing
-          // here. The literal is the point rather than a missing
-          // parameter, since this deletes from that bucket specifically
-          // and never from a space.
-          // eslint-disable-next-line no-restricted-syntax
-          eq(customTypes.space_id, ""),
+          // This table encodes "no space" as `''` rather than NULL, so the
+          // bucket is addressed as a named space here and the helper's
+          // named-space branch is the correct one. Passing the literal
+          // through the helper rather than spelling the comparison keeps
+          // one place deciding what a space fence looks like.
+          spaceBucketCondition(customTypes.space_id, ""),
           eq(customTypes.origin, "platform"),
         ),
       )

@@ -14,7 +14,7 @@
  *
  * A prune beside the seed would fire hardest exactly when the build is
  * wrong. The shipped set is a committed generated array, so a partial
- * deploy cannot ship fewer types — it is all or nothing with the bundle —
+ * deploy cannot ship fewer types, it is all or nothing with the bundle,
  * and the realistic population is a rollback, which is routine. There a
  * prune would delete rows the older build simply does not know about, on
  * every container, on every restart, with no operator present. An upsert
@@ -31,7 +31,7 @@
  * the case that matters: a rollback, where the flag was written by a build
  * that is no longer running.
  */
-import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
+import type { SeededPlatformType } from "@withmarfa/shared";
 import type { LoadedType } from "./interface.js";
 
 /**
@@ -50,6 +50,12 @@ export function computePlatformDrift(
   const drifted = new Set<string>();
   for (const row of loaded) {
     if (row.origin !== "platform") continue;
+    // Scoped to the bucket the seed writes, which is the same pair the
+    // removal is scoped to. Reporting a row the removal cannot reach would
+    // put an instance in a state with no way out: degraded forever, with
+    // the only remedy answering not-found. The two scopes have to be the
+    // same scope or the report is not a report of anything actionable.
+    if (row.space_id !== "") continue;
     if (shippedIds.has(row.schema.id)) continue;
     drifted.add(row.schema.id);
   }
@@ -73,13 +79,4 @@ export function setPlatformDrift(ids: readonly string[]): void {
  */
 export function platformDrift(): readonly string[] {
   return driftedIds;
-}
-
-/** The schema a drifted row still resolves as, for the operator listing. */
-export function driftedSchema(
-  loaded: readonly LoadedType[],
-  id: string,
-): TypeSchema | undefined {
-  return loaded.find((row) => row.origin === "platform" && row.schema.id === id)
-    ?.schema;
 }

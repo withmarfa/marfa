@@ -115,7 +115,7 @@ export async function createSqliteStorage(
   const platformRows = projectPlatformRows(loadedTypes);
   // What this instance still carries that the build no longer ships. Recorded
   // rather than acted on: the reasoning for reporting instead of pruning is
-  // at the helper, and it is the same judgement the projection above makes
+  // at the helper, and it is the same judgment the projection above makes
   // one line up.
   setPlatformDrift(computePlatformDrift(shippedPlatformTypes(), loadedTypes));
   for (const row of loadedTypes) {
