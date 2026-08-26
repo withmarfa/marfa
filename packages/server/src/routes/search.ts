@@ -21,6 +21,7 @@ import {
   MetadataSchema as BaseMetadataSchema,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
+import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 
 // Search responses use loose() so the FTS5 ranker's extra columns
 // (e.g. relevance internals) don't trip strict validation. The
@@ -192,8 +193,15 @@ export function searchRoutes(storage: Storage) {
     });
 
     const apiKey = c.get("apiKey");
+    // One resolution for the whole result set — see `_orphaned.ts`.
+    const orphanScope = await resolveOrphanScope(
+      storage,
+      callerSpaceIdForSearch,
+      results.map((r) => r.item),
+    );
     const filtered = results.map((r) => ({
       ...r,
+      item: withOrphanState(r.item, orphanScope),
       metadata: filterMetadataForCaller(r.metadata, apiKey),
     }));
     return c.json({ results: filtered }, 200);

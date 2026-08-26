@@ -25,6 +25,7 @@ import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema } from "./_schemas.js";
+import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import {
   expandSeries,
   RecurrenceExpansionError,
@@ -522,9 +523,21 @@ export function occurrenceRoutes(storage: Storage) {
     }
 
     results.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    // One resolution for the whole window — see `_orphaned.ts`. A calendar
+    // is the surface where this matters most: an events corpus is usually
+    // somebody else's, mirrored, and a disconnected calendar that keeps
+    // rendering looks current right up until somebody misses a meeting.
+    // The same row can occur many times in one window, so the scope is
+    // resolved from the rows and applied to the occurrences.
+    const orphanScope = await resolveOrphanScope(storage, spaceId, [
+      ...byId.values(),
+    ]);
     return c.json(
       {
-        data: results,
+        data: results.map((occurrence) => ({
+          ...occurrence,
+          item: withOrphanState(occurrence.item, orphanScope),
+        })),
         window: { from: from.toISOString(), to: to.toISOString() },
         ...(seriesErrors.length > 0 ? { series_errors: seriesErrors } : {}),
       },

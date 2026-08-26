@@ -21,6 +21,7 @@ import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import type { PgClient } from "../storage/pg/connection.js";
 import {
   acquireStreamRls,
@@ -317,11 +318,27 @@ export function exportRoutes(
                 cursor,
               });
 
+              // Per page rather than once per stream: the page is the
+              // batch, so an export carrying no integration-written row
+              // pays nothing. A long export re-walks per page, which is
+              // bounded by how many connections the space has and is noise
+              // beside the per-item metadata read in the same loop. See
+              // `_orphaned.ts`.
+              const orphanScope = await resolveOrphanScope(
+                storage,
+                spaceId,
+                result.data,
+              );
               for (const item of result.data) {
                 const metadata = await storage.metadata.get(item.id);
                 exportedIds.add(item.id);
                 controller.enqueue(
-                  encoder.encode(JSON.stringify({ item, metadata }) + "\n"),
+                  encoder.encode(
+                    JSON.stringify({
+                      item: withOrphanState(item, orphanScope),
+                      metadata,
+                    }) + "\n",
+                  ),
                 );
               }
 
@@ -458,10 +475,23 @@ async function handleArchiveExport(
           limit: 200,
           cursor,
         });
+        // Same per-page resolution as the NDJSON path. A restore reads the
+        // fields it writes by name, so the derived one rides along in the
+        // archive without becoming something a restore could store.
+        const orphanScope = await resolveOrphanScope(
+          storage,
+          spaceId,
+          result.data,
+        );
         for (const item of result.data) {
           const metadata = await storage.metadata.get(item.id);
           exportedIds.add(item.id);
-          lines.push(JSON.stringify({ item, metadata }));
+          lines.push(
+            JSON.stringify({
+              item: withOrphanState(item, orphanScope),
+              metadata,
+            }),
+          );
           collectBlobHashes(item.properties, blobHashes);
           collectBlobHashes(metadata.extensions, blobHashes);
         }

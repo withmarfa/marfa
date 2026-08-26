@@ -45,6 +45,15 @@ export const ItemSchema = z.object({
   schema_version: z.number().int(),
   source: z.string(),
   source_id: z.string().optional(),
+  /**
+   * Derived per read, never stored: whether the integration named in
+   * `source` still has a live connection in this space. Present only on an
+   * item an integration wrote — for anything else the question does not
+   * arise, so absence means "not applicable" rather than "no". See
+   * `_orphaned.ts` for why this is a second axis rather than a fourth
+   * `state`.
+   */
+  orphaned: z.boolean().optional(),
   device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),

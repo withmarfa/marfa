@@ -54,6 +54,7 @@ import {
 import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
+import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -1711,10 +1712,17 @@ export function itemRoutes(storage: Storage) {
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
       : null;
+    // One resolution for the whole page, not one per row — see `_orphaned.ts`.
+    const orphanScope = await resolveOrphanScope(
+      storage,
+      callerSpaceIdForRead,
+      result.data,
+    );
     const decorate = (item: (typeof result.data)[number]) => {
+      const withOrphan = withOrphanState(item, orphanScope);
       const withEdges = edgesMap
-        ? { ...item, edges: edgesMap.get(item.id) ?? {} }
-        : item;
+        ? { ...withOrphan, edges: edgesMap.get(item.id) ?? {} }
+        : withOrphan;
       return extensionsMap
         ? { ...withEdges, extensions: extensionsMap.get(item.id) ?? {} }
         : withEdges;
@@ -1884,14 +1892,24 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
+    // The item and its neighbors are one batch: they came from one space
+    // and they ask one question, so they take one resolution between them.
+    const orphanScope = await resolveOrphanScope(storage, tid, [
+      item,
+      ...(neighbors ?? []).map((n) => n.item),
+    ]);
+
     return c.json(
       {
-        item: { ...item, edges },
+        item: { ...withOrphanState(item, orphanScope), edges },
         metadata: filterMetadataForCaller(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
         ...(neighbors !== undefined
           ? {
-              neighbors,
+              neighbors: neighbors.map((n) => ({
+                ...n,
+                item: withOrphanState(n.item, orphanScope),
+              })),
               neighbors_truncated: neighborsTruncated,
               neighbors_omitted: neighborsOmitted,
             }
