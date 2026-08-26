@@ -54,7 +54,11 @@ import {
 import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
-import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
+import {
+  resolveOrphanScope,
+  resolveOrphanScopeForOwnWrite,
+  withOrphanState,
+} from "./_orphaned.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -1180,7 +1184,11 @@ export function itemRoutes(storage: Storage) {
           {
             item: withOrphanState(
               existing,
-              await resolveOrphanScope(storage, [existing]),
+              await resolveOrphanScopeForOwnWrite(
+                storage,
+                [existing],
+                stampedSource,
+              ),
             ),
             metadata,
             acknowledged: true,
@@ -1368,7 +1376,11 @@ export function itemRoutes(storage: Storage) {
           {
             item: withOrphanState(
               itemWithEdges,
-              await resolveOrphanScope(storage, [itemWithEdges]),
+              await resolveOrphanScopeForOwnWrite(
+                storage,
+                [itemWithEdges],
+                stampedSource,
+              ),
             ),
             metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
           },
@@ -1487,7 +1499,11 @@ export function itemRoutes(storage: Storage) {
       {
         item: withOrphanState(
           itemWithEdges,
-          await resolveOrphanScope(storage, [itemWithEdges]),
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [itemWithEdges],
+            stampedSource,
+          ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
@@ -1554,7 +1570,11 @@ export function itemRoutes(storage: Storage) {
       {
         item: withOrphanState(
           promoted,
-          await resolveOrphanScope(storage, [promoted]),
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [promoted],
+            itemProvenanceSource(credential),
+          ),
         ),
       },
       201,
@@ -2234,7 +2254,11 @@ export function itemRoutes(storage: Storage) {
         item: {
           ...withOrphanState(
             txResult,
-            await resolveOrphanScope(storage, [txResult]),
+            await resolveOrphanScopeForOwnWrite(
+              storage,
+              [txResult],
+              itemProvenanceSource(c.get("apiKey")),
+            ),
           ),
           edges: hydrated,
         },

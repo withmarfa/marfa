@@ -174,6 +174,11 @@ export interface Item {
    * cut off from and can never acquire one. `false` says the integration is
    * still installed there; `true` says it is not, and the item is a copy of
    * a record nothing is keeping current any more.
+   *
+   * **Read responses only.** Item events on the `GET /events` stream omit
+   * it, because removing a connection publishes no item events and the
+   * stream therefore cannot report the change. Merging frames over a read
+   * means keeping the value the read gave you; re-read to refresh it.
    */
   orphaned?: boolean;
 }

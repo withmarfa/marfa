@@ -5,13 +5,14 @@ import {
   requireAuth,
   requireTypeAccess,
   requireRowWritable,
+  itemProvenanceSource,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
-import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
+import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -170,7 +171,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
       {
         item: withOrphanState(
           restored,
-          await resolveOrphanScope(storage, [restored]),
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [restored],
+            itemProvenanceSource(c.get("apiKey")),
+          ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
@@ -222,7 +227,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
         // no integration behind it.
         item: withOrphanState(
           updated,
-          await resolveOrphanScope(storage, [updated]),
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [updated],
+            itemProvenanceSource(c.get("apiKey")),
+          ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },

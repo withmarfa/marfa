@@ -7,7 +7,6 @@ import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { PgClient } from "../storage/pg/connection.js";
 import { StreamPoolExhaustedError } from "../storage/pg/streaming-rls.js";
-import { createOrphanResolver, withOrphanState } from "./_orphaned.js";
 import {
   acquireStreamRls,
   type StreamRlsContext,
@@ -15,25 +14,6 @@ import {
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
-
-/**
- * How long a stream may reuse a walked space's orphan answer.
- *
- * A stream lives for hours, so something has to bound this; a minute is
- * short next to how often an integration is uninstalled and long next to
- * how often events arrive during a sync.
- */
-const ORPHAN_SCOPE_TTL_MS = 60_000;
-
-/** The stored shape of a replayed item event, to the extent this route
- *  reads it. Everything else on the payload is carried through untouched. */
-interface ReplayPayload {
-  item?: {
-    type?: string;
-    source?: string;
-    space_id?: string | null;
-  } & Record<string, unknown>;
-}
 
 /**
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
@@ -227,25 +207,6 @@ export function eventRoutes(
           const liveBuffer: ItemEventWithId[] = [];
           let replaying = afterId !== null;
 
-          // One resolver for the stream, with a bound on how long a walked
-          // space may be reused.
-          //
-          // The flag has to be here at all because absence means "no
-          // integration wrote this" everywhere else, so a stream that
-          // omitted it would tell a client holding a `GET /items` page that
-          // an orphaned row had become an ordinary one — a visible flicker
-          // back to healthy on the surface this exists to fix.
-          //
-          // Resolving per event would put a connection walk on every event
-          // of a bulk sync, and never resolving again would report an
-          // integration installed for as long as the client stayed
-          // connected. The TTL is the honest middle: the answer is a read,
-          // it can be at most this stale, and the client's next actual read
-          // is authoritative.
-          const orphans = createOrphanResolver(storage, {
-            ttlMs: ORPHAN_SCOPE_TTL_MS,
-          });
-
           // Subscribe BEFORE replay starts to avoid gaps.
           const events = subscribe({
             typeFilter: typeParam,
@@ -254,7 +215,7 @@ export function eventRoutes(
           });
           const reader = events[Symbol.asyncIterator]();
 
-          const sendEvent = async (
+          const sendEvent = (
             eventId: bigint | undefined,
             event: ItemEventWithId,
           ) => {
@@ -268,10 +229,7 @@ export function eventRoutes(
             const wireType = wireEventName(event.type);
             const sseData = {
               type: wireType,
-              item: withOrphanState(
-                event.item,
-                await orphans.resolve([event.item]),
-              ),
+              item: event.item,
               ...(event.metadata && { metadata: event.metadata }),
             };
 
@@ -303,7 +261,7 @@ export function eventRoutes(
           const pump = () => {
             reader
               .next()
-              .then(async ({ value: event, done }) => {
+              .then(({ value: event, done }) => {
                 if (done || state.closed) {
                   // Capture before cleanup flips it, or the close below
                   // could never run and a terminated pump would leave
@@ -324,11 +282,7 @@ export function eventRoutes(
                 if (replaying) {
                   liveBuffer.push(event);
                 } else {
-                  // Awaited so the send stays ordered against the next
-                  // event: the decoration is asynchronous, and racing two
-                  // of them would let a later change render before an
-                  // earlier one.
-                  await sendEvent(event.eventId, event);
+                  sendEvent(event.eventId, event);
                 }
                 pump();
               })
@@ -421,55 +375,30 @@ export function eventRoutes(
                       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                       if (state.closed) return;
                       const isEdge = event.edge_id !== null;
-                      // Parsed once and reused. The two filters below each
-                      // parsed it for themselves, and the decoration needs
-                      // the object anyway, so this is one parse where there
-                      // were two.
-                      const parsed = isEdge
-                        ? null
-                        : (JSON.parse(event.payload) as ReplayPayload);
-                      const replayItem = parsed?.item;
                       if (isEdge) {
                         if (typeParam) {
                           lastReplayedId = event.id;
                           continue;
                         }
-                      } else if (typeParam && replayItem?.type !== typeParam) {
-                        lastReplayedId = event.id;
-                        continue;
-                      }
-                      if (
-                        !isEdge &&
-                        allowedTypes &&
-                        replayItem?.type &&
-                        !matchesTypePattern(replayItem.type, allowedTypes)
-                      ) {
-                        lastReplayedId = event.id;
-                        continue;
-                      }
-
-                      // A stored payload is the row as it was written, and
-                      // orphan status is not a property of the row: the
-                      // connection can have been removed since, and the log
-                      // keeps events for days. Deciding it here rather than
-                      // baking it in at publish time is what stops a replay
-                      // asserting a week-old answer.
-                      let data = event.payload;
-                      if (parsed && replayItem?.source !== undefined) {
-                        const provenance = {
-                          source: replayItem.source,
-                          space_id: replayItem.space_id ?? null,
+                      } else if (typeParam) {
+                        const parsed = JSON.parse(event.payload) as {
+                          item?: { type?: string };
                         };
-                        const decorated = withOrphanState(
-                          provenance,
-                          await orphans.resolve([provenance]),
-                        );
-                        if (decorated.orphaned !== undefined) {
-                          parsed.item = {
-                            ...replayItem,
-                            orphaned: decorated.orphaned,
-                          };
-                          data = JSON.stringify(parsed);
+                        if (parsed.item?.type !== typeParam) {
+                          lastReplayedId = event.id;
+                          continue;
+                        }
+                      }
+                      if (!isEdge && allowedTypes) {
+                        const parsed = JSON.parse(event.payload) as {
+                          item?: { type?: string };
+                        };
+                        if (
+                          parsed.item?.type &&
+                          !matchesTypePattern(parsed.item.type, allowedTypes)
+                        ) {
+                          lastReplayedId = event.id;
+                          continue;
                         }
                       }
 
@@ -478,7 +407,7 @@ export function eventRoutes(
                           ItemEventWithId["type"] | EdgeEventWithId["type"],
                       );
                       send(
-                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${data}\n\n`,
+                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${event.payload}\n\n`,
                       );
                       lastReplayedId = event.id;
                     }
@@ -494,7 +423,7 @@ export function eventRoutes(
                       event.eventId <= lastReplayedId
                     )
                       continue;
-                    await sendEvent(event.eventId, event);
+                    sendEvent(event.eventId, event);
                   }
                   liveBuffer.length = 0;
                   for (const event of liveEdgeBuffer) {

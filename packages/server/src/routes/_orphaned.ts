@@ -73,14 +73,30 @@
  * question nobody asked. Present-and-false says the integration named in
  * `source` is still installed there; present-and-true says it is not.
  *
- * That reading only holds if *everything* handing an item to a client
- * decorates it. A `PATCH` response that omitted the field told a client
- * following this contract that no integration wrote the row — the opposite
- * of the truth — and a client applying SSE updates over a `GET /items` page
- * watched `orphaned: true` vanish on the first unrelated edit. So the read
- * routes, the write routes that echo the item back, and the event stream all
- * go through `withOrphanState`; `routes/items.ts` and `routes/events.ts` are
- * where that is easiest to break.
+ * That reading only holds where something answers, so every REST response
+ * carrying an item goes through `withOrphanState` — the read routes and the
+ * write routes that echo the row back. A `PATCH` that omitted the field told
+ * a client following this contract that no integration wrote the row, which
+ * is the opposite of the truth.
+ *
+ * **The event stream is the one surface that does not carry it, and that is
+ * a decision rather than an omission.** The stream cannot deliver the fact
+ * this field exists to report: uninstalling a connection publishes no item
+ * events, so the transition from live to orphaned never arrives on it under
+ * any implementation. Decorating it only made *unrelated* events carry an
+ * incidentally-current value, and it cost four defects in the pump, three of
+ * them silent — a replayed payload predating the space fix resolved against
+ * the wrong space and asserted `orphaned: true` about a healthy integration
+ * for the whole retention window; a storage failure mid-drain discarded the
+ * rest of the buffer while the cursor advanced past the gap; the awaits made
+ * a previously atomic drain interleave with the live pump and deliver frames
+ * out of order; and an unguarded reject closed the viewer's stream.
+ *
+ * So: **`orphaned` is a read-time derivation. It is present on read
+ * responses, absent from every event frame, and a client merging stream
+ * frames over a read must not treat its absence there as a value.** Carry
+ * the value from the read and re-read to refresh it. Anyone tempted to add
+ * it to `routes/events.ts` should start with the paragraph above.
  */
 import type { Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -122,21 +138,8 @@ export interface OrphanScope {
 /** Nothing in the batch was integration-written, so nothing was asked. */
 const EMPTY_SCOPE: OrphanScope = { live: new Map() };
 
-/**
- * The `typeof` guard is not belt-and-braces on a field the type says is a
- * string. This runs on the event fan-out, where the item comes off a
- * published envelope rather than out of a fresh read, and on the replay
- * path, where it comes out of `JSON.parse` over a payload stored days ago.
- * A throw there does not drop a field, it rejects the pump's promise and
- * disconnects the viewer — so an item that cannot answer the question gets
- * no answer, which is the failure direction this whole field is built
- * around.
- */
 function isIntegrationSourced(item: Pick<Item, "source">): boolean {
-  return (
-    typeof item.source === "string" &&
-    item.source.startsWith(INTEGRATION_SOURCE_PREFIX)
-  );
+  return item.source.startsWith(INTEGRATION_SOURCE_PREFIX);
 }
 
 export interface OrphanResolverOptions {
@@ -299,4 +302,51 @@ export function withOrphanState<T extends Pick<Item, "source" | "space_id">>(
   const live = scope.live.get(spaceKeyOf(item));
   if (!live) return item;
   return { ...item, orphaned: !live.has(item.source) };
+}
+
+/**
+ * The scope for a response echoing back a row the calling credential's own
+ * source stamped — answered from the call itself, with no query.
+ *
+ * A credential whose provenance source carries the integration prefix is a
+ * genuine runtime credential: both HTTP mint routes refuse a caller-supplied
+ * source with that shape (`assertUnreservedSource`), so the only issuers are
+ * the install pipeline and the runtime broker, at the storage layer. And
+ * uninstall revokes every runtime credential bound to the connection before
+ * it revokes the connection, so a credential that just authenticated belongs
+ * to a connection that has not been uninstalled. Provenance keys on
+ * `(space, manifest name)` rather than on the connection, so that is exactly
+ * the predicate: the name has a live connection in this space, and the row
+ * is not orphaned.
+ *
+ * **The shortcut is decided from the data, not from the call site.** It
+ * applies only to rows whose source is literally the caller's; anything else
+ * in the batch drops the whole thing back to the real resolution rather than
+ * going unanswered. That matters because the branches differ: a create
+ * stamps the row it returns, the natural-key branches resolve theirs by
+ * `(stampedSource, source_id)` so the source matches by construction, and a
+ * lifecycle gesture on somebody else's mirror matches nothing and pays the
+ * query — which is the case that has to be right, since the whole point is
+ * an integration that is gone.
+ *
+ * Worth roughly one listing plus one catalog get per distinct integration in
+ * the space, on every integration-sourced single-item write.
+ */
+export async function resolveOrphanScopeForOwnWrite(
+  storage: Storage,
+  items: readonly Pick<Item, "source" | "space_id">[],
+  callerSource: string | undefined,
+): Promise<OrphanScope> {
+  if (callerSource?.startsWith(INTEGRATION_SOURCE_PREFIX) !== true) {
+    return resolveOrphanScope(storage, items);
+  }
+  const live = new Map<SpaceKey, ReadonlySet<string>>();
+  for (const item of items) {
+    if (!isIntegrationSourced(item)) continue;
+    if (item.source !== callerSource) {
+      return resolveOrphanScope(storage, items);
+    }
+    live.set(spaceKeyOf(item), new Set([callerSource]));
+  }
+  return { live };
 }

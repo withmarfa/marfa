@@ -52,6 +52,14 @@ export const ItemSchema = z.object({
    * arise, so absence means "not applicable" rather than "no". See
    * `_orphaned.ts` for why this is a second axis rather than a fourth
    * `state`.
+   *
+   * **Scope of that reading: REST responses carrying an item.** The `GET
+   * /events` stream does not carry this field, because it cannot carry the
+   * change it describes — removing a connection publishes no item events, so
+   * an item never becomes orphaned *on the stream*. A client merging stream
+   * frames over a read must therefore keep the value it read rather than
+   * treating its absence in a frame as `false` or as "no integration wrote
+   * this", and must re-read to refresh it.
    */
   orphaned: z.boolean().optional(),
   device: z.string().optional(),

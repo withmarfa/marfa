@@ -47,6 +47,7 @@ import { performInstall } from "../connections/install-pipeline.js";
 import { performUninstall } from "../connections/uninstall-pipeline.js";
 import { performPause } from "../connections/pause-pipeline.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import { initEventLog } from "../pubsub.js";
 import type { IntegrationManifest, Item } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -66,8 +67,14 @@ let pausedItemId: string;
 let handWrittenItemId: string;
 let elsewhereItemId: string;
 let goneEventItemId: string;
+let goneRestoreItemId: string;
+let goneLiveFrameItemId: string;
+let goneReplayFrameItemId: string;
+let goneVouchItemId: string;
+let gonePromoteItemId: string;
 let referrerItemId: string;
 let liveRuntimeKey: string;
+let liveReplaySourceId: string;
 
 const GONE = manifest("acme/orphan-gone");
 const LIVE = manifest("acme/orphan-live");
@@ -219,6 +226,9 @@ function need(items: Map<string, Item>, id: string, what: string): Item {
 
 beforeAll(async () => {
   ctx = await createTestContext({ authMode: "hosted" });
+  // The default bootstrap leaves the event log unwired, and the replay half
+  // of the stream contract needs `publish()` to append something to replay.
+  initEventLog(ctx.storage.eventLog);
   const admin = (await ctx.storage.keys.list()).find((k) => k.role === "admin");
   if (!admin) throw new Error("admin key not found in test ctx");
   adminKeyId = admin.id;
@@ -247,6 +257,30 @@ beforeAll(async () => {
     })
   ).id;
 
+  // Rows for the destructive write-path cases, written while the
+  // connection is still live because nothing can write them afterwards.
+  goneRestoreItemId = await writeNote(
+    goneRuntimeKey,
+    "mirrored, later trashed",
+  );
+  gonePromoteItemId = await writeNote(
+    goneRuntimeKey,
+    "mirrored, later promoted",
+  );
+  // A row per stream test. Each transitions, and a transition into the state
+  // a row is already in is refused — so sharing one row makes a failure in
+  // the first surface as a confusing 400 in the second instead of as its own
+  // assertion.
+  goneLiveFrameItemId = await writeNote(goneRuntimeKey, "mirrored, live frame");
+  goneReplayFrameItemId = await writeNote(
+    goneRuntimeKey,
+    "mirrored, replayed frame",
+  );
+  goneVouchItemId = await writeNote(
+    goneRuntimeKey,
+    "mirrored, later touched by another integration",
+  );
+
   const liveConnection = await install(LIVE, liveCatalog, homeSpace);
   liveRuntimeKey = await mintRuntimeKey(LIVE, liveConnection, homeSpace);
   liveItemId = await writeNote(
@@ -259,6 +293,13 @@ beforeAll(async () => {
     await mintRuntimeKey(PAUSED, pausedConnection, homeSpace),
     "mirrored by the integration that pauses",
   );
+
+  liveReplaySourceId = `upstream-${Math.random().toString(36).slice(2, 12)}`;
+  await writeItem(liveRuntimeKey, {
+    type: "core.note",
+    properties: { body: "mirrored with a natural key" },
+    source_id: liveReplaySourceId,
+  });
 
   handWrittenItemId = await writeNote(homeKey, "written by a person");
   // Points at the mirrored row, so the neighbor hydration on the detail read
@@ -599,36 +640,381 @@ describe("a write that echoes the item back carries it too", () => {
   });
 });
 
-describe("the event stream carries it", () => {
-  it("an item event names the orphaned state rather than dropping it", async () => {
-    const stream = await request(ctx.app, "GET", "/events", { key: homeKey });
-    expect(stream.status).toBe(200);
+describe("the remaining write paths that echo an item back", () => {
+  it("PATCH, from the integration that owns the row", async () => {
+    // Mirror protection admits only the owning integration, so a PATCH can
+    // never return an orphaned row: the owner's credential went with the
+    // uninstall. `false` here is the whole reachable range, and it is worth
+    // pinning because it is the branch the own-write shortcut answers
+    // without a query.
+    const res = await request(ctx.app, "PATCH", `/items/${liveItemId}`, {
+      key: liveRuntimeKey,
+      body: { properties: { body: "re-synced" } },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    expect(json.item.source).toBe("integration:acme/orphan-live");
+    expect(json.item.orphaned).toBe(false);
+  });
 
-    // Restoring the row archived by the transition test above: any lifecycle
-    // change publishes, and this leaves the fixture as it found it.
-    const transitioned = request(
+  it("PATCH, on a row no integration wrote", async () => {
+    const res = await request(ctx.app, "PATCH", `/items/${handWrittenItemId}`, {
+      key: homeKey,
+      body: { properties: { body: "edited by hand" } },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    expect("orphaned" in json.item).toBe(false);
+  });
+
+  it("POST /items/:id/restore", async () => {
+    const trashed = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${goneRestoreItemId}`,
+      { key: homeKey },
+    );
+    expect(trashed.status).toBe(200);
+
+    const res = await request(
       ctx.app,
       "POST",
-      `/items/${goneItemId}/transition`,
-      { key: homeKey, body: { state: "active" } },
+      `/items/${goneRestoreItemId}/restore`,
+      { key: homeKey },
     );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    expect(json.item.state).toBe("active");
+    // The caller is a person, not the integration, so the shortcut does not
+    // apply and this is the real query answering.
+    expect(json.item.orphaned).toBe(true);
+  });
 
-    const { text } = await readSse(stream, {
-      until: (t) => t.includes(goneItemId),
+  it("POST /items/:id/promote", async () => {
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${gonePromoteItemId}/promote`,
+      { key: homeKey },
+    );
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as { item: Item };
+    // The promoted copy is the caller's own row, stamped with the caller's
+    // source. It is not a mirror of anything, so the question stops
+    // applying to it the moment it is promoted — which is the point of
+    // promotion, and would be hidden if the copy inherited the answer.
+    expect(json.item.source.startsWith("integration:")).toBe(false);
+    expect("orphaned" in json.item).toBe(false);
+  });
+
+  it("does not let one integration's credential vouch for another's row", async () => {
+    // The own-write shortcut answers `false` without a query on the strength
+    // of the caller's own credential being live. This is the case that makes
+    // its guard load-bearing: a runtime credential for a *different*
+    // integration transitions a row the uninstalled one wrote, so the
+    // caller's liveness says nothing about the row's source and the shortcut
+    // has to fall back to the real query. Without the guard the row would
+    // come back `false` — a live integration vouching for a dead one.
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${goneVouchItemId}/transition`,
+      { key: liveRuntimeKey, body: { state: "archived" } },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    // The caller and the row really are different integrations, or this
+    // asserts nothing about the guard.
+    expect(json.item.source).toBe("integration:acme/orphan-gone");
+    expect(json.item.orphaned).toBe(true);
+  });
+
+  it("POST /items, replaying a natural key onto a trashed mirror", async () => {
+    const existing = await request(
+      ctx.app,
+      "GET",
+      `/items?source=integration:acme/orphan-live&limit=200`,
+      { key: homeKey },
+    );
+    expect(existing.status).toBe(200);
+    const rows = ((await existing.json()) as { data: Item[] }).data.filter(
+      (i) => i.source_id === liveReplaySourceId,
+    );
+    // The filter has to have found the row, or the delete below is a no-op
+    // and the replay branch is never reached.
+    expect(rows).toHaveLength(1);
+    const target = rows[0]!;
+
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${target.id}`, {
+          key: homeKey,
+        })
+      ).status,
+    ).toBe(200);
+
+    const replay = await request(ctx.app, "POST", "/items", {
+      key: liveRuntimeKey,
+      body: {
+        type: "core.note",
+        properties: { body: "re-synced onto a trashed mirror" },
+        source_id: liveReplaySourceId,
+      },
     });
-    expect((await transitioned).status).toBe(200);
+    expect(replay.status).toBe(200);
+    const json = (await replay.json()) as {
+      item: Item;
+      acknowledged?: boolean;
+    };
+    // The branch that writes nothing and returns the row as it stands still
+    // answers, because absence would say no integration wrote it.
+    expect(json.acknowledged).toBe(true);
+    expect(json.item.orphaned).toBe(false);
+  });
+});
 
-    const frame = text
+describe("the event stream deliberately does not carry it", () => {
+  /**
+   * Not an omission. Removing a connection publishes no item events, so the
+   * change this field describes can never arrive on the stream; decorating
+   * it only made unrelated events carry an incidentally-current value, and
+   * a replayed payload is a snapshot that cannot be re-derived safely. The
+   * contract is written down in `_schemas.ts`, and these are what stop it
+   * being re-added without reading it.
+   */
+  function itemFrames(text: string): Item[] {
+    return text
       .split("\n")
       .filter((line) => line.startsWith("data: "))
       .map((line) => JSON.parse(line.slice("data: ".length)) as { item?: Item })
-      .find((payload) => payload.item?.id === goneItemId);
-    if (!frame?.item) throw new Error(`no item frame for ${goneItemId}`);
+      .flatMap((payload) => (payload.item ? [payload.item] : []));
+  }
 
-    // Without this the client applying the stream over a `GET /items` page
-    // would watch `orphaned: true` disappear on the first unrelated edit.
-    expect(frame.item.source).toBe("integration:acme/orphan-gone");
-    expect(frame.item.orphaned).toBe(true);
+  it("omits it on a live frame for a row a read answers about", async () => {
+    // The read and the frame are about the same row in the same test, so
+    // this is the difference itself rather than two separate claims.
+    const read = await request(
+      ctx.app,
+      "GET",
+      `/items/${goneLiveFrameItemId}`,
+      { key: homeKey },
+    );
+    expect(((await read.json()) as { item: Item }).item.orphaned).toBe(true);
+
+    const stream = await request(ctx.app, "GET", "/events", { key: homeKey });
+    expect(stream.status).toBe(200);
+    const transitioned = request(
+      ctx.app,
+      "POST",
+      `/items/${goneLiveFrameItemId}/transition`,
+      { key: homeKey, body: { state: "archived" } },
+    );
+    const { text } = await readSse(stream, {
+      until: (t) => t.includes(goneLiveFrameItemId),
+    });
+    expect((await transitioned).status).toBe(200);
+
+    const frame = itemFrames(text).find(
+      (item) => item.id === goneLiveFrameItemId,
+    );
+    if (!frame) throw new Error(`no item frame for ${goneLiveFrameItemId}`);
+    expect(frame.source).toBe("integration:acme/orphan-gone");
+    expect("orphaned" in frame).toBe(false);
+  });
+
+  it("omits it on a replayed frame too", async () => {
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const cursor = before.reduce((a, e) => (e.id > a ? e.id : a), 0n);
+
+    const changed = await request(
+      ctx.app,
+      "POST",
+      `/items/${goneReplayFrameItemId}/transition`,
+      { key: homeKey, body: { state: "archived" } },
+    );
+    expect(changed.status).toBe(200);
+
+    const stream = await request(ctx.app, "GET", "/events", {
+      key: homeKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(stream.status).toBe(200);
+    const { text } = await readSse(stream, {
+      until: (t) => t.includes(goneReplayFrameItemId),
+    });
+
+    const frames = itemFrames(text);
+    // Replay has to have produced the frame, or "no field" is trivially
+    // true of an empty stream.
+    const frame = frames.find((item) => item.id === goneReplayFrameItemId);
+    if (!frame)
+      throw new Error(`replay produced no frame for ${goneReplayFrameItemId}`);
+    // The stored payload is a snapshot; it must not be carrying a stale
+    // answer, and it must not be re-derived on the way out either.
+    expect("orphaned" in frame).toBe(false);
+  });
+});
+
+describe("a derivation that cannot be made is not silently skipped", () => {
+  it("fails the read rather than answering it wrong", async () => {
+    // Absence means "no integration wrote this", so swallowing a storage
+    // failure would turn an outage into a confident lie about provenance on
+    // every mirrored row in the space. Loud is the only safe direction, and
+    // this is the assertion that keeps it that way — the review found the
+    // module by fixing a bad input rather than the mechanism, which is what
+    // an untested failure path invites.
+    const realList = ctx.storage.items.list.bind(ctx.storage.items);
+    ctx.storage.items.list = async (filters) => {
+      if (filters.type === "system.connection") {
+        throw new Error("connection listing unavailable");
+      }
+      return realList(filters);
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/items?limit=200", {
+        key: homeKey,
+      });
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      // And specifically not a 200 whose rows quietly lost the field.
+      expect(res.status).not.toBe(200);
+    } finally {
+      ctx.storage.items.list = realList;
+    }
+
+    // The stub is gone and the read works again, so the assertion above was
+    // about the stub rather than about a context this test broke.
+    const after = await listItems(homeKey);
+    expect(need(after, goneItemId, "gone").orphaned).toBe(true);
+  });
+});
+
+describe("the single-space self-host shape", () => {
+  /**
+   * Every context above is hosted, where each row carries a real
+   * `space_id`. On a self-host nothing does: items and connections alike sit
+   * in the space-less bucket, which is the branch `ItemFilters` cannot fence
+   * in SQL and where the application-side re-fence is the only thing
+   * narrowing the walk. It had no coverage at all.
+   */
+  let selfHost: TestContext;
+
+  beforeAll(async () => {
+    selfHost = await createTestContext();
+  });
+
+  afterAll(async () => {
+    await selfHost.cleanup();
+  });
+
+  it("answers for space-less rows against space-less connections", async () => {
+    const admin = (await selfHost.storage.keys.list()).find(
+      (k) => k.role === "admin",
+    );
+    if (!admin) throw new Error("admin key not found");
+
+    const mk = async (m: IntegrationManifest): Promise<string> => {
+      const suffix = Math.random().toString(36).slice(2, 12);
+      const row = await selfHost.storage.items.create(
+        {
+          type: "system.integration",
+          properties: {
+            manifest_name: m.name,
+            manifest_version: m.version,
+            publisher: m.publisher,
+            direction: m.direction,
+            manifest: m,
+            registered_at: new Date().toISOString(),
+          },
+          source: `selfhost-catalog-${suffix}`,
+          source_id: `selfhost-catalog-${suffix}`,
+        },
+        undefined,
+      );
+      const result = await performInstall(selfHost.storage, TEST_API_KEY_SALT, {
+        apiKeyId: admin.id,
+        spaceId: undefined,
+        authMode: "keys",
+        integrationItemId: row.id,
+        manifest: m,
+        label: m.name,
+        clientIp: null,
+      });
+      return result.connection_id;
+    };
+
+    const runtimeKey = async (
+      m: IntegrationManifest,
+      connectionId: string,
+    ): Promise<string> => {
+      const suffix = Math.random().toString(36).slice(2, 12);
+      const raw = `marfa_k1_selfhost_${suffix}`;
+      await selfHost.storage.keys.createRuntimeCredential(
+        {
+          label: `selfhost-runtime-${suffix}`,
+          source: `selfhost-runtime-${suffix}`,
+          role: "member",
+          type_permissions: { "core.note": "write" },
+          default_tier: "library",
+          connection_id: connectionId,
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          item_source: runtimeCredentialItemSource(m),
+        },
+        hashApiKey(raw, TEST_API_KEY_SALT),
+        undefined,
+      );
+      return raw;
+    };
+
+    const goneManifest = manifest("acme/selfhost-gone");
+    const liveManifest = manifest("acme/selfhost-live");
+    const goneConnection = await mk(goneManifest);
+    const liveConnection = await mk(liveManifest);
+
+    const write = async (key: string, body: string): Promise<string> => {
+      const res = await request(selfHost.app, "POST", "/items", {
+        key,
+        body: { type: "core.note", properties: { body } },
+      });
+      expect(res.status).toBe(201);
+      const created = ((await res.json()) as { item: Item }).item;
+      // The premise of the whole describe: nothing here has a space.
+      expect(created.space_id).toBeNull();
+      return created.id;
+    };
+
+    const goneId = await write(
+      await runtimeKey(goneManifest, goneConnection),
+      "self-host mirror that loses its integration",
+    );
+    const liveId = await write(
+      await runtimeKey(liveManifest, liveConnection),
+      "self-host mirror that keeps it",
+    );
+    const handId = await write(selfHost.adminKey, "self-host hand-written");
+
+    await performUninstall(selfHost.storage, {
+      apiKeyId: admin.id,
+      spaceId: undefined,
+      connectionId: goneConnection,
+      clientIp: null,
+    });
+
+    const res = await request(selfHost.app, "GET", "/items?limit=200", {
+      key: selfHost.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const byId = new Map(
+      ((await res.json()) as { data: Item[] }).data.map((i) => [i.id, i]),
+    );
+    expect(byId.size).toBeGreaterThan(0);
+
+    // The same three answers as the hosted case, on the branch where "no
+    // fence" and "the space-less bucket" are the same set.
+    expect(need(byId, goneId, "self-host gone").orphaned).toBe(true);
+    expect(need(byId, liveId, "self-host live").orphaned).toBe(false);
+    expect("orphaned" in need(byId, handId, "self-host hand-written")).toBe(
+      false,
+    );
   });
 });
 
