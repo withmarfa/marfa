@@ -150,6 +150,13 @@ export interface LocalRuntime {
   dispatchForTest(
     envelope: SchedulerEnvelope,
     attempt?: number,
+    /**
+     * Stands in for the `AbortSignal` pg-boss hangs off every job in a fetched
+     * batch, which it aborts when the batch's expiry timer fires. Supplying an
+     * already-aborted one is how a test reaches the reclaimed-job path without
+     * waiting out a real dispatch bound.
+     */
+    jobSignal?: AbortSignal,
   ): Promise<HandlerResult>;
   /**
    * Look up an integration by name. Used by the webhook receipt route to

@@ -32,10 +32,12 @@ import {
   familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { initEventLog, __resetCycleDetectionForTests } from "../../pubsub.js";
-import { createSupervisor } from "./supervisor.js";
+import { createSupervisor, QUEUE_NAME } from "./supervisor.js";
+import type { PgBoss } from "pg-boss";
 import type {
   LocalIntegrationRegistration,
   LocalRuntime,
+  SchedulerEnvelope,
   WorkerDispatchRequest,
   WorkerDispatchResponse,
 } from "./types.js";
@@ -1069,3 +1071,343 @@ describe("local-runtime supervisor", () => {
 // Quiet the unused-namespace-import lint — the import is here so the
 // extension reads use the namespace constant rather than a magic string.
 void CONNECTION_RUNTIME_NAMESPACE;
+
+/**
+ * A dispatch whose queue job is taken away while it is still running.
+ *
+ * pg-boss arms one expiry timer per fetched batch and hands every job in that
+ * batch the same `AbortController`; when the timer fires it aborts that
+ * controller and fails every job id. Nothing terminates the worker thread, so
+ * the handler returns normally afterwards, and the supervisor used to believe
+ * it and stamp a completed sync.
+ *
+ * These drive the real signal rather than a clock. The budget pg-boss enforces
+ * is per batch, so timing one dispatch cannot see an overrun the batch shares,
+ * and an aborted `AbortSignal` is the same object production reads.
+ */
+describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
+  function scheduleEnvelope(connectionId: string) {
+    return {
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule" as const,
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    };
+  }
+
+  function runtimeFor(
+    registration: LocalIntegrationRegistration,
+  ): LocalRuntime {
+    return createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: null,
+    });
+  }
+
+  async function readTimings(connectionId: string) {
+    const connection = await ctx.storage.items.get(connectionId);
+    return (connection?.properties ?? {}) as {
+      last_sync_at?: string | null;
+      last_error_at?: string | null;
+    };
+  }
+
+  async function reclaimedActivity(connectionId: string) {
+    const activity = await ctx.storage.items.list({ type: "system.activity" });
+    return activity.data.filter((item) => {
+      const props = item.properties as {
+        summary?: string;
+        connection_id?: string;
+      };
+      return (
+        props.connection_id === connectionId &&
+        (props.summary ?? "").includes(
+          "its queue job had already been reclaimed",
+        )
+      );
+    });
+  }
+
+  it("does not record a successful sync when the job was reclaimed", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    // The handler reports success, exactly as one whose job was taken away
+    // does: it has no idea anything happened to the job underneath it.
+    const aborted = new AbortController();
+    const registration = buildRegistration(() => {
+      aborted.abort();
+      return Promise.resolve({ ok: true } satisfies HandlerResult);
+    });
+
+    const result = await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.retry).toBe(false);
+    expect(result.reason).toContain("reclaimed before the handler returned");
+
+    const timings = await readTimings(connectionId);
+    expect(timings.last_sync_at ?? null).toBeNull();
+
+    const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+    expect(state.recent_errors).toHaveLength(1);
+    expect(state.recent_errors[0]?.reason).toContain("was reclaimed");
+  });
+
+  it("writes the operator-visible row for a reclaimed job", async () => {
+    // The tail entry is per-connection state; this is the row a person sees.
+    // Without this assertion the recording can be reduced to a tail write and
+    // every other test here stays green.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const aborted = new AbortController();
+    const registration = buildRegistration(() => {
+      aborted.abort();
+      return Promise.resolve({ ok: true } satisfies HandlerResult);
+    });
+
+    await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    const reported = await reclaimedActivity(connectionId);
+    expect(reported).toHaveLength(1);
+    expect((reported[0]?.properties as { severity?: string }).severity).toBe(
+      "warning",
+    );
+  });
+
+  it("leaves the error stamp alone, because a long sweep converges", async () => {
+    // Deliberate: a sweep too large for one dispatch commits its cursor and
+    // the next run starts further on, so reddening the connection on every
+    // leg would report a fault where there is progress. Stale `last_sync_at`
+    // plus the activity row is the honest signal.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const aborted = new AbortController();
+    const registration = buildRegistration(() => {
+      aborted.abort();
+      return Promise.resolve({ ok: true } satisfies HandlerResult);
+    });
+
+    await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    const timings = await readTimings(connectionId);
+    expect(timings.last_error_at ?? null).toBeNull();
+  });
+
+  it("keeps the handler's own account of a run that also threw", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const aborted = new AbortController();
+    const registration: LocalIntegrationRegistration = {
+      name: TEMPLATE_MANIFEST.name,
+      handlerModulePath: null,
+      directDispatch: () => {
+        aborted.abort();
+        return Promise.resolve({
+          result: {
+            ok: false,
+            retry: false,
+            reason: "dispatch_threw: upstream blip",
+          },
+          cursorUpdates: {},
+          cursorDeletes: [],
+          threw: true,
+          thrownMessage: "upstream blip",
+          thrownClassName: "TypeError",
+        } satisfies WorkerDispatchResponse);
+      },
+      scheduleCron: "*/5 * * * *",
+      echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
+      triggerKinds: new Set(["schedule"]),
+    };
+
+    await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+    expect(state.recent_errors[0]?.reason).toContain("upstream blip");
+  });
+
+  it("still records a successful sync when the job was not reclaimed", async () => {
+    // The control. Without it every assertion above is satisfied by a
+    // supervisor that never stamps a success at all, which would be a worse
+    // defect than the one being fixed and would look identical here.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const live = new AbortController();
+    const registration = buildRegistration(() =>
+      Promise.resolve({ ok: true } satisfies HandlerResult),
+    );
+
+    const result = await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      live.signal,
+    );
+
+    expect(result).toEqual({ ok: true });
+
+    const timings = await readTimings(connectionId);
+    expect(timings.last_sync_at ?? null).not.toBeNull();
+
+    const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+    expect(state.recent_errors).toHaveLength(0);
+    expect(await reclaimedActivity(connectionId)).toHaveLength(0);
+  });
+
+  it("passes the queue job's signal into dispatch, which is the whole feature", async () => {
+    // The one production line that connects pg-boss to the check is inside
+    // the `boss.work` callback. Every other test here hands the signal to
+    // `dispatchForTest` by hand, so deleting that line leaves them all green
+    // while the feature is gone. This drives the registered callback instead.
+    const integrationId = await createIntegrationItem();
+    const first = await createActiveConnection(integrationId);
+    const second = await createActiveConnection(integrationId);
+
+    let dispatched = 0;
+    const registration = buildRegistration(() => {
+      dispatched += 1;
+      return Promise.resolve({ ok: true } satisfies HandlerResult);
+    });
+
+    // Only the surface `start()` touches. `work` captures the dispatch
+    // queue's handler so the test can invoke it with a batch of its own.
+    let queueHandler:
+      | ((
+          jobs: {
+            data: SchedulerEnvelope;
+            retryCount: number;
+            signal: AbortSignal;
+          }[],
+        ) => Promise<void>)
+      | null = null;
+    const boss = {
+      createQueue: () => Promise.resolve(),
+      schedule: () => Promise.resolve(),
+      unschedule: () => Promise.resolve(),
+      getSchedules: () => Promise.resolve([]),
+      send: () => Promise.resolve(),
+      stop: () => Promise.resolve(),
+      work: (name: string, _opts: unknown, handler: unknown) => {
+        if (name === QUEUE_NAME) {
+          queueHandler = handler as typeof queueHandler;
+        }
+        return Promise.resolve();
+      },
+    };
+
+    const runtime = createSupervisor(ctx.storage, {
+      apiUrl: "http://test.local",
+      apiKeySalt: TEST_API_KEY_SALT,
+      authMode: "keys" as const,
+      registrations: [registration],
+      executor: {
+        dispatch: (reg, request) => reg.directDispatch!(request),
+        terminate: () => Promise.resolve(),
+      },
+      boss: boss as unknown as PgBoss,
+    });
+    await runtime.start();
+    expect(queueHandler).not.toBeNull();
+
+    // One batch, two jobs, one shared controller already aborted — the shape
+    // pg-boss produces when a batch's expiry timer has fired.
+    const batch = new AbortController();
+    batch.abort();
+    await queueHandler!([
+      { data: scheduleEnvelope(first), retryCount: 0, signal: batch.signal },
+      { data: scheduleEnvelope(second), retryCount: 0, signal: batch.signal },
+    ]);
+
+    // pg-boss has already redelivered both, so neither should have run here
+    // and neither should be recorded as having synced.
+    expect(dispatched).toBe(0);
+    expect((await readTimings(first)).last_sync_at ?? null).toBeNull();
+    expect((await readTimings(second)).last_sync_at ?? null).toBeNull();
+  });
+
+  it("still reports a permanent failure as one when the job was also reclaimed", async () => {
+    // A handler that fails permanently is describing the connection, not the
+    // queue job. Demoting it to a reclaim warning would hide a real fault on
+    // exactly the connections that reach this branch on every run.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const aborted = new AbortController();
+    const registration = buildRegistration(() => {
+      aborted.abort();
+      return Promise.resolve({
+        ok: false,
+        retry: false,
+        reason: "config invalid",
+      } satisfies HandlerResult);
+    });
+
+    const result = await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      retry: false,
+      reason: "config invalid",
+    });
+
+    const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+    expect(state.recent_errors[0]?.reason).toBe("config invalid");
+    expect(await reclaimedActivity(connectionId)).toHaveLength(0);
+  });
+
+  it("commits the cursor writes a run made before its job was reclaimed", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+
+    const aborted = new AbortController();
+    const registration = buildRegistration(async (handlerCtx) => {
+      await handlerCtx.cursor.write("main", { page: 7 });
+      aborted.abort();
+      return { ok: true };
+    });
+
+    await runtimeFor(registration).dispatchForTest(
+      scheduleEnvelope(connectionId),
+      0,
+      aborted.signal,
+    );
+
+    const state = await readConnectionRuntimeState(ctx.storage, connectionId);
+    expect(state.cursors["cursor:main"]).toEqual({ page: 7 });
+  });
+});
