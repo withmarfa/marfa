@@ -32,7 +32,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, SPACE_STATUSES } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAdmin } from "../middleware/auth.js";
@@ -50,7 +50,12 @@ const SpaceSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
   created_at: z.string(),
-  status: z.enum(["active", "suspended"]),
+  // Keyed off SPACE_STATUSES rather than repeating the literals, because
+  // this schema is what generates the public spec. A status added to the
+  // union without reaching here would leave the OpenAPI document and the
+  // SDK types describing a narrower set than the server can return, and
+  // nothing would fail until a client met the value.
+  status: z.enum(SPACE_STATUSES),
 });
 
 const AdminSpaceSchema = SpaceSchema.extend({

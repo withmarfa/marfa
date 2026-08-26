@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { spaceFromRow, storedSpaceStatus } from "../stored-space-status.js";
 import { generateId } from "@withmarfa/shared";
 import type { Space, SpaceConfig, SpaceStatus } from "@withmarfa/shared";
 import type { SpaceStore } from "../interface.js";
@@ -38,7 +39,7 @@ export class PgSpaceStore implements SpaceStore {
       .from(spaces)
       .where(eq(spaces.id, id));
     if (!row) return null;
-    return { ...row, status: row.status as SpaceStatus };
+    return spaceFromRow(row);
   }
 
   async list(): Promise<Space[]> {
@@ -50,7 +51,7 @@ export class PgSpaceStore implements SpaceStore {
         status: spaces.status,
       })
       .from(spaces);
-    return rows.map((r) => ({ ...r, status: r.status as SpaceStatus }));
+    return rows.map(spaceFromRow);
   }
 
   async getConfig(id: string): Promise<SpaceConfig | null> {
@@ -79,7 +80,12 @@ export class PgSpaceStore implements SpaceStore {
       .select({ status: spaces.status })
       .from(spaces)
       .where(eq(spaces.id, id));
-    return (row?.status as SpaceStatus | undefined) ?? null;
+    // A missing row is a missing space and stays `null`. A row whose
+    // status this build cannot read is a different answer entirely, and
+    // collapsing the two would hand the caller `null` for a space that
+    // exists, which every consumer reads as "nothing to enforce".
+    if (!row) return null;
+    return storedSpaceStatus(row.status, id);
   }
 
   private async setStatus(
@@ -97,6 +103,6 @@ export class PgSpaceStore implements SpaceStore {
         status: spaces.status,
       });
     if (!row) return null;
-    return { ...row, status: row.status as SpaceStatus };
+    return spaceFromRow(row);
   }
 }

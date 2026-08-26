@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { spaceFromRow, storedSpaceStatus } from "../stored-space-status.js";
 import { generateId } from "@withmarfa/shared";
 import type { Space, SpaceConfig, SpaceStatus } from "@withmarfa/shared";
 import type { SpaceStore } from "../interface.js";
@@ -34,22 +35,12 @@ export class SqliteSpaceStore implements SpaceStore {
       .where(eq(spaces.id, id))
       .get();
     if (!row) return null;
-    return {
-      id: row.id,
-      name: row.name,
-      created_at: row.created_at,
-      status: row.status as SpaceStatus,
-    };
+    return spaceFromRow(row);
   }
 
   async list(): Promise<Space[]> {
     const rows = await this.db.select().from(spaces).all();
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      created_at: row.created_at,
-      status: row.status as SpaceStatus,
-    }));
+    return rows.map(spaceFromRow);
   }
 
   async getConfig(id: string): Promise<SpaceConfig | null> {
@@ -84,7 +75,12 @@ export class SqliteSpaceStore implements SpaceStore {
       .from(spaces)
       .where(eq(spaces.id, id))
       .get();
-    return (row?.status as SpaceStatus | undefined) ?? null;
+    // A missing row is a missing space and stays `null`. A row whose
+    // status this build cannot read is a different answer entirely, and
+    // collapsing the two would hand the caller `null` for a space that
+    // exists, which every consumer reads as "nothing to enforce".
+    if (!row) return null;
+    return storedSpaceStatus(row.status, id);
   }
 
   private async setStatus(
@@ -103,11 +99,6 @@ export class SqliteSpaceStore implements SpaceStore {
       });
     const row = rows[0];
     if (!row) return null;
-    return {
-      id: row.id,
-      name: row.name,
-      created_at: row.created_at,
-      status: row.status as SpaceStatus,
-    };
+    return spaceFromRow(row);
   }
 }

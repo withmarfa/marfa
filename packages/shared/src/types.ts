@@ -1055,7 +1055,38 @@ export interface Space {
   status: SpaceStatus;
 }
 
-export type SpaceStatus = "active" | "suspended";
+/**
+ * Valid space statuses, and the source the union is derived from.
+ *
+ * Declared as a tuple with `SpaceStatus` derived from it rather than the
+ * other way round, so a status added to one cannot go missing from the
+ * other. The same drift is what let a family be added to a union without
+ * reaching the array that decides which set it joins.
+ */
+export const SPACE_STATUSES = ["active", "suspended"] as const;
+
+export type SpaceStatus = (typeof SPACE_STATUSES)[number];
+
+/**
+ * Whether a value is a space status this build recognizes.
+ *
+ * Exists for the same reason `isMarfaRole` does. A status read back from
+ * storage is a bare string, the column carries no constraint in either
+ * dialect, and the one gate that consumes it compares against a single
+ * literal. So a value outside the union matches no branch and is refused
+ * nowhere: it reads as "not suspended", and the writes the suspension
+ * exists to stop are accepted.
+ *
+ * Kept free of any logging concern because this ships to npm and the SDK
+ * consumes it. The policy for meeting a bad value lives server-side in
+ * `storedSpaceStatus`.
+ */
+export function isSpaceStatus(value: unknown): value is SpaceStatus {
+  return (
+    typeof value === "string" &&
+    (SPACE_STATUSES as readonly string[]).includes(value)
+  );
+}
 
 /**
  * Per-space metrics snapshot. Returned by `GET /admin/spaces/:id/metrics`

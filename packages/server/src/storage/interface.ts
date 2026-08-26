@@ -1130,6 +1130,12 @@ export interface SpaceStore {
    * when the space doesn't exist (the gate treats unknown spaces as
    * `active` — the credential's own space_id mismatch is handled
    * separately by the standard auth flow).
+   *
+   * **A row whose status this build cannot read answers `"suspended"`,
+   * not `null`.** Those are different questions and collapsing them would
+   * hand the gate `null` for a space that exists, which it reads as
+   * nothing to enforce. Implementations narrow through `storedSpaceStatus`,
+   * which also logs the row and the true stored value.
    */
   getStatus(
     id: string,
