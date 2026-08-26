@@ -18,7 +18,11 @@ import {
   startPgBossSchedules,
   type ScheduledJobSpec,
 } from "./pg-boss-schedules.js";
-import { surveyScheduledJobs, type ScheduledJobTicks } from "./job-metrics.js";
+import {
+  surveyScheduledJobs,
+  type ScheduledJobsReport,
+  type ScheduledJobTicks,
+} from "./job-metrics.js";
 
 const isPg = process.env.DB_DIALECT === "pg";
 
@@ -39,6 +43,23 @@ async function makeBoss(url: string) {
 /** Fast polling and a short seed so a 1s-interval chain ticks within a
  *  test budget; production derives both from each job's own interval. */
 const FAST = { pollingIntervalSeconds: 0.5, seedDelaySeconds: 1 };
+
+/** The survey answers `undefined` for an empty job list; every case below
+ *  asks about a non-empty one, so an absent report is a failure, not a
+ *  shape to branch on. */
+async function survey(
+  db: Awaited<ReturnType<typeof createConnection>>["db"],
+  jobNames: string[],
+  windowHours?: number,
+): Promise<ScheduledJobsReport> {
+  const report = await surveyScheduledJobs(db, jobNames, windowHours);
+  if (!report) {
+    throw new Error(
+      `survey returned nothing for ${String(jobNames.length)} registered jobs`,
+    );
+  }
+  return report;
+}
 
 /** Named lookup, so a test asserting on one job fails loudly if the survey
  *  dropped it rather than passing on an absent key. */
@@ -79,14 +100,14 @@ async function waitForTicks(
   name: string,
   ticks: number,
   budgetMs: number,
-): Promise<Awaited<ReturnType<typeof surveyScheduledJobs>>> {
+): Promise<ScheduledJobsReport> {
   const deadline = Date.now() + budgetMs;
-  let report = await surveyScheduledJobs(db, jobNames);
+  let report = await survey(db, jobNames);
   const reached = (r: typeof report): boolean =>
     (r.jobs.find((job) => job.name === name)?.ticks ?? 0) >= ticks;
   while (!reached(report) && Date.now() < deadline) {
     await sleep(250);
-    report = await surveyScheduledJobs(db, jobNames);
+    report = await survey(db, jobNames);
   }
   return report;
 }
@@ -147,7 +168,7 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
 
       expect(silent.ticks).toBe(0);
       expect(silent.last_completed_at).toBeNull();
-      expect(silent.last_failed_at).toBeNull();
+      expect(silent.last_queue_failure_at).toBeNull();
       expect(silent.slowest_tick_ms).toBeNull();
     });
   }, 40_000);
@@ -168,17 +189,17 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
       };
       await startPgBossSchedules(boss, [job], FAST);
 
-      const survey = jobNamed(
+      const slow = jobNamed(
         (await waitForTicks(db, ["survey-slow"], "survey-slow", 2, 30_000))
           .jobs,
         "survey-slow",
       );
 
-      expect(survey.ticks).toBeGreaterThanOrEqual(2);
-      expect(survey.slowest_tick_ms).not.toBeNull();
-      expect(survey.slowest_tick_ms).toBeGreaterThanOrEqual(800);
+      expect(slow.ticks).toBeGreaterThanOrEqual(2);
+      expect(slow.slowest_tick_ms).not.toBeNull();
+      expect(slow.slowest_tick_ms).toBeGreaterThanOrEqual(800);
       // A duration, not the string `bigint` reaches the driver as.
-      expect(typeof survey.slowest_tick_ms).toBe("number");
+      expect(typeof slow.slowest_tick_ms).toBe("number");
     });
   }, 45_000);
 
@@ -192,15 +213,15 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
       if (!fetched) throw new Error("nothing was fetchable from the queue");
       await boss.fail(queue, fetched.id, new Error("tick abandoned"));
 
-      const survey = jobNamed(
-        (await surveyScheduledJobs(db, ["survey-failing"])).jobs,
+      const failed = jobNamed(
+        (await survey(db, ["survey-failing"])).jobs,
         "survey-failing",
       );
-      expect(survey.last_failed_at).not.toBeNull();
+      expect(failed.last_queue_failure_at).not.toBeNull();
       // The two are read from different states, so a failure must not
       // also register as the last success.
-      expect(survey.last_completed_at).toBeNull();
-      expect(survey.ticks).toBe(1);
+      expect(failed.last_completed_at).toBeNull();
+      expect(failed.ticks).toBe(1);
     });
   }, 30_000);
 
@@ -221,38 +242,103 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
       const recent = await completeOne(boss, queue);
       expect(recent).not.toBe(aged);
 
-      const survey = jobNamed(
-        (await surveyScheduledJobs(db, ["survey-aged"])).jobs,
+      const inWindow = jobNamed(
+        (await survey(db, ["survey-aged"])).jobs,
         "survey-aged",
       );
-      expect(survey.ticks).toBe(1);
+      expect(inWindow.ticks).toBe(1);
       // The older tick is still on record — it is out of the count, not
       // out of the answer — so the last completion must not have moved
       // backwards with it.
-      expect(survey.last_completed_at).not.toBeNull();
+      expect(inWindow.last_completed_at).not.toBeNull();
       expect(
-        Date.now() - new Date(survey.last_completed_at ?? "").getTime(),
+        Date.now() - new Date(inWindow.last_completed_at ?? "").getTime(),
       ).toBeLessThan(60_000);
     });
   }, 30_000);
 
-  it("clamps the window to the queue's own retention", async () => {
+  it("clamps the window to the retention its tick rows carry", async () => {
     await withPg(async ({ boss, db }) => {
       // pg-boss deletes a completed row `deleteAfterSeconds` after it
       // finished. Asking for 24 hours of ticks from a queue that keeps one
       // would report a single hour's worth as a day's.
-      await boss.createQueue(queueNameFor("survey-shortlived"), {
+      const queue = queueNameFor("survey-shortlived");
+      await boss.createQueue(queue, {
         policy: "stately",
         deleteAfterSeconds: 3600,
       });
+      await completeOne(boss, queue);
 
-      const clamped = await surveyScheduledJobs(db, ["survey-shortlived"], 24);
+      const clamped = await survey(db, ["survey-shortlived"], 24);
       expect(clamped.window_hours).toBe(1);
 
       // And the clamp is a ceiling, not a rewrite: a window already inside
       // retention is left where the caller put it.
-      const inside = await surveyScheduledJobs(db, ["survey-shortlived"], 0.25);
+      const inside = await survey(db, ["survey-shortlived"], 0.25);
       expect(inside.window_hours).toBe(0.25);
+    });
+  }, 30_000);
+
+  it("follows the rows' retention when the queue's has since changed", async () => {
+    await withPg(async ({ boss, db }) => {
+      // pg-boss stamps `deletion_seconds` onto each job at insert and its
+      // delete pass reads the row's copy, so raising a queue's retention
+      // does not extend the rows already in it. Clamping on the queue would
+      // widen the window past what the data behind it survives, and the
+      // count would quietly report a fraction as the whole.
+      const queue = queueNameFor("survey-relaxed");
+      await boss.createQueue(queue, {
+        policy: "stately",
+        deleteAfterSeconds: 3600,
+      });
+      await completeOne(boss, queue);
+      await db.execute(
+        sql`UPDATE pgboss.queue SET deletion_seconds = 604800
+            WHERE name = ${queue}`,
+      );
+
+      const report = await survey(db, ["survey-relaxed"], 24);
+      // One hour, the horizon the existing row is actually on — not the
+      // twenty-four the relaxed queue would now allow.
+      expect(report.window_hours).toBe(1);
+    });
+  }, 30_000);
+
+  it("keeps an abandoned tick out of the slowest-tick figure", async () => {
+    await withPg(async ({ boss, db }) => {
+      // A tick the queue gives up on keeps its `started_on` and gets a
+      // `completed_on` at the moment of failure, so it has a duration — in
+      // production, roughly its expiry budget. Counting it would report an
+      // outage as a slow tick and send someone profiling a run that never
+      // happened.
+      const queue = queueNameFor("survey-abandoned");
+      await boss.createQueue(queue, { policy: "stately" });
+      await completeOne(boss, queue);
+
+      const failing = await boss.send(queue, {}, { retryLimit: 0 });
+      if (failing === null) throw new Error("the queue refused the job");
+      const [fetched] = await boss.fetch(queue);
+      if (!fetched) throw new Error("nothing was fetchable from the queue");
+      await sleep(600);
+      await boss.fail(queue, fetched.id, new Error("tick abandoned"));
+
+      const result = jobNamed(
+        (await survey(db, ["survey-abandoned"])).jobs,
+        "survey-abandoned",
+      );
+      // Both rows are ticks; only one of them is a tick that finished.
+      expect(result.ticks).toBe(2);
+      expect(result.last_queue_failure_at).not.toBeNull();
+      expect(result.slowest_tick_ms).not.toBeNull();
+      expect(result.slowest_tick_ms).toBeLessThan(500);
+    });
+  }, 30_000);
+
+  it("reports nothing at all when no job is registered", async () => {
+    await withPg(async ({ db }) => {
+      // Absent, not an empty list: a section carrying `jobs: []` is truthy
+      // and would publish, so absence would then have two meanings.
+      await expect(surveyScheduledJobs(db, [])).resolves.toBeUndefined();
     });
   }, 30_000);
 
@@ -268,7 +354,7 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
       });
       await completeOne(boss, queue);
 
-      const report = await surveyScheduledJobs(db, ["survey-forever"]);
+      const report = await survey(db, ["survey-forever"]);
       expect(report.window_hours).toBe(24);
       // The count is what a collapsed window would silently empty, so
       // assert on it rather than on the window alone.
@@ -281,7 +367,7 @@ describe.skipIf(!isPg)("scheduled-job survey", () => {
       // A web-role process reads this before the worker has created any
       // queue. No queue row means no retention to clamp against, and the
       // absent row must not collapse the window to zero.
-      const report = await surveyScheduledJobs(db, ["survey-unqueued"]);
+      const report = await survey(db, ["survey-unqueued"]);
       expect(report.window_hours).toBe(24);
       expect(jobNamed(report.jobs, "survey-unqueued").ticks).toBe(0);
     });

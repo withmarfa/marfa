@@ -24,14 +24,14 @@ const REPORT: ScheduledJobsReport = {
     {
       name: "enrichment-sweep",
       last_completed_at: "2026-08-26T09:15:00.000Z",
-      last_failed_at: null,
+      last_queue_failure_at: null,
       ticks: 677,
       slowest_tick_ms: 4210,
     },
     {
       name: "trash-purge",
       last_completed_at: null,
-      last_failed_at: null,
+      last_queue_failure_at: null,
       ticks: 0,
       slowest_tick_ms: null,
     },

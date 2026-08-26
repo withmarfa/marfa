@@ -1064,6 +1064,11 @@ async function main() {
     // pipeline as early as possible — everything below only shortens the time
     // it has to get out.
     log("info", "Shutting down...");
+    // Before anything closes: the reporter closes over the pool, and a
+    // `/metrics` hit arriving mid-drain would otherwise ask a dying
+    // connection for the section. A draining process has nothing true to
+    // say about the queue, and absence is what that means here.
+    setScheduledJobsReporter(undefined);
     webhookConsumer.stop();
     webhookPoller.stop();
     heartbeat?.stop();

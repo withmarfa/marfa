@@ -22,6 +22,13 @@
  *     from the answer, so "registered and never run" and "not a job on
  *     this deployment" would look identical.
  *
+ * One thing it cannot separate: a job whose last tick is older than the
+ * queue's retention has had that row deleted, so it reads exactly like a
+ * job that has never ticked at all. Both come back with nulls. The
+ * horizon is pg-boss's `deletion_seconds` (seven days by default), which
+ * the payload does not carry, so a reader cannot date the silence — only
+ * see that it is at least that long.
+ *
  * Postgres only, because pg-boss is. A SQLite deployment runs the same
  * jobs on in-process timers and has no equivalent record, so nothing
  * installs a reporter there and the metrics section is absent rather
@@ -50,19 +57,28 @@ export interface ScheduledJobTicks {
   /** Last tick that finished. `null` means no completed tick is on record. */
   last_completed_at: string | null;
   /**
-   * Last tick the queue itself failed: one that outran its
-   * `expireInSeconds` budget, or whose process died mid-tick.
+   * Last tick the queue itself failed, in one of three ways: the tick
+   * outran its `expireInSeconds` budget, its process died mid-tick, or —
+   * the one worth watching — its successor send failed, which leaves the
+   * chain dead until the repair schedule restores it.
    *
-   * Not "the last time this job's work failed" — every job catches its
-   * own failure, logs it at error, and returns normally, so a tick whose
-   * work threw is recorded here as a completion. Reading this field as a
-   * health signal for the work would be the same mistake the surface
-   * exists to close.
+   * Named for the queue rather than for the job because it is not "the
+   * last time this job's work failed": every job catches its own failure,
+   * logs it at error, and returns normally, so a tick whose work threw is
+   * recorded as a completion. A field called `last_failed_at` would need
+   * that caveat to be read correctly, and a name needing a caveat is the
+   * defect this whole surface exists to close.
    */
-  last_failed_at: string | null;
-  /** Ticks that finished inside the window, failures included. */
+  last_queue_failure_at: string | null;
+  /** Ticks that finished inside the window, queue failures included. */
   ticks: number;
-  /** Longest tick inside the window, or `null` if none finished in it. */
+  /**
+   * Longest completed tick inside the window, or `null` if none completed
+   * in it. Queue failures are excluded: an abandoned tick stamps
+   * `completed_on` at its expiry, so counting it would report the expiry
+   * budget as a duration and send someone hunting a slow tick that never
+   * ran.
+   */
   slowest_tick_ms: number | null;
 }
 
@@ -73,8 +89,11 @@ export interface ScheduledJobsReport {
   jobs: ScheduledJobTicks[];
 }
 
-/** Produces the report for whatever deployment installed it. */
-export type ScheduledJobsReporter = () => Promise<ScheduledJobsReport>;
+/** Produces the report for whatever deployment installed it, or
+ *  `undefined` where there is nothing to report. */
+export type ScheduledJobsReporter = () => Promise<
+  ScheduledJobsReport | undefined
+>;
 
 let reporter: ScheduledJobsReporter | undefined;
 
@@ -99,11 +118,11 @@ interface TickRow {
   [column: string]: unknown;
   job_name: string;
   /** The clamped window, repeated on every row. Never null: `LEAST` ignores
-   *  the null a queueless deployment's `min()` produces, so the caller's
-   *  own window is what survives. */
+   *  the null a deployment with no tick rows produces, so the caller's own
+   *  window is what survives. */
   window_seconds: number;
   last_completed_on: string | null;
-  last_failed_on: string | null;
+  last_queue_failure_on: string | null;
   ticks: number;
   /** `bigint` reaches the driver as a string; coerced at the use site so a
    *  duration cannot leak into JSON as text. */
@@ -136,8 +155,11 @@ export async function surveyScheduledJobs(
   db: PgDb,
   jobNames: string[],
   windowHours: number = DEFAULT_WINDOW_HOURS,
-): Promise<ScheduledJobsReport> {
-  if (jobNames.length === 0) return { window_hours: windowHours, jobs: [] };
+): Promise<ScheduledJobsReport | undefined> {
+  // Nothing rather than an empty list: a section carrying `jobs: []` is
+  // truthy, so it would publish and mean the same thing absence already
+  // means. One way of saying nothing is enough.
+  if (jobNames.length === 0) return undefined;
 
   const windowSeconds = Math.round(windowHours * 3600);
   // A VALUES list rather than an array parameter: the pair travels as two
@@ -151,18 +173,25 @@ export async function surveyScheduledJobs(
   const rows = await db.execute<TickRow>(sql`
     WITH registered(job_name, queue_name) AS (VALUES ${registered}),
     bound AS (
-      -- Clamp to the shortest retention any scheduled queue carries, so
-      -- the count cannot silently cover less than it claims. \`LEAST\`
-      -- ignores nulls, which is what makes the two "no bound to apply"
-      -- cases fall through to the caller's window rather than to zero: a
-      -- queue row is absent until some process creates the queue, and
-      -- \`NULLIF\` turns pg-boss's \`0\` — its "never delete" — into one.
+      -- Clamp to the shortest retention the tick rows themselves carry, so
+      -- the count cannot cover less than it claims. Read off the job rows
+      -- rather than off \`pgboss.queue\` because pg-boss copies
+      -- \`deletion_seconds\` onto each job at insert and its own delete
+      -- pass uses the row's copy: a queue whose retention was changed
+      -- after rows existed has rows that outlive, or predecease, whatever
+      -- the queue now advertises. \`LEAST\` ignores nulls, which is what
+      -- makes the two "no bound to apply" cases fall through to the
+      -- caller's window rather than to zero: there may be no rows at all
+      -- yet, and \`NULLIF\` turns pg-boss's \`0\` — its "never delete" —
+      -- into the same nothing.
       SELECT LEAST(
                ${windowSeconds}::int,
-               min(NULLIF(q.deletion_seconds, 0))
+               min(NULLIF(j.deletion_seconds, 0))
              ) AS seconds
       FROM registered r
-      LEFT JOIN pgboss.queue q ON q.name = r.queue_name
+      LEFT JOIN pgboss.job j
+        ON j.name = r.queue_name
+       AND j.state IN ('completed', 'failed')
     )
     SELECT
       r.job_name,
@@ -170,14 +199,20 @@ export async function surveyScheduledJobs(
       to_json(max(j.completed_on) FILTER (WHERE j.state = 'completed')) #>> '{}'
         AS last_completed_on,
       to_json(max(j.completed_on) FILTER (WHERE j.state = 'failed')) #>> '{}'
-        AS last_failed_on,
+        AS last_queue_failure_on,
       (count(j.id) FILTER (
         WHERE j.completed_on >= now() - b.seconds * interval '1 second'
       ))::int AS ticks,
+      -- Completions only. pg-boss preserves \`started_on\` and stamps
+      -- \`completed_on\` when it abandons a tick, so a failure has a
+      -- duration too — roughly its expiry budget, eight minutes for the
+      -- enrichment sweep. Reporting that as the slowest tick would invent
+      -- a performance problem out of an outage.
       (max(
         (EXTRACT(EPOCH FROM (j.completed_on - j.started_on)) * 1000)::bigint
       ) FILTER (
-        WHERE j.started_on IS NOT NULL
+        WHERE j.state = 'completed'
+          AND j.started_on IS NOT NULL
           AND j.completed_on >= now() - b.seconds * interval '1 second'
       ))::bigint AS slowest_tick_ms
     FROM registered r
@@ -202,7 +237,7 @@ export async function surveyScheduledJobs(
     jobs: rows.map((row) => ({
       name: row.job_name,
       last_completed_at: toIso(row.last_completed_on),
-      last_failed_at: toIso(row.last_failed_on),
+      last_queue_failure_at: toIso(row.last_queue_failure_on),
       ticks: row.ticks,
       slowest_tick_ms:
         row.slowest_tick_ms === null ? null : Number(row.slowest_tick_ms),
