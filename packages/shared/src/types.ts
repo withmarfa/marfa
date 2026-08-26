@@ -158,6 +158,36 @@ export interface Item {
   device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
+  /**
+   * Whether the integration named in `source` still has a live connection in
+   * this item's space.
+   *
+   * **Derived per read and never stored.** No column backs it, no write
+   * accepts it, and the storage layer never sets it — it is attached by the
+   * server as an item goes out, from the connections the space holds at that
+   * moment. It lives on `Item` rather than beside it because `Item` is the
+   * shape a client receives, and a field a typed client cannot see without a
+   * cast is only half a signal.
+   *
+   * **Absent means the question does not apply**, not "no". Only an item an
+   * integration wrote carries it: a hand-written note has no upstream to be
+   * cut off from and can never acquire one. `false` says the integration is
+   * still installed there; `true` says it is not, and the item is a copy of
+   * a record nothing is keeping current any more.
+   *
+   * **Every REST response that carries an item answers**, whether it read
+   * the row or just wrote it — so a `POST /items` or `PATCH` response omits
+   * it for exactly the same reason a `GET` does, and never because a write
+   * had no chance to look.
+   *
+   * **The one surface that does not is the `GET /events` stream.** Removing
+   * a connection publishes no item events, so the stream cannot report the
+   * change this field describes, and its frames leave the field off
+   * entirely. A client merging frames over a read must keep the value the
+   * read gave it rather than reading absence in a frame as an answer, and
+   * must re-read to refresh it.
+   */
+  orphaned?: boolean;
 }
 
 /** Input for creating a new item. */

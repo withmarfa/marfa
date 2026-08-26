@@ -11,6 +11,7 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
+import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -167,7 +168,14 @@ export function itemsLifecycleRoutes(storage: Storage) {
     });
     return c.json(
       {
-        item: restored,
+        item: withOrphanState(
+          restored,
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [restored],
+            c.get("apiKey"),
+          ),
+        ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
       200,
@@ -213,7 +221,17 @@ export function itemsLifecycleRoutes(storage: Storage) {
     });
     return c.json(
       {
-        item: updated,
+        // A transition is the case the contract most has to survive: an
+        // archive on an orphaned row must not answer as though the row had
+        // no integration behind it.
+        item: withOrphanState(
+          updated,
+          await resolveOrphanScopeForOwnWrite(
+            storage,
+            [updated],
+            c.get("apiKey"),
+          ),
+        ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
       200,

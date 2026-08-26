@@ -203,6 +203,9 @@
                         "source_id": {
                           "type": "string"
                         },
+                        "orphaned": {
+                          "type": "boolean"
+                        },
                         "device": {
                           "type": "string"
                         },
@@ -397,6 +400,9 @@
                         },
                         "source_id": {
                           "type": "string"
+                        },
+                        "orphaned": {
+                          "type": "boolean"
                         },
                         "device": {
                           "type": "string"
@@ -922,6 +928,9 @@
                               "source_id": {
                                 "type": "string"
                               },
+                              "orphaned": {
+                                "type": "boolean"
+                              },
                               "device": {
                                 "type": "string"
                               },
@@ -1095,6 +1104,9 @@
                                   },
                                   "source_id": {
                                     "type": "string"
+                                  },
+                                  "orphaned": {
+                                    "type": "boolean"
                                   },
                                   "device": {
                                     "type": "string"
@@ -1802,6 +1814,9 @@
                         "source_id": {
                           "type": "string"
                         },
+                        "orphaned": {
+                          "type": "boolean"
+                        },
                         "device": {
                           "type": "string"
                         },
@@ -2045,6 +2060,9 @@
                               },
                               "source_id": {
                                 "type": "string"
+                              },
+                              "orphaned": {
+                                "type": "boolean"
                               },
                               "device": {
                                 "type": "string"
@@ -2443,6 +2461,9 @@
                         },
                         "source_id": {
                           "type": "string"
+                        },
+                        "orphaned": {
+                          "type": "boolean"
                         },
                         "device": {
                           "type": "string"
@@ -3019,6 +3040,9 @@
                         "source_id": {
                           "type": "string"
                         },
+                        "orphaned": {
+                          "type": "boolean"
+                        },
                         "device": {
                           "type": "string"
                         },
@@ -3342,6 +3366,9 @@
                         },
                         "source_id": {
                           "type": "string"
+                        },
+                        "orphaned": {
+                          "type": "boolean"
                         },
                         "device": {
                           "type": "string"
@@ -6521,6 +6548,9 @@
                           },
                           "source_id": {
                             "type": "string"
+                          },
+                          "orphaned": {
+                            "type": "boolean"
                           },
                           "device": {
                             "type": "string"
@@ -10743,6 +10773,9 @@
                               "source_id": {
                                 "type": "string"
                               },
+                              "orphaned": {
+                                "type": "boolean"
+                              },
                               "device": {
                                 "type": "string"
                               },
@@ -11052,6 +11085,9 @@
                               },
                               "source_id": {
                                 "type": "string"
+                              },
+                              "orphaned": {
+                                "type": "boolean"
                               },
                               "device": {
                                 "type": "string"
