@@ -39,6 +39,20 @@ export type PgClient = ReturnType<typeof postgres>;
  * idle timer whenever a connection leaves the idle queue — so a long-lived
  * streaming RLS reservation is never closed out from under an open stream.
  */
+/**
+ * Hard ceiling on the session-mode pool, and a ceiling rather than a
+ * default: the pool is built as `Math.min(maxPoolSize ?? 10, this)`, so
+ * `MARFA_DB_POOL_SIZE` can only ever lower it. Nothing raises it.
+ *
+ * Exported because more than one thing has to be sized against it, and a
+ * second copy of the number would drift from this one. Everything that
+ * reserves here competes for these five: streaming reads, the consent
+ * lock, every job-lock tick, and integration dispatch, which holds its
+ * slot for the whole of a dispatch rather than the milliseconds a tick
+ * holds one.
+ */
+export const SESSION_POOL_MAX_CONNECTIONS = 5;
+
 const POOL_IDLE_TIMEOUT_SECONDS = 30;
 
 /**
@@ -231,7 +245,7 @@ export async function createConnection(
     // carries the mechanism and the second ask that answers it. Raising
     // `max` does nothing for that one, and it reaches every client here,
     // including the single-connection one below.
-    max: Math.min(options?.maxPoolSize ?? 10, 5),
+    max: Math.min(options?.maxPoolSize ?? 10, SESSION_POOL_MAX_CONNECTIONS),
     connection: { application_name: `${appName}:session` },
     // Same reasoning as the app pool. This one matters more per socket:
     // between streams it holds its slots open with nothing to show for it.

@@ -120,6 +120,9 @@ export async function tryStartLocalIntegrationRuntime(
     executor,
     boss: options.boss,
     registerWorkers: options.dispatch !== false,
+    ...(config.integrationDispatchConcurrency !== undefined && {
+      dispatchConcurrency: config.integrationDispatchConcurrency,
+    }),
   });
   await runtime.start();
 
