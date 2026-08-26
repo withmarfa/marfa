@@ -50,7 +50,7 @@ import {
   registerScheduleHandler,
   type ConnectionContext,
   type ScheduleMessage,
-  type HandlerResult,
+  type SweepResult,
 } from "@withmarfa/runtime-sdk";
 
 interface FixtureCursor {
@@ -115,7 +115,25 @@ export const DISPATCH_FIXTURE_MANIFEST = {
 export async function handleSchedule(
   ctx: ConnectionContext,
   message: ScheduleMessage,
-): Promise<HandlerResult> {
+): Promise<SweepResult> {
+  // The budget is checked here rather than trusted, because this is the
+  // only place it can be. Every unit test reaches a handler through the
+  // executor's `directDispatch` seam and builds its own context, so all
+  // of them would stay green if the real worker thread stopped injecting
+  // one. This fixture is dispatched through an actual worker thread by
+  // the image verification, which makes a throw here the tripwire for
+  // that whole path.
+  //
+  // Widened to nullable on purpose. The declared type says this cannot be
+  // missing, and the check is worth having precisely because the type
+  // cannot enforce what a `worker_thread` actually put on the wire.
+  const budget = ctx.budget as ConnectionContext["budget"] | undefined;
+  if (
+    typeof budget?.remainingMs !== "function" ||
+    typeof budget.shouldYield !== "boolean"
+  ) {
+    throw new Error("dispatch fixture received no usable ctx.budget");
+  }
   const previous = (await ctx.cursor.read(CURSOR_KEY)) as FixtureCursor | null;
   const next: FixtureCursor = {
     last_run_at: new Date(message.scheduled_for_ms).toISOString(),
@@ -126,10 +144,17 @@ export async function handleSchedule(
   await ctx.activity.emit({
     severity: "info",
     summary: `Dispatch fixture ran (count=${String(next.run_count)})`,
-    detail: { previous: previous?.last_run_at ?? null },
+    detail: {
+      previous: previous?.last_run_at ?? null,
+      budget_remaining_ms: budget.remainingMs(),
+    },
   });
 
-  return { ok: true };
+  // `done: true` — one pass, nothing to continue. The fixture proves
+  // resolution and injection, not resumption; a fixture that parked would
+  // need the supervisor to enqueue a second slice for it and would turn
+  // an image check into a chain test.
+  return { ok: true, done: true };
 }
 
 /** Seeds the in-thread registry. Exported for callers that reset the

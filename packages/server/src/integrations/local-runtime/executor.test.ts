@@ -71,6 +71,8 @@ function buildPoisonFixture(): {
     echo: { echo_ttl_seconds: 0 },
     hopBudget: 5,
     cursorSnapshot: {},
+    startedAtMs: Date.now(),
+    softLimitMs: 60_000,
   };
   return { registration, request };
 }

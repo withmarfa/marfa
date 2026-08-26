@@ -56,7 +56,12 @@ export type {
   ActivitySeverity,
 } from "./activity.js";
 
-export { createEchoSuppression } from "./echo-suppression.js";
+export {
+  createEchoSuppression,
+  settleEchoMarkers,
+  expiredEchoMarkerKeys,
+  ECHO_MARKER_PREFIX,
+} from "./echo-suppression.js";
 export type {
   EchoSuppression,
   EchoSuppressionConfig,
@@ -64,7 +69,16 @@ export type {
 
 export type { ConnectionContext } from "./connection-context.js";
 
-export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
+export {
+  consumeBatch,
+  buildConnectionContext,
+  nextSlice,
+  assessChainProgress,
+  chainRefusal,
+  progressFingerprint,
+} from "./queue-consumer.js";
+export { sweep } from "./sweep.js";
+export type { SweepSpec, SweepPageInput, SweepPageOutput } from "./sweep.js";
 export type {
   ConsumerEnvironment,
   DlqProducer,
@@ -81,6 +95,11 @@ export type {
   ManualMessage,
   QueueMessage,
   HandlerResult,
+  DispatchResult,
+  SweepResult,
+  Continuation,
+  ContinuationInput,
+  Json,
   RuntimeCredential,
   FailureReason,
 } from "./types.js";
@@ -91,3 +110,4 @@ export {
 } from "./types.js";
 
 export { computeNextRunAt, isValidCron } from "./cron.js";
+export { createBudget, type Budget, type BudgetInput } from "./budget.js";

@@ -191,6 +191,11 @@ try {
     echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
     hopBudget: 5,
     cursorSnapshot: {},
+    // The dispatch clock. Sent because this request is built by shape
+    // rather than through `WorkerDispatchRequest`, so nothing here fails
+    // to compile when the worker starts needing a new field.
+    startedAtMs: Date.now(),
+    softLimitMs: 60_000,
   };
 
   const responsePromise = new Promise<{

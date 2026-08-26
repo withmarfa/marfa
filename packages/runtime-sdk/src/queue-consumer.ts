@@ -27,11 +27,14 @@ import {
 import { createActivitySink } from "./activity.js";
 import { createMappingResolver } from "./mapping.js";
 import { createEchoSuppression } from "./echo-suppression.js";
+import { createBudget } from "./budget.js";
 import type { ConnectionContext } from "./connection-context.js";
 import {
   SDK_DEFAULT_HOP_BUDGET,
+  type Continuation,
+  type ContinuationInput,
+  type DispatchResult,
   type FailureReason,
-  type HandlerResult,
   type QueueMessage,
   type RuntimeCredential,
 } from "./types.js";
@@ -82,6 +85,18 @@ export interface ConsumerEnvironment {
   disarmSchedule?: (connectionId: string, reason: string) => Promise<void>;
   /** Manifest's bidirectional_handling block — drives echo TTL. */
   echo: { echo_ttl_seconds: number; lag_window_seconds?: number };
+  /**
+   * How long a handler on this substrate may run before it should wrap
+   * up, in milliseconds.
+   *
+   * Required rather than defaulted, because whoever drives dispatch is
+   * the only party that knows what bound it enforces, and a default here
+   * would be this SDK guessing at somebody else's queue. A consumer that
+   * genuinely has no bound should say so with a large number rather than
+   * leaving a handler to discover the limit by being killed at it — which
+   * is what every integration had to do before there was a budget at all.
+   */
+  softLimitMs: number;
   /** Integration name from the manifest (envelope filter). */
   integrationName: string;
   /**
@@ -114,6 +129,25 @@ export interface ConsumerEnvironment {
    * for each family.
    */
   dlqProducerFor?: (kind: QueueMessage["kind"]) => DlqProducer | null;
+  /**
+   * Enqueue the next slice of a chain whose handler parked.
+   *
+   * Required, and deliberately not optional. A substrate that cannot
+   * enqueue a continuation cannot run this contract, and the failure mode
+   * of letting it try is the worst one available: the handler returns
+   * `ok: true`, the message is acked, and the unfinished sweep is
+   * indistinguishable from a finished one. Making it required means a
+   * substrate that has not thought about resumption fails to compile
+   * rather than silently dropping every chain it is handed.
+   *
+   * `notBefore` is the handler's requested delay in epoch ms — the answer
+   * to a 429 — already clamped by the caller. The driver may schedule
+   * later than asked but must not schedule earlier.
+   */
+  enqueueContinuation: (
+    message: QueueMessage,
+    options?: { notBefore?: number },
+  ) => Promise<void>;
 }
 
 interface ConsumeOutcome {
@@ -122,12 +156,162 @@ interface ConsumeOutcome {
   failed: number;
 }
 
+/**
+ * Build the queue message for the next slice of a chain.
+ *
+ * Three things are preserved rather than recomputed, and each has bitten
+ * somewhere before:
+ *
+ * - **`kind`.** A continuation of a manual run stays `manual`. The
+ *   operator surface distinguishes "this ran because someone asked" from
+ *   "this ran because the cron fired", and a chain that quietly became a
+ *   schedule run halfway through would misattribute every slice after the
+ *   first.
+ * - **`chain_id` and `started_at_ms`.** Both belong to the chain, not the
+ *   slice, so they are copied from the inbound continuation when there is
+ *   one. Restamping `started_at_ms` per slice would make a wall-clock
+ *   chain ceiling unreachable: every slice would look freshly started and
+ *   a chain could run forever inside a bound that never elapses.
+ * - **the envelope's own identity fields.** Rebuilding them from parts is
+ *   how a `space_id` gets dropped, and a message with no space is one the
+ *   consumer's own cross-space check cannot evaluate.
+ *
+ * `slice` counts from 1 for the first continuation, so it reads as "how
+ * many extra deliveries has this sweep needed" rather than as an index.
+ */
+export function nextSlice(
+  message: QueueMessage,
+  continuation: Continuation,
+): QueueMessage {
+  if (message.kind !== "schedule" && message.kind !== "manual") {
+    // Only a sweep can park. Webhook and item-event handlers return
+    // `HandlerResult`, which has no `done`, so this is unreachable
+    // through the type system and is here to fail loudly rather than
+    // silently produce a malformed envelope if that ever changes.
+    throw new Error(`a ${message.kind} message cannot carry a continuation`);
+  }
+  const inbound = "continuation" in message ? message.continuation : undefined;
+  const fingerprint = progressFingerprint(continuation);
+  const seen = [...(inbound?.seen_fingerprints ?? []), fingerprint].slice(
+    -SEEN_FINGERPRINT_WINDOW,
+  );
+  return {
+    ...message,
+    continuation: {
+      resume: continuation.resume,
+      chain_id: inbound?.chain_id ?? continuation.sweepId ?? newChainId(),
+      slice: (inbound?.slice ?? 0) + 1,
+      started_at_ms: inbound?.started_at_ms ?? Date.now(),
+      progress_fingerprint: fingerprint,
+      seen_fingerprints: seen,
+    },
+  };
+}
+
+/**
+ * How many slices one chain may run, and how long, before it is
+ * abandoned.
+ *
+ * Deliberately the same numbers the in-process supervisor uses. They are
+ * duplicated rather than shared because the supervisor cannot import a
+ * constant it also has to document in its own operator notes, but they
+ * mean the same thing and should move together.
+ */
+const MAX_SLICES_PER_CHAIN = 200;
+const MAX_CHAIN_WALL_CLOCK_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Why this chain should stop, or `null` to carry on.
+ *
+ * Wraps `assessChainProgress` with the two ceilings, so a driver has one
+ * question to ask rather than three to remember.
+ */
+export function chainRefusal(
+  inbound: ContinuationInput | undefined,
+  continuation: Continuation,
+): string | null {
+  const stalled = assessChainProgress(inbound, continuation);
+  if (stalled !== null) return stalled;
+  const sliceCount = (inbound?.slice ?? 0) + 1;
+  if (sliceCount > MAX_SLICES_PER_CHAIN) {
+    return `This sync was stopped after ${String(sliceCount - 1)} continuations without finishing`;
+  }
+  const ranForMs = Date.now() - (inbound?.started_at_ms ?? Date.now());
+  if (ranForMs > MAX_CHAIN_WALL_CLOCK_MS) {
+    return `This sync was stopped after running for ${String(Math.round(ranForMs / 60_000))} minutes without finishing`;
+  }
+  return null;
+}
+
+/** How many past fingerprints an envelope carries. Small on purpose: it
+ *  rides on every slice, and a loop longer than this is caught by the
+ *  slice and wall-clock ceilings instead. */
+const SEEN_FINGERPRINT_WINDOW = 16;
+
+/**
+ * Flatten a slice's progress into something comparable.
+ *
+ * A plain string rather than a hash, because the only consumers are an
+ * equality check and a human reading a failure reason, and a hash would
+ * cost the second to buy nothing for the first.
+ */
+export function progressFingerprint(continuation: Continuation): string {
+  const { processed, watermark } = continuation.progress;
+  return `${String(processed)}@${watermark ?? ""}`;
+}
+
+/**
+ * Whether a chain has stopped getting anywhere.
+ *
+ * Returns a reason to abandon it, or `null` to continue. Lives here
+ * rather than in the substrate so every driver applies the same rule —
+ * the check is cheap and the failure it catches is invisible, which is
+ * exactly the combination that gets reimplemented differently twice.
+ *
+ * Both cases are recoverable by design: the watermark is committed as the
+ * sweep runs, so abandoning costs only the slices already spent and the
+ * next scheduled tick starts a fresh chain from where this one reached.
+ * That is what makes it right to be strict here.
+ */
+export function assessChainProgress(
+  inbound: ContinuationInput | undefined,
+  continuation: Continuation,
+): string | null {
+  if (inbound === undefined) return null;
+  const fingerprint = progressFingerprint(continuation);
+  if (inbound.progress_fingerprint === fingerprint) {
+    return `This sync stopped making progress: two slices in a row reported the same position (${fingerprint})`;
+  }
+  if (inbound.seen_fingerprints?.includes(fingerprint) === true) {
+    return `This sync is looping: it returned to a position it had already left (${fingerprint})`;
+  }
+  return null;
+}
+
+/**
+ * Correlation id for one chain of slices.
+ *
+ * `crypto.randomUUID` is the Web Crypto standard rather than Node's, so
+ * it is available on every substrate this SDK targets — the same reason
+ * this package decodes base64 by hand instead of reaching for `Buffer`.
+ */
+function newChainId(): string {
+  return `chain_${crypto.randomUUID()}`;
+}
+
 /** Build a ConnectionContext for a single message. Exported for
  *  per-integration tests that want to exercise handlers via the same
  *  context the runtime would build. */
 export async function buildConnectionContext(
   env: ConsumerEnvironment,
   message: QueueMessage,
+  /**
+   * When the driver picked this delivery up, epoch ms. Defaults to now,
+   * which is right for a consumer that builds the context immediately;
+   * a driver that queued the delivery earlier passes its own timestamp so
+   * the wait is charged against the budget rather than forgiven.
+   */
+  startedAtMs: number = Date.now(),
 ): Promise<ConnectionContext> {
   const credential = await env.mintCredential(message.connection_id);
   // Thread the parent cycle into the ConnectionClient so every mutating
@@ -143,7 +327,22 @@ export async function buildConnectionContext(
     cycleParent,
   });
   const storage = env.storageFor(message.connection_id);
-  return {
+  const { budget, arm } = createBudget({
+    startedAtMs,
+    softLimitMs: env.softLimitMs,
+  });
+  // Armed and not handed back. The timer is unref'd, so it cannot hold
+  // the process open, and the controller it aborts belongs to this
+  // dispatch alone — firing after the handler has returned aborts
+  // something nobody is holding, which is a no-op.
+  //
+  // The in-process substrate's worker DOES cancel its timer, and the
+  // difference is lifetime rather than disagreement: its threads are
+  // pooled and outlive many dispatches, so an uncancelled timer each time
+  // accumulates for the life of the thread. Here the longest anything
+  // lives is one batch.
+  arm();
+  const context: ConnectionContext = {
     connection_id: message.connection_id,
     integration_name: message.integration_name,
     space_id: message.space_id,
@@ -153,7 +352,9 @@ export async function buildConnectionContext(
     echo: createEchoSuppression(storage, env.echo),
     mapping: createMappingResolver(client, message.connection_id),
     cycle: cycleParent,
+    budget,
   };
+  return context;
 }
 
 /**
@@ -222,6 +423,15 @@ export async function consumeBatch(
 ): Promise<ConsumeOutcome> {
   const outcome: ConsumeOutcome = { acked: 0, retried: 0, failed: 0 };
   const hopBudget = env.hopBudget ?? SDK_DEFAULT_HOP_BUDGET;
+  // Every message in this batch is charged from when the batch was
+  // fetched, because that is when the substrate's own bound started. The
+  // messages are handled one after another, so a handler late in the
+  // batch has genuinely less of the allowance left than the first — and
+  // stamping each one at its own start would hand every message a full
+  // allowance the queue has already partly spent. This is the same
+  // batch-versus-dispatch confusion the in-process substrate's expiry
+  // constant carries a warning about.
+  const batchStartedAtMs = Date.now();
 
   for (const msg of messages) {
     const message = msg.body;
@@ -276,7 +486,7 @@ export async function consumeBatch(
     // ctx is null until buildConnectionContext succeeds; activity emit falls
     // back to a fresh build if it stays null (e.g. credential mint throws).
     let ctx: ConnectionContext | null = null;
-    let result: HandlerResult;
+    let result: DispatchResult;
     let dispatchThrew = false;
     // Captured separately so the DLQ stamp uses the bare error message +
     // class name. result.reason carries a "dispatch_threw: ..." prefix for
@@ -285,7 +495,7 @@ export async function consumeBatch(
     let thrownClassName: string | null = null;
     let thrownMessage: string | null = null;
     try {
-      ctx = await buildConnectionContext(env, message);
+      ctx = await buildConnectionContext(env, message, batchStartedAtMs);
       result = await dispatchMessage(ctx, message);
     } catch (err) {
       // A gone Connection short-circuits the whole ladder. Retrying and
@@ -349,6 +559,62 @@ export async function consumeBatch(
     }
 
     if (result.ok) {
+      // A parked sweep is acked only once its successor is safely on the
+      // queue. Acking first and enqueuing after would lose the chain to
+      // any failure in between, and lose it silently: the operator
+      // surface would show a completed run.
+      if ("done" in result && !result.done) {
+        // The same ceilings the in-process substrate applies. They live
+        // here too because a chain with no bound is the documented
+        // footgun of every runtime that has one, and a driver that parks
+        // without checking will loop until something external notices —
+        // which for a queue means never.
+        const inbound =
+          "continuation" in message ? message.continuation : undefined;
+        const refusal = chainRefusal(inbound, result.continuation);
+        if (refusal !== null) {
+          console.error(
+            `[runtime-sdk:consumeBatch] abandoning the chain on connection ${message.connection_id}: ${refusal}`,
+          );
+          try {
+            await (
+              ctx ?? (await buildConnectionContext(env, message))
+            ).activity.emit({
+              severity: "action_required",
+              summary: "A sync was stopped because it stopped making progress",
+              detail: { connection_id: message.connection_id, reason: refusal },
+            });
+          } catch {
+            // Swallow — failing to emit the activity must not turn an
+            // abandoned chain into a retried one.
+          }
+          // Acked, not retried. Redelivering the slice would restart the
+          // same loop; the next scheduled tick begins a fresh chain from
+          // the committed watermark, which is the actual recovery.
+          msg.ack();
+          outcome.failed++;
+          continue;
+        }
+        const next = nextSlice(message, result.continuation);
+        try {
+          await env.enqueueContinuation(
+            next,
+            result.continuation.notBefore === undefined
+              ? undefined
+              : { notBefore: result.continuation.notBefore },
+          );
+        } catch (err) {
+          // The slice's own work is already committed, so redelivering it
+          // repeats a slice rather than losing one. That is the right
+          // trade against dropping the remainder of the sweep.
+          console.error(
+            `[runtime-sdk:consumeBatch] could not enqueue the next slice for connection ${message.connection_id}; retrying this one: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          msg.retry({ delaySeconds: backoffSecondsFor(msg.attempts) });
+          outcome.retried++;
+          continue;
+        }
+      }
       msg.ack();
       outcome.acked++;
       continue;

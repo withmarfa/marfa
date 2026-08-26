@@ -17,7 +17,7 @@ describe("createTestHarness", () => {
     registerScheduleHandler((ctx, msg) => {
       captured = msg;
       void ctx;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
 
     await harness.connection("conn_1").send({
@@ -36,7 +36,7 @@ describe("createTestHarness", () => {
     const harness = createTestHarness({ integrationName: "marfa.test" });
     registerScheduleHandler(async (ctx) => {
       await ctx.cursor.write("main", { ran_for: ctx.connection_id });
-      return { ok: true };
+      return { ok: true, done: true };
     });
 
     await harness.connection("conn_a").send({
@@ -83,7 +83,7 @@ describe("createTestHarness", () => {
     let calls = 0;
     registerScheduleHandler(() => {
       calls++;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
 
     await harness.connection("conn_1").send({
@@ -109,7 +109,7 @@ describe("createTestHarness", () => {
         });
       },
     });
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    registerScheduleHandler(() => Promise.resolve({ ok: true, done: true }));
 
     for (let i = 0; i < 3; i++) {
       await harness.connection(`conn_${String(i)}`).send({

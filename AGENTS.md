@@ -25,7 +25,7 @@ Typed data layer. This monorepo holds eight active workspace packages and the Di
 
 `@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/runtime-sdk`, `@withmarfa/runtime-test`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
 
-`@withmarfa/runtime-sdk` publishes after `@withmarfa/shared`, and `@withmarfa/runtime-test` after the kit, and the order is load-bearing: `pnpm pack` resolves a `workspace:*` dependency to a concrete version number, so packing a package before the version it names exists on the registry produces a tarball nobody can install.
+`publish.yml` publishes sequentially in one job, in this order: `@withmarfa/shared` → `@withmarfa/sdk` → `@withmarfa/runtime-sdk` → `@withmarfa/runtime-test` → `@withmarfa/webhooks`. The order is load-bearing: `pnpm pack` resolves a `workspace:*` dependency to a concrete version number, so packing a package before the version it names exists on the registry produces a tarball nobody can install. **`@withmarfa/sdk` sits in the middle of that chain and is easy to leave out of a mental model of it** — `runtime-sdk` depends on it, so a sequence that skips it packs `runtime-sdk` against a version the registry does not have.
 
 ## Tech stack
 

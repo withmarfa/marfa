@@ -84,7 +84,12 @@ const WEBHOOK = (over: Partial<WebhookMessage> = {}): WebhookMessage => ({
   ...over,
 });
 
-function makeEnv(): ConsumerEnvironment {
+/**
+ * @param enqueued Sink the env records continuations into, so a test that
+ *   cares can assert on the successor envelope rather than only on the
+ *   ack count — an ack alone is what a dropped chain also looks like.
+ */
+function makeEnv(enqueued: QueueMessage[] = []): ConsumerEnvironment {
   const stores = new Map<string, ReturnType<typeof createInMemoryStorage>>();
   return {
     apiUrl: "http://localhost:0",
@@ -104,6 +109,11 @@ function makeEnv(): ConsumerEnvironment {
         connection_id: id,
       }),
     echo: { echo_ttl_seconds: 60 },
+    softLimitMs: 60_000,
+    enqueueContinuation: (message) => {
+      enqueued.push(message);
+      return Promise.resolve();
+    },
   };
 }
 
@@ -113,7 +123,7 @@ describe("consumeBatch", () => {
   });
 
   it("acks every message when handler returns ok", async () => {
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    registerScheduleHandler(() => Promise.resolve({ ok: true, done: true }));
     const m1 = makeMsg(SCHED());
     const m2 = makeMsg(SCHED({ connection_id: "conn_b" }));
     const outcome = await consumeBatch(makeEnv(), [m1, m2]);
@@ -128,7 +138,7 @@ describe("consumeBatch", () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
     const m1 = makeMsg(SCHED({ integration_name: "demo" }));
     const m2 = makeMsg(SCHED({ integration_name: "other" }));
@@ -175,7 +185,7 @@ describe("consumeBatch", () => {
           reason: "second-fails",
         });
       }
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
     const m1 = makeMsg(SCHED({ connection_id: "conn_a" }));
     const m2 = makeMsg(SCHED({ connection_id: "conn_b" }));
@@ -278,7 +288,7 @@ describe("consumeBatch", () => {
     // dispatch try/catch but the activity-emit backstop downstream also
     // can't reach Marfa. The console.error is the only visible signal in
     // that degraded mode.
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    registerScheduleHandler(() => Promise.resolve({ ok: true, done: true }));
     const env: ConsumerEnvironment = {
       ...makeEnv(),
       mintCredential: () =>
@@ -320,7 +330,7 @@ describe("consumeBatch", () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
     const env: ConsumerEnvironment = { ...makeEnv(), spaceId: "space-A" };
     const matchA = makeMsg(SCHED({ space_id: "space-A" }));
@@ -337,7 +347,7 @@ describe("consumeBatch", () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
     const env: ConsumerEnvironment = { ...makeEnv(), spaceId: "space-A" };
     const m = makeMsg(SCHED());

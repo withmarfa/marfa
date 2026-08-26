@@ -25,6 +25,7 @@ import {
   ConnectionClient,
   createActivitySink,
   createCursorStore,
+  createBudget,
   createEchoSuppression,
   type ConnectionContext,
   type CursorStorageAdapter,
@@ -168,6 +169,13 @@ function makeDirectDispatch(
       echo: createEchoSuppression(cursorAdapter, request.echo),
       mapping: familyOnlyMappingResolver(),
       cycle: cycleParent,
+      // The real budget off the request's own numbers, not a stub that
+      // never yields. A fixed `shouldYield: false` here would let a
+      // handler's yield branch pass every test while never running.
+      budget: createBudget({
+        startedAtMs: request.startedAtMs,
+        softLimitMs: request.softLimitMs,
+      }).budget,
     };
     _resetHandlers();
     integration.registerHandlers(registerOptions);

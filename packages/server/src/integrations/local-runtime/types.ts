@@ -9,7 +9,7 @@
  * import the same primitives and run on either substrate.
  */
 import type {
-  HandlerResult,
+  DispatchResult,
   QueueMessage,
   RuntimeCredential,
 } from "@withmarfa/runtime-sdk";
@@ -88,6 +88,21 @@ export interface WorkerDispatchRequest {
    *  and replayed against the live extension by the supervisor on
    *  completion — same lock holds for the whole flow. */
   cursorSnapshot: Record<string, unknown>;
+  /**
+   * When the supervisor picked this dispatch up, epoch ms, on the main
+   * thread's clock.
+   *
+   * Sent rather than read in the worker because everything between pickup
+   * and the handler's first line — the lock, the credential mint, the
+   * state read, the thread hop — is charged against the same queue bound
+   * the handler is being asked to stay inside. A budget anchored at thread
+   * start would hand a handler an allowance the queue had already partly
+   * spent, and the overrun it exists to prevent would happen anyway.
+   */
+  startedAtMs: number;
+  /** Milliseconds from `startedAtMs` to the soft deadline the handler's
+   *  `ctx.budget` reports. Always inside the queue's own bound. */
+  softLimitMs: number;
 }
 
 /**
@@ -97,7 +112,7 @@ export interface WorkerDispatchRequest {
  * the dispatch.
  */
 export interface WorkerDispatchResponse {
-  result: HandlerResult;
+  result: DispatchResult;
   /**
    * Cursor mutations the handler issued. The supervisor merges these
    * into the live `connection.runtime.cursors` extension before releasing
@@ -111,7 +126,7 @@ export interface WorkerDispatchResponse {
    */
   cursorDeletes: string[];
   /**
-   * Whether the worker threw before producing a HandlerResult. The
+   * Whether the worker threw before producing a result. The
    * supervisor uses this to mirror Cloudflare's "throw on first attempt
    * → retry, throw on later attempt → permanent" semantics.
    */
@@ -157,7 +172,7 @@ export interface LocalRuntime {
      * waiting out a real dispatch bound.
      */
     jobSignal?: AbortSignal,
-  ): Promise<HandlerResult>;
+  ): Promise<DispatchResult>;
   /**
    * Look up an integration by name. Used by the webhook receipt route to
    * resolve `integration_name` → registration before enqueueing.

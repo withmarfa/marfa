@@ -28,7 +28,12 @@
  */
 import {
   SDK_DEFAULT_HOP_BUDGET,
-  type HandlerResult,
+  assessChainProgress,
+  expiredEchoMarkerKeys,
+  nextSlice,
+  settleEchoMarkers,
+  type Continuation,
+  type DispatchResult,
   type QueueMessage,
 } from "@withmarfa/runtime-sdk";
 import type { Item } from "@withmarfa/shared";
@@ -38,6 +43,7 @@ import type { Storage } from "../../storage/interface.js";
 import {
   mintLocalRuntimeCredential,
   DISPATCH_JOB_EXPIRY_SECONDS,
+  DISPATCH_SOFT_LIMIT_MS,
 } from "./credentials.js";
 import type { Executor } from "./executor.js";
 import {
@@ -115,6 +121,33 @@ export interface SupervisorConfig {
   registerWorkers?: boolean;
 }
 
+/**
+ * How many slices one chain may run before the supervisor abandons it.
+ *
+ * A ceiling ships with the chain mechanism rather than after it. Temporal
+ * defaults its equivalent to unlimited and documents that as its own
+ * footgun; a chain that parks without advancing produces completed jobs
+ * and a stale `last_sync_at`, so nothing on the operator surface reports
+ * it and the only symptom is a connection that quietly never finishes.
+ *
+ * Abandoning is cheap and that is what buys the right to be aggressive:
+ * the watermark is committed per page, so the next cron tick starts a
+ * fresh chain from wherever the abandoned one reached. Nothing is lost
+ * but the slices already spent.
+ */
+const MAX_SLICES_PER_CHAIN = 200;
+
+/**
+ * How long one chain may run in wall clock before it is abandoned.
+ *
+ * Independent of the slice ceiling because they catch different faults: a
+ * fast handler parking in a tight loop trips the slice count, while one
+ * making real but hopeless progress against a provider larger than the
+ * window trips this. Measured from the chain's start, which is why
+ * `started_at_ms` is copied between slices rather than restamped.
+ */
+const MAX_CHAIN_WALL_CLOCK_MS = 6 * 60 * 60 * 1000;
+
 export function createSupervisor(
   storage: Storage,
   config: SupervisorConfig,
@@ -132,7 +165,7 @@ export function createSupervisor(
   let stopped = false;
 
   /** Dispatch a single message through the per-Connection lock + the
-   *  executor; apply the side effects. Returns the HandlerResult for
+   *  executor; apply the side effects. Returns the dispatch result for
    *  tests; the queue consumer ignores the result (translation is
    *  inside this function).
    *
@@ -142,7 +175,13 @@ export function createSupervisor(
     envelope: SchedulerEnvelope,
     attempt = 0,
     jobSignal?: AbortSignal,
-  ): Promise<HandlerResult> {
+  ): Promise<DispatchResult> {
+    // Stamped here rather than beside the request built further down,
+    // because the queue's bound started running when this function was
+    // entered and everything between — the reclaim check, the hop-budget
+    // lookup, the lock, the credential mint, the state read — is spent out
+    // of the same allowance the handler is asked to stay inside.
+    const startedAtMs = Date.now();
     const registration = byName.get(envelope.integration_name);
     if (!registration) {
       // Unknown integration — ack and skip, mirroring the hosted substrate.
@@ -237,21 +276,52 @@ export function createSupervisor(
           }),
           hopBudget,
           cursorSnapshot: state.cursors,
+          startedAtMs,
+          softLimitMs: DISPATCH_SOFT_LIMIT_MS,
         };
         const response = await config.executor.dispatch(registration, request);
         // Apply cursor delta regardless of result — next dispatch must see
         // these writes. That holds for a reclaimed job too: the writes the run
         // made before its job was taken away are real, and discarding them
         // would make the next run redo work it cannot know was already done.
+        // Echo markers are stamped in a worker thread whose writes are
+        // not visible to anything until this moment, so their TTL is
+        // rebased onto the commit clock before it is applied. Written
+        // from the thread's clock, a marker from a long run arrives
+        // already expired and the first echo webhook goes straight
+        // through — deleting the record on its way past, so nothing is
+        // left to show why.
+        const committedAtMs = Date.now();
+        settleEchoMarkers(response.cursorUpdates, committedAtMs);
+        // Both read paths delete a marker they find expired, which bounds
+        // what an integration keeps asking about but not what it stops
+        // asking about. Sweeping here is what stops one key per outbound
+        // write accumulating on a Connection forever.
+        // Read from the PRE-dispatch snapshot, so a key this dispatch has
+        // just rewritten has to be excluded: `applyCursorDelta` applies
+        // updates and then deletes, so a key in both is deleted, and the
+        // marker the handler just wrote would be swept by the sweep meant
+        // for the one it replaced. The result is no marker at all on the
+        // commonest shape there is — a second write to the same external
+        // record — and the next echo webhook re-ingests the integration's
+        // own change, which is the exact loop this module exists to stop.
+        const staleMarkers = expiredEchoMarkerKeys(
+          state.cursors,
+          committedAtMs,
+        ).filter((key) => !(key in response.cursorUpdates));
+        const cursorDeletes =
+          staleMarkers.length > 0
+            ? [...new Set([...response.cursorDeletes, ...staleMarkers])]
+            : response.cursorDeletes;
         if (
           Object.keys(response.cursorUpdates).length > 0 ||
-          response.cursorDeletes.length > 0
+          cursorDeletes.length > 0
         ) {
           await applyCursorDelta(
             storage,
             message.connection_id,
             response.cursorUpdates,
-            response.cursorDeletes,
+            cursorDeletes,
           );
         }
         const result = effectiveResult(response, attempt);
@@ -261,6 +331,44 @@ export function createSupervisor(
         // that overrun every run and therefore reach this branch every time.
         if (jobSignal?.aborted === true && (result.ok || result.retry)) {
           return recordReclaimedDispatch(message, response);
+        }
+        // A parked sweep is only a park once its successor is on the
+        // queue. Enqueuing here — inside the connection lock, after the
+        // cursor delta has landed and after the reclaim check — is what
+        // makes the chain durable: the next slice cannot start before
+        // this one's writes are visible, and nothing else can dispatch
+        // this connection in between.
+        //
+        // After the reclaim check, not before. A reclaimed job has
+        // already been handed out again, so the redelivery re-runs this
+        // slice and produces its own successor; enqueuing one here as
+        // well forks the chain, and both forks carry the same id, so
+        // neither looks stale to the straggler check.
+        if (result.ok && "done" in result && !result.done) {
+          const chainError = await continueChain(
+            envelope,
+            message,
+            result.continuation,
+          );
+          if (chainError !== null) return chainError;
+        }
+        // A sweep that answered without saying whether it finished is a
+        // handler built against the previous contract. Treating that as
+        // finished is what the required discriminant exists to prevent,
+        // and `"done" in result` would do exactly that silently — so it
+        // is refused here rather than assumed. Loud during the window
+        // between this runtime shipping and the integrations moving onto
+        // it; silent and wrong forever otherwise.
+        if (
+          result.ok &&
+          !("done" in result) &&
+          (message.kind === "schedule" || message.kind === "manual")
+        ) {
+          const reason =
+            "This integration's scheduled handler did not say whether it finished. " +
+            "It is built against an older runtime SDK and needs rebuilding against the current one.";
+          await recordTerminalFailure(message, reason, "MissingSweepVerdict");
+          return { ok: false as const, retry: false, reason };
         }
         await postProcess(message, response, result);
         return result;
@@ -333,7 +441,7 @@ export function createSupervisor(
   async function recordReclaimedDispatch(
     message: QueueMessage,
     response: WorkerDispatchResponse,
-  ): Promise<HandlerResult> {
+  ): Promise<DispatchResult> {
     // The handler's own account of the run is still the most useful detail
     // there is, so it rides along rather than being replaced.
     const handlerDetail =
@@ -363,6 +471,100 @@ export function createSupervisor(
   }
 
   /**
+   * Put the next slice of a chain on the queue.
+   *
+   * Returns `null` when the chain continues, or the result the dispatch
+   * should report instead when it does not. A caller that ignored the
+   * return would ack a park whose successor never landed, which is the
+   * silent-unfinished-sync failure this whole mechanism exists to remove.
+   */
+  async function continueChain(
+    envelope: SchedulerEnvelope,
+    message: QueueMessage,
+    continuation: Continuation,
+  ): Promise<DispatchResult | null> {
+    if (message.kind !== "schedule" && message.kind !== "manual") {
+      // Only a sweep can park; webhook and item-event handlers return
+      // `HandlerResult`, which carries no `done`. Unreachable through the
+      // types, and loud rather than silent if that ever changes.
+      return {
+        ok: false,
+        retry: false,
+        reason: `a ${message.kind} dispatch returned a continuation`,
+      };
+    }
+    const inbound = message.continuation;
+    const sliceCount = (inbound?.slice ?? 0) + 1;
+    const chainStartedAtMs = inbound?.started_at_ms ?? Date.now();
+    const ranForMs = Date.now() - chainStartedAtMs;
+
+    // Checked before the ceilings, because it names the actual fault. A
+    // stalled chain would eventually trip the slice count too, but the
+    // reason an operator reads would say "stopped after 200 continuations"
+    // rather than "stopped making progress", and only one of those points
+    // at the handler.
+    const stalled = assessChainProgress(inbound, continuation);
+    if (stalled !== null) {
+      await recordTerminalFailure(message, stalled, "ChainStalled");
+      return { ok: false, retry: false, reason: stalled };
+    }
+
+    if (
+      sliceCount > MAX_SLICES_PER_CHAIN ||
+      ranForMs > MAX_CHAIN_WALL_CLOCK_MS
+    ) {
+      const reason =
+        sliceCount > MAX_SLICES_PER_CHAIN
+          ? `This sync was stopped after ${String(sliceCount - 1)} continuations without finishing`
+          : `This sync was stopped after running for ${String(Math.round(ranForMs / 60_000))} minutes without finishing`;
+      // Terminal rather than retryable. The next scheduled tick starts a
+      // fresh chain from the committed watermark, so the recovery is
+      // automatic; what is needed here is for somebody to be told, since
+      // a chain that keeps parking looks like health on every other
+      // surface.
+      await recordTerminalFailure(message, reason, "ChainCeiling");
+      return { ok: false, retry: false, reason };
+    }
+
+    const next = nextSlice(message, continuation);
+    if (!config.boss) {
+      // `runtime.enqueue`'s no-boss fallback dispatches synchronously,
+      // which for a chain means each slice calling the next one inside
+      // the previous one's stack until a ceiling stops it. Refusing is
+      // both safer and more honest: a substrate with no queue cannot run
+      // a chain, and saying so beats a recursion that looks like a hang.
+      const reason =
+        "this runtime has no queue, so a continuation cannot be scheduled";
+      await recordTerminalFailure(message, reason, "NoQueue");
+      return { ok: false, retry: false, reason };
+    }
+    try {
+      await config.boss.send(
+        QUEUE_NAME,
+        { integration_name: envelope.integration_name, message: next },
+        {
+          // Below the default so a continuation never overtakes a fresh
+          // webhook delivery. A long chain is background work; a delivery
+          // is somebody waiting.
+          priority: -1,
+          ...(continuation.notBefore !== undefined && {
+            startAfter: new Date(continuation.notBefore),
+          }),
+        },
+      );
+    } catch (err) {
+      // The slice's own writes are already committed, so redelivering it
+      // repeats a slice rather than losing the rest of the sweep.
+      return {
+        ok: false,
+        retry: true,
+        reason: `could not enqueue the next slice: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    return null;
+  }
+
+  /**
    * A handler throw on the first delivery is treated as transient and
    * earns one retry; a throw on a redelivery is a persistent programming
    * error and goes terminal rather than burning the whole retry ladder.
@@ -373,7 +575,7 @@ export function createSupervisor(
   function effectiveResult(
     response: WorkerDispatchResponse,
     attempt: number,
-  ): HandlerResult {
+  ): DispatchResult {
     const result = response.result;
     if (result.ok || result.retry || !response.threw || attempt > 0) {
       return result;
@@ -384,9 +586,18 @@ export function createSupervisor(
   async function postProcess(
     message: QueueMessage,
     response: WorkerDispatchResponse,
-    result: HandlerResult,
+    result: DispatchResult,
   ): Promise<void> {
     if (result.ok) {
+      // A sweep that parked is not a completed sync, and `ok` alone no
+      // longer distinguishes the two. Stamping `last_sync_at` here would
+      // reproduce, through the new shape, exactly the defect this
+      // substrate was just fixed for: a run that did not finish reporting
+      // to the operator surface that it did. The stamp belongs to the
+      // slice that returns `done: true`.
+      if ("done" in result && !result.done) {
+        return;
+      }
       // Only a run that means "sync" records one. An item-event dispatch is
       // a reaction, not a sync run, and stamping every one of them would
       // both misreport the field and put a write behind every reactive

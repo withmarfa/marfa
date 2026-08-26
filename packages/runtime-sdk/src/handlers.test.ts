@@ -75,10 +75,10 @@ describe("handler registration + dispatch", () => {
     let captured: unknown = null;
     registerScheduleHandler((_ctx, msg) => {
       captured = msg;
-      return Promise.resolve({ ok: true });
+      return Promise.resolve({ ok: true, done: true });
     });
     const result = await dispatchMessage(FAKE_CTX, SCHEDULE_MSG);
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, done: true });
     expect(captured).toEqual(SCHEDULE_MSG);
   });
 
@@ -99,7 +99,7 @@ describe("handler registration + dispatch", () => {
   });
 
   it("re-registering a handler replaces the previous one", async () => {
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    registerScheduleHandler(() => Promise.resolve({ ok: true, done: true }));
     registerScheduleHandler(() =>
       Promise.resolve({ ok: false, retry: false, reason: "second" }),
     );

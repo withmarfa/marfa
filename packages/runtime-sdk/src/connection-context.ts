@@ -13,6 +13,7 @@ import type { ActivitySink } from "./activity.js";
 import type { EchoSuppression } from "./echo-suppression.js";
 import type { MappingResolver } from "./mapping.js";
 import type { CycleMetadata } from "./types.js";
+import type { Budget } from "./budget.js";
 
 export interface ConnectionContext {
   /** Stable IDs for the run. */
@@ -42,4 +43,8 @@ export interface ConnectionContext {
    *  item-event. Schedule + webhook runs leave this null because they
    *  start a fresh hop chain. */
   cycle: CycleMetadata | null;
+
+  /** How much of this dispatch's allowance is left, and the signal that
+   *  fires when it runs out. Poll `shouldYield` between units of work. */
+  budget: Budget;
 }

@@ -52,22 +52,56 @@ import {
 const KEY_PREFIX = "marfa_k1_";
 
 /**
- * Longest a fetched BATCH of dispatches can run before pg-boss reclaims its
- * jobs. The supervisor pins its dispatch queue to this value rather than
- * inheriting pg-boss's default, so the number below is the real bound rather
- * than a library default that could move under us.
+ * Longest a dispatch can run before pg-boss reclaims its job.
  *
- * Per batch, not per dispatch, and the distinction matters. pg-boss arms one
- * timer for the whole batch it hands a worker, and the supervisor runs that
- * batch sequentially, so the budget an individual dispatch actually gets is
- * this value minus whatever its batch-mates have already consumed. Four
- * dispatches of six minutes each blow a fifteen-minute batch while none of
- * them is individually close to it.
+ * The supervisor pins its dispatch queue to this value rather than inheriting
+ * pg-boss's default, so the number below is the real bound rather than a
+ * library default that could move under us.
  *
- * The credential TTL derived below stays safe either way: it exceeds this
- * bound, and the per-dispatch budget is never larger than it.
+ * It is per FETCHED BATCH in pg-boss's own terms: one timer is armed across
+ * whatever a worker was handed, and on expiry every job id in that batch is
+ * failed together. The supervisor fetches one job at a time, so batch and
+ * dispatch are the same thing here — but that equivalence is a property of
+ * `batchSize: 1` in `supervisor.ts` rather than of the queue, and raising the
+ * batch would silently make this a shared allowance again.
+ *
+ * The credential TTL derived below exceeds this bound, so expiry is
+ * structurally unable to bite a live dispatch.
  */
 export const DISPATCH_JOB_EXPIRY_SECONDS = 900;
+
+/**
+ * How much of the dispatch bound is held back so a yielding handler can
+ * finish tidily. Purely the reserve — the soft limit derived below is what
+ * a handler actually sees.
+ *
+ * What has to fit inside it, in order: the handler's in-flight page (aborted
+ * at the deadline, but a socket close is not instant), its final cursor
+ * writes, the worker posting its response back, the supervisor committing the
+ * cursor delta, and the supervisor enqueuing the next slice. All but the
+ * first are milliseconds against a healthy database. The reserve is sized for
+ * an unhealthy one, because overrunning the bound is the exact failure this
+ * whole mechanism exists to remove, and the cost of reserving too much is
+ * only that a long sync takes one more slice than it strictly needed.
+ */
+const DISPATCH_YIELD_RESERVE_SECONDS = 300;
+
+/**
+ * How long a handler is given before `ctx.budget.shouldYield` goes true.
+ *
+ * Derived rather than written down, so the two can never drift into the
+ * wrong order. A soft limit at or past the bound would be no limit at all:
+ * the queue would reclaim the job before anything asked the handler to stop,
+ * which is the behaviour that exists today.
+ *
+ * Not tunable by environment, for the reason the credential TTL is not. It
+ * is one side of a three-clock ordering — soft limit < dispatch bound <
+ * credential TTL — and a deployment that could move one side could invert it
+ * and would find out by stranding records rather than by failing to boot.
+ * A test injects its own through `ConsumerEnvironment`; a deployment does not.
+ */
+export const DISPATCH_SOFT_LIMIT_MS =
+  (DISPATCH_JOB_EXPIRY_SECONDS - DISPATCH_YIELD_RESERVE_SECONDS) * 1000;
 
 /**
  * Margin between the dispatch bound and the credential lifetime. Covers
