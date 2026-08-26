@@ -3438,6 +3438,28 @@ exports[`every gallery variant renders > renders 'connections/connection-configu
 </html>"
 `;
 
+exports[`every gallery variant renders > renders 'connections/connection-configure/gene…' 2`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configure connection</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--wide" aria-label="Configure connection">
+          <h1 class="title">Configure Acme Calendar Sync</h1>
+      <form method="post" action="/connections/01999a3f-96ad-4ec1-b378-399d4875cfa5/configure">
+        <label class="field"><span class="field-name">since_days</span><span class="field-desc">How far back to look on the first run.</span><input type="number" name="since_days" value="30"></label>
+        <button type="submit" class="btn btn--primary">Save configuration</button>
+      </form>
+    
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'connections/connection-configure/not-…' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">
@@ -3745,6 +3767,64 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
     <form method="POST" action="/integrations/01999a3f-0000-4ec1-b378-000000000002/install">
       
       <p class="lsec" style="margin-top:16px">Configuration</p><label class="field"><span class="field-name">feed_url *</span><span class="field-desc">The Atom or RSS feed to poll.</span><input type="text" name="config_feed_url" value="" required></label>
+      <div class="actions">
+        <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
+        <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>
+      </div>
+    </form>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'connections/install-consent/consent-d…' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install Acme Calendar Sync</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Install Acme Calendar Sync">
+    
+    <div class="apphead">
+      <span class="logo" aria-hidden="true">A</span>
+      <div>
+        <div class="row__title">Acme Calendar Sync</div>
+        <div class="row__meta">Marfa integration acme/calendar-sync, version 2.1.0</div>
+      </div>
+    </div>
+    <p class="sub">Two-way sync between Acme Calendar and your events.</p>
+
+    <p class="lsec">Adds to your space</p>
+    <div class="captile">
+      <div class="captile__t">Calendar events</div>
+      <div class="captile__d">Synced both ways.</div>
+    </div>
+
+    <details class="disclosure">
+      <summary><span class="disclosure__chevron" aria-hidden="true"></span> Details</summary>
+      <div class="disclosure__body">
+        <p class="disclosure__micro">Kind of content</p>
+        <div class="codefield">google.calendar.event</div>
+        <p class="disclosure__micro">Permissions</p>
+        <div class="codefield">google.calendar.event:write</div>
+        <p class="disclosure__micro">Direction</p>
+        <div class="codefield">Two-way. A change on either side is written to the other.</div>
+        
+        
+      </div>
+    </details>
+
+    
+    
+
+    <form method="POST" action="/integrations/01999a3f-0000-4ec1-b378-000000000004/install">
+      
+      
       <div class="actions">
         <button type="submit" name="decision" value="approve" class="btn btn--primary">Install</button>
         <button type="submit" name="decision" value="deny" class="btn btn--ghost">Cancel</button>

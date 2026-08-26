@@ -21,6 +21,7 @@
 import { renderAuthLayout } from "./auth-layout.js";
 import { renderConfigurationFields } from "./connection-configure.js";
 import { escapeHtml } from "./auth-html.js";
+import { manifestDisplay } from "./manifest-display.js";
 
 interface ConsentParams {
   integrationId: string;
@@ -199,8 +200,33 @@ function renderPermissionDetail(manifest: Record<string, unknown>): string {
 
 export function renderInstallConsentScreen(params: ConsentParams): string {
   const targetTypes = getTargetTypes(params.manifest);
-  const glyph = (params.manifestName.trim().charAt(0) || "?").toUpperCase();
+  const display = manifestDisplay(
+    params.manifestName,
+    params.manifest.display_name,
+  );
   const verbs = directionVerbs(params.direction);
+
+  // A display name is free text its publisher chose, and every other line
+  // above the Install button (the summary, the description) is too. The
+  // identifier is not, so it stays on the page whenever a label is what the
+  // heading holds: it is what separates `acme/calendar-sync` from somebody
+  // else's integration calling itself the same words.
+  //
+  // It has to say so, though. `display_name` carries no character class, so
+  // a publisher may declare one shaped exactly like an identifier, and a
+  // screen showing two identifier-shaped strings with neither announced
+  // leaves the authoritative one as the smaller and lower of the two.
+  //
+  // The lead-in qualifies the identifier rather than replacing anything:
+  // "Marfa integration" is the only token on this line establishing the
+  // platform, rather than the publisher, as the one speaking, and the case
+  // that most needs to sound like the platform is exactly the one where a
+  // publisher-chosen string has taken the heading. So the labeled branch is
+  // the unlabeled line with the identifier inserted, and with no label the
+  // line reads as it always has.
+  const metaLead = display.labeled
+    ? `Marfa integration ${display.identifier}`
+    : "Marfa integration";
 
   // Type identifier(s): the raw, dotted identifiers from the manifest.
   const typeIdField =
@@ -221,10 +247,10 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
 
   const bodyHtml = `
     <div class="apphead">
-      <span class="logo" aria-hidden="true">${escapeHtml(glyph)}</span>
+      <span class="logo" aria-hidden="true">${escapeHtml(display.glyph)}</span>
       <div>
-        <div class="row__title">${escapeHtml(params.manifestName)}</div>
-        <div class="row__meta">Marfa integration, version ${escapeHtml(params.manifestVersion)}</div>
+        <div class="row__title">${escapeHtml(display.name)}</div>
+        <div class="row__meta">${escapeHtml(metaLead)}, version ${escapeHtml(params.manifestVersion)}</div>
       </div>
     </div>
     <p class="sub">${escapeHtml(params.summary)}</p>
@@ -263,7 +289,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   `;
 
   return renderAuthLayout({
-    title: `Install ${params.manifestName}`,
+    title: `Install ${display.name}`,
     bodyHtml,
   });
 }

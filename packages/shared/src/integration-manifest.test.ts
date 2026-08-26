@@ -567,3 +567,54 @@ describe("the retired manifest key", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("IntegrationManifestSchema — display_name", () => {
+  it("accepts a manifest declaring a display_name", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      display_name: "Calendar Sync",
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.display_name).toBe("Calendar Sync");
+  });
+
+  it("accepts a manifest omitting display_name, leaving it undefined", () => {
+    const result = IntegrationManifestSchema.safeParse(VALID_MANIFEST);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.display_name).toBeUndefined();
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "   "],
+  ])("refuses a %s display_name", (_label, value) => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      display_name: value,
+    });
+    expect(result.success).toBe(false);
+    expect(
+      !result.success &&
+        result.error.issues.some((i) => i.path.join(".") === "display_name"),
+    ).toBe(true);
+  });
+
+  it("trims a declared display_name", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      display_name: "  Calendar Sync  ",
+    });
+    expect(result.success && result.data.display_name).toBe("Calendar Sync");
+  });
+
+  // The length check reaches whitespace and stops there. Pinned so nobody
+  // reads the refusals above as a guarantee that a declared label always
+  // renders as something, which is why surfaces keep the identifier.
+  it("admits a zero-width display_name, which the length check cannot catch", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      display_name: "\u200b",
+    });
+    expect(result.success).toBe(true);
+  });
+});

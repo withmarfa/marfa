@@ -27,6 +27,7 @@ import type { TestContext } from "../test-utils.js";
 import {
   parseConfigurePayload,
   renderGoogleCalendarPicker,
+  renderGenericConfigureForm,
   connectionConfigureRoutes,
   type CalendarListEntry,
 } from "./connection-configure.js";
@@ -870,5 +871,44 @@ describe("the configuration surface answers a browser session", () => {
       (connection?.properties as { configuration?: Record<string, unknown> })
         .configuration,
     ).toMatchObject({ feed_url: "https://example.com/feed.xml" });
+  });
+});
+
+/**
+ * The install screen and this one are consecutive steps of the same flow,
+ * so they have to agree on what the integration is called. Adding a second
+ * name is what first made disagreeing possible, and the first cut of that
+ * change did: screen one led with the label and screen two, seconds later,
+ * led with the identifier. Both generic paths now derive the name from one
+ * helper, and
+ * these pin the agreement rather than the helper. The Google Calendar
+ * picker is exempt and titles itself from a constant; the reason is at the
+ * helper.
+ */
+describe("renderGenericConfigureForm — the name it leads with", () => {
+  const MANIFEST = {
+    name: "acme/calendar-sync",
+    target_types: ["core.event"],
+    configuration_schema: {
+      feed_url: {
+        type: "string" as const,
+        description: "The Atom or RSS feed to poll.",
+      },
+    },
+  };
+
+  it("leads with the display_name when the manifest declares one", () => {
+    const html = renderGenericConfigureForm(
+      "conn_1",
+      { ...MANIFEST, display_name: "Acme Calendar Sync" },
+      {},
+    );
+    expect(html).toContain("Configure Acme Calendar Sync");
+    expect(html).not.toContain("Configure acme/calendar-sync");
+  });
+
+  it("leads with the identifier when the manifest declares none", () => {
+    const html = renderGenericConfigureForm("conn_1", MANIFEST, {});
+    expect(html).toContain("Configure acme/calendar-sync");
   });
 });

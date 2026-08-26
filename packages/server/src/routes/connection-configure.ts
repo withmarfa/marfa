@@ -50,6 +50,7 @@ import type {
 } from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
 import { renderAuthLayout } from "./auth-layout.js";
+import { manifestDisplay } from "./manifest-display.js";
 
 // ---------------------------------------------------------------------------
 // Calendar surface representation — the subset of Calendar's
@@ -282,10 +283,11 @@ export function renderGenericConfigureForm(
   current: Record<string, unknown>,
 ): string {
   const rows = renderConfigurationFields(manifest, current);
+  const display = manifestDisplay(manifest.name, manifest.display_name);
   return renderAuthLayout({
     title: "Configure connection",
     wide: true,
-    bodyHtml: `      <h1 class="title">Configure ${esc(manifest.name)}</h1>
+    bodyHtml: `      <h1 class="title">Configure ${esc(display.name)}</h1>
       <form method="post" action="/connections/${esc(connectionId)}/configure">
         ${rows}
         <button type="submit" class="btn btn--primary">Save configuration</button>
@@ -434,6 +436,7 @@ export function parseConfigurePayload(
 
 interface IntegrationManifestShape {
   name: string;
+  display_name?: string;
   target_types: string[];
   configuration_schema?: Record<string, ConfigurationFieldSpec>;
   write_families?: WriteFamilies;
@@ -457,6 +460,7 @@ async function resolveIntegrationManifest(
   const integrationProps = integration.properties as {
     manifest?: {
       name?: string;
+      display_name?: string;
       target_types?: string[];
       configuration_schema?: Record<string, ConfigurationFieldSpec>;
       write_families?: WriteFamilies;
@@ -467,6 +471,9 @@ async function resolveIntegrationManifest(
   if (!Array.isArray(manifest.target_types)) return null;
   return {
     name: manifest.name,
+    ...(manifest.display_name !== undefined
+      ? { display_name: manifest.display_name }
+      : {}),
     target_types: manifest.target_types,
     ...(manifest.configuration_schema !== undefined
       ? { configuration_schema: manifest.configuration_schema }
