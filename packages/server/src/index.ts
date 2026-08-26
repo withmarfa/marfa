@@ -67,6 +67,10 @@ import {
   startPgBossSchedules,
   type ScheduledJobSpec,
 } from "./scheduled/pg-boss-schedules.js";
+import {
+  setScheduledJobsReporter,
+  surveyScheduledJobs,
+} from "./scheduled/job-metrics.js";
 import type { PgBoss } from "pg-boss";
 import {
   log,
@@ -797,6 +801,18 @@ async function main() {
     );
   }
 
+  // What `GET /metrics` reports the jobs as having done. Installed in every
+  // role that has a queue, not only the one that runs the ticks: execution
+  // is pinned to the worker but the endpoint lives on the web role, and both
+  // build the same spec list above. Driven by that list rather than by the
+  // queue table, because an absent row and an absent job read identically
+  // there and "registered, never ticked" is the case this exists to name.
+  if (boss && storage.pgDb !== undefined) {
+    const jobNames = scheduledJobs.map((job) => job.name);
+    const jobMetricsDb = storage.pgDb as PgDb;
+    setScheduledJobsReporter(() => surveyScheduledJobs(jobMetricsDb, jobNames));
+  }
+
   // Register the queue workers and seed the chains once every job above
   // has contributed its spec. Idempotent across processes and restarts.
   // Worker-role only: registering the workers is what pins scheduled
@@ -1048,6 +1064,11 @@ async function main() {
     // pipeline as early as possible — everything below only shortens the time
     // it has to get out.
     log("info", "Shutting down...");
+    // Before anything closes: the reporter closes over the pool, and a
+    // `/metrics` hit arriving mid-drain would otherwise ask a dying
+    // connection for the section. A draining process has nothing true to
+    // say about the queue, and absence is what that means here.
+    setScheduledJobsReporter(undefined);
     webhookConsumer.stop();
     webhookPoller.stop();
     heartbeat?.stop();
