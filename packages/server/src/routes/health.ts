@@ -396,16 +396,23 @@ export function healthRoutes(
     // which types an instance is serving that its build does not. Those
     // sit behind the admin read.
     //
-    // Degraded rather than a log line, because a log line is what this
-    // replaces. An instance can serve a retired type indefinitely, with a
-    // user-visible permission label, and the only previous way to find out
-    // was to go looking. The external poller already keys on this surface.
-    const driftedTypes = platformDrift().length;
-    components.platform_types = {
-      status: driftedTypes === 0 ? "ok" : "degraded",
-      count: driftedTypes,
-    };
-    if (driftedTypes > 0) overall = "degraded";
+    // Not a component: it carries no status and never degrades the
+    // response, which is the shape the connection figures below take.
+    // Neither kind of drift is a fault. A retired type that still holds
+    // items is the designed outcome, because the row is what makes those
+    // items resolve, and the removal route refuses to drop it. A retired
+    // type holding nothing is untidy rather than unhealthy: it resolves,
+    // it serves, it costs nothing. Overall status answers whether this
+    // instance is serving correctly right now, and a row that changes no
+    // behavior is not part of that answer.
+    //
+    // It degraded the response first, which paged unattended alerting for
+    // housekeeping no operator could always clear, and a component that
+    // can sit degraded indefinitely teaches its readers to ignore the ones
+    // that matter. The rule that replaces it: a check earns the right to
+    // degrade only if something is wrong now. If the honest description is
+    // "someone could tidy this up", it is a report.
+    const platformTypes = { drifted: platformDrift().length };
 
     // How much of the connection ceiling this deployment is holding. Not a
     // component: it carries no status and never degrades the response. Pool
@@ -439,6 +446,7 @@ export function healthRoutes(
       status: overall,
       auth_mode: config.authMode,
       components,
+      platform_types: platformTypes,
       ...(databaseConnections && {
         database_connections: databaseConnections,
       }),

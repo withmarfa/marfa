@@ -52,7 +52,7 @@ export function computePlatformDrift(
     if (row.origin !== "platform") continue;
     // Scoped to the bucket the seed writes, which is the same pair the
     // removal is scoped to. Reporting a row the removal cannot reach would
-    // put an instance in a state with no way out: degraded forever, with
+    // put an instance in a state with no way out: reported forever, with
     // the only remedy answering not-found. The two scopes have to be the
     // same scope or the report is not a report of anything actionable.
     if (row.space_id !== "") continue;
