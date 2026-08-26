@@ -651,8 +651,8 @@ export interface KeyStore {
    * neither field is settable through `CreateKeyInput`. `expires_at` is
    * required: every runtime credential carries a hard lifetime bound so
    * the bearer gate refuses it after expiry and the reaper can retire
-   * the row. Callers are the install pipeline and the integration
-   * runtime's in-process mint.
+   * the row. The one caller is the integration runtime's in-process
+   * mint.
    */
   createRuntimeCredential(
     input: CreateKeyInput & {

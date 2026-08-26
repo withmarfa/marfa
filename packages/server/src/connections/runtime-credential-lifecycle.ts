@@ -83,8 +83,7 @@ export function assertMintableSpaceScope(
  *
  * A mint means a dispatch is starting, and dispatches on one connection are
  * serialized: the supervisor takes `connection-dispatch:<id>` around the
- * whole dispatch and mints inside it, and the install pipeline mints
- * through the connection lifecycle lock. So a mint arriving is evidence that no
+ * whole dispatch and mints inside it. So a mint arriving is evidence that no
  * earlier dispatch on this connection is still holding its credential, and
  * every sibling can go.
  *

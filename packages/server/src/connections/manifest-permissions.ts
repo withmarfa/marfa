@@ -3,11 +3,10 @@
  *
  * Single source of truth for how an Integration manifest's declared
  * surface becomes the permission maps stamped onto a runtime credential.
- * Both mint paths use these builders — the hosted install pipeline
- * (`install-pipeline.ts`) and the local substrate's in-process mint
- * (`integrations/local-runtime/credentials.ts`) — so a credential's
- * reach is always least-privilege: exactly what the manifest declares,
- * never a wildcard.
+ * The one mint path, the local substrate's per-dispatch mint in
+ * `integrations/local-runtime/credentials.ts`, builds every credential
+ * through these, so a credential's reach is always least-privilege:
+ * exactly what the manifest declares, never a wildcard.
  */
 import { ConnectionMappingSchema } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
@@ -71,11 +70,10 @@ export function buildTypePermissions(
 
 /** Translate manifest.permissions into a runtime-credential
  *  `extension_permissions` map. The `connection.runtime` namespace is
- *  always granted write — the runtime needs it to hydrate its own
- *  cursor state — and any manifest-declared extension grants merge on
- *  top. Same shape the broker uses at refresh time, kept in sync here
- *  so the seed credential and refreshed credentials carry identical
- *  permissions. */
+ *  always granted write, because the runtime needs it to hydrate its own
+ *  cursor state, and any manifest-declared extension grants merge on
+ *  top. Every credential a Connection gets comes through here, so
+ *  successive mints cannot drift in what they grant. */
 export function buildExtensionPermissions(
   manifest: IntegrationManifest | undefined,
 ): Record<string, "read" | "write"> {

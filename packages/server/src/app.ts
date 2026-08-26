@@ -639,10 +639,7 @@ export function createApp(
   );
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/credentials", credentialRoutes(storage));
-  app.route(
-    "/integrations",
-    integrationRoutes(storage, config.apiKeySalt, auth),
-  );
+  app.route("/integrations", integrationRoutes(storage, auth));
   app.route("/spaces", spaceRoutes(storage));
   app.route(
     "/admin",
@@ -776,10 +773,7 @@ export function createApp(
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
   app.route("/connections", connectionMappingRoutes(storage));
-  app.route(
-    "/connections",
-    connectionRoutes(storage, config.apiKeySalt, localRuntime ?? null),
-  );
+  app.route("/connections", connectionRoutes(storage, localRuntime ?? null));
   app.route(
     "/connections",
     connectionConfigureRoutes(storage, {

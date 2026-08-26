@@ -162,12 +162,14 @@ describe("a runtime credential is fenced by a space", () => {
     expect(res.message).toMatch(/no space/i);
   });
 
-  it("refuses the install pipeline's mint for a space-less Connection", async () => {
-    // The third mint path. A platform admin's credential carries no
-    // space, so `POST /connections/install` stamps none on the
-    // Connection it creates and the credential minted for it comes out
-    // at the platform tier. The refusal has to reach this door too, or
-    // the rule is enforced on two of three.
+  it("refuses to install a space-less Connection", async () => {
+    // The third door. A platform admin's credential carries no space, so
+    // `POST /connections/install` stamps none on the Connection it
+    // creates, and any credential later minted for it would come out at
+    // the platform tier. Installing mints nothing, so the refusal is a
+    // precondition rather than a mint ceiling: it stops the Connection
+    // reaching an installable state at all, which is the earliest point
+    // the rule can be enforced.
     const integrationId = await makeIntegration("acme/install-fence");
     const res = await request(ctx.app, "POST", "/connections/install", {
       key: ctx.adminKey,

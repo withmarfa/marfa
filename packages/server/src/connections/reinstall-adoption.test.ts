@@ -65,7 +65,7 @@ async function install(): Promise<string> {
     },
     undefined,
   );
-  const result = await performInstall(ctx.storage, "test-salt", {
+  const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: undefined,
     authMode: "keys",
@@ -123,7 +123,7 @@ describe("install refuses configuration outside the declared contract", () => {
       },
       undefined,
     );
-    return performInstall(ctx.storage, "test-salt", {
+    return performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",

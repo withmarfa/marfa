@@ -94,7 +94,7 @@ function lockRecorder(calls: string[]): {
 }
 
 describe("performInstall — happy path", () => {
-  it("creates connection + credential + activity and returns their ids", async () => {
+  it("creates connection + activity and returns their ids", async () => {
     const adminKey = await ctx.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.role === "admin"));
@@ -115,7 +115,7 @@ describe("performInstall — happy path", () => {
       undefined,
     );
 
-    const result = await performInstall(ctx.storage, "test-salt", {
+    const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",
@@ -125,14 +125,53 @@ describe("performInstall — happy path", () => {
     });
 
     expect(result.connection_id).toMatch(/^[0-9a-f-]+$/);
-    expect(result.credential_id).toMatch(/^[0-9a-f-]+$/);
     expect(result.activity_id).toMatch(/^[0-9a-f-]+$/);
+  });
 
-    const cred = (await ctx.storage.keys.list()).find(
-      (k) => k.id === result.credential_id,
+  // The install used to mint a credential here, hash it, and discard the
+  // plaintext, so the row it left could not be presented by anyone. Its
+  // one visible effect was a key in the space's list that a space admin
+  // did not create and could not use, until the reaper took it an hour
+  // later. The supervisor mints per dispatch and revokes what it finds,
+  // so nothing downstream ever needed it.
+  it("mints no credential", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: "acme/install-pipeline-no-credential",
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          manifest: manifest(),
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
     );
-    // Direction: both => write level on target types
-    expect(cred?.type_permissions["core.note"]).toBe("write");
+    const before = await ctx.storage.keys.list();
+    const result = await performInstall(ctx.storage, {
+      apiKeyId: adminKey.id,
+      spaceId: undefined,
+      authMode: "keys",
+      integrationItemId: integration.id,
+      manifest: manifest(),
+      label: "mints nothing",
+    });
+
+    const bound = await ctx.storage.keys.listByConnectionId(
+      result.connection_id,
+      undefined,
+    );
+    expect(bound).toEqual([]);
+    // Nothing anywhere else either, so this cannot pass by the row
+    // merely being unbound.
+    expect((await ctx.storage.keys.list()).length).toBe(before.length);
   });
 });
 
@@ -179,7 +218,7 @@ describe("performInstall — the manifest's declared defaults are written in", (
       },
     });
 
-    const result = await performInstall(ctx.storage, "test-salt", {
+    const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",
@@ -290,7 +329,6 @@ describe("performInstall — compensating writes on activity failure", () => {
     await expect(
       performInstall(
         stubStorage as unknown as Parameters<typeof performInstall>[0],
-        "test-salt",
         {
           apiKeyId: "api_admin",
           spaceId: undefined,
@@ -314,10 +352,8 @@ describe("performInstall — compensating writes on activity failure", () => {
     expect(calls).toEqual([
       "create:connection",
       "lock:connection-lifecycle:itm_conn_fake",
-      "create:credential",
       "unlock:connection-lifecycle:itm_conn_fake",
       "create:activity:throw",
-      "revoke:api_cred_fake",
       "lock:connection-lifecycle:itm_conn_fake",
       "tx:begin",
       "transition:itm_conn_fake:revoked",
@@ -405,7 +441,6 @@ describe("performInstall — compensating writes on activity failure", () => {
     await expect(
       performInstall(
         stubStorage as unknown as Parameters<typeof performInstall>[0],
-        "test-salt",
         {
           apiKeyId: "api_admin",
           spaceId: undefined,
@@ -422,11 +457,9 @@ describe("performInstall — compensating writes on activity failure", () => {
     expect(calls).toEqual([
       "create:connection",
       "lock:connection-lifecycle:itm_conn_audit",
-      "create:credential",
       "unlock:connection-lifecycle:itm_conn_audit",
       "create:activity",
       "audit:log:throw",
-      "revoke:api_cred_audit",
       "lock:connection-lifecycle:itm_conn_audit",
       "tx:begin",
       "transition:itm_conn_audit:revoked",
@@ -436,96 +469,14 @@ describe("performInstall — compensating writes on activity failure", () => {
     ]);
   });
 
-  it("rollback walks compensations in reverse push order without mutating", async () => {
-    // Rollback iterates via a downward index rather than calling
-    // `compensations.reverse()`, which would mutate in place. The array
-    // stays in push order so any recovery code that re-invokes rollback
-    // walks the same reversed sequence each time.
-    //
-    // Verified by failing partway through a multi-step install and
-    // asserting the observable call sequence.
-    const calls: string[] = [];
-    const stubStorage = {
-      items: {
-        create: (input: {
-          type: string;
-        }): Promise<{ id: string; properties: Record<string, unknown> }> => {
-          calls.push(`create:${input.type}`);
-          return Promise.resolve({
-            id: `itm_${String(calls.length)}`,
-            properties: {},
-          });
-        },
-        get: (id: string): Promise<unknown> =>
-          Promise.resolve(activeConnection(id)),
-        transition: (id: string, state: string): Promise<unknown> => {
-          calls.push(`transition:${id}:${state}`);
-          return Promise.resolve(null);
-        },
-        update: (
-          id: string,
-          patch: { properties?: Record<string, unknown> },
-        ): Promise<unknown> => {
-          const p = patch.properties ?? {};
-          calls.push(
-            `update:${id}:${Object.entries(p)
-              .map(([k, v]) => `${k}=${String(v)}`)
-              .sort()
-              .join(",")}`,
-          );
-          return Promise.resolve(null);
-        },
-      },
-      keys: {
-        createRuntimeCredential: (): Promise<{ id: string }> => {
-          calls.push("create:credential:throw");
-          return Promise.reject(new Error("forced credential failure"));
-        },
-        revoke: (id: string): Promise<void> => {
-          calls.push(`revoke:${id}`);
-          return Promise.resolve();
-        },
-      },
-      coordination: lockRecorder(calls),
-      audit: {
-        log: (): Promise<void> => Promise.resolve(),
-      },
-      runInTransaction: async <T>(fn: () => T | Promise<T>): Promise<T> => {
-        calls.push("tx:begin");
-        const out = await fn();
-        calls.push("tx:commit");
-        return out;
-      },
-    };
-
-    await expect(
-      performInstall(
-        stubStorage as unknown as Parameters<typeof performInstall>[0],
-        "test-salt",
-        {
-          apiKeyId: "api_admin",
-          spaceId: undefined,
-          authMode: "keys",
-          integrationItemId: "itm_int_fake",
-          manifest: manifest(),
-          label: "rollback-reinvoke test",
-        },
-      ),
-    ).rejects.toThrow(/forced credential failure/);
-
-    expect(calls).toEqual([
-      "create:system.connection",
-      "lock:connection-lifecycle:itm_1",
-      "create:credential:throw",
-      "unlock:connection-lifecycle:itm_1",
-      "lock:connection-lifecycle:itm_1",
-      "tx:begin",
-      "transition:itm_1:revoked",
-      "update:itm_1:runtime_status=revoked,status=revoked",
-      "tx:commit",
-      "unlock:connection-lifecycle:itm_1",
-    ]);
-  });
+  // The reverse-push-order case that used to live here is gone rather
+  // than rewritten. It demonstrated ordering by watching two
+  // compensations fire, and the credential revoke was one of them. One
+  // compensation remains, so a walker that iterated upward would produce
+  // the identical call sequence and the test would have passed either
+  // way. The two cases above still prove the surviving compensation runs
+  // on a later failure; the ordering rule itself is recorded where the
+  // walker is defined, unasserted until a second compensation exists.
 });
 
 describe("performInstall — credentialRef (OAuth provider credential reuse)", () => {
@@ -596,7 +547,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     }
     expect(await countSharedProviderCredentials()).toBe(1);
 
-    const result = await performInstall(ctx.storage, "test-salt", {
+    const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",
@@ -628,7 +579,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const integrationId = await setupIntegrationItem();
 
     await expect(
-      performInstall(ctx.storage, "test-salt", {
+      performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
         spaceId: undefined,
         authMode: "keys",
@@ -656,7 +607,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     );
 
     await expect(
-      performInstall(ctx.storage, "test-salt", {
+      performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
         spaceId: undefined,
         authMode: "keys",
@@ -689,7 +640,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       undefined,
     );
 
-    const result = await performInstall(ctx.storage, "test-salt", {
+    const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",
@@ -713,7 +664,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const integrationId = await setupIntegrationItem();
 
-    const result = await performInstall(ctx.storage, "test-salt", {
+    const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: undefined,
       authMode: "keys",
@@ -752,7 +703,7 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     await hosted.cleanup();
   });
 
-  it("leaves no connection reading as active after the mint refuses", async () => {
+  it("leaves no connection reading as active after the space fence refuses", async () => {
     // A real failure, not an injected one: a hosted deployment refuses to
     // mint a runtime credential for a connection with no space, because a
     // space-less credential is the platform tier rather than a narrow one.
@@ -785,7 +736,7 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     });
 
     await expect(
-      performInstall(hosted.storage, "test-salt", {
+      performInstall(hosted.storage, {
         apiKeyId: adminKey.id,
         spaceId: undefined,
         authMode: "hosted",
@@ -866,7 +817,7 @@ describe("performInstall — an unaudited install does not stand", () => {
     });
 
     await expect(
-      performInstall(storage, "test-salt", {
+      performInstall(storage, {
         apiKeyId: adminKey.id,
         spaceId: undefined,
         authMode: "keys",

@@ -484,9 +484,9 @@ export function authMiddleware(
  * field the request controls, read later as something it earned.
  *
  * The legitimate holders never pass through the mint routes. Runtime
- * credentials are created at the storage layer by the install pipeline
- * and the per-dispatch mint; the OAuth shape is synthesized per-request
- * in this file and never persisted at all.
+ * credentials are created at the storage layer by the per-dispatch
+ * mint; the OAuth shape is synthesized per-request in this file and
+ * never persisted at all.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",

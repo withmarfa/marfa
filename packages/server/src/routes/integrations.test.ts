@@ -381,7 +381,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 });
 
 describe("POST /integrations/:id/install (install pipeline)", () => {
-  it("end-to-end: installs a connection + credential + activity on approve", async () => {
+  it("end-to-end: installs a connection + activity on approve", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme/install-happy" }) },
@@ -429,30 +429,17 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
     expect(props.direction).toBe("read");
     expect(props.runtime_status).toBe("healthy");
 
-    // Runtime credential row exists, bound to the connection
-    const keys = await ctx.storage.keys.list();
-    const cred = keys.find(
-      (k) => k.is_runtime_credential && k.connection_id === installed?.id,
+    // No credential. The install used to mint one and discard its
+    // plaintext, so nothing could present it; the supervisor mints per
+    // dispatch instead, and what that mint grants is asserted against the
+    // mint itself in `integrations/local-runtime/credentials.test.ts`.
+    const bound = await ctx.storage.keys.listByConnectionId(
+      installed?.id ?? "",
+      undefined,
     );
-    expect(cred).toBeDefined();
-    expect(cred?.label).toBe("My Calendar");
-    expect(cred?.is_runtime_credential).toBe(true);
-    if (!cred) throw new Error("expected runtime credential to exist");
-    expect(cred.extension_permissions).toMatchObject({
-      "connection.runtime": "write",
-      "acme.cursor": "write",
-    });
-    // `write`, not `read`, despite the manifest declaring `direction: "read"`.
-    // `direction` describes flow relative to the upstream service: `read` is an
-    // INBOUND integration that pulls from upstream and writes the result into
-    // Marfa. The narrowing that matters is the type set — this credential
-    // reaches core.note and core.task and nothing else.
-    expect(cred.type_permissions).toMatchObject({
-      "core.note": "write",
-      "core.task": "write",
-    });
+    expect(bound).toEqual([]);
 
-    // Activity row exists, references connection + credential
+    // Activity row exists and references the connection.
     const activities = await ctx.storage.items.list({
       type: "system.activity",
       limit: 50,
@@ -466,11 +453,9 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
     const aprops = matching?.properties as {
       severity: string;
       summary: string;
-      detail: { credential_id: string };
     };
     expect(aprops.severity).toBe("info");
     expect(aprops.summary).toContain("acme/install-happy");
-    expect(aprops.detail.credential_id).toBe(cred.id);
   });
 
   it("declines without writing rows when decision != approve", async () => {

@@ -35,7 +35,6 @@ describe("client.connections.install", () => {
   it("issues POST /connections/install with the typed body and returns the install result", async () => {
     const fakeResult = {
       connection_id: "itm_conn_99",
-      credential_id: "api_cred_99",
       activity_id: "itm_act_99",
     };
 
@@ -82,7 +81,6 @@ describe("client.connections.install", () => {
         return Promise.resolve(
           makeJsonResponse(201, {
             connection_id: "x",
-            credential_id: "y",
             activity_id: "z",
           }),
         );
@@ -110,7 +108,6 @@ describe("client.connections.install", () => {
         return Promise.resolve(
           makeJsonResponse(201, {
             connection_id: "x",
-            credential_id: "y",
             activity_id: "z",
           }),
         );
@@ -138,7 +135,6 @@ describe("client.connections.install", () => {
         return Promise.resolve(
           makeJsonResponse(201, {
             connection_id: "x",
-            credential_id: "y",
             activity_id: "z",
           }),
         );

@@ -1329,8 +1329,8 @@ export function authRoutes(
     //
     // The two sibling mint routes both call this. This one did not, and
     // the reserved list is the whole defense — nothing legitimate is
-    // turned away, because genuine integration credentials are minted at
-    // the storage layer by the install pipeline and never through an HTTP
+    // turned away, because genuine runtime credentials are minted at
+    // the storage layer by the runtime and never through an HTTP
     // route.
     if (isReservedCredentialSource(label)) {
       const keys = await listSpaceKeys(spaceId);
