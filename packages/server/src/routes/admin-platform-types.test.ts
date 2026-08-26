@@ -351,32 +351,44 @@ describe("POST /admin/platform-types/{id}/remove", () => {
   });
 });
 
-describe("/health reports the count", () => {
-  it("degrades while an instance carries a type the build does not", async () => {
+describe("/health reports drift and does not degrade on it", () => {
+  it("reports the count while the overall status stays ok", async () => {
     const ctx = await newContext();
-    setPlatformDrift(["core.retired_health"]);
+    setPlatformDrift(["core.retired_health", "core.retired_second"]);
 
     const res = await request(ctx.app, "GET", "/health");
     const body = (await res.json()) as {
       status: string;
       components: Record<string, { status: string; count?: number }>;
+      platform_types: { drifted: number };
     };
-    expect(body.components.platform_types).toEqual({
-      status: "degraded",
-      count: 1,
-    });
-    expect(body.status).toBe("degraded");
+
+    // Asserted before the status claim, so a fixture that stopped
+    // producing drift fails here rather than passing vacuously: an `ok`
+    // status on an instance carrying no drift proves nothing.
+    expect(body.platform_types).toEqual({ drifted: 2 });
+
+    expect(body.status).toBe("ok");
+    // Not a component. A status is the thing this removed, so the entry
+    // has to be absent rather than reporting a constant `ok` that a
+    // consumer could still key on.
+    expect(body.components.platform_types).toBeUndefined();
     // The identifiers are not here: this endpoint is unauthenticated.
     expect(JSON.stringify(body)).not.toContain("core.retired_health");
+    expect(JSON.stringify(body)).not.toContain("core.retired_second");
   });
 
-  it("is ok and silent about identifiers when there is no drift", async () => {
+  it("reports zero when there is no drift", async () => {
     const ctx = await newContext();
     setPlatformDrift([]);
     const res = await request(ctx.app, "GET", "/health");
     const body = (await res.json()) as {
+      status: string;
       components: Record<string, { status: string; count?: number }>;
+      platform_types: { drifted: number };
     };
-    expect(body.components.platform_types).toEqual({ status: "ok", count: 0 });
+    expect(body.platform_types).toEqual({ drifted: 0 });
+    expect(body.components.platform_types).toBeUndefined();
+    expect(body.status).toBe("ok");
   });
 });
