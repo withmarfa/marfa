@@ -139,12 +139,42 @@ export interface SeededPlatformType {
 /**
  * Where a registered type came from. Immutability used to be a compiled set —
  * a type was unmodifiable because the build said so. As a row property it can
- * distinguish the three cases that actually differ: the platform vocabulary is
+ * distinguish the cases that actually differ: the platform vocabulary is
  * locked, a type an integration published is updatable by that integration's
  * own package and nothing else, and a type a person registered is theirs.
+ *
+ * **`unknown` is a real answer, not a missing one.** An archive taken before
+ * archives carried provenance has none to replay, and the restore has to
+ * write something. The three substantive values are all wrong for it: `user`
+ * is what the consent screen offers a read-and-write wildcard over, and
+ * claiming it for a row that may be a connected service's mirror is the
+ * laundering this value exists to stop; `integration` claims a publisher
+ * nobody recorded; `platform` is a property of the build and can never be
+ * written from a request. Saying "nobody knows" lets the consent screen
+ * offer the row read-only rather than guess, which is the one option that
+ * is neither a silent upgrade nor a silent disappearance.
+ *
+ * **An older build meeting this value does not understand it**, which is the
+ * cost of adding a member at all and is worth stating rather than
+ * discovering. On a rollback, `isValidTypeOrigin` returns false for it, so
+ * every read of such a row logs at error level, and it matches neither the
+ * `user` nor the `integration` test, so its root falls out of every default
+ * bundle instead of being offered read-only. That is the same shape a
+ * rollback already produces for an unrecognized `family`, and the same
+ * answer applies: the value passes through unchanged and the doors stay
+ * shut rather than one being picked.
+ *
+ * **There is no non-destructive way back.** Updating a type carries no
+ * provenance, so a row recorded this way keeps the value until it is
+ * deleted and registered again.
  */
 /** Valid origins as a readonly tuple. The union below is derived from it. */
-export const TYPE_ORIGINS = ["platform", "integration", "user"] as const;
+export const TYPE_ORIGINS = [
+  "platform",
+  "integration",
+  "user",
+  "unknown",
+] as const;
 
 export type TypeOrigin = (typeof TYPE_ORIGINS)[number];
 

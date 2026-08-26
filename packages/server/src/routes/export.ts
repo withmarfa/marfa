@@ -518,8 +518,29 @@ async function handleArchiveExport(
       // restore has to be able to write every item the archive carries,
       // and an unfiltered archive is the case that matters. Carrying a
       // type the archive happens not to use costs one line.
-      for (const schema of await storage.types.listCustom(spaceId)) {
-        typeLines.push(JSON.stringify({ custom_type: schema }));
+      // Provenance rides beside the schema rather than inside it. The
+      // restore validates and normalizes `custom_type` and compares the
+      // result against the stored row to decide skip-or-conflict, so a
+      // field added into the schema would read as a different registration
+      // and turn every re-restore into a conflict.
+      //
+      // It is carried at all because `origin` stopped being descriptive:
+      // it decides whether the consent screen offers a root read-only or
+      // read-and-write. An archive that drops it makes the restore guess,
+      // and the default it guessed was the permissive one.
+      for (const row of await storage.types.listCustomWithProvenance(spaceId)) {
+        typeLines.push(
+          JSON.stringify({
+            custom_type: row.schema,
+            provenance: {
+              origin: row.origin,
+              ...(row.family !== undefined && { family: row.family }),
+              ...(row.owner_integration !== undefined && {
+                owner_integration: row.owner_integration,
+              }),
+            },
+          }),
+        );
         customTypeCount += 1;
       }
       for (const schema of await storage.edgeTypes.list(spaceId)) {

@@ -77,6 +77,12 @@ async function newContext(): Promise<TestContext> {
   return ctx;
 }
 
+async function newHostedContext(): Promise<TestContext> {
+  const ctx = await createTestContext({ authMode: "hosted" });
+  contexts.push(ctx);
+  return ctx;
+}
+
 afterAll(async () => {
   for (const ctx of contexts) {
     await ctx.cleanup();
@@ -565,5 +571,345 @@ describe("archives carry custom type registrations", () => {
     expect(result.imported).toBe(1);
     expect(result.custom_types_registered).toBe(0);
     expect(result.custom_edge_types_registered).toBe(0);
+  });
+});
+
+describe("an archive carries where a type came from", () => {
+  const baseType = {
+    version: 1,
+    fields: { name: { type: "string", required: true } },
+  } as const;
+
+  /** The provenance the destination actually stored for one type id. */
+  async function storedOrigin(
+    ctx: TestContext,
+    space: string,
+    typeId: string,
+  ): Promise<string | undefined> {
+    const rows = await ctx.storage.types.listCustomWithProvenance(space);
+    return rows.find((r) => r.schema.id === typeId)?.origin;
+  }
+
+  it("replays an integration's provenance instead of defaulting it", async () => {
+    // The laundering this exists to stop. The column defaults to `user`,
+    // and `user` is what the consent screen offers a read-and-write
+    // wildcard over, so a type a connected service published came back
+    // from a backup as a type the person registered, through a
+    // first-party operation described to them as a restore.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-prov-${Math.random().toString(36).slice(2, 10)}`;
+    const typeId = `acme.widget_${uniqueSuffix()}`;
+
+    await source.storage.types.create({ id: typeId, ...baseType }, space, {
+      origin: "integration",
+      family: "integration",
+      owner_integration: "acme/widgets",
+    });
+
+    const res = await restore(
+      destination,
+      space,
+      await exportArchive(source, space),
+    );
+    expect(res.status).toBe(200);
+    expect(await storedOrigin(destination, space, typeId)).toBe("integration");
+  });
+
+  it("records an archive with no provenance as unrecorded", async () => {
+    // Every archive taken before exports carried provenance looks like
+    // this. `unknown` is a real answer rather than a missing one: it is
+    // what lets the consent screen offer the root read-only instead of
+    // guessing, and guessing defaulted to the permissive side.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-prov-o-${Math.random().toString(36).slice(2, 10)}`;
+    const typeId = `salvage.record_${uniqueSuffix()}`;
+
+    await source.storage.types.create({ id: typeId, ...baseType }, space, {
+      origin: "user",
+    });
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const stripped = (entries.get("types.ndjson")?.toString() ?? "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        delete parsed.provenance;
+        return JSON.stringify(parsed);
+      })
+      .join("\n");
+
+    const res = await restore(
+      destination,
+      space,
+      await repack(entries, { "types.ndjson": stripped + "\n" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await storedOrigin(destination, space, typeId)).toBe("unknown");
+  });
+
+  it("records an origin this build does not recognize as unrecorded", async () => {
+    // Distinct from provenance being absent, and it reaches a different
+    // branch: a newer build may write an origin this one has never heard
+    // of. Falling back to `user` would be the permissive answer for a
+    // value nobody here can interpret, so it falls back to the same
+    // read-only treatment an archive with nothing recorded gets.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-prov-u-${Math.random().toString(36).slice(2, 10)}`;
+    const typeId = `salvage.future_${uniqueSuffix()}`;
+
+    await source.storage.types.create({ id: typeId, ...baseType }, space, {
+      origin: "user",
+    });
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const tampered = (entries.get("types.ndjson")?.toString() ?? "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed.custom_type) {
+          parsed.provenance = { origin: "something-later" };
+        }
+        return JSON.stringify(parsed);
+      })
+      .join("\n");
+
+    const res = await restore(
+      destination,
+      space,
+      await repack(entries, { "types.ndjson": tampered + "\n" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await storedOrigin(destination, space, typeId)).toBe("unknown");
+  });
+
+  it("refuses an archive claiming a type is platform-shipped", async () => {
+    // The delayed fuse. A restore on a self-host writes into the same
+    // space-less bucket the platform seed uses, and the boot warmup skips
+    // `platform` rows on the way to projecting them globally, so a
+    // replayed claim would seed an attacker-chosen type into the global
+    // registry at the next restart, resolving for every space and
+    // undeletable. Nothing manifests until then, which is what makes it
+    // worth refusing rather than downgrading.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-prov-p-${Math.random().toString(36).slice(2, 10)}`;
+
+    await source.storage.types.create(
+      { id: `acme.sneak_${uniqueSuffix()}`, ...baseType },
+      space,
+      { origin: "user" },
+    );
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const tampered = (entries.get("types.ndjson")?.toString() ?? "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed.custom_type) parsed.provenance = { origin: "platform" };
+        return JSON.stringify(parsed);
+      })
+      .join("\n");
+
+    const res = await restore(
+      destination,
+      space,
+      await repack(entries, { "types.ndjson": tampered + "\n" }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("refuses an archive claiming a shipped family", async () => {
+    // Family decides membership of the content category, and `core` is
+    // the permissive value the boot projection exists to warn about. The
+    // namespace guard stops a reserved identifier; this is the separate
+    // axis, and an ordinary namespace claiming a shipped family is
+    // claiming to be part of the build.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-prov-f-${Math.random().toString(36).slice(2, 10)}`;
+
+    await source.storage.types.create(
+      { id: `acme.family_${uniqueSuffix()}`, ...baseType },
+      space,
+      { origin: "user" },
+    );
+
+    const entries = await extractArchive(await exportArchive(source, space));
+    const tampered = (entries.get("types.ndjson")?.toString() ?? "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed.custom_type) {
+          parsed.provenance = { origin: "user", family: "core" };
+        }
+        return JSON.stringify(parsed);
+      })
+      .join("\n");
+
+    const res = await restore(
+      destination,
+      space,
+      await repack(entries, { "types.ndjson": tampered + "\n" }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+});
+
+describe("a claimed `user` origin is checked against the handle", () => {
+  const baseType = {
+    version: 1,
+    fields: { name: { type: "string", required: true } },
+  } as const;
+
+  /** Builds a one-line archive claiming `provenance` for `typeId`. */
+  async function archiveClaiming(
+    source: TestContext,
+    space: string,
+    seedTypeId: string,
+    typeId: string,
+    provenance: Record<string, unknown>,
+  ): Promise<Buffer> {
+    await source.storage.types.create({ id: seedTypeId, ...baseType }, space, {
+      origin: "user",
+    });
+    const entries = await extractArchive(await exportArchive(source, space));
+    const line =
+      JSON.stringify({
+        custom_type: { id: typeId, ...baseType },
+        provenance,
+      }) + "\n";
+    return await repack(entries, { "types.ndjson": line });
+  }
+
+  async function storedOriginOf(
+    ctx: TestContext,
+    space: string,
+    typeId: string,
+  ): Promise<string | undefined> {
+    const rows = await ctx.storage.types.listCustomWithProvenance(space);
+    return rows.find((r) => r.schema.id === typeId)?.origin;
+  }
+
+  it("degrades the claim when the space does not hold the handle", async () => {
+    // `POST /types` binds publisher-tier registration to owning the
+    // handle. This path never had that check, and `user` is the value
+    // that earns a write wildcard over the whole root, so honoring the
+    // claim unchecked would sell through a restore what that route sells
+    // only to the handle's owner.
+    const source = await newContext();
+    const destination = await newHostedContext();
+    const suffix = uniqueSuffix();
+    const typeId = `acme_${suffix}.shim`;
+
+    // The users table has a foreign key onto spaces, so the space has to
+    // be a real row rather than an arbitrary identifier.
+    const space = (await destination.storage.spaces!.create("hnd-none")).id;
+    await destination.storage.users!.create({
+      provider: "test",
+      provider_id: `p-${suffix}`,
+      space_id: space,
+      handle: `someoneelse${suffix}`,
+    });
+
+    const archive = await archiveClaiming(
+      source,
+      space,
+      `user.seed_${suffix}`,
+      typeId,
+      { origin: "user" },
+    );
+    const res = await restore(destination, space, archive);
+    expect(res.status).toBe(200);
+    expect(await storedOriginOf(destination, space, typeId)).toBe("unknown");
+  });
+
+  it("honors the claim when the space does hold the handle", async () => {
+    // The other half, so the check cannot pass by refusing everything.
+    const source = await newContext();
+    const destination = await newHostedContext();
+    const suffix = uniqueSuffix();
+    const handle = `acme_${suffix}`;
+    const typeId = `${handle}.shim`;
+
+    const space = (await destination.storage.spaces!.create("hnd-held")).id;
+    await destination.storage.users!.create({
+      provider: "test",
+      provider_id: `p-${suffix}`,
+      space_id: space,
+      handle,
+    });
+
+    const archive = await archiveClaiming(
+      source,
+      space,
+      `user.seed_${suffix}`,
+      typeId,
+      { origin: "user" },
+    );
+    const res = await restore(destination, space, archive);
+    expect(res.status).toBe(200);
+    expect(await storedOriginOf(destination, space, typeId)).toBe("user");
+  });
+
+  it("refuses an archive claiming the system family", async () => {
+    // The sibling of the `core` case. Both values are named in the
+    // refusal and both need pinning, or half of it can be deleted with
+    // the suite staying green.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-hnd-s-${Math.random().toString(36).slice(2, 10)}`;
+    const suffix = uniqueSuffix();
+
+    const archive = await archiveClaiming(
+      source,
+      space,
+      `user.seed_${suffix}`,
+      `acme_${suffix}.thing`,
+      { origin: "user", family: "system" },
+    );
+    const res = await restore(destination, space, archive);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("does not rewrite the provenance of a row that already exists", async () => {
+    // Re-restoring must stay a no-op. If the skip branch ever started
+    // refreshing the column, a second restore of an older copy would walk
+    // a row an integration had claimed back to `unknown`.
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-hnd-r-${Math.random().toString(36).slice(2, 10)}`;
+    const suffix = uniqueSuffix();
+    const typeId = `acme_${suffix}.widget`;
+
+    await destination.storage.types.create({ id: typeId, ...baseType }, space, {
+      origin: "integration",
+      family: "integration",
+    });
+
+    const archive = await archiveClaiming(
+      source,
+      space,
+      `user.seed_${suffix}`,
+      typeId,
+      { origin: "user" },
+    );
+    const res = await restore(destination, space, archive);
+    expect(res.status).toBe(200);
+    expect(await storedOriginOf(destination, space, typeId)).toBe(
+      "integration",
+    );
   });
 });

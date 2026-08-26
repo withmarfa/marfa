@@ -26,7 +26,7 @@ import type {
   FieldDefinition,
   TypeSchema,
 } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
+import type { Storage, TypeProvenance } from "../storage/interface.js";
 import { EdgeTypeRequestSchema } from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
@@ -37,6 +37,16 @@ export const MAX_ARCHIVE_EDGE_TYPES = 200;
 export interface ArchiveTypeEntry {
   custom_type?: unknown;
   custom_edge_type?: unknown;
+  /** Provenance for the `custom_type` on the same line. Absent in every
+   *  archive taken before exports carried it, which is what `unknown`
+   *  exists to record. */
+  provenance?: unknown;
+}
+
+/** A type from the archive with the provenance the restore will write. */
+interface PendingType {
+  schema: TypeSchema;
+  provenance: TypeProvenance;
 }
 
 export interface ArchiveTypeResult {
@@ -99,11 +109,132 @@ function normalizeForCompare(
   return result.success ? result.data : schema;
 }
 
+/**
+ * What provenance the restore writes for one archive entry.
+ *
+ * **An archive is a file, and a file is something an attacker can hand you.**
+ * The namespace guard above stops a reserved *identifier*; provenance is a
+ * separate axis and needs its own refusals, because the column decides what
+ * the consent screen offers over the row.
+ *
+ * Two claims are refused outright rather than quietly downgraded, so that a
+ * hostile archive fails loudly instead of half-landing:
+ *
+ * - **`origin: "platform"`.** `projectPlatformRows` filters `origin !== "platform"`
+ *   and does not filter `space_id`, over a `loadCustomTypes()` that reads the
+ *   whole table. On a self-host a restore writes into `space_id = ""`, the same
+ *   bucket the platform seed uses, so a replayed `platform` claim would seed an
+ *   attacker-chosen type into the global registry at the next boot, resolving for
+ *   every space, undeletable, and `default_on` in every space's connected bundle.
+ *   A delayed fuse: `create` writes the space overlay now and nothing manifests
+ *   until a restart.
+ * - **`family: "core"` or `"system"`.** Family decides membership of the content
+ *   category, and `core` is the permissive value the boot projection exists to
+ *   warn about. A type under an ordinary namespace claiming a shipped family is
+ *   claiming to be part of the build.
+ *
+ * Everything else this build does not recognize becomes `unknown`, which is the
+ * fail-closed direction: the root is still offerable, read-only.
+ */
+function provenanceFor(
+  entry: ArchiveTypeEntry,
+  typeId: string,
+  publisherHandle: PublisherHandleCheck,
+): TypeProvenance {
+  const raw = entry.provenance;
+  if (raw === undefined || raw === null || typeof raw !== "object") {
+    return { origin: "unknown" };
+  }
+  const claimed = raw as {
+    origin?: unknown;
+    family?: unknown;
+    owner_integration?: unknown;
+  };
+
+  if (claimed.origin === "platform") {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `Archive claims type "${typeId}" is platform-shipped; the platform set is a property of the build and cannot be restored`,
+      { claimed_origin: "platform" },
+    );
+  }
+  if (claimed.family === "core" || claimed.family === "system") {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `Archive claims type "${typeId}" belongs to the ${claimed.family} family, which is reserved for types the build ships`,
+      { claimed_family: claimed.family },
+    );
+  }
+
+  if (claimed.origin === "integration") {
+    return {
+      origin: "integration",
+      // The family that travels with a manifest-declared type, and the only
+      // one a restore may write. Anything else was refused above or is
+      // absent.
+      family: "integration",
+      ...(typeof claimed.owner_integration === "string" &&
+        claimed.owner_integration.length > 0 && {
+          owner_integration: claimed.owner_integration,
+        }),
+    };
+  }
+  if (claimed.origin === "user") {
+    // `user` earns a read AND write wildcard over the whole namespace
+    // root, which makes it the one claim in this file worth more than the
+    // two refused above. Honoring it unchecked turns a restore into a way
+    // to buy what `POST /types` sells only to the holder of a handle:
+    // that route binds publisher-tier registration to owning the handle,
+    // and this path has never had the same check.
+    //
+    // Degraded rather than refused, deliberately. Refusing would reject
+    // legitimate archives too, a space's own backup restored somewhere
+    // its handle does not resolve among them, and the rule stated for the
+    // bundles applies here: putting a type nowhere is an omission rather
+    // than a narrowing. The type still restores and its root is still
+    // offerable, without the half nobody could verify.
+    if (!publisherHandle.permits(typeId)) return { origin: "unknown" };
+    return { origin: "user" };
+  }
+
+  // Recorded as unrecorded. Covers an archive predating provenance, and an
+  // origin a newer build wrote that this one does not know.
+  return { origin: "unknown" };
+}
+
+/**
+ * Whether a claimed `user` origin is one this space could have made itself.
+ *
+ * Mirrors the binding `POST /types` applies: the publisher tier is the only
+ * one whose first segment is a claimable handle, so registering there means
+ * holding that exact handle. The rule binds only in hosted mode, because
+ * keys mode has no user accounts and so no handle system to check against,
+ * and the only party a refusal could stop there is the deployment's own
+ * operator.
+ */
+interface PublisherHandleCheck {
+  permits(typeId: string): boolean;
+}
+
+function publisherHandleCheck(
+  authMode: "keys" | "hosted",
+  handle: string | null,
+): PublisherHandleCheck {
+  return {
+    permits(typeId: string): boolean {
+      if (authMode !== "hosted") return true;
+      if (classifyNamespace(typeId) !== "publisher") return true;
+      return handle !== null && typeId.split(".")[0] === handle;
+    },
+  };
+}
+
 function parseTypeEntries(
   entries: ArchiveTypeEntry[],
   spaceId: string | undefined,
-): { types: TypeSchema[]; edgeTypes: EdgeTypeSchema[] } {
-  const types: TypeSchema[] = [];
+  publisherHandle: PublisherHandleCheck,
+): { types: PendingType[]; edgeTypes: EdgeTypeSchema[] } {
+  const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
 
   for (const entry of entries) {
@@ -136,7 +267,10 @@ function parseTypeEntries(
           { errors: result.errors },
         );
       }
-      types.push(result.data);
+      types.push({
+        schema: result.data,
+        provenance: provenanceFor(entry, raw.id, publisherHandle),
+      });
       continue;
     }
 
@@ -206,8 +340,19 @@ export async function registerArchiveTypes(
   storage: Storage,
   entries: ArchiveTypeEntry[],
   spaceId: string | undefined,
+  authMode: "keys" | "hosted",
 ): Promise<ArchiveTypeResult> {
-  const { types, edgeTypes } = parseTypeEntries(entries, spaceId);
+  // Resolved once for the batch rather than per entry: it is one row, it
+  // cannot change while the batch is parsed, and the parse is synchronous.
+  const handle =
+    authMode === "hosted" && spaceId && storage.users
+      ? ((await storage.users.getBySpaceId(spaceId))?.handle ?? null)
+      : null;
+  const { types, edgeTypes } = parseTypeEntries(
+    entries,
+    spaceId,
+    publisherHandleCheck(authMode, handle),
+  );
 
   if (types.length > MAX_ARCHIVE_TYPES) {
     throw new MarfaError(
@@ -234,16 +379,22 @@ export async function registerArchiveTypes(
   );
 
   const conflicts: string[] = [];
-  const typesToWrite: TypeSchema[] = [];
+  const typesToWrite: PendingType[] = [];
   let typesSkipped = 0;
-  for (const schema of types) {
-    const existing = existingTypes.get(schema.id);
+  for (const entry of types) {
+    const existing = existingTypes.get(entry.schema.id);
     if (!existing) {
-      typesToWrite.push(schema);
-    } else if (sameSchema(normalizeForCompare(existing, spaceId), schema)) {
+      typesToWrite.push(entry);
+    } else if (
+      sameSchema(normalizeForCompare(existing, spaceId), entry.schema)
+    ) {
+      // A row that is already here keeps the provenance it already has.
+      // Re-restoring an archive must stay a no-op, and rewriting the
+      // column would let a second restore of an older copy walk a row
+      // back to `unknown` after an integration had claimed it.
       typesSkipped += 1;
     } else {
-      conflicts.push(schema.id);
+      conflicts.push(entry.schema.id);
     }
   }
 
@@ -272,21 +423,27 @@ export async function registerArchiveTypes(
   // order the archive listed them in. A chain longer than the batch is
   // caught by the depth guard rather than by looping forever.
   const pending = [...typesToWrite];
-  const written: TypeSchema[] = [];
+  const written: PendingType[] = [];
   let progress = true;
   while (pending.length > 0 && progress) {
     progress = false;
     for (let i = pending.length - 1; i >= 0; i -= 1) {
-      const schema = pending[i];
-      if (!schema) continue;
+      const entry = pending[i];
+      if (!entry) continue;
+      const schema = entry.schema;
       if (schema.parent && !getTypeSchema(schema.parent, spaceId)) continue;
       if (schema.parent) {
         assertParentChainResolves(schema.id, schema.parent, spaceId);
       }
       // `types.create` registers into the space overlay as part of the
       // write, so nothing here calls the registry directly.
-      await storage.types.create(schema, spaceId);
-      written.push(schema);
+      //
+      // Provenance is passed rather than defaulted. Defaulting is what made
+      // an archive round trip launder a connected service's type into the
+      // person's own: the column defaults to `user`, and `user` is the one
+      // the consent screen offers a read-and-write wildcard over.
+      await storage.types.create(schema, spaceId, entry.provenance);
+      written.push(entry);
       pending.splice(i, 1);
       progress = true;
     }
@@ -294,7 +451,7 @@ export async function registerArchiveTypes(
   if (pending.length > 0) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
-      `Archive types name parents that do not resolve: ${pending.map((s) => s.id).join(", ")}`,
+      `Archive types name parents that do not resolve: ${pending.map((e) => e.schema.id).join(", ")}`,
     );
   }
 

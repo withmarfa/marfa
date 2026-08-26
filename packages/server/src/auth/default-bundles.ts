@@ -77,6 +77,18 @@ export interface RuntimeNamespaceRoots {
   own: string[];
   /** Roots holding types an installed integration published. */
   connected: string[];
+  /**
+   * Roots holding types whose provenance nobody recorded, restored from an
+   * archive taken before archives carried it.
+   *
+   * Offered as the person's own, because a root that lands in no bundle is
+   * a root no application can be granted, and a legitimate backup of your
+   * own types restoring into something ungrantable is a worse outcome than
+   * the one this guards against. Offered READ-ONLY, because the row may be
+   * a connected service's mirror and a third-party write would fork it from
+   * upstream. Read is the half both cases can live with.
+   */
+  ownReadOnly: string[];
 }
 
 export async function resolveRuntimeCustomNamespaces(
@@ -106,6 +118,15 @@ export async function resolveRuntimeCustomNamespaces(
     connected: namespaceRootsOf(
       rows
         .filter((row) => row.origin === "integration")
+        .map((row) => row.schema.id),
+    ),
+    // A row whose provenance nobody recorded. Deliberately its own bucket
+    // rather than folded into either neighbor: folding into `own` is the
+    // silent upgrade to write that this split exists to prevent, and
+    // folding into `connected` claims a publisher no row names.
+    ownReadOnly: namespaceRootsOf(
+      rows
+        .filter((row) => row.origin === "unknown")
         .map((row) => row.schema.id),
     ),
   };
@@ -180,6 +201,7 @@ export function buildDefaultPermissionBundles(
 ): PermissionBundle[] {
   const extraCustomNamespaces = runtimeRoots.own ?? [];
   const connectedNamespaces = runtimeRoots.connected ?? [];
+  const readOnlyCustomNamespaces = runtimeRoots.ownReadOnly ?? [];
   const coreTypes: string[] = [];
   const connectedTypes: string[] = [];
   for (const id of [...TYPE_REGISTRY.keys()].sort()) {
@@ -195,6 +217,21 @@ export function buildDefaultPermissionBundles(
       .filter((ns) => !registryRoots.has(ns) && !isReservedRoot(ns))
       .sort(),
   ];
+  // Roots reachable only through a type whose provenance nobody recorded.
+  //
+  // Subtracted from the read-and-write set rather than added beside it: a
+  // space holding both a type it registered itself and a restored one under
+  // the same root has earned write on that root through the first, and
+  // offering the same root twice at two levels would put a contradiction on
+  // one screen. The stronger grant wins, which is the existing rule for a
+  // root that appears more than once.
+  const writableRoots = new Set(customWildcardRoots);
+  const readOnlyCustomRoots = [...new Set(readOnlyCustomNamespaces)]
+    .filter(
+      (ns) =>
+        !writableRoots.has(ns) && !registryRoots.has(ns) && !isReservedRoot(ns),
+    )
+    .sort();
 
   return [
     {
@@ -237,10 +274,18 @@ export function buildDefaultPermissionBundles(
       label: "Things with your own custom types",
       description:
         "Types you define yourself, including ones you define later and ones under your own publisher handle.",
-      scopes: customWildcardRoots.flatMap((ns) => [
-        `${ns}.*:read`,
-        `${ns}.*:write`,
-      ]),
+      scopes: [
+        ...customWildcardRoots.flatMap((ns) => [
+          `${ns}.*:read`,
+          `${ns}.*:write`,
+        ]),
+        // Read without the write half. The bundle's copy claims no verb, so
+        // it stays true of both; which roots are writable is what the
+        // levels-and-parent-rows screen exists to show, and it is not built
+        // yet. What matters here is that the weaker grant is the one a row
+        // of unrecorded provenance gets.
+        ...readOnlyCustomRoots.map((ns) => `${ns}.*:read`),
+      ],
       default_on: true,
     },
     {
