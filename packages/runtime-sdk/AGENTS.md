@@ -4,6 +4,8 @@ The SDK that Connection integrations import. Provides the handler-registration A
 
 **The breaking-change posture is the server's.** This package describes what the server's integration runtime will call and what it guarantees while doing so, so its major version tracks that contract rather than its own internals: a change that makes an existing handler stop compiling or stop behaving is a major, and everything else is not. It stays in this repository for the same reason. It is versioned in lockstep with the server that implements it, and a separate repository would only add a synchronisation problem.
 
+The resumption contract is the exception, shipped as a minor: it is breaking, but every consumer moved onto it in the same delivery and none of them is outside this repository.
+
 ## Layout
 
 Inside `src/`:
