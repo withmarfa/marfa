@@ -88,7 +88,13 @@ cleanup() {
   docker network rm "${NETWORK_NAME}" >/dev/null 2>&1 \
     || echo "  warning: could not remove ${NETWORK_NAME}; remove it by hand." >&2
 }
-trap cleanup EXIT
+# EXIT alone does not cover a killed run, and a killed run is the one that
+# most needs this: nobody is watching the output to notice what was left
+# behind. A stopped matrix left a Postgres, a pooler, an anonymous volume
+# and a network running, and the networks accumulate invisibly because
+# their names carry the shell's PID, so nothing later can tell an orphan
+# from a live run's and nothing dares delete either.
+trap cleanup EXIT INT TERM
 
 # Remove anything a crashed previous run left behind under these names.
 docker rm -f -v "${BOUNCER_NAME}" >/dev/null 2>&1 || true
