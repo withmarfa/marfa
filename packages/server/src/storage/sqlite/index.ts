@@ -30,6 +30,7 @@ import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
+import { projectPlatformRows } from "../platform-family.js";
 import {
   sqliteDeleteAccountCascade,
   sqliteDeleteSpace,
@@ -41,7 +42,6 @@ import {
   seedPlatformTypes as seedPlatformRegistry,
   shippedPlatformTypes,
 } from "@withmarfa/shared";
-import type { SeededPlatformType } from "@withmarfa/shared";
 
 export async function createSqliteStorage(
   sqlitePath: string,
@@ -107,12 +107,13 @@ export async function createSqliteStorage(
   // resolves something its own rows do not carry.
   await typeStore.seedPlatformTypes(shippedPlatformTypes());
   const loadedTypes = await typeStore.loadCustomTypes();
-  const platformRows: SeededPlatformType[] = [];
+  // A platform row whose family this build cannot read is placed at the
+  // restrictive end rather than defaulted to `core`, which was the
+  // permissive one. Reasoning, and why this projects rather than refusing
+  // to boot, is at the helper.
+  const platformRows = projectPlatformRows(loadedTypes);
   for (const row of loadedTypes) {
-    if (row.origin === "platform") {
-      platformRows.push({ schema: row.schema, family: row.family ?? "core" });
-      continue;
-    }
+    if (row.origin === "platform") continue;
     // Register into the owning space's overlay so one space's custom types
     // never resolve for another space's lookups. The empty-string sentinel
     // maps to the null-space bucket.

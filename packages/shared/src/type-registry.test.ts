@@ -14,6 +14,8 @@ import {
   coerceNullProperties,
   validateTransition,
   validateTypeSchema,
+  isPlatformTypeFamily,
+  PLATFORM_TYPE_FAMILIES,
 } from "./type-registry.js";
 import { ErrorCode, MarfaError } from "./errors.js";
 import type { ItemState } from "@withmarfa/types";
@@ -1639,5 +1641,47 @@ describe("a chain past the resolution backstop", () => {
     const schema = getTypeSchema(link(LENGTH - 1), SPACE);
     expect(schema?.id).toBe(link(LENGTH - 1));
     expect(schema?.parent).toBe(link(LENGTH - 2));
+  });
+});
+
+describe("isPlatformTypeFamily", () => {
+  it("accepts every declared family", () => {
+    for (const family of PLATFORM_TYPE_FAMILIES) {
+      expect(isPlatformTypeFamily(family)).toBe(true);
+    }
+  });
+
+  it("refuses a value that is merely present", () => {
+    // The distinction this exists for. A column with no constraint holds
+    // an empty string as readily as a family, and testing for absence
+    // alone lets one through into whichever branch reads it next.
+    expect(isPlatformTypeFamily("")).toBe(false);
+    expect(isPlatformTypeFamily(" core ")).toBe(false);
+    expect(isPlatformTypeFamily("Core")).toBe(false);
+  });
+
+  it("refuses a family a later build might introduce", () => {
+    // Not a hypothetical: this is what an older build meets after a
+    // rollback, and the caller has to be able to tell it apart from a
+    // family rather than crash on it.
+    expect(isPlatformTypeFamily("capability")).toBe(false);
+  });
+
+  it("refuses values that are not strings at all", () => {
+    for (const value of [undefined, null, 0, 1, {}, [], true]) {
+      expect(isPlatformTypeFamily(value)).toBe(false);
+    }
+  });
+
+  it("declares exactly the families the seed knows how to place", () => {
+    // `seedPlatformTypes` switches on the family exhaustively, so this
+    // array and that switch move together or the build breaks. Pinning
+    // the contents means a family added without a decision about which id
+    // set it joins fails here as well as there.
+    expect([...PLATFORM_TYPE_FAMILIES]).toEqual([
+      "core",
+      "integration",
+      "system",
+    ]);
   });
 });

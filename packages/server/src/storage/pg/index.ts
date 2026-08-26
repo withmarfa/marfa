@@ -5,7 +5,6 @@ import {
   seedPlatformTypes as seedPlatformRegistry,
   shippedPlatformTypes,
 } from "@withmarfa/shared";
-import type { SeededPlatformType } from "@withmarfa/shared";
 import type { DbPoolMode } from "../../config.js";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
@@ -40,6 +39,7 @@ import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade, pgDeleteSpace } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
+import { projectPlatformRows } from "../platform-family.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -88,12 +88,13 @@ export async function createPgStorage(
   // resolves something its own rows do not carry.
   await typeStore.seedPlatformTypes(shippedPlatformTypes());
   const loadedTypes = await typeStore.loadCustomTypes();
-  const platformRows: SeededPlatformType[] = [];
+  // A platform row whose family this build cannot read is placed at the
+  // restrictive end rather than defaulted to `core`, which was the
+  // permissive one. Reasoning, and why this projects rather than refusing
+  // to boot, is at the helper.
+  const platformRows = projectPlatformRows(loadedTypes);
   for (const row of loadedTypes) {
-    if (row.origin === "platform") {
-      platformRows.push({ schema: row.schema, family: row.family ?? "core" });
-      continue;
-    }
+    if (row.origin === "platform") continue;
     // Register into the owning space's overlay so one space's custom types
     // never resolve for another space's lookups. The empty-string sentinel
     // maps to the null-space bucket.
