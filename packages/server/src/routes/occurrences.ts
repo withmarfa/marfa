@@ -529,9 +529,7 @@ export function occurrenceRoutes(storage: Storage) {
     // rendering looks current right up until somebody misses a meeting.
     // The same row can occur many times in one window, so the scope is
     // resolved from the rows and applied to the occurrences.
-    const orphanScope = await resolveOrphanScope(storage, spaceId, [
-      ...byId.values(),
-    ]);
+    const orphanScope = await resolveOrphanScope(storage, [...byId.values()]);
     return c.json(
       {
         data: results.map((occurrence) => ({

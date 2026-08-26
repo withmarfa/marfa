@@ -1176,7 +1176,17 @@ export function itemRoutes(storage: Storage) {
         // silently, and refusing forever is the bug being fixed, so the
         // sync is acknowledged and nothing is written or published.
         const metadata = await storage.metadata.get(existing.id);
-        return c.json({ item: existing, metadata, acknowledged: true }, 200);
+        return c.json(
+          {
+            item: withOrphanState(
+              existing,
+              await resolveOrphanScope(storage, [existing]),
+            ),
+            metadata,
+            acknowledged: true,
+          },
+          200,
+        );
       }
       if (existing) {
         // Authorize the update against the row it lands on, not the body
@@ -1356,7 +1366,10 @@ export function itemRoutes(storage: Storage) {
         });
         return c.json(
           {
-            item: itemWithEdges,
+            item: withOrphanState(
+              itemWithEdges,
+              await resolveOrphanScope(storage, [itemWithEdges]),
+            ),
             metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
           },
           200,
@@ -1472,7 +1485,10 @@ export function itemRoutes(storage: Storage) {
     });
     return c.json(
       {
-        item: itemWithEdges,
+        item: withOrphanState(
+          itemWithEdges,
+          await resolveOrphanScope(storage, [itemWithEdges]),
+        ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
       201,
@@ -1534,7 +1550,15 @@ export function itemRoutes(storage: Storage) {
       resource_id: promoted.id,
       details: { mirror_id: mirror.id, type: mirror.type },
     });
-    return c.json({ item: promoted }, 201);
+    return c.json(
+      {
+        item: withOrphanState(
+          promoted,
+          await resolveOrphanScope(storage, [promoted]),
+        ),
+      },
+      201,
+    );
   });
 
   router.openapi(reconcileItemRoute, async (c) => {
@@ -1712,12 +1736,9 @@ export function itemRoutes(storage: Storage) {
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
       : null;
-    // One resolution for the whole page, not one per row — see `_orphaned.ts`.
-    const orphanScope = await resolveOrphanScope(
-      storage,
-      callerSpaceIdForRead,
-      result.data,
-    );
+    // One resolution for the whole page, not one per row, and keyed on each
+    // row's own space rather than the caller's — see `_orphaned.ts`.
+    const orphanScope = await resolveOrphanScope(storage, result.data);
     const decorate = (item: (typeof result.data)[number]) => {
       const withOrphan = withOrphanState(item, orphanScope);
       const withEdges = edgesMap
@@ -1892,9 +1913,11 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // The item and its neighbors are one batch: they came from one space
-    // and they ask one question, so they take one resolution between them.
-    const orphanScope = await resolveOrphanScope(storage, tid, [
+    // The item and its neighbors are one batch, so they take one resolution
+    // between them. Each is still judged against its own space: neighbors
+    // are fetched under the caller's fence, which for a platform key is no
+    // fence at all.
+    const orphanScope = await resolveOrphanScope(storage, [
       item,
       ...(neighbors ?? []).map((n) => n.item),
     ]);
@@ -2208,7 +2231,13 @@ export function itemRoutes(storage: Storage) {
     const hydrated = await hydrateEdgesForItem(storage, id);
     return c.json(
       {
-        item: { ...txResult, edges: hydrated },
+        item: {
+          ...withOrphanState(
+            txResult,
+            await resolveOrphanScope(storage, [txResult]),
+          ),
+          edges: hydrated,
+        },
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
       200,

@@ -299,6 +299,12 @@ export class SqliteItemStore implements ItemStore {
         type: input.type,
         state: state,
         tier: input.tier ?? "library",
+        // The row was inserted with this space, so the object describing it
+        // says so. It was omitted while every read path set it through
+        // `rowToItem`, which made a created item the one `Item` in the
+        // system whose own space was unreadable — invisible because the
+        // field is optional, so `satisfies Item` never objected.
+        space_id: spaceId ?? null,
         properties,
         created_at: now,
         updated_at: now,

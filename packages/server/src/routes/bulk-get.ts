@@ -205,7 +205,7 @@ export function bulkGetRoutes(storage: Storage) {
       : null;
 
     // One resolution for the whole batch — see `_orphaned.ts`.
-    const orphanScope = await resolveOrphanScope(storage, spaceId, visible);
+    const orphanScope = await resolveOrphanScope(storage, visible);
 
     const decorated = visible.map((item) => {
       const withOrphan = withOrphanState(item, orphanScope);

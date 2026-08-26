@@ -196,7 +196,6 @@ export function searchRoutes(storage: Storage) {
     // One resolution for the whole result set — see `_orphaned.ts`.
     const orphanScope = await resolveOrphanScope(
       storage,
-      callerSpaceIdForSearch,
       results.map((r) => r.item),
     );
     const filtered = results.map((r) => ({
