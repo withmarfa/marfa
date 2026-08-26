@@ -24,10 +24,19 @@
  *
  * **Every test here asserts an observable outcome — the redirect, the
  * rendered page, the token response — never the mutation itself.** The hook
- * works by rewriting `ctx.query.scope` in place, which is only load-bearing
- * because the plugin reads the same object afterwards. Were an upstream
- * change to start cloning the hook context, a test that asserted on the
- * mutation would keep passing while sign-in broke.
+ * works by rewriting the request's `scope` in place, which is only
+ * load-bearing because the plugin reads the same object afterwards. Were an
+ * upstream change to start cloning the hook context, a test that asserted on
+ * the mutation would keep passing while sign-in broke.
+ *
+ * That object is the query string on a GET and the form body on a POST, and
+ * the endpoint serves both verbs, so the POST cases below are not a variant
+ * spelling of the GET ones: they are the half where a hook reading the wrong
+ * object narrows nothing and reports that it did. The hook reproduces the
+ * provider's own choice between the two rather than inferring one, so what
+ * these pin is that the two still agree — and they pin it end-to-end,
+ * because a divergence shows up as a request that stops being narrowed
+ * rather than as a wrong value anything could assert on directly.
  *
  * Coverage:
  *   - a stale ceiling missing a live scope reaches consent instead of
@@ -40,6 +49,11 @@
  *   - an omitted `scope` defaults to the live part of the ceiling, not to
  *     the stale stored snapshot
  *   - a client with no ceiling tracks the live allowlist
+ *   - a form POST is narrowed on the same terms as a GET, refusals included
+ *   - a POST carrying parameters on the query too follows the provider onto
+ *     the body, and one carrying them ONLY on the query is left alone rather
+ *     than narrowed on an object the provider will not read
+ *   - a narrowed form POST survives the re-entry that consent performs
  *
  * What the user cannot be shown: the consent page never learns which
  * literals were dropped. The plugin's authorize endpoint validates its
@@ -205,6 +219,34 @@ async function beginAuthorize(
   if (scope !== undefined) params.set("scope", scope);
   return request(c.app, "GET", `/auth/oauth2/authorize?${params.toString()}`, {
     headers: { cookie },
+  });
+}
+
+/**
+ * The same authorization request as {@link beginAuthorize}, sent as a form
+ * POST. The endpoint accepts `application/x-www-form-urlencoded` on POST and
+ * takes every parameter from the body, so the query string stays empty — a
+ * request whose parameters live nowhere a query-only reader would find them.
+ */
+async function beginAuthorizePost(
+  c: TestContext,
+  clientId: string,
+  scope: string | undefined,
+  cookie: string,
+  challenge: string,
+): Promise<Response> {
+  const form: Record<string, string> = {
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: CALLBACK,
+    state: "narrowing-state",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  };
+  if (scope !== undefined) form.scope = scope;
+  return request(c.app, "POST", "/auth/oauth2/authorize", {
+    form,
+    headers: { cookie, origin: ORIGIN },
   });
 }
 
@@ -671,5 +713,201 @@ describe("authorize scope narrowing", () => {
     // everything the server currently advertises survives.
     expect(res.status).toBe(302);
     expect(classifyAuthorize(res).outcome).toBe("consent");
+  });
+});
+
+describe("authorize scope narrowing on a form POST", () => {
+  it("narrows a form POST exactly as it narrows a GET", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-post-stale@example.com");
+
+    // The GET case's ceiling, unchanged: frozen before `core.task:read`
+    // existed, and still carrying a scope for a type that has since gone.
+    const live = buildAllowedScopes();
+    expect(live).toContain("core.task:read");
+    expect(live).not.toContain(RETIRED_SCOPE);
+    const clientId = await seedClient(ctx, [
+      "openid",
+      "core.note:read",
+      RETIRED_SCOPE,
+    ]);
+
+    const { challenge } = pkcePair();
+    const res = await beginAuthorizePost(
+      ctx,
+      clientId,
+      `openid core.note:read core.task:read ${RETIRED_SCOPE}`,
+      cookie,
+      challenge,
+    );
+
+    // A hook that reads only the query string finds nothing to narrow here,
+    // and the un-narrowed set then reaches the plugin, where the one
+    // unsatisfiable literal dead-ends the whole authorization on the
+    // client's own callback. Reaching consent is what says otherwise.
+    expect(res.status).toBe(302);
+    const result = classifyAuthorize(res);
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("consent");
+
+    // The signed query is what the consent screen renders from, so this is
+    // the narrowed set the person is actually shown.
+    const carried = (
+      new URLSearchParams(result.signedQuery ?? "").get("scope") ?? ""
+    ).split(" ");
+    expect(carried).not.toContain(RETIRED_SCOPE);
+    expect(carried).toContain("core.note:read");
+    expect(carried).toContain("core.task:read");
+  });
+
+  it("refuses rather than silently dropping a session-critical scope on a form POST", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-post-session@example.com");
+
+    // A ceiling that omits `offline_access`. The refusal, not the reading,
+    // is what this pins: once the hook can read a POST's scope it can also
+    // narrow one, and narrowing a session scope away succeeds at the
+    // authorize step and then fails inside the SDK with nothing naming the
+    // literal that went missing. Both verbs have to refuse, not just the
+    // one the guard was written against.
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { challenge } = pkcePair();
+    const res = await beginAuthorizePost(
+      ctx,
+      clientId,
+      "openid offline_access core.note:read",
+      cookie,
+      challenge,
+    );
+
+    expect(res.status).toBe(302);
+    const result = classifyAuthorize(res);
+    expect(result.outcome).toBe("error");
+    expect(result.error).toBe("invalid_scope");
+    expect(result.description).toContain("offline_access");
+  });
+
+  it("follows the provider onto the body when the query carries parameters too", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-post-both@example.com");
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    // The provider takes a POST's parameters from the body and ignores the
+    // query outright, so this is a request it serves normally rather than a
+    // malformed one. The query here names a client that does not exist and a
+    // scope nothing could grant: narrowing against it would fail to resolve
+    // a ceiling and leave the request alone, so reaching consent is what
+    // says the body is what got read.
+    const { challenge } = pkcePair();
+    const decoy = new URLSearchParams({
+      client_id: "client_does_not_exist",
+      scope: RETIRED_SCOPE,
+    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/auth/oauth2/authorize?${decoy.toString()}`,
+      {
+        form: {
+          response_type: "code",
+          client_id: clientId,
+          redirect_uri: CALLBACK,
+          state: "narrowing-state",
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          scope: `openid core.note:read core.task:read`,
+        },
+        headers: { cookie, origin: ORIGIN },
+      },
+    );
+
+    expect(res.status).toBe(302);
+    const result = classifyAuthorize(res);
+    expect(result.error).toBeUndefined();
+    expect(result.outcome).toBe("consent");
+    const carried = (
+      new URLSearchParams(result.signedQuery ?? "").get("scope") ?? ""
+    ).split(" ");
+    expect(carried).toContain("core.task:read");
+  });
+
+  it("leaves a POST whose parameters are only on the query entirely alone", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-post-queryonly@example.com");
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+    const before = await storedCeiling(ctx, clientId);
+
+    // The provider reads a POST's body and this one is empty, so the request
+    // is going to fail whatever happens here. What must not happen is this
+    // hook acting on the query anyway: the stale-ceiling catch-up is a
+    // permanent write to the client's registration, and it would land on an
+    // object the provider never reads.
+    //
+    // Narrowly that, and not the general shape it resembles. A before-hook
+    // completes before the endpoint does, so the catch-up still runs ahead
+    // of every rejection the endpoint itself makes — an unregistered
+    // `redirect_uri` among them. That is a separate property, older than
+    // this, and nothing here holds it.
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: CALLBACK,
+      state: "narrowing-state",
+      scope: "openid core.note:read core.task:read",
+    });
+    await request(
+      ctx.app,
+      "POST",
+      `/auth/oauth2/authorize?${query.toString()}`,
+      { form: {}, headers: { cookie, origin: ORIGIN } },
+    );
+
+    // `core.task:read` is a bundle scope the ceiling lacks, so a hook that
+    // read the query here would have widened the row to hold it.
+    expect(bundleScopes.has("core.task:read")).toBe(true);
+    expect(await storedCeiling(ctx, clientId)).toEqual(before);
+  });
+
+  it("carries a narrowed form POST through consent to a token", async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const cookie = await signInUser(ctx, "narrow-post-token@example.com");
+    const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
+
+    const { verifier, challenge } = pkcePair();
+    const res = await beginAuthorizePost(
+      ctx,
+      clientId,
+      `openid core.note:read ${RETIRED_SCOPE}`,
+      cookie,
+      challenge,
+    );
+    const { outcome, signedQuery } = classifyAuthorize(res);
+    expect(outcome).toBe("consent");
+
+    // Accepting re-enters the authorize endpoint from inside the provider,
+    // as a POST whose body is the consent form and whose query is the
+    // authorize request. The hook runs a second time on that re-entry, and
+    // the flow completing with the right grant is what says it read the
+    // query there rather than the consent body.
+    const code = await acceptConsent(ctx, cookie, signedQuery ?? "", [
+      "openid",
+      "core.note:read",
+    ]);
+
+    const tokenRes = await request(ctx.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        client_id: clientId,
+        code_verifier: verifier,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(tokenRes.status).toBe(200);
+    const body = (await tokenRes.json()) as { scope?: string };
+    const granted = (body.scope ?? "").split(" ").filter(Boolean).sort();
+    expect(granted).toEqual(["core.note:read", "openid"]);
   });
 });
