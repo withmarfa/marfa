@@ -117,6 +117,7 @@ export function createSupervisor(
   async function dispatchOne(
     envelope: SchedulerEnvelope,
     attempt = 0,
+    jobSignal?: AbortSignal,
   ): Promise<HandlerResult> {
     const registration = byName.get(envelope.integration_name);
     if (!registration) {
@@ -124,6 +125,23 @@ export function createSupervisor(
       return { ok: true };
     }
     const message = envelope.message;
+    // Nothing to do if the job is already gone. pg-boss fails every job id in
+    // a batch when that batch's timer fires, so one hung dispatch takes its
+    // batch-mates with it and has already caused each of them to be
+    // redelivered. Running them here would repeat in full the work the
+    // redelivery is about to do — a credential mint, a handler run and a
+    // cursor commit apiece — and then discard the result at the check below.
+    // The redelivery is what will actually sync this connection, so this is
+    // an ack rather than a recorded failure: nothing went wrong with a run
+    // that never started.
+    if (jobSignal?.aborted === true) {
+      log("info", "local runtime skipped a dispatch: its queue job was gone", {
+        connection_id: message.connection_id,
+        integration_name: envelope.integration_name,
+        message_kind: message.kind,
+      });
+      return { ok: true };
+    }
     const lockName = `connection-dispatch:${message.connection_id}`;
     // Ack over-budget item-event messages before the lock dance.
     //
@@ -197,7 +215,10 @@ export function createSupervisor(
           cursorSnapshot: state.cursors,
         };
         const response = await config.executor.dispatch(registration, request);
-        // Apply cursor delta regardless of result — next dispatch must see these writes.
+        // Apply cursor delta regardless of result — next dispatch must see
+        // these writes. That holds for a reclaimed job too: the writes the run
+        // made before its job was taken away are real, and discarding them
+        // would make the next run redo work it cannot know was already done.
         if (
           Object.keys(response.cursorUpdates).length > 0 ||
           response.cursorDeletes.length > 0
@@ -210,13 +231,111 @@ export function createSupervisor(
           );
         }
         const result = effectiveResult(response, attempt);
+        // A permanent failure survives the reclaim check. It is a statement
+        // about the connection rather than about the queue job, so demoting
+        // it to a warning would hide a real fault on exactly the connections
+        // that overrun every run and therefore reach this branch every time.
+        if (jobSignal?.aborted === true && (result.ok || result.retry)) {
+          return recordReclaimedDispatch(message, response);
+        }
         await postProcess(message, response, result);
         return result;
       },
     );
-    // withJobLock returns undefined when another instance holds the lock —
-    // treat as ok-and-retry-soon (same semantics as the hosted substrate).
-    return result ?? { ok: true };
+    if (result === undefined) {
+      // The lock was not acquired, so this message is dropped rather than
+      // queued behind whatever holds it. For the usual cause that is the
+      // intended shape: another dispatch is doing this connection's work, and
+      // a schedule tick or reactive event arriving mid-run duplicates work
+      // already in flight.
+      //
+      // It is deliberately not phrased as "the connection is busy", because
+      // `withJobLock` answers `undefined` for two reasons and cannot say
+      // which. The other is failing to reserve a session connection inside
+      // its budget, where nothing is holding the lock at all and the
+      // coordination store logs its own line saying so. Naming one cause here
+      // would misattribute the other.
+      //
+      // No retry follows, despite what this comment claimed for a long time.
+      // It is a try-lock and the caller acks, so the message is gone.
+      log("info", "local runtime skipped a dispatch: lock not acquired", {
+        connection_id: message.connection_id,
+        integration_name: envelope.integration_name,
+        message_kind: message.kind,
+      });
+      return { ok: true };
+    }
+    return result;
+  }
+
+  /**
+   * The verdict on a dispatch whose queue job was taken away while it ran.
+   *
+   * pg-boss arms one timer per fetched batch and hands every job in that batch
+   * the same `AbortController`. When the timer fires it aborts that controller
+   * and fails every job id in the batch. It cannot reach into a worker thread
+   * and nothing here terminates one, so the handler carries on and returns
+   * normally, sometimes minutes later. By then the job has been failed and
+   * redelivered, and the redelivery has been acked at the advisory lock the
+   * original still holds, so it is complete. Whatever the handler reports at
+   * that point describes work no queue job is waiting for.
+   *
+   * **The check has to stay inside the `boss.work` callback**, and that is the
+   * load-bearing fact rather than anything about when the timer fires. The
+   * same controller is aborted in a `finally`, so it is also aborted on the
+   * ordinary success path the instant the batch callback resolves, and again
+   * on a graceful shutdown. Reading it from inside the callback is what makes
+   * an aborted signal mean "this batch lost its jobs" rather than "the batch
+   * finished"; reading it from anywhere downstream would call every healthy
+   * run a reclaimed one.
+   *
+   * Trusting it is what made this indistinguishable from a clean sync: the
+   * handler returned `{ ok: true }`, `postProcess` stamped `last_sync_at` and
+   * cleared `last_error_at`, and nothing recorded that the run had lost its
+   * job. Reading the signal rather than timing the dispatch is what makes the
+   * check agree with pg-boss: the budget is per batch, not per dispatch, so a
+   * stopwatch around one dispatch misses every overrun a batch shares.
+   *
+   * `stampSyncFailure` is deliberately not called. A sweep too large for one
+   * dispatch is the case resumption exists to serve, and it converges: each
+   * run commits its cursor and the next starts further on. Reddening the
+   * connection on every leg would report a fault where there is progress. The
+   * honest signal is the one already there — `last_sync_at` stays stale until
+   * a run genuinely finishes — plus the row this writes.
+   *
+   * The result is not retryable because pg-boss has already redelivered the
+   * job; asking for another delivery would duplicate one that exists.
+   */
+  async function recordReclaimedDispatch(
+    message: QueueMessage,
+    response: WorkerDispatchResponse,
+  ): Promise<HandlerResult> {
+    // The handler's own account of the run is still the most useful detail
+    // there is, so it rides along rather than being replaced.
+    const handlerDetail =
+      response.thrownMessage ??
+      (response.result.ok ? undefined : response.result.reason);
+    const reason =
+      "The queue job for this run was reclaimed before the handler returned, " +
+      "so its result was discarded" +
+      (handlerDetail === undefined
+        ? ""
+        : `; the handler reported: ${handlerDetail}`);
+    await recordRuntimeError(storage, message.connection_id, {
+      timestamp_ms: Date.now(),
+      reason,
+      message_kind: message.kind,
+    }).catch(() => undefined);
+    await emitActivity(message.connection_id, message.space_id, {
+      severity: "warning",
+      summary: "Run discarded: its queue job had already been reclaimed",
+      detail: {
+        reason,
+        connection_id: message.connection_id,
+        message_kind: message.kind,
+      },
+    });
+    return { ok: false, retry: false, reason };
   }
 
   /**
@@ -312,9 +431,9 @@ export function createSupervisor(
    * it refuses an expired one, so the dispatch took 401s partway through
    * with nothing logged where the revocation happened.
    *
-   * Not minting a non-superseding credential instead: both callers fire on
-   * message traffic rather than on dispatches, so nothing retires what they
-   * leave until the connection's next dispatch, and the reaper does not help
+   * Not minting a non-superseding credential instead: the callers that fire
+   * on message traffic rather than on dispatches leave nothing to retire them
+   * until the connection's next dispatch, and the reaper does not help
    * because it only marks credentials already past their expiry. A connection
    * taking a burst of at-budget reactive events would hold every credential
    * it minted for a full TTL.
@@ -399,8 +518,9 @@ export function createSupervisor(
   async function dispatchForQueue(
     envelope: SchedulerEnvelope,
     attempt = 0,
+    jobSignal?: AbortSignal,
   ): Promise<void> {
-    const result = await dispatchOne(envelope, attempt);
+    const result = await dispatchOne(envelope, attempt, jobSignal);
     if (!result.ok && result.retry) {
       throw new Error(`retryable: ${result.reason}`);
     }
@@ -473,7 +593,7 @@ export function createSupervisor(
         { batchSize, pollingIntervalSeconds: 2, includeMetadata: true },
         async (jobs: JobWithMetadata<SchedulerEnvelope>[]) => {
           for (const job of jobs) {
-            await dispatchForQueue(job.data, job.retryCount);
+            await dispatchForQueue(job.data, job.retryCount, job.signal);
           }
         },
       );
@@ -599,8 +719,8 @@ export function createSupervisor(
       }
       await config.boss.send(QUEUE_NAME, envelope);
     },
-    async dispatchForTest(envelope, attempt = 0) {
-      return dispatchOne(envelope, attempt);
+    async dispatchForTest(envelope, attempt = 0, jobSignal) {
+      return dispatchOne(envelope, attempt, jobSignal);
     },
     getRegistration(name) {
       return byName.get(name);

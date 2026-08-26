@@ -52,10 +52,20 @@ import {
 const KEY_PREFIX = "marfa_k1_";
 
 /**
- * Longest a single dispatch can run before pg-boss reclaims the job. The
- * supervisor pins its dispatch queue to this value rather than inheriting
- * pg-boss's default, so the number below is the real bound rather than a
- * library default that could move under us.
+ * Longest a fetched BATCH of dispatches can run before pg-boss reclaims its
+ * jobs. The supervisor pins its dispatch queue to this value rather than
+ * inheriting pg-boss's default, so the number below is the real bound rather
+ * than a library default that could move under us.
+ *
+ * Per batch, not per dispatch, and the distinction matters. pg-boss arms one
+ * timer for the whole batch it hands a worker, and the supervisor runs that
+ * batch sequentially, so the budget an individual dispatch actually gets is
+ * this value minus whatever its batch-mates have already consumed. Four
+ * dispatches of six minutes each blow a fifteen-minute batch while none of
+ * them is individually close to it.
+ *
+ * The credential TTL derived below stays safe either way: it exceeds this
+ * bound, and the per-dispatch budget is never larger than it.
  */
 export const DISPATCH_JOB_EXPIRY_SECONDS = 900;
 
