@@ -459,25 +459,34 @@ export function authMiddleware(
 // ---------------------------------------------------------------------------
 
 /**
- * Credential `source` prefixes that the connection routes read as proof
- * of integration identity: `requireConnectionAccess` in
- * `routes/inbound-webhooks.ts` and `routes/connection-leased-tokens.ts`,
- * `requireConnectionProxyAccess` in `routes/connection-proxy.ts`, and the
- * cycle resolver's origin derivation all match on them.
+ * Credential `source` prefixes a caller may not name for itself.
  *
- * A caller-supplied `source` is free text, so without this reservation a
- * space admin could mint a plain `member` key labelled
- * `oauth:<connection-id>` and hold integration authority over that
- * connection — proxying through its decrypted upstream token, issuing
- * leases, rewriting its inbound webhooks — while carrying none of the
- * bindings that authority is supposed to follow from. Same shape as
- * lifting `role` out of the body: a field the request controls, read
- * later as authority.
+ * A caller-supplied `source` is free text, and two separate readers give
+ * one meaning, so the reservation covers both.
  *
- * The legitimate holders never pass through the mint routes. Integration
+ * `oauth:` is read as authority. `actsAsConnection` compares against it
+ * on the three routes a Connection operates on itself, and the cycle
+ * resolver derives an event's origin from it. Without the reservation a
+ * space admin could mint a plain `member` key sourced
+ * `oauth:<something>` and be read later as a Connection it has no
+ * binding to. The comparison is currently unsatisfiable for the reason
+ * given on `actsAsConnection`, which makes this a fence around an
+ * identity that is meant to work rather than one that does, and it has
+ * to hold before that is corrected rather than after.
+ *
+ * `integration:` is read as provenance. No route reads it as identity:
+ * `itemProvenanceSource` stamps it onto rows an integration writes, and
+ * `permitsMirrorWrite` then admits only a credential whose `item_source`
+ * matches. A forged one would let a member claim to be the owning
+ * integration of a mirrored row and write over a corpus it does not own.
+ *
+ * Either way the shape is the same as lifting `role` out of the body: a
+ * field the request controls, read later as something it earned.
+ *
+ * The legitimate holders never pass through the mint routes. Runtime
  * credentials are created at the storage layer by the install pipeline
- * and the runtime broker; the OAuth shape is synthesized per-request in
- * this file and never persisted at all.
+ * and the per-dispatch mint; the OAuth shape is synthesized per-request
+ * in this file and never persisted at all.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
@@ -730,6 +739,50 @@ export function requireTypeAccess(
   level: "read" | "write",
 ): void {
   checkTypeAccess(c.get("apiKey"), type, level);
+}
+
+/**
+ * True when the caller IS the Connection, for the three routes a
+ * Connection operates on itself: the OAuth proxy, its inbound-webhook
+ * subscriptions, and its leased tokens.
+ *
+ * The live arm is the runtime credential. One minted for a Connection
+ * carries `is_runtime_credential: true` and a `connection_id` stamped
+ * at mint time, and nothing outside `createRuntimeCredential` sets
+ * either field, so a caller cannot name its way into the pair. It is
+ * matched as a pair rather than by `source` because a runtime
+ * credential has no fixed source to match: the per-dispatch mint
+ * appends a random suffix, keeping the column unique among live
+ * credentials. Matching a fixed string is what this function exists to
+ * stop three routes doing separately. Two of them had already widened
+ * to the pair and the third had not, so it refused every credential a
+ * running integration can hold while reading as though it admitted one.
+ *
+ * The `oauth:` arm matches nothing today. It is kept rather than
+ * deleted because the intent is live and only the comparison is wrong:
+ * the synthetic key an OAuth access token produces is sourced
+ * `oauth:<clientId>:<userId>`, a stable grant handle rather than a
+ * Connection id, and a Connection id is a UUIDv7 carrying no colon, so
+ * the two can never be equal. Such a caller reaches these routes only
+ * through `hasSpaceAdminAuthority`, on the role projected from the
+ * consenting user, which means a grant held by a member is refused.
+ * Correcting it means resolving a grant to its Connection, which
+ * changes who can reach three live routes and needs its own
+ * verification rather than riding along here.
+ *
+ * It answers identity only. Whether that identity may reach the
+ * Connection at all is the caller's space fence, which each route
+ * applies alongside this.
+ */
+export function actsAsConnection(
+  key: ApiKey | undefined,
+  connectionId: string,
+): boolean {
+  if (!key) return false;
+  return (
+    key.source === `oauth:${connectionId}` ||
+    (key.is_runtime_credential === true && key.connection_id === connectionId)
+  );
 }
 
 /**

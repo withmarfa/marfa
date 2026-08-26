@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
+import {
+  requireAuth,
+  actsAsConnection,
+  hasSpaceAdminAuthority,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   encryptSecret,
@@ -644,19 +648,11 @@ async function requireConnectionProxyAccess(
   // The lookup above is already fenced on `key.space_id`, so a
   // space-bound caller of any rank sees only its own connections.
   const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
-  // Two integration-credential shapes accept here:
-  //   1. OAuth-token grants the user issued for a kind:app connection —
-  //      synthetic credentials minted in middleware/auth.ts with
-  //      `source: "oauth:<connectionId>"`.
-  //   2. Runtime credentials minted for a kind:integration connection by
-  //      the install pipeline or the supervisor's in-process mint. Both
-  //      carry `is_runtime_credential: true` and `connection_id` stamped
-  //      at mint time, so the gate matches on that pair rather than the
-  //      free-form source string. Without this widening, an
-  //      integration's `proxyRequest` call 403s on dispatch.
-  const isIntegration =
-    key.source === `oauth:${connectionId}` ||
-    (key.is_runtime_credential === true && key.connection_id === connectionId);
+  // Shared with the inbound-webhook and leased-token routes: the caller
+  // is the Connection itself, either as an OAuth grant or as a runtime
+  // credential stamped with this `connection_id`. Without the runtime
+  // half, an integration's `proxyRequest` call 403s on dispatch.
+  const isIntegration = actsAsConnection(key, connectionId);
   if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,

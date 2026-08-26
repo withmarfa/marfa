@@ -1319,12 +1319,13 @@ export function authRoutes(
     }
     // The label becomes the key's `source`, and a `source` is not inert:
     // `oauth:<connection-id>` is read as proof that a caller IS that
-    // connection's own credential, by the connection proxy and by the
-    // inbound-webhook routes alike. Both treat it as an alternative to
-    // space-admin rank, so a member who could name one here would be
-    // handed the connection's upstream access token to proxy through and
-    // the ability to mint its webhook secrets, for any connection in their
-    // own space.
+    // connection's own credential, by the connection proxy, the
+    // inbound-webhook and the leased-token routes alike. All three treat
+    // it as an alternative to space-admin rank, so a member who could
+    // name one here would be handed the connection's upstream access
+    // token to proxy through, the ability to mint its webhook secrets and
+    // the ability to issue leases on it, for any connection in their own
+    // space.
     //
     // The two sibling mint routes both call this. This one did not, and
     // the reserved list is the whole defense — nothing legitimate is
