@@ -31,6 +31,7 @@ import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { projectPlatformRows } from "../platform-family.js";
+import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
 import {
   sqliteDeleteAccountCascade,
   sqliteDeleteSpace,
@@ -112,6 +113,11 @@ export async function createSqliteStorage(
   // permissive one. Reasoning, and why this projects rather than refusing
   // to boot, is at the helper.
   const platformRows = projectPlatformRows(loadedTypes);
+  // What this instance still carries that the build no longer ships. Recorded
+  // rather than acted on: the reasoning for reporting instead of pruning is
+  // at the helper, and it is the same judgment the projection above makes
+  // one line up.
+  setPlatformDrift(computePlatformDrift(shippedPlatformTypes(), loadedTypes));
   for (const row of loadedTypes) {
     if (row.origin === "platform") continue;
     // Register into the owning space's overlay so one space's custom types

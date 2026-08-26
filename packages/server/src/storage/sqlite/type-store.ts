@@ -7,7 +7,8 @@ import {
   ErrorCode,
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { spaceBucketCondition } from "../space-condition.js";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -132,6 +133,25 @@ export class SqliteTypeStore implements TypeStore {
           updated_at = ${now}
       `);
     }
+  }
+
+  async deletePlatformType(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(customTypes)
+      .where(
+        and(
+          eq(customTypes.id, id),
+          // This table encodes "no space" as `''` rather than NULL, so the
+          // bucket is addressed as a named space here and the helper's
+          // named-space branch is the correct one. Passing the literal
+          // through the helper rather than spelling the comparison keeps
+          // one place deciding what a space fence looks like.
+          spaceBucketCondition(customTypes.space_id, ""),
+          eq(customTypes.origin, "platform"),
+        ),
+      )
+      .returning({ id: customTypes.id });
+    return deleted.length > 0;
   }
 
   async countCustom(): Promise<number> {

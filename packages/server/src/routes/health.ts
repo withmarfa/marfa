@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { platformDrift } from "../storage/platform-drift.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
@@ -385,6 +386,26 @@ export function healthRoutes(
         if (count > 0) overall = "degraded";
       }
     }
+
+    // Shipped types this instance still carries that the build no longer
+    // names. Derived at boot from the build and the rows, so reading it
+    // costs nothing and cannot go stale against a running process.
+    //
+    // A count and nothing else, for the reason the dead-letter component
+    // gives: this endpoint is unauthenticated, and the identifiers say
+    // which types an instance is serving that its build does not. Those
+    // sit behind the admin read.
+    //
+    // Degraded rather than a log line, because a log line is what this
+    // replaces. An instance can serve a retired type indefinitely, with a
+    // user-visible permission label, and the only previous way to find out
+    // was to go looking. The external poller already keys on this surface.
+    const driftedTypes = platformDrift().length;
+    components.platform_types = {
+      status: driftedTypes === 0 ? "ok" : "degraded",
+      count: driftedTypes,
+    };
+    if (driftedTypes > 0) overall = "degraded";
 
     // How much of the connection ceiling this deployment is holding. Not a
     // component: it carries no status and never degrades the response. Pool
