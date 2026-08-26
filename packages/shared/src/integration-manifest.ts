@@ -17,8 +17,9 @@ import {
  *
  * `manifest_schema_version` evolution policy.
  *
- * Initial value: `1.0.0`. The semver applies to the manifest contract
- * itself, not to a published Integration. Bump rules:
+ * The semver applies to the manifest contract itself, not to a published
+ * Integration. It started at `1.0.0`; the contract has since crossed a
+ * major and 1.x is no longer accepted. Bump rules:
  *   - **major** — breaking change to the contract: a removed field, a
  *     renamed field, an enum value retired, a default semantically
  *     altered. Server rejects manifests whose major doesn't match a
@@ -30,9 +31,12 @@ import {
  *     validator on an already-defined field. Forward- and
  *     backward-compatible by definition.
  *
- * Server validator currently accepts any 1.x.x and rejects 2.x.x with a
- * clear "manifest schema version not supported" error. Bump the
- * server-side range when the contract crosses a major.
+ * The majors the server accepts are declared by
+ * `MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS` below, and anything outside
+ * them is refused with a "manifest schema version not supported" error
+ * naming the range. Widen or move that constant when the contract
+ * crosses a major; it is the single place the range is stated, so prose
+ * restating the number here would be a second copy to forget.
  *
  * Triggers — design intent.
  *
@@ -164,7 +168,7 @@ const BidirectionalHandlingSchema = z.object({
 const OAuthRequirementValue = z.enum(["proxy", "leased"]);
 
 /**
- * Token-credential requirements — manifest 1.1.0 additive field.
+ * Token-credential requirements — an additive manifest field.
  *
  * For integrations whose upstream uses a static API token rather than
  * an OAuth flow. The map key names the capability (typically the
@@ -175,9 +179,10 @@ const OAuthRequirementValue = z.enum(["proxy", "leased"]);
  * at request time and stamps `Authorization: Bearer …` directly, with
  * no refresh primitive.
  *
- * Optional and additive: existing manifests at 1.0.0 keep validating
- * without declaring this field. Integrations that declare it bump
- * `manifest_schema_version` to `1.1.0`.
+ * Optional and additive, so a manifest that does not declare it still
+ * validates. It arrived as a minor bump while the contract was at 1.x;
+ * that history is why the field is described as additive, and it is not
+ * guidance to declare a 1.x version today, which the server refuses.
  */
 const TokenRequirementValue = z.literal("required");
 
@@ -296,7 +301,7 @@ export const IntegrationManifestSchema = z
     bidirectional_handling: BidirectionalHandlingSchema,
     oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
     /**
-     * Static-API-token requirements — manifest 1.1.0 additive field.
+     * Static-API-token requirements — an additive manifest field.
      * Optional; present on integrations whose upstream uses a bearer
      * token rather than OAuth. See `TokenRequirementValue` above.
      */
