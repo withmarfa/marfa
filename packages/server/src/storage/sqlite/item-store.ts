@@ -1051,6 +1051,15 @@ export class SqliteItemStore implements ItemStore {
     return { ...row, state, updated_at: now };
   }
 
+  async countByType(type: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(items)
+      .where(eq(items.type, type))
+      .all();
+    return row?.count ?? 0;
+  }
+
   async stats(
     spaceId?: string,
     allowedTypes?: string[],

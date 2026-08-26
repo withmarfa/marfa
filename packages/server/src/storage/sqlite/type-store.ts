@@ -7,7 +7,7 @@ import {
   ErrorCode,
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -132,6 +132,28 @@ export class SqliteTypeStore implements TypeStore {
           updated_at = ${now}
       `);
     }
+  }
+
+  async deletePlatformType(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(customTypes)
+      .where(
+        and(
+          eq(customTypes.id, id),
+          // The shared fence reads an absent space as SQL NULL, and this
+          // table's space-less bucket is an empty string: the seed writes
+          // `''` and the primary key is `(space_id, id)`, so
+          // `spaceBucketCondition` would emit `IS NULL` and match nothing
+          // here. The literal is the point rather than a missing
+          // parameter, since this deletes from that bucket specifically
+          // and never from a space.
+          // eslint-disable-next-line no-restricted-syntax
+          eq(customTypes.space_id, ""),
+          eq(customTypes.origin, "platform"),
+        ),
+      )
+      .returning({ id: customTypes.id });
+    return deleted.length > 0;
   }
 
   async countCustom(): Promise<number> {

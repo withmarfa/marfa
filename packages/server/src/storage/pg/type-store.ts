@@ -180,6 +180,20 @@ export class PgTypeStore implements TypeStore {
     }
   }
 
+  async deletePlatformType(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(customTypes)
+      .where(
+        and(
+          eq(customTypes.id, id),
+          eq(customTypes.space_id, ""),
+          eq(customTypes.origin, "platform"),
+        ),
+      )
+      .returning({ id: customTypes.id });
+    return deleted.length > 0;
+  }
+
   async countCustom(): Promise<number> {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)::int` })

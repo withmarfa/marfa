@@ -334,6 +334,24 @@ export interface ItemStore {
   bulkPurge(ids: string[], spaceId?: string): Promise<number>;
   restore(id: string, spaceId?: string): Promise<Item>;
   transition(id: string, state: ItemState, spaceId?: string): Promise<Item>;
+  /**
+   * How many items carry this exact type identifier, across every space.
+   *
+   * Deliberately unscoped, and the only caller is the platform-admin
+   * surface that decides whether a retired shipped type can be removed.
+   * The question it answers is about the instance, not about a space: a
+   * row kept because one space still holds items of it is kept for
+   * everyone, since the row is what makes those items resolve.
+   *
+   * `stats` groups by state rather than by type, so it cannot answer this,
+   * and a list would page over rows to count them.
+   *
+   * **Exact identifier, not the subtree.** That matches the hand-written
+   * retirement this generalizes, and it is the narrower reading: a
+   * subtype's rows carry the subtype's identifier, so they are counted by
+   * asking about the subtype.
+   */
+  countByType(type: string): Promise<number>;
   stats(
     spaceId?: string,
     allowedTypes?: string[],
@@ -534,6 +552,22 @@ export interface TypeStore {
    * schema moves the instance forward without a second mechanism.
    */
   seedPlatformTypes(seeded: readonly SeededPlatformType[]): Promise<void>;
+  /**
+   * Remove one platform row the build no longer ships. Answers whether a
+   * row was actually deleted.
+   *
+   * **Scoped to `(space_id = '', origin = 'platform')`, and both halves
+   * matter.** The seed writes an empty `space_id` and the primary key is
+   * `(space_id, id)`, so scoping on origin alone would reach a row of the
+   * same identifier in a space. Nothing else writes that pair, which used
+   * to be true by accident and is now a rule the archive restore enforces
+   * by refusing to write a platform origin.
+   *
+   * No guard of its own: whether removal is safe is a question about
+   * items, which this layer cannot see. The caller decides and this
+   * performs.
+   */
+  deletePlatformType(id: string): Promise<boolean>;
   countCustom(): Promise<number>;
 }
 

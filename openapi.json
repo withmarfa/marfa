@@ -15967,6 +15967,252 @@
         }
       }
     },
+    "/admin/platform-types/drift": {
+      "get": {
+        "operationId": "adminListPlatformTypeDrift",
+        "summary": "Shipped types this instance carries that the build does not",
+        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as the `platform_types` component; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Platform-admin only.",
+        "responses": {
+          "200": {
+            "description": "The drifted rows, with their live item counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "item_count": {
+                            "type": "number"
+                          },
+                          "removable": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "item_count",
+                          "removable"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "types"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a platform admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/platform-types/{id}/remove": {
+      "post": {
+        "operationId": "adminRemovePlatformType",
+        "summary": "Remove one shipped type the build no longer carries",
+        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Platform-admin only.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row is gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "removed": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "removed",
+                    "id"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a platform admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No platform row with this identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The build still ships this type, or items still carry the identifier",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "conflict"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/export": {
       "get": {
         "operationId": "exportSpaceData",

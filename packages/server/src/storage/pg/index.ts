@@ -40,6 +40,7 @@ import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade, pgDeleteSpace } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
 import { projectPlatformRows } from "../platform-family.js";
+import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -93,6 +94,11 @@ export async function createPgStorage(
   // permissive one. Reasoning, and why this projects rather than refusing
   // to boot, is at the helper.
   const platformRows = projectPlatformRows(loadedTypes);
+  // What this instance still carries that the build no longer ships. Recorded
+  // rather than acted on: the reasoning for reporting instead of pruning is
+  // at the helper, and it is the same judgement the projection above makes
+  // one line up.
+  setPlatformDrift(computePlatformDrift(shippedPlatformTypes(), loadedTypes));
   for (const row of loadedTypes) {
     if (row.origin === "platform") continue;
     // Register into the owning space's overlay so one space's custom types

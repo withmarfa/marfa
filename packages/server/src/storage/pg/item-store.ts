@@ -1047,6 +1047,14 @@ export class PgItemStore implements ItemStore {
     return { ...row, state, updated_at: now };
   }
 
+  async countByType(type: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(items)
+      .where(eq(items.type, type));
+    return row?.count ?? 0;
+  }
+
   async stats(
     spaceId?: string,
     allowedTypes?: string[],

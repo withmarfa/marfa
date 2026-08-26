@@ -37,6 +37,7 @@ import { credentialRoutes } from "./routes/credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
+import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
 import { adminRuntimeJobsRoutes } from "./routes/admin-runtime-jobs.js";
 import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
@@ -648,6 +649,7 @@ export function createApp(
     adminArchiveRoutes(storage, blobBackend, config.authMode),
   );
   app.route("/admin", adminRuntimeJobsRoutes(deadLetterOps ?? null));
+  app.route("/admin", adminPlatformTypeRoutes(storage));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
   // session-level RLS on a reserved pool connection — for /export's whole
   // bounded response, and for /events only during the replay phase (live
