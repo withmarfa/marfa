@@ -13,10 +13,13 @@
 # learn the same thing.
 #
 # **Scheduled rather than on push**, because the sync opens a pull request
-# rather than committing directly. For the window between a spec change landing
-# here and that PR merging, the two copies legitimately differ, and a push
-# trigger would fail on every spec change. A daily check ignores that window
-# and still catches the case that matters: a sync PR nobody merged.
+# rather than committing directly. The sync now enables auto-merge on it, so
+# that pull request closes itself once its check passes, but not instantly:
+# for the window between a spec change landing here and that check finishing,
+# the two copies legitimately differ, and a push trigger would fail on every
+# spec change. A daily check ignores that window and still catches what is
+# left, which is a sync that failed or a pull request whose check did not
+# pass.
 name: OpenAPI drift
 
 on:
@@ -70,7 +73,13 @@ jobs:
             exit 0
           fi
 
-          echo "::error title=Published spec is stale::${SPEC_TARGET_REPO} differs from the spec generated here. Re-run the 'Sync openapi.json to docs' workflow, then merge the pull request it opens."
+          # The repair changed when the sync started merging its own pull
+          # request. Before that, a red guard usually meant a pull request
+          # nobody had merged, and it said so. Now that is the case that
+          # should not happen, so the message says what to look at rather
+          # than what to do: the sync's own run, and whether its pull
+          # request is open. This guard's expected state is green.
+          echo "::error title=Published spec is stale::${SPEC_TARGET_REPO} differs from the spec generated here. The sync enables auto-merge on the pull request it opens, so this means either its last run failed, or that pull request is open with a failing check. Check the 'Sync openapi.json to docs' run for the spec change that landed here, and ${SPEC_TARGET_REPO} for an open sync pull request."
           python3 - <<'PY'
           import json
 
