@@ -502,6 +502,21 @@ export interface TypeStore {
    *  registrations a restore would otherwise be missing, and only the
    *  custom ones are the space's to carry. */
   listCustom(spaceId?: string): Promise<TypeSchema[]>;
+  /**
+   * One space's custom types with their stored provenance.
+   *
+   * `listCustom` returns bare schemas, which is all three of its other
+   * callers need. This exists because deciding what a type IS cannot be
+   * done from its identifier: a vendor's `readwise.book` and a person's
+   * `jonah.reading_item` under a claimed handle are the same shape, and
+   * only the stored `origin` separates them.
+   *
+   * Space-scoped rather than reusing `loadCustomTypes`, which reads every
+   * space. Answering a question about one space by loading all of them is
+   * the shape space isolation exists to prevent, and it is not made safe
+   * by the caller filtering afterwards.
+   */
+  listCustomWithProvenance(spaceId?: string): Promise<LoadedType[]>;
   /** Load every custom type across all spaces for server-startup registry
    *  warmup. Each row carries its owning space so the warmup can register it
    *  into the right space overlay. */
@@ -525,7 +540,20 @@ export interface TypeStore {
 /** Where a registered type came from, written alongside its schema. */
 export interface TypeProvenance {
   origin: TypeOrigin;
-  /** Shipped family, for `platform` rows only. */
+  /**
+   * What kind of type this is: core content, an integration's own shape,
+   * or a structural platform record.
+   *
+   * **Widened deliberately from "shipped rows only".** It began as a
+   * property of the shipped set, which is why a type travelling with an
+   * integration manifest registered without one. That is a gap rather
+   * than a design: the question "what kind of type is this" is asked of
+   * every type, and answering it from the identifier cannot separate a
+   * vendor's type from a person's under a claimed handle.
+   *
+   * Absent for `user` rows, which is not a gap — a type a person
+   * registered belongs to no platform family and never did.
+   */
   family?: PlatformTypeFamily;
   /** Manifest name of the publishing integration, for `integration` rows. */
   owner_integration?: string;

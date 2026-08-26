@@ -143,7 +143,28 @@ export interface SeededPlatformType {
  * locked, a type an integration published is updatable by that integration's
  * own package and nothing else, and a type a person registered is theirs.
  */
-export type TypeOrigin = "platform" | "integration" | "user";
+/** Valid origins as a readonly tuple. The union below is derived from it. */
+export const TYPE_ORIGINS = ["platform", "integration", "user"] as const;
+
+export type TypeOrigin = (typeof TYPE_ORIGINS)[number];
+
+/**
+ * Whether a value is one of the origins this build recognizes.
+ *
+ * Reporting only. Unlike `isMarfaRole`, no caller substitutes a fallback
+ * on a false: an origin outside the union already fails every equality
+ * its consumers test, which excludes the row from the shipped vocabulary
+ * and from a person's own registrations alike. Substituting a member of
+ * the union would pick one of those doors and open it.
+ *
+ * Derived from the array for the reason `isPlatformTypeFamily` gives.
+ */
+export function isValidTypeOrigin(value: unknown): value is TypeOrigin {
+  return (
+    typeof value === "string" &&
+    (TYPE_ORIGINS as readonly string[]).includes(value)
+  );
+}
 
 /**
  * Refill the platform registry from seeded rows.

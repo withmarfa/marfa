@@ -197,6 +197,12 @@ async function writeDeclaredTypes(
       if (!already) {
         await storage.types.create(schema, spaceId, {
           origin: "integration",
+          // The family travels with the type. Without it the row records
+          // who published the type and not what kind of type it is, and
+          // the only thing left to answer that with is the identifier —
+          // which cannot separate a vendor's type from a person's under a
+          // claimed handle, because both are publisher-tier by prefix.
+          family: "integration",
           owner_integration: manifest.name,
         });
       }

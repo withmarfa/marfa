@@ -346,9 +346,12 @@ export const customTypes = pgTable(
     // Where the type came from, and who may change it. `platform` is the
     // seeded vocabulary and is locked; `integration` belongs to the manifest
     // named in `owner_integration` and only that package may update it;
-    // `user` is a registration through the API. `family` is meaningful for
-    // platform rows alone and carries the shipped split (core / integration /
-    // system), which the identifier cannot express.
+    // `user` is a registration through the API. `family` carries the split the
+    // identifier cannot express (core / integration / system). It began as
+    // a property of the shipped set and is written for an integration's
+    // own types too, so a row's family says what kind of type it is
+    // rather than which build shipped it. Absent for `user` rows, which
+    // belong to no platform family and never did.
     origin: text("origin").notNull().default("user"),
     family: text("family"),
     owner_integration: text("owner_integration"),

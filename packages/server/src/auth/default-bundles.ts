@@ -72,12 +72,43 @@ export function deriveCustomTypeNamespaces(): string[] {
  * inherit the platform bucket, whose types resolve only for space-less
  * callers.
  */
+export interface RuntimeNamespaceRoots {
+  /** Roots holding types the person registered themselves. */
+  own: string[];
+  /** Roots holding types an installed integration published. */
+  connected: string[];
+}
+
 export async function resolveRuntimeCustomNamespaces(
   storage: Storage,
   spaceId?: string,
-): Promise<string[]> {
-  const custom = await storage.types.listCustom(spaceId);
-  return namespaceRootsOf(custom.map((schema) => schema.id));
+): Promise<RuntimeNamespaceRoots> {
+  const rows = await storage.types.listCustomWithProvenance(spaceId);
+  // Split by the stored fact, because the identifier cannot do it:
+  // `readwise.book` and `jonah.reading_item` are the same shape to a
+  // first-segment test, and one arrived with a connected service while
+  // the other is the person's own invention.
+  //
+  // Both are offered; what differs is how. A person's own root gets the
+  // read-and-write wildcard, because types they have not invented yet
+  // cannot be enumerated. A service's root is offered read-only, matching
+  // every other connected type: an integration's row is a faithful mirror
+  // of an upstream record, and a third-party write forks it.
+  //
+  // Neither is dropped. Removing a service's types from the person's
+  // bundle without putting them anywhere is not a narrowing, it is an
+  // omission — they would then sit in no default bundle at all, including
+  // the one named for them.
+  return {
+    own: namespaceRootsOf(
+      rows.filter((row) => row.origin === "user").map((row) => row.schema.id),
+    ),
+    connected: namespaceRootsOf(
+      rows
+        .filter((row) => row.origin === "integration")
+        .map((row) => row.schema.id),
+    ),
+  };
 }
 
 /**
@@ -145,8 +176,10 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  *   without being part of the default grant.
  */
 export function buildDefaultPermissionBundles(
-  extraCustomNamespaces: readonly string[] = [],
+  runtimeRoots: Partial<RuntimeNamespaceRoots> = {},
 ): PermissionBundle[] {
+  const extraCustomNamespaces = runtimeRoots.own ?? [];
+  const connectedNamespaces = runtimeRoots.connected ?? [];
   const coreTypes: string[] = [];
   const connectedTypes: string[] = [];
   for (const id of [...TYPE_REGISTRY.keys()].sort()) {
@@ -186,7 +219,17 @@ export function buildDefaultPermissionBundles(
       label: "Content from your connected services",
       description:
         "What your integrations have synced, like Google and Readwise.",
-      scopes: connectedTypes.map((id) => `${id}:read`),
+      // Shipped publisher types are enumerated; a space's own installed
+      // integrations publish types this build has never heard of, so
+      // their roots ride as wildcards. Read-only either way, which is the
+      // rule for a mirror rather than a property of how it is named.
+      scopes: [
+        ...connectedTypes.map((id) => `${id}:read`),
+        ...[...new Set(connectedNamespaces)]
+          .filter((ns) => !registryRoots.has(ns) && !isReservedRoot(ns))
+          .sort()
+          .map((ns) => `${ns}.*:read`),
+      ],
       default_on: true,
     },
     {

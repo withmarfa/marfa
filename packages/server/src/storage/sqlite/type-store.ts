@@ -12,6 +12,7 @@ import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { toLoadedTypes } from "../loaded-types.js";
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -95,30 +96,22 @@ export class SqliteTypeStore implements TypeStore {
     return results;
   }
 
+  async listCustomWithProvenance(spaceId?: string): Promise<LoadedType[]> {
+    // Same row set as `listCustom`, carrying the provenance columns. The
+    // `origin != 'platform'` filter is load-bearing for the same reason
+    // it is there: the shipped vocabulary shares this table, so "the
+    // space's own registrations" has to say so explicitly.
+    const rows = await this.db
+      .select()
+      .from(customTypes)
+      .where(sql`space_id = ${spaceId ?? ""} AND origin != 'platform'`)
+      .all();
+    return toLoadedTypes(rows);
+  }
+
   async loadCustomTypes(): Promise<LoadedType[]> {
     const rows = await this.db.select().from(customTypes).all();
-    const results: LoadedType[] = [];
-    for (const row of rows) {
-      const parsed = safeJsonParse<TypeSchema | null>(
-        row.schema,
-        null,
-        `custom_types.schema[${row.id}]`,
-      );
-      if (parsed) {
-        results.push({
-          space_id: row.space_id,
-          schema: parsed,
-          origin: (row.origin as LoadedType["origin"] | null) ?? "user",
-          ...(row.family !== null && {
-            family: row.family as LoadedType["family"],
-          }),
-          ...(row.owner_integration !== null && {
-            owner_integration: row.owner_integration,
-          }),
-        });
-      }
-    }
-    return results;
+    return toLoadedTypes(rows);
   }
 
   async seedPlatformTypes(
