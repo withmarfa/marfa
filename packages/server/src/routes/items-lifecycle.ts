@@ -5,7 +5,6 @@ import {
   requireAuth,
   requireTypeAccess,
   requireRowWritable,
-  itemProvenanceSource,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
@@ -174,7 +173,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
           await resolveOrphanScopeForOwnWrite(
             storage,
             [restored],
-            itemProvenanceSource(c.get("apiKey")),
+            c.get("apiKey"),
           ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
@@ -230,7 +229,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
           await resolveOrphanScopeForOwnWrite(
             storage,
             [updated],
-            itemProvenanceSource(c.get("apiKey")),
+            c.get("apiKey"),
           ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),

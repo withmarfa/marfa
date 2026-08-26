@@ -66,18 +66,27 @@
  * layer a person put over the item — tags and extensions somebody chose.
  * Neither describes this.
  *
- * **Absent is not false, and that contract binds every emitter.** The field
- * is present only on an item an integration wrote. For everything else the
+ * **Absent is not false, and that contract binds every REST response that
+ * carries an item** — the reads, and the writes that echo the row back. The
+ * field is present only on an item an integration wrote. For everything else the
  * question does not arise: a hand-written note has no upstream to be cut off
  * from and can never acquire one, so `false` would assert an answer to a
  * question nobody asked. Present-and-false says the integration named in
  * `source` is still installed there; present-and-true says it is not.
  *
- * That reading only holds where something answers, so every REST response
- * carrying an item goes through `withOrphanState` — the read routes and the
- * write routes that echo the row back. A `PATCH` that omitted the field told
- * a client following this contract that no integration wrote the row, which
- * is the opposite of the truth.
+ * That reading only holds where something answers, so the read routes and
+ * the write routes that echo the row back all go through `withOrphanState`.
+ * A `PATCH` that omitted the field told a client following this contract
+ * that no integration wrote the row, which is the opposite of the truth.
+ *
+ * Two exceptions to "every response", neither of which a client can trip
+ * over. The connection and integration routes hand back `system.connection`
+ * rows undecorated, and those can never be integration-sourced — their
+ * provenance is the credential that installed them. And absence carries a
+ * second, internal meaning inside this module: a space nobody resolved. It
+ * has never reached the wire, because every call site resolves precisely
+ * the batch it decorates, and a call site that stopped doing that would be
+ * the bug rather than the contract changing.
  *
  * **The event stream is the one surface that does not carry it, and that is
  * a decision rather than an omission.** The stream cannot deliver the fact
@@ -98,7 +107,7 @@
  * the value from the read and re-read to refresh it. Anyone tempted to add
  * it to `routes/events.ts` should start with the paragraph above.
  */
-import type { Item } from "@withmarfa/shared";
+import type { ApiKey, Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 import { manifestOfCatalogRow } from "../connections/upgrade-pipeline.js";
@@ -305,48 +314,59 @@ export function withOrphanState<T extends Pick<Item, "source" | "space_id">>(
 }
 
 /**
- * The scope for a response echoing back a row the calling credential's own
- * source stamped — answered from the call itself, with no query.
+ * The scope for a response echoing back a row the calling credential itself
+ * wrote — answered from the credential, with no query.
  *
- * A credential whose provenance source carries the integration prefix is a
- * genuine runtime credential: both HTTP mint routes refuse a caller-supplied
- * source with that shape (`assertUnreservedSource`), so the only issuers are
- * the install pipeline and the runtime broker, at the storage layer. And
- * uninstall revokes every runtime credential bound to the connection before
- * it revokes the connection, so a credential that just authenticated belongs
- * to a connection that has not been uninstalled. Provenance keys on
- * `(space, manifest name)` rather than on the connection, so that is exactly
- * the predicate: the name has a live connection in this space, and the row
- * is not orphaned.
+ * **Gated on `is_runtime_credential`, not on the shape of the source
+ * string.** Only `createRuntimeCredential` sets that flag; `keys.create`
+ * cannot. The string is not safe to reason from: two of the three mint
+ * routes refuse a caller-supplied `integration:` source, and the third —
+ * the console's self-serve form — writes the caller's `label` straight into
+ * `source` with no such check. A space owner could mint one labelled
+ * `integration:acme/calendar`, and since it carries no `item_source`,
+ * `itemProvenanceSource` would hand back the forged value. Reading the flag
+ * instead makes that unreachable rather than merely unlikely.
  *
- * **The shortcut is decided from the data, not from the call site.** It
- * applies only to rows whose source is literally the caller's; anything else
- * in the batch drops the whole thing back to the real resolution rather than
- * going unanswered. That matters because the branches differ: a create
- * stamps the row it returns, the natural-key branches resolve theirs by
- * `(stampedSource, source_id)` so the source matches by construction, and a
- * lifecycle gesture on somebody else's mirror matches nothing and pays the
- * query — which is the case that has to be right, since the whole point is
- * an integration that is gone.
+ * With the flag established, the credential answers the question: uninstall
+ * revokes every runtime credential bound to a connection before it revokes
+ * the connection, so one that just authenticated belongs to a connection
+ * that is still installed. Provenance keys on `(space, manifest name)`
+ * rather than on the connection, and the two remaining equalities pin both
+ * halves — `item_source` against the row's source for the name, `space_id`
+ * against the row's for the space. Without the space equality the match
+ * would be safe only by the accident that no route hands this a row from
+ * outside the caller's fence.
+ *
+ * **Decided from the data, not from the call site.** Any row in the batch
+ * that fails those equalities drops the whole call back to the real
+ * resolution rather than going unanswered. That is what the fallback is
+ * for, and it runs in both directions: an integration touching a row a
+ * *removed* integration wrote must not be told `false`, and one touching a
+ * row a *live* integration wrote must not be told `true`. Two integrations
+ * declaring the same type in `target_types` makes both reachable, because
+ * lifecycle gestures are exempt from mirror protection.
  *
  * Worth roughly one listing plus one catalog get per distinct integration in
- * the space, on every integration-sourced single-item write.
+ * the space, on every integration-sourced single-item write that misses.
  */
 export async function resolveOrphanScopeForOwnWrite(
   storage: Storage,
   items: readonly Pick<Item, "source" | "space_id">[],
-  callerSource: string | undefined,
+  key: ApiKey | undefined,
 ): Promise<OrphanScope> {
-  if (callerSource?.startsWith(INTEGRATION_SOURCE_PREFIX) !== true) {
+  const ownSource =
+    key?.is_runtime_credential === true ? key.item_source : null;
+  if (ownSource === null || ownSource === undefined) {
     return resolveOrphanScope(storage, items);
   }
+  const callerSpace: SpaceKey = key?.space_id ?? null;
   const live = new Map<SpaceKey, ReadonlySet<string>>();
   for (const item of items) {
     if (!isIntegrationSourced(item)) continue;
-    if (item.source !== callerSource) {
+    if (item.source !== ownSource || spaceKeyOf(item) !== callerSpace) {
       return resolveOrphanScope(storage, items);
     }
-    live.set(spaceKeyOf(item), new Set([callerSource]));
+    live.set(spaceKeyOf(item), new Set([ownSource]));
   }
   return { live };
 }

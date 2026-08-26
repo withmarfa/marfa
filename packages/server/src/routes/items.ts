@@ -1187,7 +1187,7 @@ export function itemRoutes(storage: Storage) {
               await resolveOrphanScopeForOwnWrite(
                 storage,
                 [existing],
-                stampedSource,
+                c.get("apiKey"),
               ),
             ),
             metadata,
@@ -1379,7 +1379,7 @@ export function itemRoutes(storage: Storage) {
               await resolveOrphanScopeForOwnWrite(
                 storage,
                 [itemWithEdges],
-                stampedSource,
+                c.get("apiKey"),
               ),
             ),
             metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
@@ -1502,7 +1502,7 @@ export function itemRoutes(storage: Storage) {
           await resolveOrphanScopeForOwnWrite(
             storage,
             [itemWithEdges],
-            stampedSource,
+            c.get("apiKey"),
           ),
         ),
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
@@ -1570,11 +1570,7 @@ export function itemRoutes(storage: Storage) {
       {
         item: withOrphanState(
           promoted,
-          await resolveOrphanScopeForOwnWrite(
-            storage,
-            [promoted],
-            itemProvenanceSource(credential),
-          ),
+          await resolveOrphanScopeForOwnWrite(storage, [promoted], credential),
         ),
       },
       201,
@@ -2257,7 +2253,7 @@ export function itemRoutes(storage: Storage) {
             await resolveOrphanScopeForOwnWrite(
               storage,
               [txResult],
-              itemProvenanceSource(c.get("apiKey")),
+              c.get("apiKey"),
             ),
           ),
           edges: hydrated,

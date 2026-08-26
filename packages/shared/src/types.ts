@@ -175,10 +175,17 @@ export interface Item {
    * still installed there; `true` says it is not, and the item is a copy of
    * a record nothing is keeping current any more.
    *
-   * **Read responses only.** Item events on the `GET /events` stream omit
-   * it, because removing a connection publishes no item events and the
-   * stream therefore cannot report the change. Merging frames over a read
-   * means keeping the value the read gave you; re-read to refresh it.
+   * **Every REST response that carries an item answers**, whether it read
+   * the row or just wrote it — so a `POST /items` or `PATCH` response omits
+   * it for exactly the same reason a `GET` does, and never because a write
+   * had no chance to look.
+   *
+   * **The one surface that does not is the `GET /events` stream.** Removing
+   * a connection publishes no item events, so the stream cannot report the
+   * change this field describes, and its frames leave the field off
+   * entirely. A client merging frames over a read must keep the value the
+   * read gave it rather than reading absence in a frame as an answer, and
+   * must re-read to refresh it.
    */
   orphaned?: boolean;
 }

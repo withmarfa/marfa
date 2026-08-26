@@ -47,8 +47,9 @@ import { performInstall } from "../connections/install-pipeline.js";
 import { performUninstall } from "../connections/uninstall-pipeline.js";
 import { performPause } from "../connections/pause-pipeline.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
 import { initEventLog } from "../pubsub.js";
-import type { IntegrationManifest, Item } from "@withmarfa/shared";
+import type { ApiKey, IntegrationManifest, Item } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let homeSpace: string;
@@ -71,6 +72,8 @@ let goneRestoreItemId: string;
 let goneLiveFrameItemId: string;
 let goneReplayFrameItemId: string;
 let goneVouchItemId: string;
+let pausedVouchItemId: string;
+let goneForgedItemId: string;
 let gonePromoteItemId: string;
 let referrerItemId: string;
 let liveRuntimeKey: string;
@@ -280,6 +283,10 @@ beforeAll(async () => {
     goneRuntimeKey,
     "mirrored, later touched by another integration",
   );
+  goneForgedItemId = await writeNote(
+    goneRuntimeKey,
+    "mirrored, later touched by a forged credential",
+  );
 
   const liveConnection = await install(LIVE, liveCatalog, homeSpace);
   liveRuntimeKey = await mintRuntimeKey(LIVE, liveConnection, homeSpace);
@@ -289,9 +296,18 @@ beforeAll(async () => {
   );
 
   const pausedConnection = await install(PAUSED, pausedCatalog, homeSpace);
+  const pausedRuntimeKey = await mintRuntimeKey(
+    PAUSED,
+    pausedConnection,
+    homeSpace,
+  );
   pausedItemId = await writeNote(
-    await mintRuntimeKey(PAUSED, pausedConnection, homeSpace),
+    pausedRuntimeKey,
     "mirrored by the integration that pauses",
+  );
+  pausedVouchItemId = await writeNote(
+    pausedRuntimeKey,
+    "mirrored, later touched by another integration",
   );
 
   liveReplaySourceId = `upstream-${Math.random().toString(36).slice(2, 12)}`;
@@ -707,14 +723,21 @@ describe("the remaining write paths that echo an item back", () => {
     expect("orphaned" in json.item).toBe(false);
   });
 
-  it("does not let one integration's credential vouch for another's row", async () => {
-    // The own-write shortcut answers `false` without a query on the strength
-    // of the caller's own credential being live. This is the case that makes
-    // its guard load-bearing: a runtime credential for a *different*
-    // integration transitions a row the uninstalled one wrote, so the
-    // caller's liveness says nothing about the row's source and the shortcut
-    // has to fall back to the real query. Without the guard the row would
-    // come back `false` — a live integration vouching for a dead one.
+  /**
+   * The own-write shortcut answers from the calling credential instead of
+   * querying, so it must only answer for rows that credential's own
+   * `item_source` stamped. Two integrations declaring the same type in
+   * `target_types` gives one write access to the other's rows, and lifecycle
+   * gestures are exempt from mirror protection, so a caller touching a
+   * stranger's mirror is reachable in both directions.
+   *
+   * The second of these is the one that pins the guard. Drop it and the
+   * scope becomes the caller's own source, so the row is judged against a
+   * set that never contains it — every stranger's row reads `true`,
+   * including rows of perfectly healthy integrations. The first case reads
+   * `true` either way, so on its own it proves nothing.
+   */
+  it("does not let one integration answer for a removed one's row", async () => {
     const res = await request(
       ctx.app,
       "POST",
@@ -723,10 +746,61 @@ describe("the remaining write paths that echo an item back", () => {
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as { item: Item };
-    // The caller and the row really are different integrations, or this
-    // asserts nothing about the guard.
+    // Caller and row really are different integrations, or this says nothing.
     expect(json.item.source).toBe("integration:acme/orphan-gone");
     expect(json.item.orphaned).toBe(true);
+  });
+
+  it("does not take a hand-minted credential's word for its own provenance", async () => {
+    // `source` is free text on a hand-minted key, and one of the three mint
+    // routes writes the caller's label into it with no reserved-prefix
+    // check — so the string can claim to be an integration when nothing is
+    // installed behind it. Minted through storage here rather than through
+    // that route, so this pins the rule this module is responsible for
+    // instead of the missing check, which is somebody else's fix.
+    const suffix = Math.random().toString(36).slice(2, 12);
+    const raw = `marfa_k1_orphan_forged_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: "integration:acme/orphan-gone",
+        source: "integration:acme/orphan-gone",
+        role: "admin",
+        type_permissions: {},
+        default_tier: "library",
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      homeSpace,
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${goneForgedItemId}/transition`,
+      { key: raw, body: { state: "archived" } },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    // The forged source matches the row exactly, which is what would make a
+    // string comparison believe it. The credential is not a runtime one, so
+    // the shortcut must not fire and the integration is still gone.
+    expect(json.item.source).toBe("integration:acme/orphan-gone");
+    expect(json.item.orphaned).toBe(true);
+  });
+
+  it("does not let one integration condemn a live one's row", async () => {
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${pausedVouchItemId}/transition`,
+      { key: liveRuntimeKey, body: { state: "archived" } },
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { item: Item };
+    expect(json.item.source).toBe("integration:acme/orphan-paused");
+    // `acme/orphan-paused` is installed, so the honest answer is `false`.
+    // The shortcut cannot produce it — its set holds the caller's source
+    // and nothing else — so this only passes when the fallback runs.
+    expect(json.item.orphaned).toBe(false);
   });
 
   it("POST /items, replaying a natural key onto a trashed mirror", async () => {
@@ -885,6 +959,58 @@ describe("a derivation that cannot be made is not silently skipped", () => {
     // about the stub rather than about a context this test broke.
     const after = await listItems(homeKey);
     expect(need(after, goneItemId, "gone").orphaned).toBe(true);
+  });
+});
+
+describe("the own-write shortcut's space equality", () => {
+  /**
+   * Every write route fetches its row under the caller's own space fence, so
+   * no route can currently hand the shortcut a row from another space — the
+   * equality is safe today by the routes' behaviour rather than by anything
+   * in this module. That is exactly why it is asserted here, against the
+   * function, rather than through a route that cannot express the case: the
+   * check has to survive a future caller that fetches differently.
+   */
+  function runtimeKey(itemSource: string, spaceId: string | undefined): ApiKey {
+    return {
+      id: "key_shortcut_probe",
+      is_runtime_credential: true,
+      item_source: itemSource,
+      space_id: spaceId,
+      role: "member",
+      type_permissions: {},
+    } as unknown as ApiKey;
+  }
+
+  it("answers without a query when the row is the caller's own", async () => {
+    const row = {
+      source: "integration:acme/orphan-gone",
+      space_id: homeSpace,
+    };
+    const scope = await resolveOrphanScopeForOwnWrite(
+      ctx.storage,
+      [row],
+      runtimeKey(row.source, homeSpace),
+    );
+    // The shortcut fired: `acme/orphan-gone` is uninstalled in `homeSpace`,
+    // so the real query would have said `true` and this says `false`.
+    expect(withOrphanState(row, scope).orphaned).toBe(false);
+  });
+
+  it("falls back when the row is in a different space from the caller", async () => {
+    const row = {
+      source: "integration:acme/orphan-gone",
+      space_id: homeSpace,
+    };
+    const scope = await resolveOrphanScopeForOwnWrite(
+      ctx.storage,
+      [row],
+      // Same integration, same source string, a different space. The
+      // credential proves a live connection where it lives, and nothing
+      // about `homeSpace`.
+      runtimeKey(row.source, elsewhereSpace),
+    );
+    expect(withOrphanState(row, scope).orphaned).toBe(true);
   });
 });
 
