@@ -643,7 +643,10 @@ export function createApp(
     integrationRoutes(storage, config.apiKeySalt, auth),
   );
   app.route("/spaces", spaceRoutes(storage));
-  app.route("/admin", adminArchiveRoutes(storage, blobBackend));
+  app.route(
+    "/admin",
+    adminArchiveRoutes(storage, blobBackend, config.authMode),
+  );
   app.route("/admin", adminRuntimeJobsRoutes(deadLetterOps ?? null));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
   // session-level RLS on a reserved pool connection — for /export's whole

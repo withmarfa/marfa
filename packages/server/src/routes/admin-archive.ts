@@ -296,7 +296,11 @@ async function restoreArchiveBlobs(
   };
 }
 
-export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
+export function adminArchiveRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+  authMode: "keys" | "hosted",
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
@@ -502,6 +506,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
       storage,
       typeEntries,
       spaceId,
+      authMode,
     );
 
     // Blobs land only once every refusal above has passed. They used to be
