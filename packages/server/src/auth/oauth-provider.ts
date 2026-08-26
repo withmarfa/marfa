@@ -44,15 +44,26 @@ import { log } from "../middleware/logger.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 
 /**
- * Minimal context shape we read off `hooks.after` matchers + handlers.
- * Mirrors the slice of Better Auth's `HookEndpointContext` we touch —
- * `path` is widened to `string | undefined` to match the library's
- * type (some internal paths leave it unset).
+ * Minimal context shape we read off the `hooks.before` and `hooks.after`
+ * matchers + handlers. Mirrors the slice of Better Auth's
+ * `HookEndpointContext` we touch — `path` is widened to `string | undefined`
+ * to match the library's type (some internal paths leave it unset), and
+ * `method` and `authorizeSettings` are read only on the before side.
  */
 interface HookCtxLite {
   path?: string;
+  method?: string;
   body?: Record<string, unknown>;
   query?: Record<string, unknown>;
+  /**
+   * Set only when the provider re-enters its own authorize endpoint rather
+   * than serving a request off the wire, and the marker that tells the two
+   * apart. Declared here rather than described in prose because
+   * {@link findAuthorizeRequest} reads it to reproduce the provider's own
+   * parameter selection, and a field is harder to lose track of than a
+   * comment.
+   */
+  authorizeSettings?: { isAuthorize?: boolean };
   context?: {
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
@@ -735,10 +746,76 @@ function normalizeResourceParameter(
 }
 
 /**
- * Before-hook for `GET|POST /oauth2/authorize`. Rewrites `ctx.query.scope`
- * to the intersection of what was requested, what this server can grant, and
- * what the client is registered for, so an unsatisfiable literal is dropped
- * instead of failing the authorization.
+ * The object the vendored provider will read an authorize request's
+ * parameters out of, together with the client the request names. This is the
+ * object a before-hook has to rewrite for a rewrite to mean anything.
+ *
+ * It reproduces the provider's own selection rather than inferring one:
+ *
+ *     ctx.method === "POST" && settings?.isAuthorize === true
+ *       ? ctx.body
+ *       : ctx.query
+ *
+ * with `settings` being `ctx.authorizeSettings ?? { isAuthorize: true }`.
+ * Reproducing it is what makes the two impossible to disagree; anything
+ * inferred from the shape of the request is a second rule that can drift
+ * against the first, and drifting means failing open without saying so.
+ *
+ * The verb alone does not settle it, which is the part worth knowing. The
+ * endpoint re-enters itself from six places: twice from the consent
+ * endpoint, once when it cannot satisfy a `prompt=login` and once when it is
+ * done; once after a sign-in; and once from each of the three branches of
+ * `/oauth2/continue`. Each dispatches this same endpoint with the parameters
+ * lifted onto the query while the method still reads POST, and every one of
+ * them leaves `isAuthorize` unset — which is exactly how the provider tells
+ * a re-entry from a form post it is serving directly.
+ *
+ * `undefined` when the selected object names no client. The provider refuses
+ * a request with no `client_id` itself, and there is no grant in it to
+ * narrow, so there is nothing here to fail open on.
+ *
+ * If a future version changes that selection, this diverges silently. Two
+ * things bound how far: the dependency is pinned to an exact version rather
+ * than a range, so arriving at a different one is an edit somebody made on
+ * purpose; and the coverage is end-to-end rather than a unit test on this
+ * function, so a form POST that stops being narrowed fails a test about the
+ * redirect it produces rather than one about which object was read.
+ *
+ * **The `isAuthorize` half of that test passes every test in the suite if it
+ * is deleted, and it must not be.** Dropping it reads the consent or
+ * continue body on a re-entry instead of the query. That is a no-op only
+ * because those two endpoints declare their bodies as plain `z.object`
+ * without `.passthrough()`, so an unknown `client_id` is stripped out before
+ * dispatch and this finds nothing to act on — where the authorize endpoint's
+ * own body schema does passthrough, which is why the same key survives on a
+ * form post. The no-op is therefore a property of those schemas rather than
+ * of what a client happens to send, and a re-entry body that ever carried a
+ * `client_id` would turn it into this hook rewriting the scope list a person
+ * just consented to. It is here because it reproduces the rule, not because
+ * a test caught it.
+ */
+function findAuthorizeRequest(
+  ctx: HookCtxLite,
+): { params: Record<string, unknown>; clientId: string } | undefined {
+  const settings = ctx.authorizeSettings ?? { isAuthorize: true };
+  const source =
+    ctx.method === "POST" && settings.isAuthorize === true
+      ? ctx.body
+      : ctx.query;
+  if (!source || typeof source !== "object") return undefined;
+
+  const clientId = source.client_id;
+  if (typeof clientId !== "string" || clientId.length === 0) return undefined;
+  return { params: source, clientId };
+}
+
+/**
+ * Before-hook for `GET|POST /oauth2/authorize`. Rewrites the request's
+ * `scope` — on the query string or the form body, whichever the provider
+ * will read it from, see {@link findAuthorizeRequest} — to the intersection
+ * of what was requested, what this server can grant, and what the client is
+ * registered for, so an unsatisfiable literal is dropped instead of failing
+ * the authorization.
  *
  * **It refuses to narrow in two cases, each deliberately leaving the
  * plugin's own `invalid_scope` to fire:**
@@ -767,7 +844,7 @@ function normalizeResourceParameter(
  * what the page must never trust. The machine channel is the honest one.
  *
  * A read failure fails open (log, return) so a transient database blip
- * degrades to the pre-existing behaviour rather than breaking sign-in.
+ * degrades to the pre-existing behavior rather than breaking sign-in.
  */
 async function narrowAuthorizeScopes(
   ctx: HookCtxLite,
@@ -775,11 +852,9 @@ async function narrowAuthorizeScopes(
   liveScopes: Set<string>,
   bundleScopes: Set<string>,
 ): Promise<void> {
-  const query = ctx.query;
-  if (!query || typeof query !== "object") return;
-
-  const clientId = query.client_id;
-  if (typeof clientId !== "string" || clientId.length === 0) return;
+  const request = findAuthorizeRequest(ctx);
+  if (!request) return;
+  const { params, clientId } = request;
 
   const oauth = storage.oauthProvider;
   if (!oauth) return;
@@ -800,7 +875,7 @@ async function narrowAuthorizeScopes(
     return;
   }
 
-  const rawScope = query.scope;
+  const rawScope = params.scope;
   const requested =
     typeof rawScope === "string"
       ? rawScope.split(" ").filter((s) => s.length > 0)
@@ -823,7 +898,7 @@ async function narrowAuthorizeScopes(
       });
       return;
     }
-    query.scope = grantable.join(" ");
+    params.scope = grantable.join(" ");
     log("info", "oauth authorize: defaulted scope to the live ceiling", {
       client_id: clientId,
       dropped_scopes: dead,
@@ -921,15 +996,15 @@ async function narrowAuthorizeScopes(
   // Both tests below are exact membership, and both stay that way even
   // though the consent comparisons one file over now understand breadth.
   //
-  // This hook rewrites `query.scope` and hands it straight back to the
-  // vendored provider, which re-validates what it receives against the very
-  // same values: `new Set(client.scopes ?? opts.scopes)` and `.has(scope)`,
-  // exact, with no pattern matching anywhere in it. So a literal waved
-  // through here on the grounds that a wildcard in the ceiling covers it is
-  // refused a moment later — and refused as `invalid_scope` on the WHOLE
-  // request, riding a redirect the app may never render. That is a worse
-  // outcome than the narrowing this loop performs, and it is the dead end
-  // the hook exists to prevent.
+  // This hook rewrites the request's `scope` and hands it straight back to
+  // the vendored provider, which re-validates what it receives against the
+  // very same values: `new Set(client.scopes ?? opts.scopes)` and
+  // `.has(scope)`, exact, with no pattern matching anywhere in it. So a
+  // literal waved through here on the grounds that a wildcard in the
+  // ceiling covers it is refused a moment later — and refused as
+  // `invalid_scope` on the WHOLE request, riding a redirect the app may
+  // never render. That is a worse outcome than the narrowing this loop
+  // performs, and it is the dead end the hook exists to prevent.
   //
   // The repair that works on this path is above rather than here: the
   // stale-ceiling catch-up writes the requested literal INTO the stored row,
@@ -979,7 +1054,7 @@ async function narrowAuthorizeScopes(
     return;
   }
 
-  query.scope = granted.join(" ");
+  params.scope = granted.join(" ");
 
   // Two log lines because they are two different events. A scope this server
   // has never heard of points at a client built against a different registry
