@@ -119,7 +119,6 @@ async function scenario(
         runtime_status: "healthy",
         granted_at: new Date().toISOString(),
         integration_ref: first.item.id,
-        label: `Acme ${name}`,
         configuration: {},
         direction: "read",
         triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
@@ -157,7 +156,7 @@ describe("a widening upgrade can be seen and approved", () => {
     const body = (await res.json()) as {
       pending: {
         connection_id: string;
-        label: string | null;
+        manifest_name: string;
         from_version: string;
         to_version: string;
         consent_lines: string[];
@@ -167,7 +166,10 @@ describe("a widening upgrade can be seen and approved", () => {
     expect(entry).toBeDefined();
     expect(entry?.from_version).toBe("1.0.0");
     expect(entry?.to_version).toBe("2.0.0");
-    expect(entry?.label).toBe(`Acme ${s.name}`);
+    // The name a person reads. It comes from the manifest because a
+    // connection has none of its own — the entry used to offer a `label`
+    // read off the connection's properties, which nothing ever wrote.
+    expect(entry?.manifest_name).toBe(s.name);
     // The sentences are the point: a count told nobody what to decide.
     expect(entry?.consent_lines.join(" ")).toContain("core.bookmark");
   });

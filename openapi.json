@@ -20784,10 +20784,6 @@
                           "connection_id": {
                             "type": "string"
                           },
-                          "label": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "manifest_name": {
                             "type": "string"
                           },
@@ -20806,7 +20802,6 @@
                         },
                         "required": [
                           "connection_id",
-                          "label",
                           "manifest_name",
                           "from_version",
                           "to_version",
