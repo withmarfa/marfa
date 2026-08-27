@@ -14,7 +14,6 @@ import {
   isReservedHandle,
   canGrantRole,
   GLOBAL_TYPE_WILDCARD,
-  TYPE_REGISTRY,
   grantCoversScope,
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
@@ -28,6 +27,7 @@ import {
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import { mergeDeviceApprovalScopes } from "./device-scope-merge.js";
+import { buildScopeDescriptions } from "./auth-consent.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import {
   bundlePublishedScopes,
@@ -142,29 +142,6 @@ async function revokeProjectedGrant(
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const REFRESH_TOKEN_PREFIX = "marfa_rt_";
 const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
-
-/**
- * Plain-English descriptions for the metadata-layer sub-resource scopes.
- * Type scopes pull their descriptions from `TYPE_REGISTRY`; these don't
- * correspond to a registered type, so they live alongside the route.
- */
-const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  metadata: "Read or write any metadata-layer resource",
-  "metadata.types": "Register and update custom data types in your space",
-};
-
-/**
- * Plain-English descriptions for wildcard patterns. The registry cannot
- * describe these — a wildcard matches types at check time rather than
- * naming one — and the grant covers types that may not exist yet, which
- * is exactly what the copy has to say.
- */
-const WILDCARD_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  "*": "Everything in your space",
-  "core.*": "All standard content types, including ones added later",
-  "user.*": "Your custom types, including ones you define later",
-  "app.*": "Types this app defines for itself",
-};
 
 function generateToken(prefix: string): string {
   return `${prefix}${randomBytes(32).toString("hex")}`;
@@ -2584,23 +2561,16 @@ export function authRoutes(
       .filter(
         (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
       );
-    const descriptions: Record<string, string> = {};
-    for (const s of parsedScopes) {
-      const typeEntry = TYPE_REGISTRY.get(s.typePattern);
-      if (typeEntry?.description) {
-        descriptions[s.typePattern] = typeEntry.description;
-      } else {
-        // OIDC literals are deliberately absent. `describeCapabilities` in
-        // `device-pages.ts` resolves them from `oidc-labels.ts` and never
-        // reads this map for one, so the entry that used to sit here — the
-        // one claiming `profile` hands over a username and a bio — was
-        // written into a map and then discarded on every render.
-        const fallback =
-          METADATA_SCOPE_DESCRIPTIONS[s.typePattern] ??
-          WILDCARD_SCOPE_DESCRIPTIONS[s.typePattern];
-        if (fallback) descriptions[s.typePattern] = fallback;
-      }
-    }
+    // The same copy `/auth/authorize` renders, from the same function. Two
+    // maps stood here and agreed with that screen about types while
+    // contradicting it about metadata and wildcards, so which answer a
+    // person got depended on which screen the device flow had put them on.
+    //
+    // It also reverses the precedence this loop carried: curated copy now
+    // wins over the type registry's description. That is what the other
+    // screen has always shown, and the registry's is written for a developer
+    // reading API docs rather than for an owner approving a grant.
+    const descriptions = buildScopeDescriptions(parsedScopes);
 
     setNoStore(c);
     return c.html(

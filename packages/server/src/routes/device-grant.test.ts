@@ -7,7 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setActivePermissionBundles } from "../config.js";
-import { grantCoversScope } from "@withmarfa/shared";
+import { grantCoversScope, TYPE_REGISTRY } from "@withmarfa/shared";
 
 /**
  * Tests for the Device Authorization Grant (RFC 8628) surface:
@@ -550,6 +550,42 @@ describe("GET /auth/device/consent — gated on session", () => {
     expect(html).toContain("Your custom types, including ones you define");
     const rowCount = html.split('class="crow"').length - 1;
     expect(rowCount).toBe(2);
+  });
+
+  it("describes a type in the consent screen's words, not the registry's", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const initResult = await initiate(ctx, clientId, "core.note:read");
+    const cookie = await signInAndCookie(
+      ctx,
+      "dave@example.com",
+      "correct horse",
+    );
+
+    const res = await ctx.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/device/consent?user_code=${encodeURIComponent(initResult.user_code)}`,
+        { headers: { origin: ORIGIN, cookie } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // This route built a description map of its own that reached for the type
+    // registry first, and the registry's copy is written for a developer
+    // reading API docs. The authorize screen has always shown the curated
+    // line, so a person approving the same grant met one answer or the other
+    // depending on which screen the flow had put them in front of. Asserting
+    // the curated line is what holds this route to the shared source: a
+    // rebuilt local map would satisfy the wildcard row above unchanged.
+    const registry = TYPE_REGISTRY.get("core.note")?.description;
+    expect(
+      registry,
+      "fixture assumes the registry describes core.note",
+    ).toMatch(/\S/);
+    expect(registry).not.toBe("Your notes.");
+    expect(html).toContain("Your notes.");
+    expect(html).not.toContain(registry);
   });
 });
 

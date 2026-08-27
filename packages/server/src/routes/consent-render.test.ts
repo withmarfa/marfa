@@ -9,7 +9,13 @@ import {
   CAPABILITY_SHORT,
   capabilityLabel,
 } from "./capability-labels.js";
-import { CAPABILITY_SCOPES } from "@withmarfa/shared";
+import { CAPABILITY_SCOPES, TYPE_REGISTRY } from "@withmarfa/shared";
+import {
+  buildScopeDescriptions,
+  CONSENT_SCOPE_DESCRIPTIONS,
+} from "./auth-consent.js";
+import { renderDeviceConsentScreen } from "./device-pages.js";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
 
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
@@ -881,6 +887,194 @@ describe("sentence forms cover every label that can be joined into one", () => {
       // snapshots are what caught the real instance and are the guard that
       // can tell the two apart, because a person reads them.
       expect(value[0]).toBe(value[0]?.toLowerCase());
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The description axis: one answer per scope, whichever screen asks.
+//
+// Distinct from the label maps above, and the distinction is what the
+// renderer runs on. A label is the short name on a toggle row; a description
+// is the plain-English line, and `labelFor` falls back from the first to the
+// second. Three maps used to hold descriptions and two of them contradicted
+// each other about whether a metadata scope or a wildcard gets one at all.
+// ---------------------------------------------------------------------------
+
+/** Throws rather than filtering, so a fixture typo cannot leave an empty
+ *  scope list and quietly satisfy an assertion about what is absent. */
+const parse = (literal: string): ParsedScope => {
+  const parsed = parseScope(literal);
+  if (!parsed) throw new Error(`unparseable scope literal: ${literal}`);
+  return parsed;
+};
+
+const describeAll = (...literals: string[]): Record<string, string> =>
+  buildScopeDescriptions(literals.map(parse));
+
+describe("buildScopeDescriptions covers every kind a person can be shown", () => {
+  it("describes the metadata scopes instead of skipping them", () => {
+    // The skip rested on these being self-explanatory to whoever requests
+    // them. Whoever requests them is not who reads the screen.
+    const out = describeAll("metadata:read", "metadata.types:write");
+    expect(out.metadata).toMatch(/\S/);
+    expect(out["metadata.types"]).toBe(
+      "Register and update custom data types in your space",
+    );
+  });
+
+  it("describes every metadata scope a client can actually request", () => {
+    // Asked of the allowlist rather than a list beside it, so a third
+    // sub-resource added to the grammar arrives here without copy and fails,
+    // rather than reaching a screen as its own literal. `metadata.edge_types`
+    // is why: it has been requestable as long as `metadata.types` has, and
+    // the map that described one had never heard of the other.
+    const metadata = buildAllowedScopes()
+      .map(parse)
+      .filter((s) => s.kind === "metadata");
+    expect(metadata.length).toBeGreaterThan(2);
+    const out = buildScopeDescriptions(metadata);
+    for (const scope of metadata) {
+      expect(out[scope.typePattern], scope.typePattern).toMatch(/\S/);
+    }
+  });
+
+  it("describes a wildcard, which nothing else can", () => {
+    const out = describeAll(
+      "*:read",
+      "core.*:read",
+      "user.*:read",
+      "app.*:read",
+    );
+    expect(Object.keys(out).sort()).toEqual(["*", "app.*", "core.*", "user.*"]);
+    for (const [pattern, copy] of Object.entries(out)) {
+      expect(copy, pattern).toMatch(/\S/);
+    }
+    // A wildcard nobody curated gets nothing, rather than one matched type's
+    // copy standing in for a whole namespace.
+    expect(describeAll("readwise.*:read")).toEqual({});
+  });
+
+  it("cannot get a wildcard's copy from the type registry", () => {
+    // The premise the wildcard arm does not rely on, pinned so that a
+    // registry which started answering patterns fails here and points at the
+    // arm rather than shipping one type's sentence as a namespace's.
+    for (const pattern of ["*", "core.*", "user.*", "app.*"]) {
+      expect(TYPE_REGISTRY.get(pattern), pattern).toBeUndefined();
+    }
+  });
+
+  it("resolves a capability through the labels the other screens read", () => {
+    expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
+    const out = describeAll(...CAPABILITY_SCOPES);
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(out[literal], literal).toBe(CAPABILITY_LABELS[literal]);
+    }
+  });
+
+  it("answers nothing for an OIDC literal", () => {
+    // `labelFor` here and `describeCapabilities` on the device screen both
+    // resolve one through `oidc-labels.ts` and return before they reach this
+    // map, so an entry would be computed and discarded on every render.
+    expect(describeAll("openid", "profile", "email", "offline_access")).toEqual(
+      {},
+    );
+  });
+
+  it("prefers curated copy to the registry's, and falls back to it", () => {
+    const out = describeAll("core.note:read", "google.calendar.event:read");
+    // The registry's own sentence is written for a developer reading API
+    // docs. Both screens show the curated one now; the device screen used to
+    // show this.
+    expect(out["core.note"]).toBe("Your notes.");
+    expect(out["core.note"]).not.toBe(
+      TYPE_REGISTRY.get("core.note")?.description,
+    );
+    // The fallback is what serves a type registered at runtime, where the
+    // operator wrote the description and nobody curated one here.
+    expect(CONSENT_SCOPE_DESCRIPTIONS["google.calendar.event"]).toBeUndefined();
+    expect(out["google.calendar.event"]).toBe(
+      TYPE_REGISTRY.get("google.calendar.event")?.description,
+    );
+    expect(out["google.calendar.event"]).toMatch(/\S/);
+  });
+
+  it("does not let one kind read another kind's copy off the flat map", () => {
+    // `typePattern` carries a different namespace per kind, so one map across
+    // four kinds is only sound while no two can produce the same key. The
+    // edge entries were keyed on the bare edge type id, where `*` is an edge
+    // type the scope allowlist publishes and `metadata` is a name an edge
+    // type can be registered under. Both would have read the type axis's copy
+    // the moment the wildcard entries landed beside them.
+    const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
+    expect(out["*"]).toBe("Everything in your space");
+    expect(out["edge.*"]).toBeUndefined();
+    expect(out["edge.metadata"]).toBeUndefined();
+    // The curated edge copy still resolves, keyed on the pattern.
+    expect(describeAll("edge.parent-of:write")["edge.parent-of"]).toMatch(/\S/);
+  });
+});
+
+/**
+ * The two screens a person meets a scope on say the same thing about it.
+ *
+ * Worth more than two tests each checking one screen, because the defect was
+ * never that either screen was wrong on its own: each was internally
+ * consistent and they disagreed with each other, so which answer somebody got
+ * depended on which screen the flow had put them on.
+ *
+ * Only the description field is held to this. The label field is deliberately
+ * free to differ: `SCOPE_LABELS` gives the authorize screen a short toggle
+ * name where the device screen, which has no toggles, shows the sentence. So
+ * the literals below are ones with no label entry, where the authorize screen
+ * renders the description itself and a disagreement would be visible.
+ *
+ * This holds the renderers to one source. That the device *route* still reads
+ * that source rather than rebuilding a map of its own is held by
+ * `device-grant.test.ts`, which drives the real request.
+ */
+describe("the authorize screen and the device screen describe a scope alike", () => {
+  const UNLABELED = [
+    "metadata.types:write",
+    "core.*:read",
+    "app.*:read",
+    "*:read",
+  ];
+
+  it("renders the same copy on both, from the one map", () => {
+    const scopes = UNLABELED.map(parse);
+    const descriptions = buildScopeDescriptions(scopes);
+    // Every literal described, or the loop below asserts over less than it
+    // reads as asserting over.
+    expect(Object.keys(descriptions)).toHaveLength(UNLABELED.length);
+
+    const authorize = renderConsentScreen({ ...PARAMS, scopes, descriptions });
+    const device = renderDeviceConsentScreen({
+      clientName: "Test CLI",
+      scopes,
+      userCode: "ABCD-EFGH",
+      descriptions,
+    });
+
+    for (const [pattern, copy] of Object.entries(descriptions)) {
+      expect(authorize, pattern).toContain(copy);
+      expect(device, pattern).toContain(copy);
+    }
+  });
+
+  it("shows no scope on either screen as its bare literal", () => {
+    // The floor both screens fall to when nothing describes a scope. It is
+    // what a metadata row and a wildcard row rendered on one of them.
+    const scopes = UNLABELED.map(parse);
+    const descriptions = buildScopeDescriptions(scopes);
+    const device = renderDeviceConsentScreen({
+      clientName: "Test CLI",
+      scopes,
+      userCode: "ABCD-EFGH",
+      descriptions,
+    });
+    for (const literal of UNLABELED) {
+      expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
   });
 });
