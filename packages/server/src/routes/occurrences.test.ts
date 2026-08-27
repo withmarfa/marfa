@@ -479,3 +479,99 @@ describe("GET /occurrences", () => {
     expect(errors.filter((e) => e.item_id === badId)).toHaveLength(1);
   });
 });
+
+describe("the occurrence ceiling", () => {
+  // Its own fixture, anchored well past every other case's window: the
+  // series pass is unwindowed, so rules dense enough to flood a window
+  // would be re-expanded by every assertion in this file if they
+  // overlapped one.
+  const DENSE_FROM = "2029-01-01T00:00:00Z";
+
+  beforeAll(async () => {
+    // Three hourly rules: 1,680 occurrences each over seventy days,
+    // under the per-series cap that would report them individually, and
+    // 5,040 together — past the ceiling on the assembled result.
+    //
+    // This ceiling was covered only from the client suite, against a
+    // real in-process server. That is a real test in the wrong layer: a
+    // server change that broke it would go red in a client's tests and
+    // nowhere here.
+    for (const n of [1, 2, 3]) {
+      await createEvent({
+        title: `Hourly ${String(n)}`,
+        starts_at: "2029-01-01T00:00:00.000Z",
+        recurrence: ["RRULE:FREQ=HOURLY"],
+      });
+    }
+  });
+
+  it("refuses a window holding more occurrences than the ceiling", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/occurrences?from=${encodeURIComponent(DENSE_FROM)}&to=${encodeURIComponent("2029-03-12T00:00:00Z")}`,
+      { key: memberKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details?: { max_occurrences?: number; found?: number } };
+    };
+    expect(body.error.details?.max_occurrences).toBe(5000);
+    // The count comes back with it, so a caller narrows by an informed
+    // amount rather than by guesswork.
+    expect(body.error.details?.found).toBeGreaterThan(5000);
+  });
+
+  it("serves a narrower window over the same rules", async () => {
+    // The direction that matters most here. A caller refused by this
+    // ceiling is told to narrow, and narrowing has to actually work —
+    // the scan ceiling this route used to carry refused the same read
+    // for a reason no narrowing could address, so "ask for less" did
+    // nothing at all.
+    const { status, rows } = await occurrences(
+      DENSE_FROM,
+      "2029-01-03T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    // Scoped to this fixture's own rules: the file's other series are
+    // unbounded, so a handful of them reach any window put in front of
+    // them, and asserting on the whole window would be asserting on
+    // them too.
+    const hourly = rows.filter((r) =>
+      String(r.item.properties.title).startsWith("Hourly "),
+    );
+    // Three rules, hourly, over two days: every slot present and none
+    // doubled.
+    expect(hourly).toHaveLength(3 * 48);
+    expect(new Set(hourly.map((r) => r.starts_at)).size).toBe(48);
+    expect(hourly.every((r) => r.series_id !== undefined)).toBe(true);
+  });
+});
+
+describe("the scan block", () => {
+  it("reports the ceiling on a read nowhere near it", async () => {
+    // The announcement is the point: a bound mentioned only when it
+    // fires tells a growing calendar nothing until the day it breaks.
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/occurrences?from=2026-05-01T00:00:00Z&to=2026-05-08T00:00:00Z",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      scan: {
+        events_read: number;
+        occurrences: number;
+        max_occurrences: number;
+      };
+    };
+    expect(body.scan.max_occurrences).toBe(5000);
+    expect(body.scan.occurrences).toBe(body.data.length);
+    // What the read actually cost. Two of the three passes cannot be
+    // narrowed by the window, so this is the figure that grows with the
+    // calendar, and it is the one worth watching.
+    expect(body.scan.events_read).toBeGreaterThan(0);
+  });
+});

@@ -11,6 +11,47 @@
  * Nothing is materialized. The window is the bound that makes an
  * unbounded rule finite, so it is required, capped, and refused rather
  * than trimmed when a caller asks for more than the cap.
+ *
+ * ## What the read is bounded by, and what it is not
+ *
+ * Two of the three passes cannot be narrowed by the window and so read
+ * every matching row in the space. They are walked to exhaustion. There
+ * is deliberately no ceiling on how many rows that is: a ceiling on the
+ * scan cannot be recovered from, because the only move a caller knows —
+ * ask for a narrower window — does not change how many rows carry a
+ * rule. Such a ceiling fails closed permanently, and every call fails
+ * once a space crosses it. A large calendar should be slower, not
+ * refused.
+ *
+ * What keeps "slower" from meaning "out of memory" is that a scanned row
+ * is projected the moment it arrives and the row itself is dropped. The
+ * two unwindowed passes retain exactly `RecurrenceSeries` and
+ * `RecurrenceException` — the expander's own inputs, and nothing else.
+ * An event's `properties` is the upstream record in full, attendees and
+ * description and conference data included, so retaining the projection
+ * rather than the row is the difference between a couple of hundred
+ * bytes and several kilobytes each. Whole items are read exactly once,
+ * for the occurrences actually being returned, after the occurrence
+ * ceiling has already refused anything larger — so the number of items
+ * held at once is bounded by `MAX_OCCURRENCES` rather than by the size
+ * of the space.
+ *
+ * That leaves the projections themselves growing linearly with the
+ * space's event count. It is survivable where holding whole rows is not,
+ * and it is not free. Two follow-ups would remove the growth rather than
+ * shrink it, and neither is possible against the schema as it stands:
+ *
+ *   - **Narrow the series pass by each rule's own bounds**, so a rule
+ *     that ended before the window is never read. It needs the rule's
+ *     first and last instant as indexed columns; a rule is stored as
+ *     RFC 5545 text, and computing its bounds is the expansion this
+ *     pass exists to feed.
+ *   - **Narrow the exception pass by the window.** `original_starts_at`
+ *     has no normalized or indexed column — only `starts_at`/`ends_at`
+ *     are normalized, into `starts_at_utc`/`ends_at_utc`. Comparing the
+ *     raw property text instead would reproduce exactly the bug that
+ *     normalization exists to fix, because an offset-bearing stored time
+ *     does not order against a `Z` one as text.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -19,7 +60,7 @@ import {
   isValidTypePattern,
   matchesTypePattern,
 } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
@@ -33,6 +74,7 @@ import {
 import type {
   Occurrence,
   RecurrenceException,
+  RecurrenceSeries,
 } from "../events/expand-recurrence.js";
 
 /**
@@ -42,7 +84,16 @@ import type {
  */
 export const MAX_WINDOW_DAYS = 400;
 
-/** Ceiling on the assembled result, across every series in the window. */
+/**
+ * Ceiling on the assembled result, across every series in the window.
+ *
+ * The one bound that still refuses, and it is recoverable in the way the
+ * removed scan ceiling was not: a caller asks for less time and
+ * succeeds. It is checked before any item is read, so a window that
+ * cannot be served costs the assembly and no row fetches, and it is
+ * published on every successful read (see `scan` on the response) so a
+ * calendar growing toward it is visible before a request is refused.
+ */
 export const MAX_OCCURRENCES = 5000;
 
 /**
@@ -58,22 +109,17 @@ export const MAX_OCCURRENCES = 5000;
 const EVENT_PAGE_SIZE = 200;
 
 /**
- * Ceiling on how many event rows one request will read, across every
- * pass it makes.
+ * Ids handed to one batched storage call.
  *
- * The window now narrows the standalone read in SQL: `starts_at_utc`
- * carries each stored time as a normalized instant, so a range over it
- * is a range over time. Two of the three passes still cannot be
- * windowed, and this is the backstop for those. A rule written in 2019
- * produces occurrences in 2026, so every series has to be considered
- * whatever the window is; an exception moved outside the window still
- * shadows the slot it left inside it. Both are read whole.
- *
- * It refuses rather than truncating, matching `MAX_OCCURRENCES`. Reading
- * one page and stopping is what this replaces: it returned 200 with an
- * incomplete calendar, which is the failure a person cannot see.
+ * Both batched reads below build a single `IN (...)` from every id they
+ * are given and neither chunks internally, so an unchunked call from
+ * here turns a large calendar into a statement carrying more bind
+ * parameters than SQLite will accept. While the scan was capped that was
+ * unreachable; without the cap it is the failure that would replace the
+ * one being removed, and a different error is not an improvement on a
+ * refusal.
  */
-export const MAX_EVENTS_SCANNED = 20000;
+const ID_BATCH_SIZE = 500;
 
 /**
  * Types whose items this route reads. Anything declaring the event
@@ -82,8 +128,9 @@ export const MAX_EVENTS_SCANNED = 20000;
  */
 const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
 
-/** Rows read so far by one request, shared across its passes so the
- *  ceiling bounds the request rather than each pass separately. */
+/** Rows read so far by one request, summed across its passes. Reported
+ *  on the response rather than compared against anything: what the read
+ *  cost is worth knowing, and it is no longer grounds for refusing. */
 interface ScanBudget {
   scanned: number;
 }
@@ -95,25 +142,40 @@ type EventScanNarrowing = Pick<
 >;
 
 /**
- * The active events of the named types that match one pass's narrowing,
- * walked page by page rather than one page deep.
+ * What the window pass keeps from a row.
  *
- * The ceiling is a parameter rather than a closed-over constant so it is
- * reachable: a backstop nothing can drive is a backstop nobody knows the
- * shape of, and the sibling `MAX_OCCURRENCES` cap sat untested for
- * exactly that reason. It refuses rather than trimming — the single-page
- * read this replaces answered 200 with a calendar missing whatever sat
- * past row 200, which is the failure a person cannot see.
+ * Its own shape rather than one of the expander's because this pass asks
+ * a different question: not how a rule unfolds, but whether this row is
+ * a plain event that lands in the window. `has_recurrence` is resolved
+ * here so the rule text does not have to be carried forward merely to be
+ * tested for emptiness later.
  */
-async function scanEvents(
+interface WindowSeed {
+  id: string;
+  starts_at: string;
+  ends_at?: string;
+  has_recurrence: boolean;
+}
+
+/**
+ * The active events of the named types that match one pass's narrowing,
+ * walked page by page to exhaustion and projected as they arrive.
+ *
+ * `project` returning `undefined` drops the row, which is how a pass
+ * discards what it cannot use at the point the row is in hand rather
+ * than carrying it to a later loop to be skipped there. No page's items
+ * outlive the page: that is the whole reason this is generic rather
+ * than returning `Item[]`.
+ */
+async function scanEvents<T>(
   storage: Storage,
   spaceId: string | undefined,
   types: readonly string[],
-  maxScanned: number,
   budget: ScanBudget,
-  narrowing: EventScanNarrowing = {},
-): Promise<Item[]> {
-  const items: Item[] = [];
+  narrowing: EventScanNarrowing,
+  project: (item: Item) => T | undefined,
+): Promise<T[]> {
+  const kept: T[] = [];
   for (const type of types) {
     let cursor: string | undefined;
     do {
@@ -125,34 +187,107 @@ async function scanEvents(
         ...narrowing,
         ...(cursor !== undefined ? { cursor } : {}),
       });
-      items.push(...page.data);
       budget.scanned += page.data.length;
-      if (budget.scanned > maxScanned) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `This space holds more than ${String(maxScanned)} events; the calendar cannot be assembled in one read`,
-          { max_events_scanned: maxScanned },
-        );
+      for (const item of page.data) {
+        const projected = project(item);
+        if (projected !== undefined) kept.push(projected);
       }
       cursor = page.has_more ? (page.cursor ?? undefined) : undefined;
     } while (cursor !== undefined);
   }
-  return items;
+  return kept;
+}
+
+function projectSeries(item: Item): RecurrenceSeries | undefined {
+  const recurrence = recurrenceProp(item);
+  const startsAt = stringProp(item, "starts_at");
+  // A row carrying the key but no usable rule, or no anchor to unfold it
+  // from, contributes nothing. Dropped here rather than in the expansion
+  // loop so it is never retained in the first place.
+  if (recurrence.length === 0 || startsAt === undefined) return undefined;
+  return {
+    id: item.id,
+    starts_at: startsAt,
+    ends_at: stringProp(item, "ends_at"),
+    timezone: stringProp(item, "timezone"),
+    recurrence,
+  };
+}
+
+function projectException(item: Item): RecurrenceException | undefined {
+  const originalStartsAt = stringProp(item, "original_starts_at");
+  if (originalStartsAt === undefined) return undefined;
+  return { id: item.id, original_starts_at: originalStartsAt };
+}
+
+function projectWindow(item: Item): WindowSeed | undefined {
+  const startsAt = stringProp(item, "starts_at");
+  if (startsAt === undefined) return undefined;
+  return {
+    id: item.id,
+    starts_at: startsAt,
+    ends_at: stringProp(item, "ends_at"),
+    has_recurrence: recurrenceProp(item).length > 0,
+  };
 }
 
 /**
- * Every active event of the named types in the space, unnarrowed.
+ * The series pass's walk, exposed so a test can drive it against a
+ * storage serving more rows than any single page.
  *
- * The unbounded walk the ceiling exists to bound, exposed so the ceiling
- * itself is reachable from a test.
+ * Exported for two properties that are otherwise unobservable: that the
+ * walk runs to exhaustion rather than stopping at a ceiling, and that
+ * what it retains is the projection rather than the row.
  */
-export async function gatherEventItems(
+export async function gatherSeriesSeeds(
   storage: Storage,
   spaceId: string | undefined,
   types: readonly string[],
-  maxScanned: number,
-): Promise<Item[]> {
-  return await scanEvents(storage, spaceId, types, maxScanned, { scanned: 0 });
+): Promise<RecurrenceSeries[]> {
+  return await scanEvents(
+    storage,
+    spaceId,
+    types,
+    { scanned: 0 },
+    { hasProperty: "recurrence" },
+    projectSeries,
+  );
+}
+
+/** Items for the given ids, read in batches. See `ID_BATCH_SIZE`. */
+async function fetchItemsBatched(
+  storage: Storage,
+  spaceId: string | undefined,
+  ids: readonly string[],
+): Promise<Map<string, Item>> {
+  const unique = [...new Set(ids)];
+  const out = new Map<string, Item>();
+  for (let i = 0; i < unique.length; i += ID_BATCH_SIZE) {
+    const slice = unique.slice(i, i + ID_BATCH_SIZE);
+    for (const [id, item] of await storage.items.getMany(slice, spaceId)) {
+      out.set(id, item);
+    }
+  }
+  return out;
+}
+
+/** Parent edges for the given ids, read in batches. See `ID_BATCH_SIZE`. */
+async function fetchParentsBatched(
+  storage: Storage,
+  ids: readonly string[],
+): Promise<Map<string, Edge[]>> {
+  const out = new Map<string, Edge[]>();
+  for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
+    const slice = ids.slice(i, i + ID_BATCH_SIZE);
+    const page = await storage.edges.listToTargetsBatched(
+      slice,
+      // One parent is all a `parent-of` exception has; asking for a
+      // second would only widen what a malformed graph could return.
+      1,
+    );
+    for (const [id, edges] of page) out.set(id, edges);
+  }
+  return out;
 }
 
 const OccurrenceSchema = z.object({
@@ -172,9 +307,32 @@ const SeriesErrorSchema = z.object({
   message: z.string(),
 });
 
+const ScanSchema = z.object({
+  events_read: z
+    .number()
+    .int()
+    .describe(
+      "Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for.",
+    ),
+  occurrences: z
+    .number()
+    .int()
+    .describe("Occurrences returned, the length of `data`."),
+  max_occurrences: z
+    .number()
+    .int()
+    .describe(
+      "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is.",
+    ),
+});
+
 const OccurrencesResponseSchema = z.object({
   data: z.array(OccurrenceSchema),
   window: z.object({ from: z.string(), to: z.string() }),
+  /** What this read cost and what would stop it. Always present: a bound
+   *  that is only mentioned when it fires announces itself too late to
+   *  act on. */
+  scan: ScanSchema,
   /** One entry per series that could not expand — a malformed rule, or
    *  a rule that floods the window. The rest of the calendar still
    *  returns; failing the whole read for one bad series would make a
@@ -189,7 +347,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. The window is required and bounded — a request wider than the cap is refused rather than silently trimmed. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. Two bounds apply and both refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -216,7 +374,8 @@ const occurrencesRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Missing, unreadable, inverted, or over-long window",
+      description:
+        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is — the response carries `max_occurrences` and `found` so the caller can narrow by an informed amount.",
     },
     401: {
       content: {
@@ -259,6 +418,23 @@ function toInstantString(raw: string | undefined, fallback: string): string {
   if (raw === undefined) return fallback;
   const at = new Date(raw);
   return Number.isNaN(at.getTime()) ? fallback : at.toISOString();
+}
+
+/**
+ * One occurrence before its item is in hand.
+ *
+ * Carries the item's id rather than the item, which is what lets the
+ * occurrence ceiling refuse an over-full window without a single row
+ * having been read. For a replacement, `starts_at` here is the computed
+ * slot; the time actually shown comes from the stored item and is
+ * resolved once the items arrive.
+ */
+interface PendingOccurrence {
+  starts_at: string;
+  ends_at?: string;
+  item_id: string;
+  series_id?: string;
+  replaces?: string;
 }
 
 export function occurrenceRoutes(storage: Storage) {
@@ -311,56 +487,60 @@ export function occurrenceRoutes(storage: Storage) {
         {
           data: [],
           window: { from: from.toISOString(), to: to.toISOString() },
+          scan: {
+            events_read: 0,
+            occurrences: 0,
+            max_occurrences: MAX_OCCURRENCES,
+          },
         },
         200,
       );
     }
 
     // Three passes, because the calendar is three different questions
-    // and only one of them is about the window.
-    //
-    // The ceiling is shared across all three: it bounds the request, not
-    // each pass, so a space cannot slip past it by splitting its events
-    // between them.
+    // and only one of them is about the window. Each keeps its own
+    // projection of a row and never the row: see the note at the top of
+    // this file for why that is what makes an unbounded scan safe.
     const budget: ScanBudget = { scanned: 0 };
 
     // Series. Unwindowed by necessity — a rule written years ago
     // produces occurrences in any window, so the window says nothing
     // about which rules matter.
-    const seriesItems = await scanEvents(
+    const seriesSeeds = await scanEvents(
       storage,
       spaceId,
       wanted,
-      MAX_EVENTS_SCANNED,
       budget,
       { hasProperty: "recurrence" },
+      projectSeries,
     );
 
     // Exceptions. Unwindowed for the opposite reason — an exception
     // whose own time was moved outside the window still shadows the
     // occurrence it replaced inside it, so narrowing this pass would put
     // a ghost back on the calendar at a slot nobody is at.
-    const exceptionItems = await scanEvents(
+    const exceptionSeeds = await scanEvents(
       storage,
       spaceId,
       wanted,
-      MAX_EVENTS_SCANNED,
       budget,
       { hasProperty: "original_starts_at" },
+      projectException,
     );
 
     // Standalone events, narrowed to the window in SQL against the
-    // normalized instant column.
-    const windowItems = await scanEvents(
+    // normalized instant column. Bounded by the window, unlike the two
+    // above, so this is the one pass whose size a caller can influence.
+    const windowSeeds = await scanEvents(
       storage,
       spaceId,
       wanted,
-      MAX_EVENTS_SCANNED,
       budget,
       {
         startsAtUtcFrom: from.toISOString(),
         startsAtUtcTo: to.toISOString(),
       },
+      projectWindow,
     );
 
     // An exception names its series through parent-of, so the series is
@@ -372,41 +552,23 @@ export function occurrenceRoutes(storage: Storage) {
     // hundred meetings have each been moved once is a busy calendar, not
     // a pathological one.
     const exceptionsBySeries = new Map<string, RecurrenceException[]>();
-    if (exceptionItems.length > 0) {
-      const parentsByException = await storage.edges.listToTargetsBatched(
-        exceptionItems.map((item) => item.id),
-        // One parent is all a `parent-of` exception has; asking for a
-        // second would only widen what a malformed graph could return.
-        1,
+    if (exceptionSeeds.length > 0) {
+      const parentsByException = await fetchParentsBatched(
+        storage,
+        exceptionSeeds.map((seed) => seed.id),
       );
-      for (const item of exceptionItems) {
-        const originalStartsAt = stringProp(item, "original_starts_at");
-        if (originalStartsAt === undefined) continue;
-        const seriesId = (parentsByException.get(item.id) ?? []).find(
+      for (const seed of exceptionSeeds) {
+        const seriesId = (parentsByException.get(seed.id) ?? []).find(
           (edge) => edge.edge_type === "parent-of",
         )?.source_id;
         if (seriesId === undefined) continue;
         const list = exceptionsBySeries.get(seriesId) ?? [];
-        list.push({ id: item.id, original_starts_at: originalStartsAt });
+        list.push(seed);
         exceptionsBySeries.set(seriesId, list);
       }
     }
 
-    // One row can answer more than one pass — a series whose own start
-    // falls in the window is in the first and the third — so the three
-    // results are folded into one map keyed on id. Everything below
-    // reads a row through this, so nothing is expanded or shown twice.
-    const byId = new Map<string, Item>();
-    for (const item of [...seriesItems, ...exceptionItems, ...windowItems]) {
-      byId.set(item.id, item);
-    }
-    const results: {
-      starts_at: string;
-      ends_at?: string;
-      item: Item;
-      series_id?: string;
-      replaces?: string;
-    }[] = [];
+    const pending: PendingOccurrence[] = [];
     const seriesErrors: { item_id: string; message: string }[] = [];
     // Exceptions an expansion actually consumed. Only these are hidden
     // from the standalone pass: an exception whose slot fell outside the
@@ -417,26 +579,17 @@ export function occurrenceRoutes(storage: Storage) {
     // Series first, standalone second, because only the expansion knows
     // which stored exceptions it consumed.
     const expandedSeries = new Set<string>();
-    for (const item of seriesItems) {
-      if (expandedSeries.has(item.id)) continue;
-      expandedSeries.add(item.id);
-      const recurrence = recurrenceProp(item);
-      const startsAt = stringProp(item, "starts_at");
-      if (recurrence.length === 0 || startsAt === undefined) continue;
+    for (const seed of seriesSeeds) {
+      if (expandedSeries.has(seed.id)) continue;
+      expandedSeries.add(seed.id);
 
       let expanded: Occurrence[];
       try {
         expanded = expandSeries(
-          {
-            id: item.id,
-            starts_at: startsAt,
-            ends_at: stringProp(item, "ends_at"),
-            timezone: stringProp(item, "timezone"),
-            recurrence,
-          },
+          seed,
           from,
           to,
-          exceptionsBySeries.get(item.id) ?? [],
+          exceptionsBySeries.get(seed.id) ?? [],
         );
       } catch (err) {
         // One series that cannot expand degrades that series, never the
@@ -444,82 +597,128 @@ export function occurrenceRoutes(storage: Storage) {
         // calendar. Anything not the expander's own error type is a
         // genuine bug and stays loud.
         if (err instanceof RecurrenceExpansionError) {
-          seriesErrors.push({ item_id: item.id, message: err.message });
+          seriesErrors.push({ item_id: seed.id, message: err.message });
           continue;
         }
         throw err;
       }
       for (const occurrence of expanded) {
-        const shown = byId.get(occurrence.item_id);
-        if (!shown) continue;
         if (occurrence.replaces !== undefined) {
           consumedExceptions.add(occurrence.item_id);
         }
-        const shownEndsAt = stringProp(shown, "ends_at");
-        results.push({
-          // A replacement is shown at its own times, which is the
-          // whole point of having moved it.
-          starts_at:
-            occurrence.replaces !== undefined
-              ? toInstantString(
-                  stringProp(shown, "starts_at"),
-                  occurrence.starts_at,
-                )
-              : occurrence.starts_at,
-          ...(occurrence.replaces !== undefined
-            ? shownEndsAt !== undefined
-              ? { ends_at: toInstantString(shownEndsAt, shownEndsAt) }
-              : {}
-            : occurrence.ends_at !== undefined
-              ? { ends_at: occurrence.ends_at }
-              : {}),
-          item: shown,
-          series_id: item.id,
-          ...(occurrence.replaces !== undefined
-            ? { replaces: occurrence.replaces }
-            : {}),
+        pending.push({
+          starts_at: occurrence.starts_at,
+          ends_at: occurrence.ends_at,
+          item_id: occurrence.item_id,
+          series_id: seed.id,
+          replaces: occurrence.replaces,
         });
       }
     }
 
     const shownStandalone = new Set<string>();
-    for (const item of windowItems) {
-      if (shownStandalone.has(item.id)) continue;
-      shownStandalone.add(item.id);
+    for (const seed of windowSeeds) {
+      if (shownStandalone.has(seed.id)) continue;
+      shownStandalone.add(seed.id);
 
       // A row carrying a rule was already read and expanded by the first
       // pass; the window scan reaches it too, because a series' own
       // start is an ordinary start.
-      if (recurrenceProp(item).length > 0) continue;
+      if (seed.has_recurrence) continue;
 
       // An exception an expansion consumed is already shown through its
       // series; showing it here too would double it.
-      if (consumedExceptions.has(item.id)) continue;
+      if (consumedExceptions.has(seed.id)) continue;
 
-      const startsAt = stringProp(item, "starts_at");
-      if (startsAt === undefined) continue;
-      const at = new Date(startsAt);
+      const at = new Date(seed.starts_at);
       // The SQL does the narrowing now. This stays as a belt: it is the
       // one place the normalized column and the stored value are read
       // against each other, so a column that ever disagreed with its row
       // shows up as a missing event rather than a wrong one.
       if (Number.isNaN(at.getTime()) || at < from || at >= to) continue;
-      const endsAt = stringProp(item, "ends_at");
-      results.push({
+      pending.push({
         starts_at: at.toISOString(),
-        ...(endsAt !== undefined
-          ? { ends_at: toInstantString(endsAt, endsAt) }
-          : {}),
-        item,
+        ends_at:
+          seed.ends_at !== undefined
+            ? toInstantString(seed.ends_at, seed.ends_at)
+            : undefined,
+        item_id: seed.id,
       });
     }
 
-    if (results.length > MAX_OCCURRENCES) {
+    // Checked before the items are read, so an over-full window costs the
+    // assembly and no row fetches at all.
+    if (pending.length > MAX_OCCURRENCES) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `This window holds more than ${String(MAX_OCCURRENCES)} occurrences; narrow it`,
-        { max_occurrences: MAX_OCCURRENCES, found: results.length },
+        { max_occurrences: MAX_OCCURRENCES, found: pending.length },
       );
+    }
+
+    // The only place a whole row is read, and it is reached only for the
+    // occurrences being returned. One row can answer many occurrences, so
+    // the ids are deduplicated on the way in.
+    const shownById = await fetchItemsBatched(
+      storage,
+      spaceId,
+      pending.map((occurrence) => occurrence.item_id),
+    );
+
+    const results: {
+      starts_at: string;
+      ends_at?: string;
+      item: Item;
+      series_id?: string;
+      replaces?: string;
+    }[] = [];
+    for (const occurrence of pending) {
+      const shown = shownById.get(occurrence.item_id);
+      // Deleted between the scan and this read. Dropping it is the right
+      // direction — a meeting removed a moment ago should not render —
+      // and it is the only way the two can disagree.
+      if (shown === undefined) continue;
+      if (occurrence.replaces !== undefined) {
+        // A replacement is shown at its own times, which is the whole
+        // point of having moved it.
+        //
+        // The fallback is load-bearing rather than incidental: an
+        // exception with no readable `starts_at` of its own is shown at
+        // the slot it replaced, so `starts_at` and `replaces` come back
+        // equal and the row reads as "moved to where it already was".
+        // That is the truthful rendering — such a row replaced its
+        // slot's content and not its time — and it is preferred to the
+        // two alternatives. Dropping the row loses a meeting. Dropping
+        // `replaces` when it matches would trade a redundant field for
+        // the only signal a caller has that this is a stored
+        // replacement rather than a computed occurrence.
+        const shownEndsAt = stringProp(shown, "ends_at");
+        results.push({
+          starts_at: toInstantString(
+            stringProp(shown, "starts_at"),
+            occurrence.starts_at,
+          ),
+          ...(shownEndsAt !== undefined
+            ? { ends_at: toInstantString(shownEndsAt, shownEndsAt) }
+            : {}),
+          item: shown,
+          ...(occurrence.series_id !== undefined
+            ? { series_id: occurrence.series_id }
+            : {}),
+          replaces: occurrence.replaces,
+        });
+        continue;
+      }
+      results.push({
+        starts_at: occurrence.starts_at,
+        ...(occurrence.ends_at !== undefined
+          ? { ends_at: occurrence.ends_at }
+          : {}),
+        item: shown,
+        ...(occurrence.series_id !== undefined
+          ? { series_id: occurrence.series_id }
+          : {}),
+      });
     }
 
     results.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
@@ -528,8 +727,10 @@ export function occurrenceRoutes(storage: Storage) {
     // somebody else's, mirrored, and a disconnected calendar that keeps
     // rendering looks current right up until somebody misses a meeting.
     // The same row can occur many times in one window, so the scope is
-    // resolved from the rows and applied to the occurrences.
-    const orphanScope = await resolveOrphanScope(storage, [...byId.values()]);
+    // resolved from the distinct rows and applied to the occurrences.
+    const orphanScope = await resolveOrphanScope(storage, [
+      ...shownById.values(),
+    ]);
     return c.json(
       {
         data: results.map((occurrence) => ({
@@ -537,6 +738,11 @@ export function occurrenceRoutes(storage: Storage) {
           item: withOrphanState(occurrence.item, orphanScope),
         })),
         window: { from: from.toISOString(), to: to.toISOString() },
+        scan: {
+          events_read: budget.scanned,
+          occurrences: results.length,
+          max_occurrences: MAX_OCCURRENCES,
+        },
         ...(seriesErrors.length > 0 ? { series_errors: seriesErrors } : {}),
       },
       200,

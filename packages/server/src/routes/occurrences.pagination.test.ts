@@ -13,7 +13,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { MAX_EVENTS_SCANNED, gatherEventItems } from "./occurrences.js";
+import { gatherSeriesSeeds } from "./occurrences.js";
+import type { ItemFilters, Storage } from "../storage/interface.js";
+import type { Item } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let memberKey: string;
@@ -227,26 +229,96 @@ describe("GET /occurrences past the first page", () => {
   });
 });
 
-describe("the scan ceiling", () => {
-  it("refuses rather than returning a partial calendar", async () => {
-    // Driven at a ceiling a test can reach, against the same walk the
-    // route runs. The direction of failure is the whole point: the read
-    // this replaces answered 200 with whatever fitted in one page.
-    await expect(
-      gatherEventItems(ctx.storage, undefined, ["core.event"], 5),
-    ).rejects.toThrow(/more than 5 events/);
-  });
+/**
+ * A storage that serves `rowCount` synthetic series rows, a page at a time.
+ *
+ * The scan reaches nothing but `items.list`, so this is its whole
+ * surface. Synthetic rather than seeded because the property under test
+ * only starts above twenty thousand rows, and writing that many real
+ * ones would cost minutes per dialect on a machine shared with CI to
+ * prove something about a loop the rows play no part in.
+ */
+function pagedStorage(rowCount: number): Storage {
+  const row = (i: number): Item =>
+    ({
+      id: `synthetic-${String(i)}`,
+      type: "core.event",
+      state: "active",
+      source: "synthetic",
+      space_id: null,
+      properties: {
+        title: `synthetic ${String(i)}`,
+        starts_at: "2026-06-01T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=WEEKLY"],
+        // Stands in for the blob a mirrored event really carries, which
+        // is what makes retaining rows rather than projections
+        // expensive.
+        description: "x".repeat(2048),
+      },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }) as unknown as Item;
 
-  it("returns everything when the ceiling is not reached", async () => {
-    // The other direction, so the refusal above is not simply a function
-    // that always throws.
-    const all = await gatherEventItems(
-      ctx.storage,
+  return {
+    items: {
+      list: (filters: ItemFilters) => {
+        const offset =
+          filters.cursor === undefined ? 0 : Number(filters.cursor);
+        const limit = Math.min(filters.limit ?? 50, 200);
+        const end = Math.min(offset + limit, rowCount);
+        const data: Item[] = [];
+        for (let i = offset; i < end; i += 1) data.push(row(i));
+        return Promise.resolve({
+          data,
+          cursor: end < rowCount ? String(end) : null,
+          has_more: end < rowCount,
+        });
+      },
+    },
+  } as unknown as Storage;
+}
+
+describe("the unwindowed scan", () => {
+  // Comfortably past the 20,000-row total this route used to refuse the
+  // whole calendar at. That refusal could not be recovered from: the one
+  // move a caller knows is to ask for a narrower window, and the window
+  // has no bearing on how many rows carry a rule.
+  const PAST_THE_OLD_CEILING = 20_500;
+
+  it("walks past the row count that used to refuse the whole calendar", async () => {
+    const seeds = await gatherSeriesSeeds(
+      pagedStorage(PAST_THE_OLD_CEILING),
       undefined,
       ["core.event"],
-      MAX_EVENTS_SCANNED,
     );
-    // More than one page — the fixtures above put several hundred rows in.
-    expect(all.length).toBeGreaterThan(200);
+    expect(seeds).toHaveLength(PAST_THE_OLD_CEILING);
+  });
+
+  it("keeps the expansion's input rather than the row", async () => {
+    // The property that makes an unbounded walk affordable, and the one
+    // a regression would quietly undo: going back to accumulating rows
+    // still returns the right answer, just at kilobytes each instead of
+    // a couple of hundred bytes. Nothing else would notice.
+    const seeds = await gatherSeriesSeeds(pagedStorage(3), undefined, [
+      "core.event",
+    ]);
+    expect(Object.keys(seeds[0] ?? {}).sort()).toEqual([
+      "ends_at",
+      "id",
+      "recurrence",
+      "starts_at",
+      "timezone",
+    ]);
+    expect(seeds[0]).not.toHaveProperty("properties");
+  });
+
+  it("reads the fixture's own series against real storage", async () => {
+    // The stub above proves the loop; this proves the loop is wired to a
+    // real store with a real narrowing behind it.
+    const seeds = await gatherSeriesSeeds(ctx.storage, undefined, [
+      "core.event",
+    ]);
+    expect(seeds.length).toBeGreaterThanOrEqual(2);
+    expect(seeds.every((seed) => seed.recurrence.length > 0)).toBe(true);
   });
 });
