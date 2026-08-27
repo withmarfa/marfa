@@ -2210,10 +2210,6 @@ export function authRoutes(
         "This client is not registered for the device grant",
       );
     }
-    // Validate every requested literal against the allowlist. The stored
-    // grant is the literal set and consent approves it verbatim, so a
-    // scope that slipped through here would be granted unseen — any
-    // disallowed scope refuses the whole request.
     const requestedScopes = scope.split(" ").filter(Boolean);
     if (requestedScopes.length === 0) {
       throw new MarfaError(
@@ -2221,12 +2217,33 @@ export function authRoutes(
         "No valid scopes requested",
       );
     }
-    // Two ceilings, both of which must hold: what the platform offers at
-    // all, and what this client registered for. The plugin resolves the
-    // second as `client.scopes ?? opts.scopes` on the authorization-code
-    // path; this path never read it, so a client registered for one scope
-    // could open a device flow asking for every scope on the platform, with
-    // only a person reading the consent screen carefully in the way.
+    // The first ceiling, on a pass of its own: what the platform offers at
+    // all. The stored grant is the literal set and consent approves it
+    // verbatim, so a scope that slipped through here would be granted
+    // unseen — any disallowed scope refuses the whole request.
+    //
+    // Nothing that writes may run above this loop. Initiation is
+    // unauthenticated, and the catch-up below is a persistent write to a
+    // stored registration row. Interleaving the two lets a caller who has
+    // proved nothing move stored state with input this server has not
+    // accepted: the request still refuses, and the row it was refused
+    // against keeps the widening. That row is also what this client is
+    // given when it omits `scope` entirely, so the next consent screen
+    // would open pre-ticked with what the refused request named.
+    for (const requested of requestedScopes) {
+      if (!allowedScopes.has(requested)) {
+        throw new MarfaError(
+          ErrorCode.INVALID_SCOPE,
+          `Scope not available: ${requested}`,
+        );
+      }
+    }
+    // The second ceiling: what this client registered for. The plugin
+    // resolves it as `client.scopes ?? opts.scopes` on the
+    // authorization-code path; this path never read it, so a client
+    // registered for one scope could open a device flow asking for every
+    // scope on the platform, with only a person reading the consent screen
+    // carefully in the way.
     //
     // It refuses rather than narrowing, which is the opposite of what the
     // authorize surface does and deliberately so. There, the error rides a
@@ -2241,9 +2258,9 @@ export function authRoutes(
     // is current, and the stored row is not: it is a registration-time
     // snapshot of an allowlist that moves whenever the type registry does.
     // So it gets the same catch-up the authorize surface performs, before
-    // anything is compared against it. Without that, a client registered for
-    // a bundle-published wildcard was refused a scope beneath it, terminally,
-    // for a registration that plainly covered it.
+    // the loop below compares against it. Without that, a client registered
+    // for a bundle-published wildcard was refused a scope beneath it,
+    // terminally, for a registration that plainly covered it.
     //
     // Making the comparison below coverage-aware instead is the repair that
     // looks right and is not. It would leave this surface reading a ceiling
@@ -2262,12 +2279,6 @@ export function authRoutes(
     });
     const offByDefaultOnly = [...scopesOfferedOffByDefaultOnly(bundles)];
     for (const requested of requestedScopes) {
-      if (!allowedScopes.has(requested)) {
-        throw new MarfaError(
-          ErrorCode.INVALID_SCOPE,
-          `Scope not available: ${requested}`,
-        );
-      }
       if (clientCeiling !== null && !clientCeiling.includes(requested)) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,

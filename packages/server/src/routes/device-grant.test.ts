@@ -877,9 +877,6 @@ describe("POST /auth/device — the client's registered ceiling", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatchObject({ code: "invalid_scope" });
     expect(JSON.stringify(res.body)).toContain("core.*:read");
-    // And nothing was written on the way to the refusal, which is what makes
-    // the catch-up a catch-up rather than the ceiling ceasing to exist.
-    expect(await storedCeiling(ctx, clientId)).toEqual(["core.note:read"]);
   });
 
   it("allows a scope inside the registered ceiling", async () => {
@@ -997,6 +994,28 @@ describe("POST /auth/device — a stale ceiling catches up", () => {
     expect(row?.resource_id).toBe(clientId);
     expect(row?.details.surface).toBe("device");
     expect(row?.details.added_scopes).toEqual(["core.note:read"]);
+  });
+
+  it("does not widen the row on a request the allowlist refuses", async () => {
+    // The catch-up is a persistent write and initiation is unauthenticated,
+    // so the live allowlist has to clear the whole request before the row
+    // moves. Both halves of the fixture are load-bearing: `core.task:read` is
+    // bundle-published and unheld, which is exactly what a catch-up widens
+    // by, and `core.nonexistent.type:read` is on no allowlist, so the request
+    // cannot succeed. Widening on the way to that refusal leaves an
+    // anonymous caller holding a ceiling it was refused — and the ceiling is
+    // also what this client is given the next time it omits `scope`.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { scopes: ["core.note:read"] });
+
+    const res = await tryInit(
+      ctx,
+      clientId,
+      "core.task:read core.nonexistent.type:read",
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+    expect(await storedCeiling(ctx, clientId)).toEqual(["core.note:read"]);
   });
 
   it("does not fill in an empty ceiling", async () => {
