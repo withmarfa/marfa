@@ -959,12 +959,20 @@ describe("a grant that reaches things not yet created says so", () => {
     "part",
   ]);
 
+  /**
+   * The stoplist is applied before `singular`, not after, and the order is
+   * the whole of what it does. `singular("this")` is "thi", which is in no
+   * stoplist, so the one entry above that `singular` rewrites was the one
+   * entry that escaped it. It is the only one of the nineteen: the rule only
+   * fires on a word longer than three characters ending in a lone "s".
+   */
   const normalizeWords = (text: string): string[] =>
     text
       .split(/[^A-Za-z0-9]+/)
       .filter(Boolean)
+      .filter((w) => !NOT_A_NAME.has(w.toLowerCase()))
       .map(singular)
-      .filter((w) => w.length > 2 && !NOT_A_NAME.has(w));
+      .filter((w) => w.length > 2);
 
   const containsSequence = (haystack: string[], needle: string[]): boolean => {
     if (needle.length === 0) return false;
@@ -972,6 +980,27 @@ describe("a grant that reaches things not yet created says so", () => {
       needle.every((word, j) => haystack[i + j] === word),
     );
   };
+
+  it("drops every function word, including the one singular rewrites", () => {
+    // The stoplist runs before `singular`, and this is what the order costs
+    // when it is the other way round. `singular("this")` is "thi", which is
+    // in no stoplist, so "this" was the one entry of the nineteen that
+    // survived being stopped. It is the only one the rule can reach: nothing
+    // else here is longer than three characters and ends in a lone "s".
+    //
+    // Not reachable from today's copy, and it fails loudly rather than
+    // quietly when it is, since a stray "thi" can only add a needle or a
+    // haystack word. Held anyway, because the cost of the wrong order is a
+    // silent hole in a stoplist and the whole point of the stoplist is that
+    // nobody looks at it again.
+    for (const word of NOT_A_NAME) {
+      expect(normalizeWords(word), word).toEqual([]);
+    }
+    expect(normalizeWords("Notes about this and that")).toEqual([
+      "note",
+      "about",
+    ]);
+  });
 
   /**
    * The mechanical forms of a child type's name, as normalized word
@@ -1099,10 +1128,19 @@ describe("a grant that reaches things not yet created says so", () => {
         const parentWords = normalizeWords(surface.copy[parent] ?? "");
         const names = namesOf(child, parent);
         // Every assertion below is two loops deep, so a child that yields no
-        // forms at all is checked against nothing and passes. That is
-        // reachable without anybody touching this file: the own-segment
-        // filter drops any word matching the parent's type id, and a child
-        // described only in its parent's words would empty out.
+        // forms at all is checked against nothing and passes.
+        //
+        // The route to that is narrower than it looks, and naming the wrong
+        // one would put the floor's justification on a mechanism that cannot
+        // occur. The own-segment filter is not it: it applies only to the
+        // description-derived `words`, while `phrases` is unfiltered, so a
+        // child described entirely in its parent's words still yields its
+        // curated label, its humanized id and its registry label. What is
+        // reachable is a child whose last id segment normalizes away, which
+        // is any segment of two characters or fewer or one that is a
+        // function word, leaving `humanizeType` contributing nothing, with
+        // neither a curated nor a registry label behind it to take its
+        // place.
         expect(
           names.length,
           `no mechanical form of ${child}'s name, so nothing is checked for it`,
