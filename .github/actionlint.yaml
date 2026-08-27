@@ -1,0 +1,13 @@
+# Custom runner labels actionlint cannot know about. Without this it reports
+# every Blacksmith label as unknown, which buries a genuine typo in a label
+# among warnings that are all false.
+#
+# Temporary, and it belongs to the runner-sizing experiment branch: `main`'s
+# workflows resolve `runs-on` through an expression, so no label there is
+# written out for actionlint to check in the first place. If a fixed
+# Blacksmith label ever lands on `main`, this file should land with it.
+self-hosted-runner:
+  labels:
+    - blacksmith-2vcpu-ubuntu-2404-arm
+    - blacksmith-8vcpu-ubuntu-2404-arm
+    - blacksmith-16vcpu-ubuntu-2404-arm

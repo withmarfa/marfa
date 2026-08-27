@@ -1,0 +1,183 @@
+name: Postgres suite benchmark
+description: >-
+  Runs the same install, build and Postgres suite as `CI (Postgres)` while
+  measuring what the runner did, and uploads the measurement as an artifact.
+
+# Temporary. This exists for the runner-sizing experiment and is deleted with
+# the branch that carries it. Nothing on `main` calls it.
+#
+# Deliberately does NOT run `actions/setup-node` or manage a dependency cache.
+# The repository's cache rule is decided at each `actions/setup-node` step from
+# its own job's `runs-on`, and `ci/cache-rule.test.ts` reads the workflows to
+# enforce that. A setup-node step in here would be invisible to that check,
+# which is the one shape the rule cannot afford. The calling job keeps it.
+
+inputs:
+  label:
+    description: Name for this observation, used for the artifact and the record.
+    required: true
+  npm-token:
+    description: Token written into .npmrc, matching the CI (Postgres) job.
+    required: true
+  allowance-per-runner-minute:
+    description: >-
+      Allowance minutes consumed per runner-minute at this runner size, so the
+      job records its own normalized cost rather than leaving it to be worked
+      out later from a size the artifact does not carry.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Configure registry auth
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.npm-token }}
+      run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+
+    # The same two commands `CI (Postgres)` runs, so runner size is the only
+    # deliberate variable. Timed separately from the suite: the two-vCPU run
+    # already showed setup was not where its time went, and a total that
+    # cannot be split cannot confirm that at a larger size.
+    - name: Install and build
+      shell: bash
+      run: |
+        set -euo pipefail
+        setup_start=${SECONDS}
+        pnpm install --frozen-lockfile
+        pnpm build
+        echo "SETUP_SECONDS=$((SECONDS - setup_start))" >> "${GITHUB_ENV}"
+
+    - name: Measure the Postgres suite
+      shell: bash
+      env:
+        LABEL: ${{ inputs.label }}
+        ALLOWANCE_PER_MINUTE: ${{ inputs.allowance-per-runner-minute }}
+      run: |
+        set -euo pipefail
+
+        vcpus="$(nproc)"
+        mem_total_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)"
+
+        # Average CPU utilization comes from two /proc/stat reads rather than
+        # from the sampler. Sampling estimates an average; the counter deltas
+        # ARE the average over the interval, and cost one read at each end.
+        read_cpu() {
+          awk '/^cpu /{idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; print total, idle}' /proc/stat
+        }
+        read -r cpu_total_before cpu_idle_before <<<"$(read_cpu)"
+
+        # Peak memory genuinely needs sampling — a maximum is not recoverable
+        # from endpoints. Five seconds is fine against a suite measured in
+        # minutes and costs nothing measurable itself.
+        samples="${RUNNER_TEMP}/mem-samples.txt"
+        : > "${samples}"
+        (
+          while :; do
+            awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print t - a}' /proc/meminfo >> "${samples}" 2>/dev/null || exit 0
+            sleep 5
+          done
+        ) &
+        sampler_pid=$!
+        # The sampler outlives a failing suite otherwise, and a background
+        # process left behind on a runner is the same defect as one left on a
+        # laptop. EXIT alone does not cover a killed job.
+        trap 'kill "${sampler_pid}" 2>/dev/null || true' EXIT INT TERM
+
+        # cgroup v2 counts kills the kernel performed against this job's own
+        # cgroup. `dmesg` below is the host-wide view; neither alone is
+        # conclusive, so both are recorded.
+        oom_before=0
+        if [ -r /sys/fs/cgroup/memory.events ]; then
+          oom_before="$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events)"
+        fi
+
+        # The suite's own exit status is captured rather than allowed to end
+        # the step, so a failure still produces a record. The step re-raises
+        # it at the end.
+        suite_start=${SECONDS}
+        suite_status=0
+        pnpm test:pg || suite_status=$?
+        suite_seconds=$((SECONDS - suite_start))
+
+        kill "${sampler_pid}" 2>/dev/null || true
+
+        read -r cpu_total_after cpu_idle_after <<<"$(read_cpu)"
+        cpu_percent="$(awk -v tb="${cpu_total_before}" -v ib="${cpu_idle_before}" \
+                          -v ta="${cpu_total_after}" -v ia="${cpu_idle_after}" \
+          'BEGIN { d = ta - tb; if (d <= 0) { print "unknown"; exit } printf "%.1f", (1 - (ia - ib) / d) * 100 }')"
+
+        peak_used_kb="$(sort -n "${samples}" | tail -1)"
+        peak_used_kb="${peak_used_kb:-0}"
+        peak_percent="$(awk -v p="${peak_used_kb}" -v t="${mem_total_kb}" \
+          'BEGIN { if (t <= 0) { print "unknown"; exit } printf "%.1f", p / t * 100 }')"
+
+        oom_after=0
+        if [ -r /sys/fs/cgroup/memory.events ]; then
+          oom_after="$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events)"
+        fi
+        oom_cgroup=$((oom_after - oom_before))
+
+        # Absent or unreadable `dmesg` is recorded as unknown rather than as
+        # zero. "We could not look" and "we looked and found none" are
+        # different findings and only one of them supports a conclusion.
+        oom_dmesg="unknown"
+        if dmesg_out="$(sudo dmesg 2>/dev/null)" || dmesg_out="$(dmesg 2>/dev/null)"; then
+          oom_dmesg="$(printf '%s\n' "${dmesg_out}" | grep -ci 'out of memory' || true)"
+        fi
+
+        setup_seconds="${SETUP_SECONDS:-0}"
+        total_seconds=$((setup_seconds + suite_seconds))
+        allowance="$(awk -v s="${total_seconds}" -v m="${ALLOWANCE_PER_MINUTE}" \
+          'BEGIN { printf "%.1f", s / 60 * m }')"
+
+        record="${RUNNER_TEMP}/${LABEL}.json"
+        cat > "${record}" <<JSON
+        {
+          "label": "${LABEL}",
+          "runner": "${RUNNER_NAME:-unknown}",
+          "arch": "$(uname -m)",
+          "vcpus": ${vcpus},
+          "memory_total_kb": ${mem_total_kb},
+          "commit": "${GITHUB_SHA}",
+          "run_id": "${GITHUB_RUN_ID}",
+          "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+          "suite_exit_status": ${suite_status},
+          "setup_seconds": ${setup_seconds},
+          "test_pg_seconds": ${suite_seconds},
+          "measured_total_seconds": ${total_seconds},
+          "average_cpu_percent": "${cpu_percent}",
+          "peak_memory_percent": "${peak_percent}",
+          "peak_memory_kb": ${peak_used_kb},
+          "oom_kills_cgroup": ${oom_cgroup},
+          "oom_lines_dmesg": "${oom_dmesg}",
+          "allowance_minutes_per_runner_minute": ${ALLOWANCE_PER_MINUTE},
+          "normalized_allowance_minutes": ${allowance}
+        }
+        JSON
+        # `measured_total_seconds` is install through suite, not the job. Queue
+        # time, checkout and the runner's own setup sit outside it, so the
+        # authoritative total is the job duration GitHub reports and that is
+        # what the completion record uses. This number is here to show how
+        # much of that total the work itself accounts for.
+
+        {
+          echo "### ${LABEL}"
+          echo
+          echo '```json'
+          cat "${record}"
+          echo '```'
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        cp "${record}" "${GITHUB_WORKSPACE}/bench-record.json"
+        exit "${suite_status}"
+
+    - name: Upload the measurement
+      # `always()`, because a failed suite is a result. Without this the one
+      # outcome most worth reading is the one that uploads nothing.
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: bench-${{ inputs.label }}
+        path: bench-record.json
+        if-no-files-found: warn

@@ -1,0 +1,138 @@
+# TEMPORARY — measurement only, and it never merges.
+#
+# Answers one question: how long does the main Postgres suite take on a larger
+# managed ARM runner, measured rather than extrapolated. The only Blacksmith
+# observation the estate holds is a single two-vCPU run at 24m28s against a
+# recent local median of 7m01s; everything said about 8 and 16 vCPU so far is a
+# curve fitted to that one point.
+#
+# It runs on the pull request alongside the ordinary `CI` workflow, which
+# supplies the same-revision control: `CI (Postgres)` still runs on the local
+# pool from this same commit, so the comparison is not against a median taken
+# on other days with other diffs.
+#
+# Why this is a branch workflow and not a repository variable. `CI_POSTGRES_RUNNER`
+# governs pushes to `main` and pull requests deliberately read `CI_RUNNER`, so
+# setting it would move unrelated work onto a runner nobody has measured yet and
+# still not produce the paired comparison wanted here.
+#
+# No `workflow_dispatch`. A workflow that exists only on a branch cannot be
+# dispatched — GitHub reads the trigger from the default branch — so the key
+# would look like a re-run route and not be one. Re-run through the run itself.
+name: Experiment — Postgres runner sizing
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Deliberately unlike every other workflow here, which cancels in progress.
+  # A cancelled measurement is not a cheap loss the way a cancelled check is:
+  # the four observations are only comparable because they share a commit, so
+  # losing one to a later push costs the pairing rather than a few minutes. The
+  # run is meant to be left alone until it finishes, and this makes that the
+  # file's behavior rather than a rule someone has to remember.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Two rounds rather than four jobs at once, so the first and second observation
+# at each size are distinguishable. Four simultaneous jobs would share whatever
+# the provider's capacity looked like in that one minute, and a repeat that is
+# not independent is not a repeat.
+jobs:
+  bench-8-round-1:
+    name: Bench 8 vCPU (round 1)
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # The runner is a fixed label rather than a chain, so the cache
+          # answer is fixed too. `blacksmith-` runners keep no store between
+          # jobs, which is the condition the repository caches on; the rule
+          # and its reasoning are in `ci/cache-rule.test.ts`.
+          cache: pnpm
+      - uses: ./.github/actions/pg-bench
+        with:
+          label: 8vcpu-round-1
+          npm-token: ${{ secrets.GITHUB_TOKEN }}
+          # 0.625 allowance minutes per ARM runner-minute at 2 vCPU, scaling
+          # proportionally with vCPU count: (8 / 2) * 0.625 = 2.5.
+          # docs.blacksmith.sh/blacksmith-runners/overview, read 27 August 2026.
+          # The base rate and the proportional rule are published; the per-size
+          # figure is derived from them rather than quoted.
+          allowance-per-runner-minute: "2.5"
+
+  bench-16-round-1:
+    name: Bench 16 vCPU (round 1)
+    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # Fixed runner, fixed answer — see the note in `bench-8-round-1`.
+          cache: pnpm
+      - uses: ./.github/actions/pg-bench
+        with:
+          label: 16vcpu-round-1
+          npm-token: ${{ secrets.GITHUB_TOKEN }}
+          # (16 / 2) * 0.625 = 5.0, from the same published rule.
+          allowance-per-runner-minute: "5.0"
+
+  bench-8-round-2:
+    name: Bench 8 vCPU (round 2)
+    needs: [bench-8-round-1, bench-16-round-1]
+    # Runs even when round 1 failed, and stops when the run was cancelled.
+    # A suite that fails on a large runner is itself a result worth a second
+    # observation — the one prior finding of this kind, sync's burst test,
+    # failed only on the slower machine — and holding round 2 behind round 1's
+    # success would throw away the repeat exactly when it is most informative.
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # Fixed runner, fixed answer — see the note in `bench-8-round-1`.
+          cache: pnpm
+      - uses: ./.github/actions/pg-bench
+        with:
+          label: 8vcpu-round-2
+          npm-token: ${{ secrets.GITHUB_TOKEN }}
+          allowance-per-runner-minute: "2.5"
+
+  bench-16-round-2:
+    name: Bench 16 vCPU (round 2)
+    needs: [bench-8-round-1, bench-16-round-1]
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # Fixed runner, fixed answer — see the note in `bench-8-round-1`.
+          cache: pnpm
+      - uses: ./.github/actions/pg-bench
+        with:
+          label: 16vcpu-round-2
+          npm-token: ${{ secrets.GITHUB_TOKEN }}
+          allowance-per-runner-minute: "5.0"
