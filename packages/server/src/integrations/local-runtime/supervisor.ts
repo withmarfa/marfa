@@ -226,6 +226,51 @@ export function createSupervisor(
     const result = await storage.coordination.withJobLock(
       lockName,
       async () => {
+        // Two gates on one read, and the terminal one goes first.
+        const target = await storage.items.get(message.connection_id);
+
+        // A connection this runtime can never dispatch on again: revoked,
+        // trashed, or gone entirely.
+        //
+        // The predicate is deliberately the same one the mint refuses on,
+        // `type` and then `state`, because the defect this closes was the
+        // two reading different fields. The pause gate below tests
+        // `properties.runtime_status`, and a revoked connection does not
+        // carry `paused` there — the terminal write sets that property to
+        // `revoked` — so the message sailed past this point, reached the
+        // mint, and threw.
+        //
+        // A throw out of here is not a verdict. It leaves the lock, leaves
+        // `dispatchOne`, and reaches pg-boss as a rejected handler, so the
+        // job burns the full retry ladder and dead-letters. A dead letter
+        // means "this gave up, someone look"; a revoked connection is
+        // settled and no operator action changes it, so the row is one
+        // nobody can act on, and it degrades `/health` for the external
+        // poller while it sits there. Unactionable rows are how a queue
+        // stops being read.
+        //
+        // Every kind acks, webhooks included, and that is where this parts
+        // company with the pause gate below. Pause retries a webhook on
+        // purpose: resume inside the ladder and it dispatches, outlast the
+        // ladder and it lands somewhere a person can replay it. Neither
+        // half survives here. A retry cannot succeed against a terminal
+        // state, and the dead letter it would eventually produce can never
+        // be replayed — which is the row this gate exists to stop writing.
+        //
+        // Acking silently would trade a bad row for no record at all, so
+        // the drop writes an activity row: visible on the connection
+        // without being a dead letter. It needs no report-once marker to
+        // stay bounded, because every producer already refuses a connection
+        // in this state. The schedule walker and the reactive fan-out both
+        // filter on `state === "active"`, and the webhook receipt route
+        // answers 410 before it enqueues. What arrives here is the residue
+        // that was already queued when the connection was revoked, drained
+        // once.
+        if (target?.type !== "system.connection" || target.state !== "active") {
+          await emitUndispatchableActivity(message, target);
+          return { ok: true as const };
+        }
+
         // The gate that survives any stale cache upstream: whatever
         // enqueued this message, a paused connection dispatches nothing.
         // The verdict differs by kind. Schedule ticks and item events are
@@ -236,11 +281,9 @@ export function createSupervisor(
         // it retries instead: resume inside the retry ladder and it
         // dispatches; outlast the ladder and it lands on the dead-letter
         // surface, visible and replayable rather than silently gone.
-        const target = await storage.items.get(message.connection_id);
         if (
-          target?.type === "system.connection" &&
           (target.properties as { runtime_status?: string }).runtime_status ===
-            "paused"
+          "paused"
         ) {
           if (message.kind === "webhook") {
             return {
@@ -777,6 +820,41 @@ export function createSupervisor(
         connection_id: message.connection_id,
         originating_connection_id: message.cycle.originating_connection_id,
         hop_count: message.cycle.hop_count,
+      },
+    });
+  }
+
+  /**
+   * Record a delivery dropped because its connection can no longer be
+   * dispatched on at all.
+   *
+   * `warning` rather than `error`: nothing failed. The connection reached a
+   * state it was moved to deliberately and the queued work behind it is
+   * being discarded on purpose. It is also not `action_required`, because
+   * there is no action — that is the whole reason this stopped being a dead
+   * letter.
+   *
+   * The state is carried on the row rather than folded into one summary,
+   * because "revoked" and "the row is gone" arrive here through the same
+   * branch and are different things to read afterwards.
+   */
+  async function emitUndispatchableActivity(
+    message: QueueMessage,
+    target: Item | null,
+  ): Promise<void> {
+    const state =
+      target === null
+        ? "missing"
+        : target.type !== "system.connection"
+          ? "not-a-connection"
+          : target.state;
+    await emitActivity(message.connection_id, message.space_id, {
+      severity: "warning",
+      summary: `Delivery dropped: connection is ${state}, so it cannot be dispatched`,
+      detail: {
+        connection_id: message.connection_id,
+        message_kind: message.kind,
+        connection_state: state,
       },
     });
   }
