@@ -1575,10 +1575,20 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // types at check time and the grant reaches types nobody has registered
   // yet, so what the copy has to say is precisely what no registry entry
   // knows.
+  //
+  // **Which means an open-ended description has to say so.** The authorize
+  // screen states it on the row's second line, but the device screen has no
+  // toggles and no second line: it prints these sentences and nothing else,
+  // so a description that reads as a closed set is the whole of what that
+  // screen says about a grant reaching types that do not exist yet.
+  // `app.*` read "Types this app defines for itself." for exactly that
+  // reason. The global wildcard is the one entry that carries it without
+  // saying "later", because there is nothing outside "everything" for the
+  // set to grow into.
   "*": "Everything in your space.",
   "core.*": "All standard content types, including ones added later.",
   "user.*": "Your custom types, including ones you define later.",
-  "app.*": "Types this app defines for itself.",
+  "app.*": "Types this app defines for itself, including ones it adds later.",
 };
 
 /**

@@ -13,6 +13,7 @@ import {
   CAPABILITY_SCOPES,
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
+  grantCoversScope,
   scopesToMetadataPermissions,
   subtreeWildcardRoot,
   TYPE_REGISTRY,
@@ -626,13 +627,143 @@ describe("a grant that reaches things not yet created says so", () => {
     expect(row.match(/\blater\b/g)).toHaveLength(1);
   });
 
+  /** The descriptions the two screens are handed, for the open-ended scopes
+   *  a client can request. Derived from the same allowlist as the row cases,
+   *  and built by the renderer's own builder rather than read off the map, so
+   *  a pattern that starts resolving through a fallback is still held. */
+  const openEndedDescriptions = (): Record<string, string> =>
+    buildScopeDescriptions(
+      openEndedLiterals()
+        .map((literal) => parseScope(literal))
+        .filter((scope): scope is ParsedScope => scope !== null),
+    );
+
+  it("states it in the description too, for the screen with no rows", () => {
+    // The same rule on the other surface. A row's second line exists only on
+    // the authorize screen; the device screen has no toggles and prints the
+    // description on its own, so there the description is the whole of what
+    // is said about a grant reaching types that do not exist yet. `app.*`
+    // read "Types this app defines for itself.", a closed set over a grant
+    // whose whole point is that the app has not defined them all.
+    //
+    // Narrowed to the patterns something curated copy for. A wildcard nobody
+    // wrote a line for renders from its label on both screens and has no
+    // description to hold to anything.
+    //
+    // That this copy is what actually reaches both screens is held further
+    // down, by the pair of cases asserting the two screens describe a scope
+    // alike. This case is the rule; that one is the delivery.
+    const described = openEndedDescriptions();
+
+    // The global wildcard is excluded and pinned separately rather than
+    // skipped. "Everything in your space." names no growth because there is
+    // nothing outside it to grow into, and a regex loose enough to admit
+    // that sentence would admit most closed ones as well.
+    expect(described[GLOBAL_TYPE_WILDCARD]).toMatch(/^Everything\b/);
+
+    const patterns = Object.keys(described).filter(
+      (pattern) => pattern !== GLOBAL_TYPE_WILDCARD,
+    );
+    // Every assertion below is inside the loop, so a derivation that quietly
+    // returns nothing would pass. The pattern that carried the defect is
+    // named for the same reason.
+    expect(patterns.length).toBeGreaterThan(2);
+    expect(patterns).toContain("app.*");
+
+    for (const pattern of patterns) {
+      expect(
+        described[pattern],
+        `${pattern} describes itself as a fixed set`,
+      ).toMatch(/\blater\b/);
+    }
+  });
+
+  it("leaves a concrete scope's description saying nothing of the kind", () => {
+    // The discriminator for the case above, which is otherwise satisfied by
+    // a map whose every line ends "and any added later", copy that would
+    // tell somebody granting one type that the grant grows. Two of these are
+    // the parents of open-ended neighbours, so they are the lines a blanket
+    // rewrite would take with it.
+    const out = buildScopeDescriptions(
+      ["core.note:read", "core.entity:read", "metadata.types:write"].map(
+        (literal) => {
+          const parsed = parseScope(literal);
+          if (!parsed) throw new Error(`unparseable: ${literal}`);
+          return parsed;
+        },
+      ),
+    );
+    expect(Object.keys(out)).toHaveLength(3);
+    for (const [pattern, copy] of Object.entries(out)) {
+      expect(copy, `${pattern} reads as an open-ended grant`).not.toMatch(
+        /\blater\b/,
+      );
+    }
+  });
+
   it("keeps every curated label out of the summary's punctuation", () => {
     // `summarize` joins these into a sentence, so a label carrying its own
     // comma arrives there as two items. This is also why the open-endedness
     // above is on the row and not in the label: saying it needs an "and",
     // and an "and" breaks the same list a comma does.
+    //
+    // The conjunction is asserted here where `CAPABILITY_SHORT` deliberately
+    // leaves it alone, and the difference is what the two maps hold. A
+    // capability's short form is a verb phrase, where "connect and
+    // disconnect services" is one item and reads correctly in a list. Every
+    // entry here is the name of a thing, and a name joined by a conjunction
+    // is two names: "Notes, People and places and Files" is what this one
+    // rendered.
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
       expect(label, `${pattern} carries a comma`).not.toContain(",");
+      expect(label, `${pattern} carries a conjunction`).not.toContain(" and ");
+    }
+  });
+
+  it("never names a type its own scope does not reach", () => {
+    // The other half of the rule the labels run on, and the half a curated
+    // string cannot be trusted with. A pattern's descendants are separately
+    // requestable and carry rows of their own, while a bare grant on the
+    // parent is exact: `grantCoversScope` answers false for every child. So a
+    // parent label naming one of them puts a type on the row that ticking it
+    // does not grant. `core.entity` was "People and places" above
+    // "Contacts" and "Places", neither of which it reaches.
+    //
+    // Asked of `grantCoversScope` rather than of a list, so the assertion
+    // relaxes on its own if coverage ever changes, and scoped to the
+    // ancestor's label naming a descendant rather than the reverse. The
+    // reverse is ordinary qualification: "Audio files" sits under `Files`
+    // and does not claim to be it.
+    const entries = Object.entries(SCOPE_LABELS);
+    const pairs: { parent: string; child: string }[] = [];
+    for (const [parent] of entries) {
+      for (const [child] of entries) {
+        if (!child.startsWith(`${parent}.`)) continue;
+        if (grantCoversScope([`${parent}:read`], `${child}:read`)) continue;
+        pairs.push({ parent, child });
+      }
+    }
+    // A derivation that finds no pairs asserts nothing, and every assertion
+    // below is inside the loop. The named pair is the one that had the
+    // defect, so a rename that moves it out of the map fails here rather
+    // than quietly emptying the case.
+    expect(pairs.length).toBeGreaterThan(3);
+    expect(pairs).toContainEqual({
+      parent: "core.entity",
+      child: "core.entity.place",
+    });
+
+    for (const { parent, child } of pairs) {
+      const childLabel = SCOPE_LABELS[child];
+      if (childLabel === undefined) continue;
+      const word = new RegExp(
+        `\\b${childLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+        "i",
+      );
+      expect(
+        SCOPE_LABELS[parent],
+        `${parent} names ${child}, which it does not reach`,
+      ).not.toMatch(word);
     }
   });
 });

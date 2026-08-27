@@ -341,6 +341,18 @@ function summarize(group: ScopeGroup): string {
  * metadata sub-resource, and its own list says it grows; the label named one
  * of the two that exist today.
  *
+ * **The rule has a second half: a label may not name a type its scope does
+ * not reach.** `core.entity` was "People and places", and a bare
+ * `core.entity` grant is exact, so `grantCoversScope` answers false for
+ * `core.entity.person` and false for `core.entity.place`. Both are
+ * requestable on their own and carry their own rows, labeled "Contacts" and
+ * "Places", so somebody ticking this one for their contacts granted nothing
+ * of the kind, and the type it does reach went unnamed. The registry calls
+ * `core.entity` a non-person entity and lists a company, a band, a team, a
+ * charity, a brand and a school, so "Organizations" is what the grant
+ * reaches. That half is asked of `grantCoversScope` rather than curated: a
+ * label naming a descendant its own pattern does not cover fails the suite.
+ *
  * **Open-endedness is the one thing a label here cannot carry**, and the
  * constraint is the sentence rather than the space above a switch.
  * {@link summarize} joins these into a list, so an entry holding a comma or
@@ -359,7 +371,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "core.highlight": "Highlights",
   "core.event": "Calendar",
   "core.message": "Messages",
-  "core.entity": "People and places",
+  "core.entity": "Organizations",
   "core.entity.person": "Contacts",
   "core.entity.place": "Places",
   "core.file": "Files",
