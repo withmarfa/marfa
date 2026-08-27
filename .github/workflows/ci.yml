@@ -376,7 +376,7 @@ jobs:
     name: CI (SQLite)
     needs: changes
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -402,8 +402,8 @@ jobs:
           # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
           # its own job's runs-on.
           cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            ${{ (startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
             && 'pnpm' || '' }}
 
       - name: Configure registry auth
@@ -421,10 +421,36 @@ jobs:
         run: pnpm lint
       - if: needs.changes.outputs.code == 'true'
         run: pnpm format:check
+      # The OCR language model the step below needs, restored on the runners
+      # that would otherwise re-download it every run.
+      #
+      # This is the same rule the dependency cache carries, resolved through
+      # the same chain, and for the same reason in both directions. On the
+      # self-hosted pool the directory persists in `~/.cache` between jobs,
+      # so caching it would tar a store that is already there — the cost
+      # `ci/cache-rule.test.ts` exists to keep off that machine. On an
+      # ephemeral runner nothing survives the job, so without this every run
+      # pays the download before it can test anything.
+      #
+      # `actions/cache` is refused outright by that check unless it carries
+      # this condition, because the check cannot otherwise tell a cache that
+      # respects the rule from one that reinstates the tar somebody had
+      # removed.
+      - name: Restore the OCR language model
+        if: >-
+          ${{ needs.changes.outputs.code == 'true' &&
+          (startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+          || startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-')) }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/marfa-tessdata
+          key: marfa-tessdata-${{ runner.os }}-${{ runner.arch }}-v1
+
       # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts)
       # in this lane only — the PG lane covers dialect behavior, not the
       # OCR library. The language model caches under ~/.cache on the
-      # self-hosted pool, so only the first run pays the download.
+      # self-hosted pool, so only the first run pays the download; on an
+      # ephemeral runner the step above is what supplies it.
       - if: needs.changes.outputs.code == 'true'
         run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
       - if: needs.changes.outputs.code == 'true'

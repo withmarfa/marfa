@@ -115,10 +115,22 @@ const EPHEMERAL_PREFIXES = ["ubuntu-", "blacksmith-"];
  * `runnerExpression`. Whitespace-normalized, matching `expressionBody`.
  */
 function canonicalRule(runnerExpression: string): string {
+  return `${recognizesEphemeral(runnerExpression)} && 'pnpm' || ''`;
+}
+
+/**
+ * The half of the rule that answers "does this job's runner keep a store".
+ *
+ * Extracted because a standalone cache step has to carry the same answer in
+ * its `if:` and has no `cache:` key to put it in. One spelling, two
+ * consumers, so the two cannot drift into disagreeing about the same
+ * question.
+ */
+function recognizesEphemeral(runnerExpression: string): string {
   const recognized = EPHEMERAL_PREFIXES.map(
     (prefix) => `startsWith((${runnerExpression}), '${prefix}')`,
   ).join(" || ");
-  return `(${recognized}) && 'pnpm' || ''`;
+  return `(${recognized})`;
 }
 
 /** The `|| 'some-runner'` a runner chain ends with, when it has one. */
@@ -137,6 +149,7 @@ function isEphemeralLabel(label: string): boolean {
 
 interface Step {
   uses?: string;
+  if?: unknown;
   with?: Record<string, unknown>;
 }
 
@@ -236,6 +249,16 @@ function isScalarCache(value: unknown): value is string | undefined {
 
 const setupNodeSteps: SetupNodeStep[] = [];
 const standaloneCacheSteps: Refusal[] = [];
+/** One `actions/cache` step that IS gated, with what it is gated on. */
+interface GatedCacheStep {
+  source: string;
+  jobId: string;
+  /** The job's `runs-on`, verbatim. */
+  runsOn: string;
+  /** The step's `if:`, verbatim. */
+  gate: string;
+}
+const gatedCacheSteps: GatedCacheStep[] = [];
 const unreadableJobs: Refusal[] = [];
 const cachingCompositeActions: Refusal[] = [];
 const unmodeledSteps: Refusal[] = [];
@@ -259,10 +282,25 @@ for (const file of yamlFilesIn(workflowsDir)) {
 
     for (const step of job.steps ?? []) {
       if (usesCacheAction(step)) {
-        standaloneCacheSteps.push({
-          source,
-          detail: `job \`${jobId}\` uses \`${step.uses ?? ""}\``,
-        });
+        // Collected with its job's runner and its own `if:`, rather than
+        // refused on sight. The refusal was never that caching is wrong —
+        // it was that nothing here could tell a cache obeying the rule from
+        // one reinstating a tar somebody had deliberately removed. Given
+        // both halves, that is answerable, so it is answered below.
+        const runsOn = job["runs-on"];
+        const gate = step.if;
+        if (typeof runsOn !== "string" || typeof gate !== "string") {
+          standaloneCacheSteps.push({
+            source,
+            detail:
+              `job \`${jobId}\` uses \`${step.uses ?? ""}\` with ` +
+              (typeof gate !== "string"
+                ? "no `if:`"
+                : "a runs-on this check cannot read"),
+          });
+        } else {
+          gatedCacheSteps.push({ source, jobId, runsOn, gate });
+        }
       }
 
       // A local action under `.github/actions` is read below. One from
@@ -517,14 +555,57 @@ describe("the dependency cache rule in .github/workflows", () => {
     ).toEqual([]);
   });
 
-  it("has no standalone actions/cache step tarring the same store", () => {
+  it("has no ungated standalone actions/cache step", () => {
     expect(
       standaloneCacheSteps.map((r) => `${r.source}: ${r.detail}`),
       `\`actions/cache\` tars the path it is given exactly as ` +
         `\`setup-node\`'s post step does, and it is the obvious move for ` +
-        `someone who finds the cache off and wants it back. Nothing above ` +
-        `constrains it, so it is refused here instead.`,
+        `someone who finds the cache off and wants it back. It is allowed ` +
+        `only when its \`if:\` answers the same question the cache rule ` +
+        `answers, resolved through its own job's runner — see the ` +
+        `assertion below. One that carries no \`if:\`, or sits in a job ` +
+        `whose runner this check cannot read, is refused rather than ` +
+        `assumed clean.`,
     ).toEqual([]);
+  });
+
+  it("gates every standalone actions/cache step on its own job's runner", () => {
+    // A cache action has no `cache:` key to put the rule in, so the rule
+    // moves into its `if:`. What is checked is containment rather than
+    // equality: the gate legitimately carries other conditions beside this
+    // one — the SQLite lane's also skips a documentation-only run — and
+    // demanding the whole expression would refuse a correct step for
+    // saying something true as well.
+    //
+    // Containment is still the property that matters. The clause is built
+    // from the step's own job's `runs-on`, so a job pointed at a new pool
+    // and a cache step left behind stop agreeing and this fails.
+    for (const step of gatedCacheSteps) {
+      const runsOn = expressionBody(step.runsOn);
+      const gate = expressionBody(step.gate);
+      expect(
+        gate,
+        `${step.source} job \`${step.jobId}\` gates a cache step on a ` +
+          `literal rather than an expression, so it cannot be resolving ` +
+          `anything through the job's runner.`,
+      ).not.toBeNull();
+      expect(
+        runsOn,
+        `${step.source} job \`${step.jobId}\` caches on a fixed runner. ` +
+          `That is legitimate on an ephemeral label and wrong on a pool, ` +
+          `and this check does not model it — add the case rather than ` +
+          `letting the step through.`,
+      ).not.toBeNull();
+      if (runsOn === null || gate === null) continue;
+      expect(
+        gate.includes(recognizesEphemeral(runsOn)),
+        `${step.source} job \`${step.jobId}\` caches without recognizing ` +
+          `the runners that keep no store between jobs, resolved through ` +
+          `its own \`runs-on\`. On the pool this tars a store that is ` +
+          `already there, which is the cost this file exists to keep off ` +
+          `that machine.\n  runs-on: ${runsOn}\n  if: ${gate}`,
+      ).toBe(true);
+    }
   });
 
   it("has no composite action managing a dependency cache", () => {
