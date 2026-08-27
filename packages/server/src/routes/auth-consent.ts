@@ -1537,7 +1537,29 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.file.video": "Videos.",
 
   // Media
-  "core.media": "Media: books, films, music, podcasts.",
+  //
+  // The same defect `core.entity` carried, on the surface that has no second
+  // line to soften it. "Media: books, films, music, podcasts." named four
+  // kinds a bare `core.media` grant reaches none of: the registry holds
+  // seven subtypes, each separately requestable with a scope of its own, and
+  // `grantCoversScope` answers false for every one of them. So the device
+  // screen, which prints this sentence and nothing else, described the grant
+  // by listing what it does not include.
+  //
+  // The replacement says what the grant does reach, which is media stored as
+  // `core.media` itself. It is deliberately awkward rather than vague: a
+  // sentence like "Media content" could not be checked against anything and
+  // so could never be found wrong again, which is a worse place to end up
+  // than the wrong list. This one is checkable against the registry, and it
+  // stays true when an eighth subtype is registered, because it names the
+  // relationship instead of the members.
+  //
+  // It also names no subtype, not even in the negative. "Media that is not a
+  // book or a film" would be true and would still put those words on the row
+  // of a grant that does not reach them, which is the thing the coverage
+  // guard reads for. The guard cannot see polarity and teaching it to would
+  // mean parsing negation, so the sentence stays positive.
+  "core.media": "Media saved without a more specific type.",
   "core.media.album": "Music albums.",
   "core.media.article": "Articles.",
   "core.media.book": "Books.",

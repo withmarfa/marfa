@@ -896,79 +896,112 @@ describe("a grant that reaches things not yet created says so", () => {
     ];
   };
 
-  it("never names a type its own scope does not reach", () => {
-    // The other half of the rule the labels run on, and the half a curated
-    // string cannot be trusted with. A pattern's descendants are separately
-    // requestable and carry rows of their own, while a bare grant on the
-    // parent is exact: `grantCoversScope` answers false for every child. So a
-    // parent label naming one of them puts a type on the row that ticking it
-    // does not grant. `core.entity` was "People and places" above
-    // "Contacts" and "Places", neither of which it reaches.
-    //
-    // Asked of `grantCoversScope` rather than of a list, so the assertion
-    // relaxes on its own if coverage ever changes, and scoped to the
-    // ancestor's label naming a descendant rather than the reverse. The
-    // reverse is ordinary qualification: "Audio files" sits under `Files`
-    // and does not claim to be it.
-    //
-    // **What this can see, and what it cannot.** It compared the parent's
-    // label against the child's label verbatim, which is a much narrower
-    // question than the one it is asking: "Photos" over `core.file` names
-    // `core.file.image` and passed, "Individuals" over `core.entity` names
-    // `core.entity.person` and passed, and the real defect it did catch,
-    // "People and places", was caught on the "Places" half alone, because
-    // "Places" happened to be a child's label letter for letter. The "People"
-    // half, which named `core.entity.person`, was never seen. `namesOf` now
-    // gathers every mechanical form of a child's name, and that is still all
-    // it can do: the forms are the words the product itself uses for that
-    // child, plural-folded and matched as whole words.
-    //
-    // **A synonym nobody wrote down is invisible to it and always will be.**
-    // "Pictures" over `core.file` is a real violation this returns green on,
-    // because no copy anywhere in the repository calls an image a picture.
-    // The set of words meaning the same thing as a type is unbounded, so this
-    // narrows the gap rather than closing it, and a label that reads as if it
-    // covers a child still wants a human to look at it. Do not read a pass
-    // here as the question having been answered.
-    const entries = Object.entries(SCOPE_LABELS);
-    const pairs: { parent: string; child: string }[] = [];
-    for (const [parent] of entries) {
-      for (const [child] of entries) {
-        if (!child.startsWith(`${parent}.`)) continue;
-        if (grantCoversScope([`${parent}:read`], `${child}:read`)) continue;
-        pairs.push({ parent, child });
-      }
-    }
-    // A derivation that finds no pairs asserts nothing, and every assertion
-    // below is inside the loop. The named pair is the one that had the
-    // defect, so a rename that moves it out of the map fails here rather
-    // than quietly emptying the case.
-    expect(pairs.length).toBeGreaterThan(3);
-    expect(pairs).toContainEqual({
-      parent: "core.entity",
-      child: "core.entity.place",
-    });
+  /**
+   * The two maps a scope's copy reaches a person through, and the reason the
+   * rule below runs over both rather than over the toggles alone.
+   *
+   * A label wins on the authorize screen, so it is the whole of what that
+   * screen says about a grant. The device screen has no toggles and no
+   * second line: it prints the description and stops. Neither surface is the
+   * lenient one, and the description is if anything the surface where a
+   * wrong sentence does more damage, because nothing beside it qualifies
+   * what it says.
+   *
+   * `verb` is the word the failure message needs to read correctly about
+   * whichever map it caught.
+   */
+  const COPY_SURFACES = [
+    { name: "SCOPE_LABELS", verb: "labeled", copy: SCOPE_LABELS },
+    {
+      name: "CONSENT_SCOPE_DESCRIPTIONS",
+      verb: "described as",
+      copy: CONSENT_SCOPE_DESCRIPTIONS,
+    },
+  ] as const;
 
-    for (const { parent, child } of pairs) {
-      const parentWords = normalizeWords(SCOPE_LABELS[parent] ?? "");
-      const names = namesOf(child, parent);
-      // Every assertion below is two loops deep, so a child that yields no
-      // forms at all is checked against nothing and passes. That is reachable
-      // without anybody touching this file: the own-segment filter drops any
-      // word matching the parent's type id, and a child described only in its
-      // parent's words would empty out.
-      expect(
-        names.length,
-        `no mechanical form of ${child}'s name, so nothing is checked for it`,
-      ).toBeGreaterThan(0);
-      for (const name of names) {
-        expect(
-          containsSequence(parentWords, name),
-          `${parent} is labeled "${SCOPE_LABELS[parent] ?? ""}", which names ${child} as "${name.join(" ")}": a type this grant does not reach`,
-        ).toBe(false);
+  for (const surface of COPY_SURFACES) {
+    it(`never names a type its own scope does not reach, in ${surface.name}`, () => {
+      // The other half of the rule the labels run on, and the half a curated
+      // string cannot be trusted with. A pattern's descendants are separately
+      // requestable and carry rows of their own, while a bare grant on the
+      // parent is exact: `grantCoversScope` answers false for every child. So
+      // a parent naming one of them puts a type on the row that ticking it
+      // does not grant. `core.entity` was "People and places" above
+      // "Contacts" and "Places", neither of which it reaches.
+      //
+      // Asked of `grantCoversScope` rather than of a list, so the assertion
+      // relaxes on its own if coverage ever changes, and scoped to the
+      // ancestor naming a descendant rather than the reverse. The reverse is
+      // ordinary qualification: "Audio files" sits under `Files` and does not
+      // claim to be it.
+      //
+      // **What this can see, and what it cannot.** It compared the parent's
+      // label against the child's label verbatim, which is a much narrower
+      // question than the one it is asking: "Photos" over `core.file` names
+      // `core.file.image` and passed, "Individuals" over `core.entity` names
+      // `core.entity.person` and passed, and the real defect it did catch,
+      // "People and places", was caught on the "Places" half alone, because
+      // "Places" happened to be a child's label letter for letter. The
+      // "People" half, which named `core.entity.person`, was never seen.
+      // `namesOf` now gathers every mechanical form of a child's name, and
+      // that is still all it can do: the forms are the words the product
+      // itself uses for that child, plural-folded and matched as whole words.
+      //
+      // **It reads words, never polarity.** A sentence saying a grant does
+      // *not* reach a book still holds the word "book" and is caught here.
+      // That is deliberate rather than a limitation worked around: a copy
+      // decision phrased as a list of exclusions puts those names on the row
+      // of a grant that does not reach them, which is the failure the case
+      // exists for, and separating the two readings would mean parsing
+      // negation scope. Say what a grant does reach.
+      //
+      // **A synonym nobody wrote down is invisible to it and always will
+      // be.** "Pictures" over `core.file` is a real violation this returns
+      // green on, because no copy anywhere in the repository calls an image a
+      // picture. The set of words meaning the same thing as a type is
+      // unbounded, so this narrows the gap rather than closing it, and copy
+      // that reads as if it covers a child still wants a human to look at it.
+      // Do not read a pass here as the question having been answered.
+      const entries = Object.entries(surface.copy);
+      const pairs: { parent: string; child: string }[] = [];
+      for (const [parent] of entries) {
+        for (const [child] of entries) {
+          if (!child.startsWith(`${parent}.`)) continue;
+          if (grantCoversScope([`${parent}:read`], `${child}:read`)) continue;
+          pairs.push({ parent, child });
+        }
       }
-    }
-  });
+      // A derivation that finds no pairs asserts nothing, and every assertion
+      // below is inside the loop. The named pair is the one that had the
+      // defect, so a rename that moves it out of the map fails here rather
+      // than quietly emptying the case.
+      expect(pairs.length).toBeGreaterThan(3);
+      expect(pairs).toContainEqual({
+        parent: "core.entity",
+        child: "core.entity.place",
+      });
+
+      for (const { parent, child } of pairs) {
+        const parentWords = normalizeWords(surface.copy[parent] ?? "");
+        const names = namesOf(child, parent);
+        // Every assertion below is two loops deep, so a child that yields no
+        // forms at all is checked against nothing and passes. That is
+        // reachable without anybody touching this file: the own-segment
+        // filter drops any word matching the parent's type id, and a child
+        // described only in its parent's words would empty out.
+        expect(
+          names.length,
+          `no mechanical form of ${child}'s name, so nothing is checked for it`,
+        ).toBeGreaterThan(0);
+        for (const name of names) {
+          expect(
+            containsSequence(parentWords, name),
+            `${parent} is ${surface.verb} "${surface.copy[parent] ?? ""}", which names ${child} as "${name.join(" ")}": a type this grant does not reach`,
+          ).toBe(false);
+        }
+      }
+    });
+  }
 
   it("says one thing about an entity grant, on both screens", () => {
     // A label wins over a description on this screen and the device screen
@@ -994,15 +1027,14 @@ describe("a grant that reaches things not yet created says so", () => {
       "Companies, teams, schools, and other organizations.",
     );
 
-    // The general form of this is checkable and is deliberately not on. The
-    // child-naming rule above, run against descriptions rather than labels,
-    // holds everywhere except `core.media`, whose "Media: books, films,
-    // music, podcasts." names four types a bare `core.media` grant does not
-    // reach. That is the same defect on the other surface, it wants its own
-    // copy decision, and turning the check on before that decision is made
-    // would only invite an exemption for the one case it catches. Not
-    // asserted either way here: pinning that sentence would make fixing it
-    // fail this test.
+    // The general form of this is on now, over both maps. It was held back
+    // while `core.media` still read "Media: books, films, music, podcasts.",
+    // naming four types a bare `core.media` grant reaches none of, because
+    // turning the check on before that sentence was rewritten would only
+    // have invited an exemption for the one case it catches. The sentence is
+    // rewritten, the exception is gone, and the case above runs over the
+    // descriptions unqualified. What stays pinned here is this pair, which
+    // is a copy decision rather than a property and so cannot be derived.
   });
 });
 
