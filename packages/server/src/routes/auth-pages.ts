@@ -107,19 +107,6 @@ async function revokeProjectedGrant(
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
-    // Device codes first, ahead of the tokens, on the reasoning above: a
-    // revocation that cannot drop what still mints access is a revocation
-    // that did not happen. An outstanding approved device code is exactly
-    // that, because a poll inside its remaining TTL is a token mint, and
-    // with `offline_access` the pair it hands back includes a refresh
-    // token nothing later invalidates.
-    //
-    // Called here rather than from `revokeTokensForGrant` because
-    // `oauth_device_codes` is Marfa's table and the provider store owns the
-    // plugin's. This function is already the single writer for both revoke
-    // doors and already holds the consent lock, so keeping the sweep here
-    // means one writer rather than two that can drift apart.
-    await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
     if (
       opts.clientId &&
       opts.authUserId &&
@@ -130,6 +117,32 @@ async function revokeProjectedGrant(
         opts.authUserId,
       );
     }
+    // Device codes after the tokens, and before the record. An outstanding
+    // approved device code is another thing that still mints access, since
+    // a poll inside its remaining TTL is a token mint and with
+    // `offline_access` the pair it hands back carries a refresh token
+    // nothing later invalidates, so a revocation that leaves one behind is
+    // a revocation that did not happen.
+    //
+    // **After the tokens, because this cascade aborts on a throw.** That is
+    // the same position `revokeTokensForGrant` gives its own sibling sweep:
+    // `revokeAuthorizationCodesForGrant` runs last, once the access tokens,
+    // the refresh tokens and the consent row are already gone. The ordering
+    // argument in the docstring above is about the record, not about which
+    // sweep goes first, and running this one first inverts what a fault on
+    // `oauth_device_codes` costs. A lock, a permissions change or a corrupt
+    // index there would abort before `revokeTokensForGrant` had run, so the
+    // grant would stay active, every bearer and refresh token would survive,
+    // and Disconnect would be permanently non-functional while the app kept
+    // full access. Sweeping last, the same fault still kills every token and
+    // still leaves the record honestly reading active.
+    //
+    // Called here rather than from `revokeTokensForGrant` because
+    // `oauth_device_codes` is Marfa's table and the provider store owns the
+    // plugin's. This function is already the single writer for both revoke
+    // doors and already holds the consent lock, so keeping the sweep here
+    // means one writer rather than two that can drift apart.
+    await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
     await storage.items.update(
       opts.itemId,
       {
@@ -2841,9 +2854,10 @@ export function authRoutes(
     // every scope check below a revoked grant still passes and the poll
     // hands back a working pair for the rest of the device code's TTL, and
     // where `offline_access` was approved, a refresh token minted after the
-    // revoke cascade already ran, which nothing subsequently invalidates. A bounded window becomes indefinite access through
-    // ordinary rotation, while the user's security page reports the app as
-    // disconnected the whole time.
+    // revoke cascade already ran, which nothing subsequently invalidates. A
+    // bounded window becomes indefinite access through ordinary rotation,
+    // while the user's security page reports the app as disconnected the
+    // whole time.
     //
     // Revocation now deletes the codes too, so in the ordinary case this
     // never fires. It is kept for the same reason the authorization-code
