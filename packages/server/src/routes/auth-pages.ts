@@ -107,6 +107,19 @@ async function revokeProjectedGrant(
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
+    // Device codes first, ahead of the tokens, on the reasoning above: a
+    // revocation that cannot drop what still mints access is a revocation
+    // that did not happen. An outstanding approved device code is exactly
+    // that, because a poll inside its remaining TTL is a token mint, and
+    // with `offline_access` the pair it hands back includes a refresh
+    // token nothing later invalidates.
+    //
+    // Called here rather than from `revokeTokensForGrant` because
+    // `oauth_device_codes` is Marfa's table and the provider store owns the
+    // plugin's. This function is already the single writer for both revoke
+    // doors and already holds the consent lock, so keeping the sweep here
+    // means one writer rather than two that can drift apart.
+    await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
     if (
       opts.clientId &&
       opts.authUserId &&
@@ -2767,10 +2780,20 @@ export function authRoutes(
 
     // status === "approved" — issue tokens against the connection grant.
     if (!row.connection_item_id) {
-      // Invariant violation: status was flipped to approved without a
-      // connection_item_id. Surface as 500 with a clear message.
-      throw new Error(
-        "Approved device-code is missing connection_item_id (invariant violation)",
+      // The foreign key is `onDelete: "set null"`, so hard-purging the grant
+      // item through `DELETE /items/:id/purge` leaves an approved code
+      // pointing at nothing. That is a grant that no longer exists rather
+      // than an invariant this code can vouch for, and the caller gets the
+      // same refusal a revoked grant gets.
+      log("info", "device token refused: grant no longer exists", {
+        client_id: row.client_id,
+      });
+      return c.json(
+        {
+          error: "invalid_grant",
+          error_description: "The device code is invalid, expired, or revoked.",
+        },
+        400,
       );
     }
 
@@ -2804,6 +2827,50 @@ export function authRoutes(
       );
     }
     const grantProps = deviceGrant.properties;
+
+    // Both lifecycle axes, before anything is minted against the record.
+    //
+    // Revocation leaves the scope list verbatim on the row it flips, so
+    // every scope check below a revoked grant still passes and the poll
+    // hands back a working pair for the rest of the device code's TTL, and
+    // where `offline_access` was approved, a refresh token minted after the
+    // revoke cascade already ran, which nothing subsequently invalidates. A bounded window becomes indefinite access through
+    // ordinary rotation, while the user's security page reports the app as
+    // disconnected the whole time.
+    //
+    // Revocation now deletes the codes too, so in the ordinary case this
+    // never fires. It is kept for the same reason the authorization-code
+    // guard is: the deletion alone is a sweep, and a sweep has a window.
+    // A code bound to the grant after the sweep passed over it survives
+    // one and misses the other, and the approval that binds it runs
+    // outside the consent lock the revoke holds.
+    //
+    // **Both axes, because a grant needs both to be reachable.** `state` is
+    // the item's lifecycle axis and `properties.status` is the type's own,
+    // and `connections/revoked-connection.ts` carries why the two cannot
+    // legitimately disagree. Both read surfaces require both before showing
+    // a grant to its owner, so a row active on one axis alone is one no
+    // person can revoke through the interface built for revoking it, and
+    // minting against it is what makes that state worth having.
+    //
+    // Tested FOR "active" rather than against "revoked": a state this code
+    // cannot read is not evidence the user granted anything.
+    //
+    // `invalid_grant`, per RFC 6749 §5.2, and the same answer the
+    // authorization-code guard gives for the same fact on the code path.
+    if (deviceGrant.state !== "active" || grantProps.status !== "active") {
+      log("info", "device token refused: grant revoked", {
+        client_id: row.client_id,
+      });
+      return c.json(
+        {
+          error: "invalid_grant",
+          error_description: "The device code is invalid, expired, or revoked.",
+        },
+        400,
+      );
+    }
+
     const grantScopes = Array.isArray(grantProps.scopes)
       ? (grantProps.scopes as string[])
       : [];
@@ -2843,15 +2910,11 @@ export function authRoutes(
     // intersection is the only reading that holds both ends: never more
     // than was asked for, never more than the scope list reaches.
     //
-    // **What it does NOT cover: revocation.** This handler reads the
-    // grant's scopes and nothing else, not `status` and not `revoked_at`, so
-    // a connection revoked between approval and poll still mints a working
-    // token pair for the rest of the device code's TTL, with the scope list
-    // the revoked record still carries. That is a hole and it is not this
-    // filter's to close; it is recorded here so the next reader does not
-    // take the paragraph above as saying the poll is already fenced against
-    // a revoke. Closing it means reading the grant's status here, and
-    // deciding what an approved-then-revoked device code should answer.
+    // **Revocation is not this filter's job and never was.** Filtering
+    // against a revoked record would still mint, because revocation leaves
+    // the scope list intact. The lifecycle guard above is what refuses that
+    // grant outright, and it runs before this line so the intersection is
+    // only ever computed against a grant that is live on both axes.
     const issuedScopes = row.scopes.filter((scope) =>
       grantCoversScope(grantScopes, scope),
     );
