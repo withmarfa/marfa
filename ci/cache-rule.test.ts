@@ -392,6 +392,36 @@ function expressionBody(value: string): string | null {
   return null;
 }
 
+/**
+ * A boolean expression's top-level `&&` operands, trimmed.
+ *
+ * Depth-aware because the runner chain this file compares against carries
+ * its own `&&` inside parentheses, and splitting on the operator naively
+ * would cut the clause in half and then fail to find it.
+ *
+ * Not a parser and not trying to be. It answers one question — is this
+ * clause one of the things being ANDed together, on its own, rather than
+ * merely appearing somewhere in the text — and anything it cannot answer
+ * that way falls out as a non-match, which is the refusing direction.
+ */
+function topLevelConjuncts(expression: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expression.length; i++) {
+    const char = expression[i];
+    if (char === "(") depth++;
+    else if (char === ")") depth--;
+    else if (depth === 0 && char === "&" && expression[i + 1] === "&") {
+      parts.push(expression.slice(start, i).trim());
+      i++;
+      start = i + 1;
+    }
+  }
+  parts.push(expression.slice(start).trim());
+  return parts.filter((part) => part.length > 0);
+}
+
 /* -------------------------------------------------------------------------
  * The assertions
  * ---------------------------------------------------------------------- */
@@ -571,15 +601,28 @@ describe("the dependency cache rule in .github/workflows", () => {
 
   it("gates every standalone actions/cache step on its own job's runner", () => {
     // A cache action has no `cache:` key to put the rule in, so the rule
-    // moves into its `if:`. What is checked is containment rather than
-    // equality: the gate legitimately carries other conditions beside this
-    // one — the SQLite lane's also skips a documentation-only run — and
-    // demanding the whole expression would refuse a correct step for
-    // saying something true as well.
+    // moves into its `if:`. The gate legitimately carries other conditions
+    // beside this one — the SQLite lane's also skips a documentation-only
+    // run — so demanding the whole expression would refuse a correct step
+    // for saying something true as well.
     //
-    // Containment is still the property that matters. The clause is built
-    // from the step's own job's `runs-on`, so a job pointed at a new pool
-    // and a cache step left behind stop agreeing and this fails.
+    // What it demands instead is that the clause is one of the gate's
+    // top-level `&&` operands, **verbatim**. The first version of this
+    // asked whether the gate CONTAINED the clause, and that was the same
+    // defect this file exists to catch, one level up: a substring test
+    // cannot tell a clause from a clause that has been defeated, because
+    // both contain it. `!( … )` contains it and inverts it, which caches
+    // on the pool and nowhere else — exactly the cost this file is for —
+    // and `… || true` contains it and always fires. Neither is something
+    // anyone writes on purpose, and neither is the point. The point is
+    // that "assumed clean because the text is present" is not a standard
+    // this file gets to apply while refusing everything else it cannot
+    // read. Demonstrated rather than argued: the negated gate passed the
+    // containment version with every other assertion green.
+    //
+    // The split has to respect parentheses, because the runner chain
+    // carries its own `&&` (`github.event_name == 'push' && vars.X`) and a
+    // naive split would shred the clause it is looking for.
     for (const step of gatedCacheSteps) {
       const runsOn = expressionBody(step.runsOn);
       const gate = expressionBody(step.gate);
@@ -598,13 +641,15 @@ describe("the dependency cache rule in .github/workflows", () => {
       ).not.toBeNull();
       if (runsOn === null || gate === null) continue;
       expect(
-        gate.includes(recognizesEphemeral(runsOn)),
+        topLevelConjuncts(gate),
         `${step.source} job \`${step.jobId}\` caches without recognizing ` +
           `the runners that keep no store between jobs, resolved through ` +
-          `its own \`runs-on\`. On the pool this tars a store that is ` +
-          `already there, which is the cost this file exists to keep off ` +
-          `that machine.\n  runs-on: ${runsOn}\n  if: ${gate}`,
-      ).toBe(true);
+          `its own \`runs-on\`, as a plain conjunct of its \`if:\`. On ` +
+          `the pool this tars a store that is already there, which is the ` +
+          `cost this file exists to keep off that machine. A clause that ` +
+          `is present but negated or defeated does not count.` +
+          `\n  runs-on: ${runsOn}\n  if: ${gate}`,
+      ).toContain(recognizesEphemeral(runsOn));
     }
   });
 
