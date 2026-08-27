@@ -32,6 +32,8 @@ import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
+import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
+import { sqliteStoredValueCounts } from "./stored-value-counts.js";
 import {
   sqliteDeleteAccountCascade,
   sqliteDeleteSpace,
@@ -118,6 +120,18 @@ export async function createSqliteStorage(
   // at the helper, and it is the same judgment the projection above makes
   // one line up.
   setPlatformDrift(computePlatformDrift(shippedPlatformTypes(), loadedTypes));
+  // How many rows this instance holds that no build understands. One
+  // aggregate per scanned column, awaited for the reason the type warmup
+  // above is: a value recorded after storage is handed back is a value
+  // some request can miss, and reporting zero because the scan has not
+  // finished is the dishonest answer. It reports and never refuses —
+  // reasoning at the helper, and it is the same judgment the two lines
+  // above make.
+  setStoredValueScan(
+    await scanStoredValues(
+      sqliteStoredValueCounts(async (sql) => (await raw.execute(sql)).rows),
+    ),
+  );
   for (const row of loadedTypes) {
     if (row.origin === "platform") continue;
     // Register into the owning space's overlay so one space's custom types

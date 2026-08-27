@@ -23,6 +23,7 @@ import type {
   CreateEdgeInput,
 } from "@withmarfa/shared";
 import type {
+  DeletionState,
   EdgeTypeSchema,
   PlatformTypeFamily,
   SeededPlatformType,
@@ -2199,13 +2200,13 @@ export interface AccountLifecycleStore {
   /** Read the lifecycle row by `auth_user.id`. Returns null when no
    *  matching row exists. */
   getAccountLifecycle(authUserId: string): Promise<{
-    deletion_state: "active" | "pending_deletion";
+    deletion_state: DeletionState;
     pending_deletion_at: string | null;
   } | null>;
   /** Pre-sign-in middleware lookup keyed by lower-cased email. */
   getAccountLifecycleByEmail(email: string): Promise<{
     auth_user_id: string;
-    deletion_state: "active" | "pending_deletion";
+    deletion_state: DeletionState;
     pending_deletion_at: string | null;
   } | null>;
   /** Purger fan-out — every account whose `pending_deletion_at` is
