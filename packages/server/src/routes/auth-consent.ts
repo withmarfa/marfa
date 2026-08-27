@@ -1552,20 +1552,21 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
 
   // Metadata layer: sub-resources rather than item types, so no registry
   // holds a description to fall back to and this is the only source.
-  metadata: "Read or write any metadata-layer resource",
-  "metadata.types": "Register and update custom data types in your space",
+  metadata:
+    "Register and update custom data types, relationship types, and any others added later.",
+  "metadata.types": "Register and update custom data types in your space.",
   "metadata.edge_types":
-    "Register and update custom relationship types in your space",
+    "Register and update custom relationship types in your space.",
 
   // Wildcards: the one family where curated copy is not merely better than
   // the registry's but is the only thing that can exist. A wildcard matches
   // types at check time and the grant reaches types nobody has registered
   // yet, so what the copy has to say is precisely what no registry entry
   // knows.
-  "*": "Everything in your space",
-  "core.*": "All standard content types, including ones added later",
-  "user.*": "Your custom types, including ones you define later",
-  "app.*": "Types this app defines for itself",
+  "*": "Everything in your space.",
+  "core.*": "All standard content types, including ones added later.",
+  "user.*": "Your custom types, including ones you define later.",
+  "app.*": "Types this app defines for itself.",
 };
 
 /**

@@ -919,7 +919,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     const out = describeAll("metadata:read", "metadata.types:write");
     expect(out.metadata).toMatch(/\S/);
     expect(out["metadata.types"]).toBe(
-      "Register and update custom data types in your space",
+      "Register and update custom data types in your space.",
     );
   });
 
@@ -1007,7 +1007,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // type can be registered under. Both would have read the type axis's copy
     // the moment the wildcard entries landed beside them.
     const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
-    expect(out["*"]).toBe("Everything in your space");
+    expect(out["*"]).toBe("Everything in your space.");
     expect(out["edge.*"]).toBeUndefined();
     expect(out["edge.metadata"]).toBeUndefined();
     // The curated edge copy still resolves, keyed on the pattern.
