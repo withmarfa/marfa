@@ -175,6 +175,15 @@ function uncoveredBecause(
 interface UncoveredPattern {
   pattern: string;
   because: string;
+  /**
+   * Set on the entries this file invented rather than found: the injected
+   * publisher root's pair. They are gaps in the same sense as the rest and
+   * nobody can ever close them by writing a sentence, because the root is
+   * synthetic, so they must not be counted as work outstanding on a
+   * shipping surface. Anybody counting the gaps wants the number without
+   * these two.
+   */
+  synthetic?: true;
 }
 
 /**
@@ -188,20 +197,26 @@ interface UncoveredPattern {
  * lands user-facing words in a change nobody reviews as words. Copy is
  * reviewed as copy or it is not reviewed.
  *
- * **Emptying it is the point.** Deleting an entry is how the guard reports
- * that its pattern now has a sentence, and the test below refuses an entry
- * whose pattern has since been covered, so the list cannot outlive the gap
- * it records.
+ * **Emptying it is the point, and the test below holds both halves of
+ * that.** One half is that the list cannot outlive a gap: an entry whose
+ * pattern has since been given copy is refused. The other half is that it
+ * cannot be fed a new one, which needs a count rather than a per-entry
+ * check, because every conceivable new entry is individually well-formed.
+ * Without the count the escape hatch is a paste: delete a curated sentence,
+ * add a plausible line here, and the surface has quietly shrunk again in
+ * exactly the way this file exists to stop one level down.
  *
- * Two families, and they need different fixes.
+ * Three families, and they need different fixes. The first two are counted
+ * separately because only one of them is work anybody can do.
  */
 const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [
   // ---------------------------------------------------------------------
-  // Namespace wildcards. The registry cannot close these at all: a wildcard
-  // matches at check time and reaches types nobody has registered yet, so
-  // there is nothing for a map keyed on concrete ids to return. Four are
-  // curated (`*`, `core.*`, `user.*`, `app.*`) and the rest never were —
-  // the curated map predates the wildcards being publishable.
+  // SHIPPING NAMESPACE WILDCARDS, of which there are eleven. The registry
+  // cannot close these at all: a wildcard matches at check time and reaches
+  // types nobody has registered yet, so there is nothing for a map keyed on
+  // concrete ids to return. Four are curated (`*`, `core.*`, `user.*`,
+  // `app.*`) and the rest never were — the curated map predates the
+  // wildcards being publishable.
   //
   // A per-wildcard entry closes today's set and reopens on the next
   // integration, so the fix is a rule that derives a wildcard's sentence
@@ -259,27 +274,39 @@ const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [
     pattern: "edge.todoist.*",
     because: "Integration namespace edge wildcard, never described.",
   },
-  // The runtime publisher root's pair, named through the constant rather
-  // than spelled out, because the root itself is this file's fixture and a
-  // literal here would read as a namespace this build ships. These are the
-  // instance of the family that cannot be closed by an entry per wildcard
-  // even in principle: the root arrives from the database at boot, so no
-  // list written at authoring time can name it.
+
+  // ---------------------------------------------------------------------
+  // SYNTHETIC. The injected publisher root's pair, and the only two entries
+  // here that name nothing this build ships. They are marked and counted
+  // apart because a reader tallying the wildcard gaps wants ELEVEN, not
+  // thirteen: `acme` is this file's fixture, so no sentence anybody writes
+  // can close these, and a ticket that lists them is asking for work that
+  // does not exist.
+  //
+  // They are still carried rather than filtered, because they are the one
+  // instance proving the shape: the root arrives from the database at boot,
+  // so no list written at authoring time can name it and only a derivation
+  // rule reaches it. Whatever closes the eleven above has to close these
+  // too, and if it cannot then it was a table rather than a rule.
+  // ---------------------------------------------------------------------
   {
     pattern: `${RUNTIME_PUBLISHER_ROOT}.*`,
+    synthetic: true,
     because:
       "A publisher root installed at boot. Unknowable when copy is " +
       "written, so only a derivation can describe it.",
   },
   {
     pattern: `edge.${RUNTIME_PUBLISHER_ROOT}.*`,
+    synthetic: true,
     because:
       "The relationship half of a boot-installed publisher root. Same " +
       "reason as the pattern above.",
   },
 
   // ---------------------------------------------------------------------
-  // Concrete types this build ships through an integration. These do have
+  // SHIPPING CONCRETE TYPES, of which there are sixteen. Types this build
+  // ships through an integration. These do have
   // a registry description, which is why they read as covered and are not:
   // the descriptions are written for a developer reading API docs and run
   // from 170 to 796 characters, several of them carrying backticks. They
@@ -432,12 +459,53 @@ describe("the consent copy guard derives the scopes it checks", () => {
     expect(failures.sort()).toEqual([]);
   });
 
-  it("keeps the known-uncovered list to patterns that are still uncovered", () => {
-    // The list is allowed to shrink and nothing else. An entry whose pattern
-    // has since been given copy would go on suppressing a check that now
-    // passes, and an entry naming a pattern no client can request would
-    // suppress a check that never ran — both leave the list looking like
-    // work outstanding when it is not.
+  it("holds the known-uncovered list to its size and lets it only shrink", () => {
+    // **The bound is the point of this test, not a tidiness check.**
+    //
+    // The per-entry checks below are each necessary and together they are
+    // not sufficient, because every entry somebody might add tomorrow
+    // satisfies all of them: a pattern that is requestable and genuinely
+    // uncovered is exactly what a newly un-curated scope looks like. So the
+    // hatch is a paste. Delete a sentence from the description map, add a
+    // plausible line to the list, and the coverage check goes green over a
+    // surface that has quietly shrunk — which is this ticket's own defect,
+    // one level up from where it was found.
+    //
+    // A count is what closes it, because a count is the one property a
+    // paste cannot satisfy. Held to equality rather than a ceiling: a
+    // ceiling still admits a swap, one entry out and one entry in, and a
+    // swap is the same silent narrowing wearing a stable number.
+    //
+    // So growth is a digit somebody had to change, which puts it in the
+    // diff and in front of a reviewer. **Lowering these numbers is the
+    // work**: closing the wildcards takes the first to zero, and writing
+    // consent copy for the integration types takes the third to zero. The
+    // synthetic pair goes when a derivation rule reaches it, and never by
+    // anybody writing a sentence.
+    //
+    // Nothing today depends on this bound being right rather than merely
+    // present, and that is luck rather than design. The description-map
+    // tests in `consent-render.test.ts` hold the whole of both registries,
+    // so every core, system and edge pattern is independently guarded and a
+    // paste naming one would fail there instead. An integration shipping a
+    // type outside `core.` and `system.` sits outside their reach, and is
+    // the case this bound is actually for.
+    const wildcards = KNOWN_UNCOVERED.filter((u) => u.pattern.endsWith(".*"));
+    const synthetic = KNOWN_UNCOVERED.filter((u) => u.synthetic === true);
+    expect(KNOWN_UNCOVERED).toHaveLength(29);
+    expect(wildcards.filter((u) => !u.synthetic)).toHaveLength(11);
+    expect(synthetic).toHaveLength(2);
+    expect(
+      KNOWN_UNCOVERED.filter((u) => !u.pattern.endsWith(".*")),
+    ).toHaveLength(16);
+    // Every synthetic entry is a wildcard, so the three counts partition the
+    // list and no entry can be added to one bucket by leaving another.
+    expect(synthetic.every((u) => u.pattern.endsWith(".*"))).toBe(true);
+
+    // The per-entry half. An entry whose pattern has since been given copy
+    // would go on suppressing a check that now passes, and an entry naming a
+    // pattern no client can request would suppress a check that never ran —
+    // both leave the list looking like work outstanding when it is not.
     const patterns = distinctPatterns(DESCRIBED_KINDS);
     const descriptions = buildScopeDescriptions(patterns);
     const byPattern = new Map(patterns.map((s) => [s.typePattern, s]));
@@ -521,13 +589,6 @@ describe("the consent copy guard derives the scopes it checks", () => {
       expect(copy ?? "", scope.typePattern).toMatch(/\S/);
       expect(device, scope.typePattern).toContain(escapeHtml(copy ?? ""));
 
-      // The device screen's floor, matched on the row's own markup so that
-      // the checkbox `value` carrying the same literal on the other screen
-      // cannot stand in for it.
-      expect(device, scope.typePattern).not.toContain(
-        `<span>${literalOf(scope)}</span>`,
-      );
-
       // The authorize screen resolves a row's label from the curated label
       // where there is one and from the description otherwise. Held to
       // whichever of those applies rather than to "not `humanizeType`":
@@ -536,9 +597,27 @@ describe("the consent copy guard derives the scopes it checks", () => {
       // coincidence as a defect.
       const label = SCOPE_LABELS[scope.typePattern] ?? copy ?? "";
       expect(authorize, scope.typePattern).toContain(escapeHtml(label));
-      expect(authorize, scope.typePattern).not.toContain(
-        `<span>${literalOf(scope)}<`,
-      );
     }
+    // **No negative floor is asserted here, and the omission is deliberate
+    // rather than an oversight to be corrected.** Two were written and both
+    // were unreachable, which is worse than absent: an assertion that cannot
+    // fire reads to the next person as a floor that is being held.
+    //
+    // On the authorize screen, `not.toContain("<span>" + literal + "<")`
+    // cannot fire at all. `labelFor` falls `SCOPE_LABELS` → description →
+    // `humanizeType`, and `humanizeType` returns a title-cased segment of
+    // the pattern, so the literal is not a string that chain can produce.
+    //
+    // On the device screen the equivalent cannot fire because the positive
+    // above already requires copy to have resolved, and the literal floor is
+    // reached only when it did not. A floor that could fire would also have
+    // to be written differently: `openEndedSuffixed` renders an uncovered
+    // open-ended scope as `edge.*:read Also covers anything added later.`,
+    // so matching on `<span>literal</span>` would miss the shape the gallery
+    // snapshot actually shows.
+    //
+    // The floors are held where they can be, which is the coverage check
+    // above: it asks the resolution rather than the markup, and it is what
+    // reddens when copy goes missing.
   });
 });

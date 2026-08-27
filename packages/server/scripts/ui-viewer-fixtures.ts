@@ -220,8 +220,15 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // curated entries and was never caught up with.
   "google.*:read",
   // An integration's concrete type, which reads as described and is not: the
-  // curated map has no entry, so the row a person approves is the registry's
-  // Sync API rationale. The longest of them, deliberately.
+  // curated map has no entry, so it falls through to the registry's Sync API
+  // rationale. The longest of them, deliberately.
+  //
+  // **On the device screen only.** `SCOPE_LABELS` names this one "Todoist
+  // tasks", and the authorize screen's row is that label, so its snapshot
+  // shows a clean row and hides the defect entirely. The device screen has
+  // no labels and prints the description as the whole of the row, which is
+  // where the paragraph lands. Reading the two variants against each other
+  // is the point of previewing this scope on both.
   "todoist.task:read",
 );
 
