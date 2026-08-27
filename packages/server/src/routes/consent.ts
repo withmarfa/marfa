@@ -57,8 +57,11 @@
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
+  GLOBAL_TYPE_WILDCARD,
   HIDDEN_MECHANISM_SCOPES,
   scopesOfferedOffByDefaultOnly,
+  scopesToMetadataPermissions,
+  subtreeWildcardRoot,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
@@ -322,6 +325,32 @@ function summarize(group: ScopeGroup): string {
  * registry description, then a humanized type name. A test pins every
  * default-bundle scope to an entry here, so widening a bundle without a
  * label fails the suite instead of shipping an auto-generated toggle.
+ *
+ * **A label may be shorter than its description. It may never be narrower
+ * than its scope.** An entry here wins over the description, so it is the
+ * whole of what this screen says about that grant, while the device screen
+ * has no toggles and reads the description out in full. A label naming a
+ * proper subset of what its pattern reaches therefore puts the smaller
+ * answer on the screen where somebody is ticking boxes, and the direction is
+ * what makes that a defect rather than a matter of taste: a grant that
+ * overstates its reach makes a person hesitate, and a grant that understates
+ * it makes them approve something larger than they think they are approving.
+ *
+ * `metadata` was "Type definitions" under that rule and is the worked
+ * example. The bare root projects to `{ "*": verb }`, so it reaches every
+ * metadata sub-resource, and its own list says it grows; the label named one
+ * of the two that exist today.
+ *
+ * **Open-endedness is the one thing a label here cannot carry**, and the
+ * constraint is the sentence rather than the space above a switch.
+ * {@link summarize} joins these into a list, so an entry holding a comma or
+ * an "and" arrives there as two items: "Definitions in your space and any
+ * added later" joined with "Edge types" reads as one unpunctuated run of
+ * three. Saying that a grant reaches things which do not exist yet needs a
+ * conjunction, so a label cannot say it and stay a name. {@link subRow}
+ * states it on the row's second line instead, for every open-ended pattern
+ * rather than for the ones somebody remembered, which is what keeps this
+ * rule from needing a curator.
  */
 export const SCOPE_LABELS: Record<string, string> = {
   "core.note": "Notes",
@@ -367,7 +396,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.device": "Devices",
   "system.webhook": "Webhooks",
   "system.activity": "Activity",
-  metadata: "Type definitions",
+  metadata: "Definitions in your space",
 };
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
@@ -399,6 +428,33 @@ export function humanizeType(typePattern: string): string {
   if (!words) return typePattern;
   const titled = words.charAt(0).toUpperCase() + words.slice(1);
   return typePattern.endsWith(".*") ? `${titled} (all)` : titled;
+}
+
+/**
+ * Whether a scope reaches things that do not exist yet.
+ *
+ * Two shapes qualify and they share nothing in the grammar, so both are
+ * asked rather than inferred from the spelling. A subtree wildcard covers
+ * its root and everything under it, later registrations included. The bare
+ * `metadata` root carries no wildcard character at all and is the one that
+ * reads as concrete: it projects to `{ "*": verb }`, which matches any
+ * sub-resource, so it covers the two that exist today and whatever the list
+ * grows next.
+ *
+ * The second arm asks the projection rather than a list of open-ended roots
+ * kept here. A list beside the grammar is a second answer to a question the
+ * grammar already settles, and the way it fails is that the screen keeps
+ * rendering while quietly going narrow about one pattern.
+ */
+function isOpenEnded(scope: ParsedScope): boolean {
+  if (scope.kind === "oidc" || scope.kind === "capability") return false;
+  const pattern = scope.typePattern;
+  if (pattern === GLOBAL_TYPE_WILDCARD) return true;
+  if (subtreeWildcardRoot(pattern) !== null) return true;
+  const projected = scopesToMetadataPermissions([
+    `${pattern}:${scope.operation}`,
+  ]);
+  return projected["*"] !== undefined;
 }
 
 /** Human toggle label for a scope. */
@@ -462,10 +518,33 @@ export function renderConsentScreen(params: ConsentParams): string {
       scope.kind !== "oidc"
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
-    const detail =
+    // The row's second line is where open-endedness is stated, and it is
+    // stated for every open-ended pattern rather than only for the ones a
+    // space can name members of today.
+    //
+    // It cannot live in the label. `SCOPE_LABELS` entries are also joined
+    // into the group summary sentence, and open-endedness needs a
+    // conjunction to say, so a label that says it breaks the list it is
+    // joined into. It cannot live in the description either, because a
+    // curated label suppresses that. So the two known offenders were not a
+    // pair of bad strings: they were the only place left for the fact to go
+    // being one that could not hold it. Both said less than the device
+    // screen, which has no toggle labels and so reads the description out
+    // whole, and the narrower of the two answers was the one on the screen
+    // where somebody is ticking boxes.
+    //
+    // The expansion line wins where there is one: it already ends "plus any
+    // you add later", so it says this and names today's members too.
+    const openEndedLine = isOpenEnded(scope)
+      ? "Covers what exists today plus anything added later"
+      : "";
+    const detailText =
       matched && matched.length > 0
-        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today this covers ${matched.join(", ")}, plus any you add later`)}</span>`
-        : "";
+        ? `Today this covers ${matched.join(", ")}, plus any you add later`
+        : openEndedLine;
+    const detail = detailText
+      ? `<span class="rmeta" style="display:block">${escapeHtml(detailText)}</span>`
+      : "";
     // The per-type checkbox is what the form submits, so this attribute is
     // the whole of what `default_on: false` means: the literal is offered,
     // and ticking it is the grant.

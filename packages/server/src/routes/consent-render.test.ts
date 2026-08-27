@@ -12,6 +12,9 @@ import {
 import {
   CAPABILITY_SCOPES,
   EDGE_TYPE_REGISTRY,
+  GLOBAL_TYPE_WILDCARD,
+  scopesToMetadataPermissions,
+  subtreeWildcardRoot,
   TYPE_REGISTRY,
 } from "@withmarfa/shared";
 import {
@@ -507,6 +510,130 @@ describe("group summaries describe the request", () => {
 
     const wildcard = summariesOf(render([scope("user.*", "read")])).join(" ");
     expect(wildcard).toContain("anything else");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Open-ended grants
+//
+// A wildcard reaches types nobody has registered yet, and the bare `metadata`
+// root reaches sub-resources nobody has written yet. That property is the
+// whole difference between such a grant and the list of things it covers
+// today, and it is the part a person needs in order to weigh it.
+//
+// Pinned as a rule rather than as the strings that broke, because the strings
+// were a symptom. `labelFor` resolves a curated label ahead of the
+// description, so a curated label is the only thing this screen says about
+// its grant, while the device screen has no toggle labels and reads the
+// description out whole. Two labels named less than their scope that way, and
+// asserting those two would pass again the moment a third arrived.
+// ---------------------------------------------------------------------------
+
+describe("a grant that reaches things not yet created says so", () => {
+  /** The same two shapes {@link isOpenEnded} asks about, derived here the
+   *  same way rather than imported, so the test fails if the renderer's
+   *  answer stops matching the grammar's. */
+  const openEnded = (scope: ParsedScope): boolean => {
+    if (scope.kind === "oidc" || scope.kind === "capability") return false;
+    if (scope.typePattern === GLOBAL_TYPE_WILDCARD) return true;
+    if (subtreeWildcardRoot(scope.typePattern) !== null) return true;
+    return (
+      scopesToMetadataPermissions([`${scope.typePattern}:${scope.operation}`])[
+        "*"
+      ] !== undefined
+    );
+  };
+
+  /** Every open-ended literal the server will accept, from the allowlist
+   *  rather than from a list kept here: a new open-ended pattern joins this
+   *  case by being requestable, which is the point at which it can reach a
+   *  person. */
+  const openEndedLiterals = (): string[] =>
+    buildAllowedScopes().filter((literal) => {
+      const parsed = parseScope(literal);
+      return parsed !== null && openEnded(parsed);
+    });
+
+  const render = (literal: string): string => {
+    const parsed = parseScope(literal);
+    if (!parsed) throw new Error(`unparseable: ${literal}`);
+    return renderConsentScreen({
+      clientName: "Test App",
+      clientId: "test-app",
+      oauthQuery: "sig=x",
+      scopes: [parsed],
+      descriptions: buildScopeDescriptions([parsed]),
+    });
+  };
+
+  /** One toggle row, by the literal its checkbox carries. Scoped to the row
+   *  because the group heading above it has an open ending of its own, and a
+   *  whole-document match would read that one and call the row covered. */
+  const rowFor = (html: string, literal: string): string => {
+    for (const row of html.match(
+      /<div class="subrow">[\s\S]*?<\/label><\/div>/g,
+    ) ?? []) {
+      if (row.includes(`value="${literal}"`)) return row;
+    }
+    return "";
+  };
+
+  it("finds open-ended literals in the allowlist at all", () => {
+    // A derivation that silently returns nothing makes the case below
+    // vacuous, and it would: every assertion in it is inside the loop.
+    const literals = openEndedLiterals();
+    expect(literals.length).toBeGreaterThan(3);
+    // The two shapes, named so a derivation that quietly stops recognizing
+    // one of them fails here rather than passing over it.
+    expect(literals).toContain("user.*:read");
+    expect(literals).toContain("metadata:read");
+  });
+
+  it("states it on the row, for every open-ended scope offered", () => {
+    for (const literal of openEndedLiterals()) {
+      const row = rowFor(render(literal), literal);
+      expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
+      expect(row, `${literal} renders as though it were a fixed set`).toMatch(
+        /\blater\b/,
+      );
+    }
+  });
+
+  it("says nothing of the kind on a concrete scope", () => {
+    // The discriminator. Without it the case above passes on a renderer that
+    // puts the line under every row, which would say a grant on one type
+    // grows, and would also mean the case above never observed anything.
+    const row = rowFor(render("core.note:read"), "core.note:read");
+    expect(row).toContain("Notes");
+    expect(row).not.toMatch(/\blater\b/);
+  });
+
+  it("does not repeat itself where the row already lists what it matches", () => {
+    // The expansion line ends "plus any you add later", so it satisfies the
+    // rule already. A second line saying the same thing would be the cost of
+    // stating the rule twice rather than once.
+    const parsed = parseScope("user.*:read");
+    if (!parsed) throw new Error("unparseable");
+    const html = renderConsentScreen({
+      clientName: "Test App",
+      clientId: "test-app",
+      oauthQuery: "sig=x",
+      scopes: [parsed],
+      wildcardExpansions: { "user.*": ["Recipes", "Training log"] },
+    });
+    const row = rowFor(html, "user.*:read");
+    expect(row).toContain("Today this covers Recipes, Training log");
+    expect(row.match(/\blater\b/g)).toHaveLength(1);
+  });
+
+  it("keeps every curated label out of the summary's punctuation", () => {
+    // `summarize` joins these into a sentence, so a label carrying its own
+    // comma arrives there as two items. This is also why the open-endedness
+    // above is on the row and not in the label: saying it needs an "and",
+    // and an "and" breaks the same list a comma does.
+    for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
+      expect(label, `${pattern} carries a comma`).not.toContain(",");
+    }
   });
 });
 

@@ -45,7 +45,7 @@ exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Things with your own custom types"><span class="tk" aria-hidden="true"></span></label>
       </summary>
-      <div class="gsub"><div class="subrow"><span>Your custom types</span><label class="sw"><input type="checkbox" name="scopes" value="user.*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+      <div class="gsub"><div class="subrow"><span>Your custom types<span class="rmeta" style="display:block">Covers what exists today plus anything added later</span></span><label class="sw"><input type="checkbox" name="scopes" value="user.*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
     </details><details class="grp">
       <summary>
         <span class="gmain">
@@ -63,16 +63,16 @@ exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other read access"><span class="tk" aria-hidden="true"></span></label>
       </summary>
-      <div class="gsub"><div class="subrow"><span>Who created what.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.authored-by:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>References between items.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.references:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Everything in your space.</span><label class="sw"><input type="checkbox" name="scopes" value="*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+      <div class="gsub"><div class="subrow"><span>Who created what.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.authored-by:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>References between items.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.references:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Everything in your space.<span class="rmeta" style="display:block">Covers what exists today plus anything added later</span></span><label class="sw"><input type="checkbox" name="scopes" value="*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
     </details><details class="grp">
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Other write access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
-          <span class="gdesc">Type definitions and Edge types.</span>
+          <span class="gdesc">Definitions in your space and Edge types.</span>
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other write access"><span class="tk" aria-hidden="true"></span></label>
       </summary>
-      <div class="gsub"><div class="subrow"><span>Type definitions</span><label class="sw"><input type="checkbox" name="scopes" value="metadata:write" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Custom relationship types in your space.</span><label class="sw"><input type="checkbox" name="scopes" value="metadata.edge_types:write" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+      <div class="gsub"><div class="subrow"><span>Definitions in your space<span class="rmeta" style="display:block">Covers what exists today plus anything added later</span></span><label class="sw"><input type="checkbox" name="scopes" value="metadata:write" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Custom relationship types in your space.</span><label class="sw"><input type="checkbox" name="scopes" value="metadata.edge_types:write" checked><span class="tk" aria-hidden="true"></span></label></div></div>
     </details><details class="grp">
       <summary>
         <span class="gmain">
