@@ -547,7 +547,17 @@ describe("GET /auth/device/consent — gated on session", () => {
     // show it — silently omitting it would approve more than was shown.
     // Expansion against the static registry dropped `user.*` (runtime
     // types never enumerate there), leaving one row for two scopes.
-    expect(html).toContain("Your custom types, including ones you define");
+    //
+    // Both halves of the row, because they arrive from different places and
+    // only one of them is copy. The description says what the grant reaches;
+    // the clause after it says the grant is not a snapshot, and this screen
+    // composes that from the scope grammar rather than reading it out of a
+    // curated string. Pinning the description alone would pass on a row that
+    // had quietly stopped saying how far the grant goes.
+    expect(html).toContain("Your custom types.");
+    expect(html).toContain(
+      "Your custom types. Also covers anything added later.",
+    );
     const rowCount = html.split('class="crow"').length - 1;
     expect(rowCount).toBe(2);
   });

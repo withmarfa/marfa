@@ -1598,8 +1598,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // and update" told somebody approving a read that they were granting a
   // write. The read/write split is already carried by the screen's own
   // grouping and by the toggle the row sits on.
-  metadata:
-    "Custom data types, relationship types, and any others added later.",
+  metadata: "Custom data types and relationship types.",
   "metadata.types": "Custom data types in your space.",
   "metadata.edge_types": "Custom relationship types in your space.",
 
@@ -1609,30 +1608,37 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // yet, so what the copy has to say is precisely what no registry entry
   // knows.
   //
-  // **Which means an open-ended description has to say so.** The authorize
-  // screen states it on the row's second line, but the device screen has no
-  // toggles and no second line: it prints these sentences and nothing else,
-  // so a description that reads as a closed set is the whole of what that
-  // screen says about a grant reaching types that do not exist yet.
-  // `app.*` read "Types this app defines for itself." for exactly that
-  // reason. The global wildcard is the one entry that carries it without
-  // saying "later", because there is nothing outside "everything" for the
-  // set to grow into.
+  // **None of these sentences says that the grant reaches types nobody has
+  // registered yet, and none of them may.** Both screens compose that from
+  // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
+  // line, `describeCapabilities` appends `OPEN_ENDED_SENTENCE` to whichever
+  // of these it is about to print, and `isOpenEnded` is the single answer
+  // both read. So an entry here says what the grant reaches and stops.
   //
-  // **That is an argument about this sentence, not about the pattern.** `*`
-  // is open-ended like any other, and its authorize-screen row carries the
-  // standalone line, because nothing in that row's label has said it. The
-  // exemption buys one thing: a sentence that cannot be falsified by a new
-  // type, which is all the device screen needs, since that screen has no
-  // second line to state it on. Reading the exemption as "`*` is special"
-  // and suppressing the row's line would leave the widest grant on the
-  // screen as the only one that never says it reaches what does not exist
-  // yet. The pin on this entry is the sentence itself rather than its
-  // shape, for the reason recorded at the test.
+  // **The prohibition is not tidiness, it is the only way the two screens
+  // can be made to agree.** These sentences used to carry a futurity clause,
+  // because the device screen has no toggles and no second line and this is
+  // the whole of what it says about a grant. But `labelFor` on the authorize
+  // screen falls through to this map wherever nothing curated names the
+  // pattern, so the clause written for one screen arrived as the other
+  // screen's toggle label, directly above a line about to state the same
+  // thing. What reconciled them was a regex looking for the word "later" in
+  // the label, and a check on the copy cannot tell a clause that means
+  // futurity from a word that merely spells it: futurity phrased in other
+  // words was stated twice, and a "later" carrying no futurity at all
+  // silenced the line on a wildcard that then said nothing about its reach.
+  // Composing removes the collision rather than arbitrating it.
+  //
+  // The global wildcard is no longer an exemption. It read "Everything in
+  // your space." because that sentence cannot be falsified by a type
+  // registered tomorrow, which was all the device screen needed back when
+  // the device screen needed the copy to carry it. It needs nothing of the
+  // sort now, so `*` says what it reaches like every other entry and the
+  // screens add the rest.
   "*": "Everything in your space.",
-  "core.*": "All standard content types, including ones added later.",
-  "user.*": "Your custom types, including ones you define later.",
-  "app.*": "Types this app defines for itself, including ones it adds later.",
+  "core.*": "All standard content types.",
+  "user.*": "Your custom types.",
+  "app.*": "Types this app defines for itself.",
 };
 
 /**

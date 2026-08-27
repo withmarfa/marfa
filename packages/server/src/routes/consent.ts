@@ -57,11 +57,8 @@
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
-  GLOBAL_TYPE_WILDCARD,
   HIDDEN_MECHANISM_SCOPES,
   scopesOfferedOffByDefaultOnly,
-  scopesToMetadataPermissions,
-  subtreeWildcardRoot,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
@@ -69,6 +66,11 @@ import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
+import {
+  isOpenEnded,
+  OPEN_ENDED_EXPANSION_TAIL,
+  OPEN_ENDED_LINE,
+} from "./scope-openness.js";
 
 interface ConsentParams {
   clientName: string;
@@ -380,6 +382,15 @@ function summarize(group: ScopeGroup): string {
  * states it on the row's second line instead, for every open-ended pattern
  * rather than for the ones somebody remembered, which is what keeps this
  * rule from needing a curator.
+ *
+ * **`CONSENT_SCOPE_DESCRIPTIONS` is under the same prohibition, for a
+ * different reason.** A description cannot carry it because a description is
+ * sometimes this label: `labelFor` falls through to one wherever nothing
+ * curated names the pattern, so a futurity clause written there for the
+ * device screen's sake lands on a toggle row already about to state the same
+ * fact. Both screens compose their own sentence from {@link isOpenEnded}
+ * instead, so neither map has to hold one and no renderer has to read
+ * English to find out whether a string it was handed has said it already.
  */
 export const SCOPE_LABELS: Record<string, string> = {
   "core.note": "Notes",
@@ -459,60 +470,6 @@ export function humanizeType(typePattern: string): string {
   return typePattern.endsWith(".*") ? `${titled} (all)` : titled;
 }
 
-/**
- * Whether a scope reaches things that do not exist yet.
- *
- * Two shapes qualify and they share nothing in the grammar, so both are
- * asked rather than inferred from the spelling. A subtree wildcard covers
- * its root and everything under it, later registrations included. The bare
- * `metadata` root carries no wildcard character at all and is the one that
- * reads as concrete: it projects to `{ "*": verb }`, which matches any
- * sub-resource, so it covers the two that exist today and whatever the list
- * grows next.
- *
- * The second arm asks the projection rather than a list of open-ended roots
- * kept here. A list beside the grammar is a second answer to a question the
- * grammar already settles, and the way it fails is that the screen keeps
- * rendering while quietly going narrow about one pattern.
- */
-function isOpenEnded(scope: ParsedScope): boolean {
-  if (scope.kind === "oidc" || scope.kind === "capability") return false;
-  const pattern = scope.typePattern;
-  if (pattern === GLOBAL_TYPE_WILDCARD) return true;
-  if (subtreeWildcardRoot(pattern) !== null) return true;
-  const projected = scopesToMetadataPermissions([
-    `${pattern}:${scope.operation}`,
-  ]);
-  return projected["*"] !== undefined;
-}
-
-/** The row's own sentence for an open ending, used where nothing already on
- *  the row has said it. */
-const OPEN_ENDED_LINE = "Covers what exists today plus anything added later";
-
-/**
- * Whether a piece of row copy already tells the reader that the grant reaches
- * things which do not exist yet.
- *
- * Three strings on one row can say it: the label, the expansion line's tail,
- * and {@link OPEN_ENDED_LINE}. A row that says it twice reads as two separate
- * facts about one grant, so the row is assembled by asking this of what it is
- * already showing rather than by naming the patterns that need suppressing.
- * The naming approach is what failed: the pair that needed it were a pair only
- * until a third arrived, and the third arrived one commit later, when a
- * description gained the clause the device screen needed without anybody
- * noticing that the same string is this screen's row label.
- *
- * A check on the copy rather than on the grammar. Every futurity clause here
- * turns on the same word, and one phrased in other words would slip past and
- * be stated twice. What keeps that convention from rotting is the row test,
- * which holds every open-ended row to saying it exactly once rather than at
- * least once.
- */
-function statesOpenEndedness(text: string): boolean {
-  return /\blater\b/i.test(text);
-}
-
 /** Human toggle label for a scope. */
 function labelFor(
   scope: ParsedScope,
@@ -569,39 +526,42 @@ export function renderConsentScreen(params: ConsentParams): string {
    *  pattern matches today, since the grant itself names no types. */
   const subRow = (scope: ParsedScope, defaultOn: boolean): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
-    const rawLabel = labelFor(scope, params.descriptions);
-    const label = escapeHtml(rawLabel);
+    const label = escapeHtml(labelFor(scope, params.descriptions));
     const matched =
       scope.kind !== "oidc"
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
     // Open-endedness is stated for every open-ended pattern rather than only
     // for the ones a space can name members of today, and stated once.
+    // {@link isOpenEnded} is the whole of the condition: this row asks the
+    // grammar and nothing else, so no string anywhere can talk it out of
+    // saying so.
     //
-    // It cannot live in a curated label. `SCOPE_LABELS` entries are also
-    // joined into the group summary sentence, and open-endedness needs a
-    // conjunction to say, so a label that says it breaks the list it is
-    // joined into. So the offenders were never a set of bad strings: they
-    // were the only place left for the fact to go being one that could not
-    // hold it.
+    // **It was conditioned on the copy, and that is the bug this shape
+    // exists to make unrepresentable.** A curated label cannot carry the
+    // fact, because `SCOPE_LABELS` entries are joined into the group summary
+    // sentence and futurity needs a conjunction to say, which breaks the
+    // list. But a label is not always curated: `labelFor` falls through to
+    // the scope's description, and the description used to carry a futurity
+    // clause of its own for the device screen's sake. So the same sentence
+    // arrived as this row's label with the line about to repeat it, and the
+    // suppression that followed asked whether the label contained the word
+    // "later". A clause meaning futurity in other words slipped past it and
+    // was stated twice. A "later" meaning something else entirely, as in a
+    // deletion that stays recoverable, suppressed the line on a grant that
+    // then said nothing about reaching types nobody has registered. The copy
+    // no longer states it on either surface: `OPEN_ENDED_SENTENCE` is how
+    // the device screen gets it, composed there the same way.
     //
-    // But a label is not always curated. `labelFor` falls through to the
-    // scope's description, and an open-ended description carries a futurity
-    // clause of its own because the device screen has no rows and reads it
-    // out whole. Such a row therefore arrives with the fact already stated,
-    // and adding the line beneath said it twice. Which patterns those are is
-    // not something to enumerate here: {@link statesOpenEndedness} asks the
-    // copy the row is already showing, so a description that gains a clause
-    // tomorrow is handled the day it does.
-    //
-    // The expansion line wins where there is one, since it names today's
-    // members as well. Its own tail is what steps aside when the label has
-    // already said it.
-    const labelStatesIt = statesOpenEndedness(rawLabel);
+    // The expansion line absorbs the clause where there is one, since that
+    // line names today's members as well and a wildcard's reach reads as one
+    // fact rather than two. Which branch runs is a question about the
+    // enumeration, not about what any string says.
+    const open = isOpenEnded(scope);
     const detailText =
       matched && matched.length > 0
-        ? `Today this covers ${matched.join(", ")}${labelStatesIt ? "" : ", plus any you add later"}`
-        : isOpenEnded(scope) && !labelStatesIt
+        ? `Today this covers ${matched.join(", ")}${open ? OPEN_ENDED_EXPANSION_TAIL : ""}`
+        : open
           ? OPEN_ENDED_LINE
           : "";
     const detail = detailText

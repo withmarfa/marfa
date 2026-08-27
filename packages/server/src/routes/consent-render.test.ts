@@ -23,6 +23,11 @@ import {
   CONSENT_SCOPE_DESCRIPTIONS,
 } from "./auth-consent.js";
 import { renderDeviceConsentScreen } from "./device-pages.js";
+import {
+  OPEN_ENDED_EXPANSION_TAIL,
+  OPEN_ENDED_LINE,
+  OPEN_ENDED_SENTENCE,
+} from "./scope-openness.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 
 /**
@@ -557,6 +562,92 @@ describe("a grant that reaches things not yet created says so", () => {
     );
   };
 
+  /**
+   * The words a reader takes as "and whatever comes next".
+   *
+   * **The list lives here and nowhere else.** Both renderers derive open
+   * endedness from the grammar and hold no vocabulary at all, which is the
+   * whole point of the shape they were given: a case whose subject is a
+   * predicate the code under test also holds cannot disagree with it, and
+   * the row case below structurally could not. It counted the word "later"
+   * while `statesOpenEndedness` suppressed the line on the word "later", so
+   * the row supplied exactly one occurrence either way, the label's when the
+   * line was suppressed and the line's when it was not. Both failure
+   * directions passed for the whole time it was watching them.
+   *
+   * **What it catches.** A second statement of futurity anywhere on a row,
+   * in whichever of these words it is phrased, and a futurity word in any
+   * curated string, where the renderers no longer read for meaning and so
+   * would simply say the thing twice.
+   *
+   * **What it cannot catch.** Futurity phrased entirely outside the list.
+   * "Covering whatever the app decides to invent" means the same thing and
+   * matches nothing here, and no word list closes that gap, because the ways
+   * English says "and more to come" are unbounded. The gap is narrowed
+   * rather than closed, and the direction it is narrowed in is what matters:
+   * the failure that can no longer happen is silence, because nothing in the
+   * copy can stop a renderer stating the property. What is left is a row
+   * saying it twice, a defect a reader can see, rather than a grant whose
+   * size a reader is never told.
+   *
+   * **It reads vocabulary rather than meaning, so it has false positives,
+   * and they are wanted.** A description noting that removed items stay
+   * recoverable "later" is caught here even though the row it produces is
+   * correct. These words are reserved for the composed clause, so copy
+   * borrowing one is copy somebody should look at before it ships.
+   */
+  const FUTURITY_VOCABULARY =
+    /\b(?:later|future|yet|upcoming|forthcoming|henceforth|subsequently)\b|\badd(?:s|ed|ing)?\b|\bfrom now on\b|\bgoing forward\b|\bnew (?:ones|types|kinds|members)\b/i;
+
+  /** The sentences the renderers compose, which are the only statements of
+   *  the property either screen is allowed to make. */
+  const COMPOSED = [
+    OPEN_ENDED_LINE,
+    OPEN_ENDED_EXPANSION_TAIL,
+    OPEN_ENDED_SENTENCE,
+  ];
+
+  /** Strip every composed sentence out of `text`, returning how many came
+   *  out and what was left behind. */
+  const withoutComposed = (
+    text: string,
+  ): { stated: number; residue: string } => {
+    let residue = text;
+    let stated = 0;
+    for (const sentence of COMPOSED) {
+      const parts = residue.split(sentence);
+      stated += parts.length - 1;
+      residue = parts.join(" ");
+    }
+    return { stated, residue };
+  };
+
+  /** `text` states the property exactly once, and the statement is the
+   *  renderer's rather than something the copy happened to say. */
+  const statesFuturityOnce = (text: string, what: string): void => {
+    const { stated, residue } = withoutComposed(text);
+    expect(
+      stated,
+      `${what} composes its open ending ${String(stated)} times, not once`,
+    ).toBe(1);
+    expect(
+      residue,
+      `${what} states its open ending a second time, in copy`,
+    ).not.toMatch(FUTURITY_VOCABULARY);
+  };
+
+  /** `text` says nothing of the kind, by either route. */
+  const statesNoFuturity = (text: string, what: string): void => {
+    const { stated, residue } = withoutComposed(text);
+    expect(
+      stated,
+      `${what} carries a composed open-ended sentence on a closed grant`,
+    ).toBe(0);
+    expect(residue, `${what} reads as an open-ended grant`).not.toMatch(
+      FUTURITY_VOCABULARY,
+    );
+  };
+
   /** Every open-ended literal the server will accept, from the allowlist
    *  rather than from a list kept here: a new open-ended pattern joins this
    *  case by being requestable, which is the point at which it can reach a
@@ -606,20 +697,15 @@ describe("a grant that reaches things not yet created says so", () => {
     for (const literal of openEndedLiterals()) {
       const row = rowFor(render(literal), literal);
       expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
-      // Once, not merely at least once, and the difference is what this
-      // case failed to see. `labelFor` falls through to the description
-      // where nothing curated claims the pattern, and an open-ended
-      // description carries a futurity clause for the device screen's sake,
-      // so a whole-row `toMatch` was already satisfied by the label alone
-      // for `core.*` and `app.*`: their second lines were verified by
-      // nothing, and both were rendering the fact twice while this passed.
-      // Counting holds the row to both halves at once, a fixed set on one
-      // side and a doubled sentence on the other.
-      const said = row.match(/\blater\b/g) ?? [];
-      expect(
-        said,
-        `${literal} states its open ending ${String(said.length)} times, not once`,
-      ).toHaveLength(1);
+      // Once, and once said by the renderer rather than once said by
+      // anybody. What this replaces counted the word "later" on the row,
+      // which is the word the suppression it was watching also turned on,
+      // so the row carried exactly one occurrence whether the line fired or
+      // not: the label's when it was suppressed, the line's when it was
+      // not. The count came out at one in both failure directions and in the
+      // correct case alike, which left the only reachable failure a label
+      // holding the word twice.
+      statesFuturityOnce(row, literal);
     }
   });
 
@@ -629,7 +715,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // grows, and would also mean the case above never observed anything.
     const row = rowFor(render("core.note:read"), "core.note:read");
     expect(row).toContain("Notes");
-    expect(row).not.toMatch(/\blater\b/);
+    statesNoFuturity(row, "core.note:read");
   });
 
   it("does not repeat itself where the row already lists what it matches", () => {
@@ -669,84 +755,114 @@ describe("a grant that reaches things not yet created says so", () => {
         row,
         `${literal} stopped naming the members it can name`,
       ).toContain("Today this covers Recipes, Training log");
-      const said = row.match(/\blater\b/g) ?? [];
-      expect(
-        said,
-        `${literal} states its open ending ${String(said.length)} times, not once`,
-      ).toHaveLength(1);
+      statesFuturityOnce(row, `${literal} with an expansion`);
     }
   });
 
-  /** The descriptions the two screens are handed, for the open-ended scopes
-   *  a client can request. Derived from the same allowlist as the row cases,
-   *  and built by the renderer's own builder rather than read off the map, so
-   *  a pattern that starts resolving through a fallback is still held. */
-  const openEndedDescriptions = (): Record<string, string> =>
-    buildScopeDescriptions(
-      openEndedLiterals()
-        .map((literal) => parseScope(literal))
-        .filter((scope): scope is ParsedScope => scope !== null),
+  /**
+   * One capability row from the device screen, which carries no toggles and
+   * no scope literals. Rendered a scope at a time so the row is the only
+   * one, since there is nothing in the markup to key a lookup on.
+   */
+  const deviceRow = (literal: string): string => {
+    const parsed = parseScope(literal);
+    if (!parsed) throw new Error(`unparseable: ${literal}`);
+    const html = renderDeviceConsentScreen({
+      clientName: "Test App",
+      scopes: [parsed],
+      userCode: "ABCD-EFGH",
+      descriptions: buildScopeDescriptions([parsed]),
+    });
+    const rows = html.match(/<div class="crow">[\s\S]*?<\/div>/g) ?? [];
+    expect(
+      rows,
+      `device screen rendered ${String(rows.length)} rows for ${literal}, not one`,
+    ).toHaveLength(1);
+    return rows[0] ?? "";
+  };
+
+  it("states it once on the screen that has no rows", () => {
+    // The same rule on the other surface, asserted against what that screen
+    // renders rather than against the map behind it.
+    //
+    // What this replaces asserted that every open-ended *description*
+    // contained the word "later", and it held the wrong thing twice over. It
+    // held a map rather than a screen, and it held a word rather than a
+    // statement: "Ones you remove later stay recoverable." satisfied it
+    // while saying nothing whatever about how far the grant reaches. The
+    // clause is composed now, by `describeCapabilities` from the same
+    // `isOpenEnded` the toggle row asks, so what is worth holding is that it
+    // arrives, exactly once, on the surface a person actually reads.
+    //
+    // The global wildcard runs in this loop like everything else. It used to
+    // be exempted, on the argument that "Everything in your space." cannot
+    // be falsified by a type registered tomorrow and that this was all the
+    // device screen needed, since the device screen had no second line to
+    // state the property on. The device screen composes its own sentence
+    // now, so the exemption has nothing left to buy and is gone rather than
+    // overridden.
+    const literals = openEndedLiterals();
+    // Every assertion is inside the loop, and the pattern that carried the
+    // defect is named, so a derivation that quietly stops finding it fails
+    // here rather than emptying the case.
+    expect(literals.length).toBeGreaterThan(3);
+    expect(literals).toContain("app.*:read");
+    expect(literals).toContain("*:read");
+    for (const literal of literals) {
+      statesFuturityOnce(deviceRow(literal), `${literal} on the device screen`);
+    }
+  });
+
+  it("leaves a concrete grant's device row saying nothing of the kind", () => {
+    // The discriminator for the case above, the same one the toggle row
+    // gets. Without it that case passes on a screen appending the clause to
+    // every row, which tells somebody granting one type that the grant
+    // grows, and would also mean the case above never observed anything.
+    statesNoFuturity(
+      deviceRow("core.note:read"),
+      "core.note:read on the device screen",
     );
+  });
 
-  it("states it in the description too, for the screen with no rows", () => {
-    // The same rule on the other surface. A row's second line exists only on
-    // the authorize screen; the device screen has no toggles and prints the
-    // description on its own, so there the description is the whole of what
-    // is said about a grant reaching types that do not exist yet. `app.*`
-    // read "Types this app defines for itself.", a closed set over a grant
-    // whose whole point is that the app has not defined them all.
+  it("keeps futurity out of every curated string", () => {
+    // The rule that makes composing safe, and the one place a word list is
+    // the right instrument rather than the wrong one. Neither renderer reads
+    // these strings for meaning any more, so a futurity clause written into
+    // one is not suppressed, not reconciled and not noticed. It is simply
+    // said twice, once by the copy and once by the sentence composed beneath
+    // it.
     //
-    // Narrowed to the patterns something curated copy for. A wildcard nobody
-    // wrote a line for renders from its label on both screens and has no
-    // description to hold to anything.
-    //
-    // That this copy is what actually reaches both screens is held further
-    // down, by the pair of cases asserting the two screens describe a scope
-    // alike. This case is the rule; that one is the delivery.
-    const described = openEndedDescriptions();
-
-    // The global wildcard is excluded and pinned separately rather than
-    // skipped. "Everything in your space." names no growth because there is
-    // nothing outside it to grow into, and a regex loose enough to admit
-    // that sentence would admit most closed ones as well.
-    //
-    // Pinned as itself, not as a shape. `/^Everything\b/` admitted
-    // "Everything you have already created.", which is narrow, past tense,
-    // carries no futurity, and is printed alone on the screen that has no
-    // second line to repair it. It held the first word of the exemption
-    // rather than the property the exemption was granted for, and that
-    // property, a sentence that cannot be falsified by a type registered
-    // tomorrow, is not something a pattern can check. So the one sentence
-    // the exemption covers is the pin: changing the copy means coming here
-    // and making the argument again, which is the whole point of exempting
-    // it by hand.
-    //
-    // The exemption is the description's alone. `*` is open-ended, and its
-    // authorize-screen row states so on the line the cases above hold every
-    // other open-ended pattern to.
-    //
-    // This sentence is pinned twice on purpose, and the other pin is not a
-    // duplicate of this one. "does not let one kind read another kind's copy
-    // off the flat map" pins it to prove the wildcard key is not being read
-    // by an edge type of the same name; this pins it because it is the one
-    // description exempted from the futurity rule. Deleting either leaves a
-    // property unheld.
-    expect(described[GLOBAL_TYPE_WILDCARD]).toBe("Everything in your space.");
-
-    const patterns = Object.keys(described).filter(
-      (pattern) => pattern !== GLOBAL_TYPE_WILDCARD,
-    );
-    // Every assertion below is inside the loop, so a derivation that quietly
-    // returns nothing would pass. The pattern that carried the defect is
-    // named for the same reason.
-    expect(patterns.length).toBeGreaterThan(2);
-    expect(patterns).toContain("app.*");
-
-    for (const pattern of patterns) {
+    // Both maps, because `labelFor` falls through to a description wherever
+    // nothing curated names the pattern. That fall-through is how a sentence
+    // written for the device screen became an authorize-screen toggle label
+    // in the first place, and it is still there: what has changed is that
+    // the sentence it hands over no longer states anything the row is about
+    // to state as well.
+    const entries: [string, string][] = [
+      ...Object.entries(SCOPE_LABELS).map(
+        ([k, v]) => [`SCOPE_LABELS[${k}]`, v] as [string, string],
+      ),
+      ...Object.entries(CONSENT_SCOPE_DESCRIPTIONS).map(
+        ([k, v]) => [`CONSENT_SCOPE_DESCRIPTIONS[${k}]`, v] as [string, string],
+      ),
+    ];
+    expect(entries.length).toBeGreaterThan(20);
+    for (const [where, copy] of entries) {
       expect(
-        described[pattern],
-        `${pattern} describes itself as a fixed set`,
-      ).toMatch(/\blater\b/);
+        copy,
+        `${where} states an open ending the renderers compose for it`,
+      ).not.toMatch(FUTURITY_VOCABULARY);
+    }
+  });
+
+  it("composes sentences a reader would take as futurity", () => {
+    // The floor under `statesFuturityOnce`, which strips these before it
+    // looks for a second statement. A constant rewritten into something that
+    // no longer says anything of the kind would leave every case above
+    // green and observing nothing.
+    expect(COMPOSED.length).toBeGreaterThan(2);
+    for (const sentence of COMPOSED) {
+      expect(sentence, sentence).toMatch(FUTURITY_VOCABULARY);
     }
   });
 
@@ -767,9 +883,7 @@ describe("a grant that reaches things not yet created says so", () => {
     );
     expect(Object.keys(out)).toHaveLength(3);
     for (const [pattern, copy] of Object.entries(out)) {
-      expect(copy, `${pattern} reads as an open-ended grant`).not.toMatch(
-        /\blater\b/,
-      );
+      statesNoFuturity(copy, pattern);
     }
   });
 
