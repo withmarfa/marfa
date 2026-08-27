@@ -957,10 +957,16 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
  * make, so "leaving it alone grants nothing" has nothing to attach to. The
  * device flow is that surface, and this is what it refuses.
  *
- * Claimed by at least one bundle and by no on-by-default one, so a scope
- * that also appears in a bundle the user gets by default is not withheld,
- * and a scope no bundle mentions is untouched. Only a bundle can declare
- * this, so only a bundle can withhold it.
+ * Claimed by at least one bundle and reached by no on-by-default one, so a
+ * scope the user already gets by default is not withheld, and a scope no
+ * bundle mentions is untouched. Only a bundle can declare this, so only a
+ * bundle can withhold it.
+ *
+ * "Reached" rather than "named", because a bundle may hold a wildcard. An
+ * on-by-default bundle offering `core.*:read` gives the user `core.note:read`
+ * without anybody ticking anything, so withholding `core.note:read` because
+ * an off-by-default bundle also names it withholds nothing real and refuses
+ * the device flow over a scope the consent screen would tick.
  */
 export function scopesOfferedOffByDefaultOnly(
   bundles: readonly PermissionBundle[],
@@ -973,7 +979,18 @@ export function scopesOfferedOffByDefaultOnly(
       if (bundle.default_on) onByDefault.add(scope);
     }
   }
+  // Two passes rather than one, and the literal pass is not redundant.
+  // Coverage is computed over the whole on-by-default union, and a union is
+  // not monotone: a narrower entry outranks a wildcard, so
+  // `grantCoversScope(["*:write", "core.*:read"], "*:write")` is false even
+  // though a bundle named `*:write` outright. Asking coverage alone would
+  // therefore start withholding scopes an on-by-default bundle plainly
+  // offers, which is a refusal in the direction nobody would look for.
   for (const scope of onByDefault) offered.delete(scope);
+  const held = [...onByDefault];
+  for (const scope of [...offered]) {
+    if (grantCoversScope(held, scope)) offered.delete(scope);
+  }
   // The hidden mechanisms are exempt, matching the consent screen, which
   // submits them without a visible toggle for the same reason: a person
   // cannot decline a control they cannot see, so `default_on` never governed

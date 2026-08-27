@@ -930,6 +930,43 @@ describe("scopesOfferedOffByDefaultOnly", () => {
     expect(out.size).toBe(0);
   });
 
+  it("does not withhold a scope an on-by-default wildcard reaches", () => {
+    // The overlap case again, one step wider. `core.*:write` is what the
+    // user gets by leaving the ticked bundle alone, and it reaches
+    // `core.task:write`, so withholding that literal withholds nothing while
+    // refusing a device flow the consent screen would have ticked.
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("write", true, ["core.*:write"]),
+      bundle("manage", false, ["core.task:write"]),
+    ]);
+    expect(out.size).toBe(0);
+  });
+
+  it("still withholds a scope the on-by-default wildcard does not reach", () => {
+    // The control. A wildcard covers its own subtree and nothing else, so
+    // breadth here must not read as the withholding quietly ceasing to
+    // apply: a sibling root and a capability are both still withheld.
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("write", true, ["core.*:write"]),
+      bundle("manage", false, ["user.secret:write", "capability.keys"]),
+    ]);
+    expect([...out].sort()).toEqual(["capability.keys", "user.secret:write"]);
+  });
+
+  it("keeps a scope an on-by-default bundle names outright", () => {
+    // Coverage is asked of the whole on-by-default union, and a union is not
+    // monotone: a narrower entry outranks a wildcard, so this union does not
+    // cover the `*:write` one of its own bundles names. Asking coverage
+    // alone would start withholding it, which is a refusal in the direction
+    // nobody would think to look.
+    const out = scopesOfferedOffByDefaultOnly([
+      bundle("all", true, ["*:write"]),
+      bundle("read", true, ["core.*:read"]),
+      bundle("manage", false, ["*:write"]),
+    ]);
+    expect(out.size).toBe(0);
+  });
+
   it("never withholds a hidden mechanism", () => {
     // `offline_access` is what a client names to get a refresh token, and
     // every SDK device flow requests it. Withholding it would refuse them
