@@ -1279,6 +1279,24 @@ export interface OAuthStore {
   denyDeviceCode(id: string): Promise<boolean>;
 
   /**
+   * Delete every device code bound to a projected grant, so revoking that
+   * grant leaves nothing behind that can still be exchanged for a token.
+   *
+   * **Keyed on `connection_item_id`, never on `client_id`.** The table
+   * carries a client id and no user column, because a pending row is
+   * pre-consent and the user it will belong to is genuinely unknown. A
+   * sweep by client would therefore delete every OTHER user's in-flight
+   * device login for that client, turning one person's revoke into a
+   * denial of service across everyone using the same app. The foreign key
+   * reaches exactly the approved codes bound to the grant being revoked.
+   *
+   * A pending code for the same client survives, and that is correct
+   * rather than a gap: approving one runs the grant projection, which is a
+   * fresh consent the user has just given.
+   */
+  deleteDeviceCodesForGrant(connectionItemId: string): Promise<void>;
+
+  /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
    * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
    * shape: the WHERE clause only writes when the existing
