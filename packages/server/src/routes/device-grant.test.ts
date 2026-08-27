@@ -853,11 +853,12 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
   });
 
-  // The merge is coverage-aware because a literal one can narrow. Scope
-  // resolution gives an exact type id precedence over a wildcard spanning it,
-  // so parking `core.note:read` beside a standing `core.*:write` pins
-  // `core.note` to read and takes away a write nobody unticked. Appending only
-  // what the standing set does not already reach cannot do that.
+  // The merge happens on effective permissions because a literal one can
+  // narrow. Scope resolution gives an exact type id precedence over a wildcard
+  // spanning it, so parking `core.note:read` beside a standing `core.*:write`
+  // pins `core.note` to read and takes away a write nobody unticked. The unit
+  // coverage is in `device-scope-merge.test.ts`; this pins that the route
+  // actually routes through it.
   it("does not park a covered literal beside the wildcard that covers it", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
@@ -873,6 +874,95 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     const scopes = await standingGrantScopes(ctx);
     expect(scopes).not.toContain("core.note:read");
     expect(grantCoversScope(scopes, "core.note:write")).toBe(true);
+  });
+
+  // The other direction, which the coverage-append merge got wrong: skipping a
+  // pin the standing wildcard already covers leaves the record conferring a
+  // write neither side conferred.
+  it("does not confer a write neither the standing grant nor the request did", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-escalation@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:read");
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.*:write core.note:read",
+    );
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(grantCoversScope(scopes, "core.note:write")).toBe(false);
+    // Not vacuous: the request genuinely widened the rest of the namespace, so
+    // a merge that refused to widen anything would also pass the line above.
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+  });
+
+  // Coverage is not reflexive on a pinned set, so a literal merge failed the
+  // stored `core.*:write` against its own record and re-appended it on every
+  // login. Five repeats took the array from two entries to seven.
+  //
+  // The CLI keeps sending the request it was built with while the record has
+  // been canonicalized upward, so `core.note` is spelled differently on the
+  // two sides from the second login onward. Repeating a request the record
+  // already spells identically would not exercise that.
+  it("does not grow the record when a CLI signs in again and again", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-repeat@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+    const first = await standingGrantScopes(ctx);
+    for (let i = 0; i < 4; i++) {
+      await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+      expect(await standingGrantScopes(ctx)).toEqual(first);
+    }
+  });
+
+  // An approval merges, so the request no longer describes what the record
+  // ends up holding. Logging only the request made a grant look like it
+  // acquired scopes from nowhere.
+  it("audits the approved scopes and the record the merge produced", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-audit@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.task:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    // The audit write is fire-and-forget, so poll until the re-consent row
+    // lands rather than racing it.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () => ctxRef.storage.audit.list({ action: "auth.grant.created" }),
+      (r) => r.data.some((row) => row.details.created === false),
+    );
+    const reconsent = rows.data.find((r) => r.details.created === false);
+    expect(reconsent).toBeDefined();
+    // The request, unchanged: this is what the device asked for and what its
+    // screen showed.
+    expect(reconsent?.details.scopes).toEqual(["core.note:read"]);
+    // The record after the merge, which is the half the request cannot supply.
+    // Neither literal reaches the other, so the merge is the plain pair and
+    // can be asserted exactly.
+    expect(reconsent?.details.resulting_scopes).toEqual([
+      "core.task:write",
+      "core.note:read",
+    ]);
   });
 
   it("issues the device a token for what it asked for, not for the merged grant", async () => {
