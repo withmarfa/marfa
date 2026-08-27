@@ -6,6 +6,7 @@ import {
   resolveTypePermission,
   edgePermissionCovers,
   metadataPermissionCovers,
+  subtreeWildcardRoot,
   GLOBAL_TYPE_WILDCARD,
 } from "@withmarfa/shared";
 import type {
@@ -113,21 +114,31 @@ import type {
  * whose key the rest of the record already resolves to the same verb is
  * dropped, and that shape stays at one entry.
  *
- * **The elimination rule, and it is sequential on purpose.** Walk the emitted
- * entries of one breadth axis in first-appearance order and drop `K:v` if and
- * only if resolving `K` against the map built from the entries still
- * surviving, with `K` itself taken out, still yields `v`. Each drop is taken
- * against the shrinking working set rather than against the original list.
+ * **The elimination rule.** Walk the emitted entries of one breadth axis in
+ * first-appearance order and drop `K:v` if and only if resolving `K` against
+ * the map built from the entries still surviving, with `K` itself taken out,
+ * still yields `v`.
  *
- * That is the part a later reader will try to simplify into one pass over the
- * original. Take `{core.*:read, core.note:read}`. Measured against the whole
- * list, each entry resolves its own key to `read`, so both look redundant and
- * a pass that does not take the candidate out first drops both, and the
- * record then confers nothing on notes at all. Taking the candidate out is
- * what separates them: `core.note` resolves under `core.*` and goes, while
- * `core.*` measured against what is left resolves to `none`, because a
- * concrete key never answers for the pattern above it. Whichever of the two
- * is tested first, the wildcard stays.
+ * **Taking the candidate out before resolving it is the load-bearing half.**
+ * Take `{core.*:read, core.note:read}`. Resolved against the whole list, each
+ * entry answers its own key with its own verb, so both read as redundant,
+ * both go, and the record stops conferring read on notes altogether. Taking
+ * the candidate out first separates them: `core.note` resolves under `core.*`
+ * and goes, while `core.*` measured against what is left answers `none`,
+ * because a concrete key never answers for the pattern above it. Whichever of
+ * the two is tested first, the wildcard stays.
+ *
+ * **Sequential, and not because one pass would be wrong.** A single pass over
+ * the original list that still takes each candidate out is equivalent, and
+ * that example does not argue otherwise: it rules out a pass with no
+ * exclusion, which is a different transformation. On these resolvers
+ * domination is antisymmetric, so two keys cannot each be the other's reason
+ * to go, and the two forms agree on every input. Sequential is written
+ * because it is the form that needs no such argument. Every removal is
+ * resolution-preserving against the set current when it is taken, so the
+ * composition is safe by induction, and nothing has to be established about
+ * how one drop bears on the next. Simplifying this to one pass does not break
+ * it; dropping the exclusion does.
  *
  * **Why testing the key is enough, and why no concrete id is enumerated
  * here.** An entry `K` with subtree root `R` can only be the resolver's
@@ -138,6 +149,10 @@ import type {
  * every id it governed. The key-level test is therefore equivalent to an
  * id-level one. The enumeration that shows this belongs in the test, over
  * concrete ids, and not in a runtime loop over the registries here.
+ *
+ * That argument has a precondition, and one axis does not meet it: the keys
+ * have to form a prefix tree over concrete ids. See {@link keyIsWellFormed},
+ * which is what keeps the prune inside the set where the argument holds.
  *
  * **The literal family is never pruned.** Capability, OIDC and unparseable
  * literals have membership as their whole algebra. There is no verb to
@@ -315,6 +330,43 @@ function renderEntry(entry: MergedEntry): string {
 }
 
 /**
+ * Whether a key is well-formed for the axis it sits on: a concrete
+ * identifier, a subtree wildcard over one, or the global wildcard.
+ *
+ * The sufficiency argument in the module docblock assumes the keys form a
+ * prefix tree over concrete ids, and the grammar does not guarantee that
+ * everywhere. `isValidTypePattern` puts a type wildcard's root through a
+ * charset holding no asterisk, so `core.*.*:write` is refused outright. The
+ * edge axis has no pattern validator, so `edge.*.*:write` parses, and
+ * `subtreeWildcardRoot("*.*")` is `"*"`, a root that string-matches the
+ * global KEY while matching no concrete edge type. Such an entry therefore
+ * answers for `edge.*` at the key level and confers nothing at any id, which
+ * is precisely the divergence the argument rules out.
+ *
+ * It cost a real narrowing: `edge.*:write` merged with `edge.*.*:write`
+ * dropped the wildcard carrying write on every edge type on the instance,
+ * because the malformed sibling appeared to confer it. Reachable through
+ * operator-configured permission bundles, whose only filter is
+ * `isValidScope`.
+ *
+ * A key like that is inert at every concrete id, so it can neither be shown
+ * redundant nor stand as the reason another entry is. Both halves are needed
+ * and the second is the one that fixes the case above: the victim there is
+ * `edge.*`, whose own key is well-formed, so refusing only malformed
+ * CANDIDATES leaves it dropped. It is carried through untouched and kept out
+ * of the map a candidate is measured against.
+ *
+ * Closing the grammar hole belongs to the edge validator and is tracked on
+ * its own. This only stops the prune acting where its own argument does not
+ * hold, and deliberately does not touch the merge, which resolves such a key
+ * before the prune ever runs.
+ */
+function keyIsWellFormed(key: string): boolean {
+  if (key === GLOBAL_TYPE_WILDCARD) return true;
+  return !(subtreeWildcardRoot(key) ?? key).includes(GLOBAL_TYPE_WILDCARD);
+}
+
+/**
  * Drops every breadth entry the rest of the record already confers, by
  * sequential single-entry elimination per axis. See the module docblock for
  * why this is sequential rather than one pass, and why resolving the key is
@@ -334,12 +386,21 @@ function pruneRedundantEntries(entries: readonly MergedEntry[]): MergedEntry[] {
 
   for (const candidate of entries) {
     if (candidate.kind !== "breadth") continue;
+    if (!keyIsWellFormed(candidate.key)) continue;
 
     // Taking the candidate out BEFORE resolving is the whole rule. Left in,
     // it resolves its own key to its own verb and every entry reads as
     // redundant.
     const without = surviving.filter((entry) => entry !== candidate);
-    const remainder = project(without.map(renderEntry));
+    // A malformed key stays in `surviving` and out of the remainder: it is
+    // emitted, and it never justifies a drop.
+    const remainder = project(
+      without
+        .filter(
+          (entry) => entry.kind === "literal" || keyIsWellFormed(entry.key),
+        )
+        .map(renderEntry),
+    );
 
     if (
       resolveOn(candidate.axis, candidate.key, remainder) === candidate.verb
