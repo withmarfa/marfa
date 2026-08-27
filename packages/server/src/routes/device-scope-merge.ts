@@ -330,8 +330,17 @@ function renderEntry(entry: MergedEntry): string {
 }
 
 /**
- * Whether a key is well-formed for the axis it sits on: a concrete
- * identifier, a subtree wildcard over one, or the global wildcard.
+ * Whether the prune may reason about a key: whether it carries no asterisk
+ * outside a subtree-root position. That admits the global wildcard, a key
+ * with no asterisk at all, and a subtree wildcard whose root is
+ * asterisk-free.
+ *
+ * **Not a grammar check, and it does not claim to be one.** `a..b`, `a.` and
+ * `u_1..x` all pass it and none is a well-formed identifier. Admitting them
+ * changes nothing, because they are inert on both sides of the test: they
+ * match no concrete id, and no other key resolves through them. What has to
+ * be excluded is the one shape that is not inert, a key whose ROOT
+ * string-matches another key while matching no concrete id.
  *
  * The sufficiency argument in the module docblock assumes the keys form a
  * prefix tree over concrete ids, and the grammar does not guarantee that
@@ -343,23 +352,38 @@ function renderEntry(entry: MergedEntry): string {
  * answers for `edge.*` at the key level and confers nothing at any id, which
  * is precisely the divergence the argument rules out.
  *
+ * **This is not only about the global root, and a check written against that
+ * one instance is not enough.** The same collision happens at every level of
+ * the key tree: `subtreeWildcardRoot("user.*.*")` is `"user.*"`, which
+ * matches the key `user.*` exactly as `"*"` matches `*`. Those two shapes are
+ * the whole of what a malformed key can answer for, and they are the bug. So
+ * `edge.user.*:write` merged with `edge.user.*.*:write` loses the wildcard
+ * too, and that victim is not contrived: `resolveEdgePermission` says in its
+ * own docblock that `edge.user.*` is the only expression reaching a space's
+ * runtime-registered relation edges short of the global wildcard.
+ *
  * It cost a real narrowing: `edge.*:write` merged with `edge.*.*:write`
  * dropped the wildcard carrying write on every edge type on the instance,
  * because the malformed sibling appeared to confer it. Reachable through
  * operator-configured permission bundles, whose only filter is
  * `isValidScope`.
  *
- * A key like that is inert at every concrete id, so it can neither be shown
- * redundant nor stand as the reason another entry is. Both halves are needed
- * and the second is the one that fixes the case above: the victim there is
- * `edge.*`, whose own key is well-formed, so refusing only malformed
- * CANDIDATES leaves it dropped. It is carried through untouched and kept out
- * of the map a candidate is measured against.
+ * A key like that can neither be shown redundant nor stand as the reason
+ * another entry is. Both halves are needed and the second is the one that
+ * fixes the case above: the victim there is `edge.*`, whose own key is
+ * well-formed, so refusing only malformed CANDIDATES leaves it dropped. It is
+ * carried through untouched and kept out of the map a candidate is measured
+ * against.
  *
- * Closing the grammar hole belongs to the edge validator and is tracked on
- * its own. This only stops the prune acting where its own argument does not
- * hold, and deliberately does not touch the merge, which resolves such a key
- * before the prune ever runs.
+ * **One legitimate shape is refused, and that is the accepted cost.**
+ * `routes/edge-types.ts` skips the identifier check entirely for any id
+ * holding a hyphen, so a concrete edge id can carry an asterisk and this
+ * declines to reason about it. The result is an entry that stays in the
+ * record forever rather than access lost, it needs a perverse type name, and
+ * the thing worth closing is the registration hole. Closing that, and the
+ * missing edge pattern validator, is tracked on its own. This only stops the
+ * prune acting where its own argument does not hold, and deliberately does
+ * not touch the merge, which resolves such a key before the prune ever runs.
  */
 function keyIsWellFormed(key: string): boolean {
   if (key === GLOBAL_TYPE_WILDCARD) return true;

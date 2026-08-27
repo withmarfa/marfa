@@ -25,6 +25,49 @@ function verb(scopes: readonly string[], point: string): string {
   return "none";
 }
 
+/**
+ * The (axis, key) an emitted scope occupies, mirroring `breadthKey` in the
+ * module. Restated here rather than exported on purpose: the counters below
+ * exist to measure what the prune did, and a helper handed to them by the
+ * module under test would agree with it by construction.
+ */
+function emittedKey(scope: string): { axis: string; key: string } | null {
+  const parsed = parseScope(scope);
+  if (!parsed || parsed.operation === "none") return null;
+  if (parsed.kind === "type") return { axis: "type", key: parsed.typePattern };
+  if (parsed.kind === "edge")
+    return parsed.edgeType ? { axis: "edge", key: parsed.edgeType } : null;
+  if (parsed.kind === "metadata")
+    return { axis: "metadata", key: parsed.subresource ?? "*" };
+  return null;
+}
+
+/**
+ * Mirrors `keyIsWellFormed`: no asterisk outside a subtree-root position.
+ * The prune leaves anything else where it found it.
+ */
+function wellFormed(key: string): boolean {
+  return key === "*" || !(subtreeWildcardRoot(key) ?? key).includes("*");
+}
+
+/**
+ * How many entries the merge emits before the prune runs: one per distinct
+ * (axis, key) either side names, plus one per membership literal. Counting
+ * spelled scopes instead measured the merge's own collapse of two verbs onto
+ * one key, which cleared its threshold tenfold with the prune deleted.
+ */
+function mergedEntryCount(
+  standing: readonly string[],
+  approved: readonly string[],
+): number {
+  const ids = new Set<string>();
+  for (const scope of [...standing, ...approved]) {
+    const key = emittedKey(scope);
+    ids.add(key ? `${key.axis}:${key.key}` : `literal:${scope}`);
+  }
+  return ids.size;
+}
+
 describe("mergeDeviceApprovalScopes, the two cases it exists for", () => {
   // A plain set union narrows here. `core.note:read` appended beneath a
   // standing `core.*:write` outranks the wildcard and pins notes to read,
@@ -246,6 +289,40 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
     expect(
       mergeDeviceApprovalScopes(["edge.*.*:write"], ["edge.*:write"]),
     ).toContain("edge.*:write");
+  });
+
+  // The same collision at a nested root, which is the general form. A guard
+  // written against the one literal `*.*` passes every assertion above and
+  // leaves this live: `subtreeWildcardRoot("user.*.*")` is `"user.*"`, which
+  // matches the key `user.*` exactly as `"*"` matches `*`. Those two shapes
+  // are the whole of what a malformed key can answer for.
+  //
+  // The victim is not contrived. `resolveEdgePermission` says in its own
+  // docblock that `edge.user.*` is the only expression reaching a space's
+  // runtime-registered relation edges short of the global wildcard, so this
+  // is a grant a space cannot express any other way.
+  it("does not drop a namespace wildcard on the say-so of a malformed child", () => {
+    expect(isValidScope("edge.user.*.*:write")).toBe(true);
+    expect(subtreeWildcardRoot("user.*.*")).toBe("user.*");
+    expect(
+      grantCoversScope(["edge.user.*.*:write"], "edge.user.blocks:write"),
+    ).toBe(false);
+    expect(
+      grantCoversScope(["edge.user.*:write"], "edge.user.blocks:write"),
+    ).toBe(true);
+
+    const merged = mergeDeviceApprovalScopes(
+      ["edge.user.*:write"],
+      ["edge.user.*.*:write"],
+    );
+    expect(grantCoversScope(merged, "edge.user.blocks:write")).toBe(true);
+    expect(grantCoversScope(merged, "edge.user:write")).toBe(true);
+    expect(merged).toContain("edge.user.*:write");
+    expect(merged).toContain("edge.user.*.*:write");
+
+    expect(
+      mergeDeviceApprovalScopes(["edge.user.*.*:write"], ["edge.user.*:write"]),
+    ).toContain("edge.user.*:write");
   });
 
   it("carries the metadata axis through and raises its verb", () => {
@@ -588,46 +665,6 @@ describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => 
     GRANTS.map((g) => [g, read(g)] as const),
   );
 
-  /**
-   * The (axis, key) an emitted scope occupies, mirroring `breadthKey` in the
-   * module. Restated here rather than exported on purpose: the counters below
-   * exist to measure what the prune did, and a helper handed to them by the
-   * module under test would agree with it by construction.
-   */
-  const emittedKey = (scope: string): { axis: string; key: string } | null => {
-    const parsed = parseScope(scope);
-    if (!parsed || parsed.operation === "none") return null;
-    if (parsed.kind === "type")
-      return { axis: "type", key: parsed.typePattern };
-    if (parsed.kind === "edge")
-      return parsed.edgeType ? { axis: "edge", key: parsed.edgeType } : null;
-    if (parsed.kind === "metadata")
-      return { axis: "metadata", key: parsed.subresource ?? "*" };
-    return null;
-  };
-
-  /** Mirrors `keyIsWellFormed`: the prune leaves anything else alone. */
-  const wellFormed = (key: string): boolean =>
-    key === "*" || !(subtreeWildcardRoot(key) ?? key).includes("*");
-
-  /**
-   * How many entries the merge emits before the prune runs: one per distinct
-   * (axis, key) either side names, plus one per membership literal. Counting
-   * spelled scopes instead measured the merge's own collapse of two verbs
-   * onto one key, which cleared its threshold tenfold with the prune deleted.
-   */
-  const mergedEntryCount = (
-    standing: readonly string[],
-    approved: readonly string[],
-  ): number => {
-    const ids = new Set<string>();
-    for (const scope of [...standing, ...approved]) {
-      const key = emittedKey(scope);
-      ids.add(key ? `${key.axis}:${key.key}` : `literal:${scope}`);
-    }
-    return ids.size;
-  };
-
   // Assert the fixture is the shape the two clauses assume, rather than
   // trusting it. A vocabulary entry the grammar refuses would be carried
   // through the literal arm and never reach the prune at all, and a probe
@@ -799,7 +836,15 @@ describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => 
  * keys it is entitled to reason about.
  */
 describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
-  const MALFORMED = "edge.*.*:write";
+  /**
+   * More than one, and that is the point. A single literal pins the guard at
+   * the global root alone: replacing the whole of `keyIsWellFormed` with
+   * `key !== "*.*"` passed a corpus built on `edge.*.*:write` by itself while
+   * leaving `edge.user.*:write` merged with `edge.user.*.*:write` deleting
+   * the wildcard. The collision is the same at every level of the key tree,
+   * so the corpus has to carry more than one level of it.
+   */
+  const MALFORMED = ["edge.*.*:write", "edge.user.*.*:write"];
 
   const VOCAB = [
     "*:write",
@@ -808,6 +853,7 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
     "edge.*:read",
     "edge.*:write",
     "edge.user.*:read",
+    "edge.user.*:write",
     "edge.parent-of:read",
     "edge.parent-of:write",
     "metadata:write",
@@ -825,12 +871,20 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
     "metadata.types",
   ];
 
-  const wellFormed = (key: string): boolean =>
-    key === "*" || !(subtreeWildcardRoot(key) ?? key).includes("*");
+  /**
+   * The one verb-less family this vocabulary carries. Without it the
+   * minimality clause below reads a capability literal as redundant, because
+   * no concrete point can see it go.
+   */
+  const MEMBERSHIP = ["capability.webhooks"];
 
-  /** Grants of size one and two, each holding the malformed literal. */
-  const CARRIERS: string[][] = [[MALFORMED]];
-  for (const other of VOCAB) CARRIERS.push([MALFORMED, other]);
+  /** Grants of size one and two, each holding at least one malformed key. */
+  const CARRIERS: string[][] = [];
+  for (const m of MALFORMED) {
+    CARRIERS.push([m]);
+    for (const other of VOCAB) CARRIERS.push([m, other]);
+  }
+  CARRIERS.push([...MALFORMED]);
 
   /** Ordinary grants of size zero, one and two, drawn from the vocabulary. */
   const PLAIN: string[][] = [[]];
@@ -841,31 +895,47 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
     }
   }
 
-  it("is built on a scope the grammar admits and that confers nothing", () => {
-    expect(isValidScope(MALFORMED)).toBe(true);
-    expect(wellFormed("*.*")).toBe(false);
+  /** Both orders: the prune walks candidates standing-then-approved. */
+  const PAIRS: [string[], string[]][] = [];
+  for (const c of CARRIERS) {
+    for (const q of PLAIN) PAIRS.push([c, q], [q, c]);
+  }
+
+  it("is built on scopes the grammar admits that confer nothing", () => {
     expect(wellFormed("*")).toBe(true);
     expect(wellFormed("user.*")).toBe(true);
-    for (const point of POINTS) {
-      expect({
-        point,
-        covered: grantCoversScope([MALFORMED], `${point}:read`),
-      }).toEqual({ point, covered: false });
+    expect(wellFormed("parent-of")).toBe(true);
+
+    for (const scope of MALFORMED) {
+      expect({ scope, valid: isValidScope(scope) }).toEqual({
+        scope,
+        valid: true,
+      });
+      const key = emittedKey(scope);
+      expect({ scope, malformed: key ? !wellFormed(key.key) : null }).toEqual({
+        scope,
+        malformed: true,
+      });
+      // Inert: it reaches no concrete point, at either verb.
+      for (const point of POINTS) {
+        expect({
+          scope,
+          point,
+          covered: grantCoversScope([scope], `${point}:write`),
+        }).toEqual({ scope, point, covered: false });
+      }
     }
+
+    // The victim of the nested case has to be in the vocabulary, or the
+    // enumeration cannot construct the pair that catches it.
+    expect(VOCAB).toContain("edge.user.*:write");
   });
 
   it("never takes away what either side conferred", () => {
     let checked = 0;
     let carried = 0;
 
-    const pairs: [string[], string[]][] = [];
-    for (const c of CARRIERS) {
-      for (const q of PLAIN) {
-        pairs.push([c, q], [q, c]);
-      }
-    }
-
-    for (const [standing, approved] of pairs) {
+    for (const [standing, approved] of PAIRS) {
       const pruned = mergeDeviceApprovalScopes(standing, approved);
 
       for (const point of POINTS) {
@@ -887,14 +957,15 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
         }
       }
 
-      // The malformed key is carried, never deleted.
-      if (standing.includes(MALFORMED) || approved.includes(MALFORMED)) {
+      // Every malformed key named is carried, never deleted.
+      for (const m of MALFORMED) {
+        if (!standing.includes(m) && !approved.includes(m)) continue;
         carried++;
         expect({
           standing,
           approved,
           pruned,
-          kept: pruned.includes(MALFORMED),
+          kept: pruned.includes(m),
         }).toEqual({ standing, approved, pruned, kept: true });
       }
     }
@@ -904,32 +975,47 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
   });
 
   it("still leaves nothing redundant among the keys it may reason about", () => {
-    for (const standing of CARRIERS) {
-      for (const approved of PLAIN) {
-        const pruned = mergeDeviceApprovalScopes(standing, approved);
-        const before = POINTS.map((p) => verb(pruned, p));
+    let entriesChecked = 0;
+    let skipped = 0;
+    let dropped = 0;
 
-        for (let i = 0; i < pruned.length; i++) {
-          const parsed = parseScope(pruned[i]!);
-          if (!parsed || parsed.operation === "none") continue;
-          const key =
-            parsed.kind === "edge"
-              ? (parsed.edgeType ?? "")
-              : parsed.typePattern;
-          if (!wellFormed(key)) continue;
+    for (const [standing, approved] of PAIRS) {
+      const pruned = mergeDeviceApprovalScopes(standing, approved);
+      const before = POINTS.map((p) => verb(pruned, p));
+      const beforeHolds = MEMBERSHIP.map((m) => grantCoversScope(pruned, m));
 
-          const reduced = pruned.filter((_, j) => j !== i);
-          const changed = POINTS.some((p, k) => verb(reduced, p) !== before[k]);
-          if (!changed) {
-            expect({
-              standing,
-              approved,
-              pruned,
-              redundant: pruned[i],
-            }).toEqual({ standing, approved, pruned, redundant: null });
-          }
+      for (let i = 0; i < pruned.length; i++) {
+        const key = emittedKey(pruned[i]!);
+        if (key && !wellFormed(key.key)) {
+          skipped++;
+          continue;
+        }
+        entriesChecked++;
+
+        const reduced = pruned.filter((_, j) => j !== i);
+        const changed =
+          POINTS.some((p, k) => verb(reduced, p) !== before[k]) ||
+          MEMBERSHIP.some(
+            (m, k) => grantCoversScope(reduced, m) !== beforeHolds[k],
+          );
+        if (!changed) {
+          expect({
+            standing,
+            approved,
+            pruned,
+            redundant: pruned[i],
+          }).toEqual({ standing, approved, pruned, redundant: null });
         }
       }
+
+      dropped += mergedEntryCount(standing, approved) - pruned.length;
     }
+
+    // Not vacuous, on all three arms: entries the clause actually probed,
+    // malformed entries it deliberately did not, and entries the prune
+    // removed. `dropped` is zero against a prune that does nothing.
+    expect(entriesChecked).toBeGreaterThan(1000);
+    expect(skipped).toBeGreaterThan(100);
+    expect(dropped).toBeGreaterThan(100);
   });
 });
