@@ -330,16 +330,23 @@ async function createUserAppGrant(
       //
       // **Both axes, because both read surfaces filter on both.**
       // `GET /grants` and the security page each list with `state: "active"`
-      // and then skip a row whose `properties.status` is not "active". The
-      // merge read only the second, while `findGrantItemId` carries no
-      // `state` predicate and `items.get` hides `trashed` alone, so a row
-      // sitting at `state: "revoked"` with `status: "active"` was found,
-      // admitted, and merged against. That writes scopes back onto a row
-      // neither surface will list, which puts it beyond the Disconnect
-      // button while the token step below still mints against it.
-      // `connections/revoked-connection.ts` carries why the two axes cannot
-      // legitimately disagree, and exists because they drifted once already
-      // on the integration side.
+      // and then skip a row whose `properties.status` is not "active", so a
+      // row failing either axis is beyond the Disconnect button while the
+      // token step below still mints against it.
+      //
+      // **The lookup is the first fence now, and this is the second.**
+      // `findGrantItemId` carries its own `state = 'active'` predicate, so a
+      // row sitting at `state: "revoked"` no longer reaches this branch at
+      // all — the approval falls through to the fresh insert below and the
+      // unreachable row is left where it is. That predicate lives in the
+      // store rather than here because the code-flow twin
+      // (`projectGrantOnConsent` in `auth-consent.ts`) resolves through the
+      // same method and had the identical defect. This read stays because
+      // it guards the axis the lookup does not: a row the store admits can
+      // still hold `status: "revoked"`, and merging against a withdrawn
+      // scope set is what the clause below refuses.
+      // `connections/revoked-connection.ts` carries the relationship
+      // between the two axes and which disagreements are legitimate.
       //
       // Tested FOR "active" on both rather than against "revoked", which
       // decides the absent and unrecognized cases the safe way round: a
