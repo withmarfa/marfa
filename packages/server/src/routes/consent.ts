@@ -66,6 +66,11 @@ import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 import { escapeHtml } from "./auth-html.js";
+import {
+  isOpenEnded,
+  OPEN_ENDED_EXPANSION_TAIL,
+  OPEN_ENDED_LINE,
+} from "./scope-openness.js";
 
 interface ConsentParams {
   clientName: string;
@@ -268,14 +273,19 @@ function buildGroups(
  * an app that wanted very little, and a trusting one learns the copy does not
  * track the request.
  *
- * A wildcard is the one case where "and more" is honest, because the grant
- * really does extend to types that do not exist yet.
+ * An open-ended scope is the one case where "and more" is honest, because the
+ * grant really does extend to types that do not exist yet. Which scopes those
+ * are is {@link isOpenEnded}'s answer rather than a second one read off the
+ * spelling. This asked whether the pattern held a `*`, and bare `metadata`
+ * holds none while reaching every metadata sub-resource, so the two
+ * derivations disagreed on the one heading that most needed the clause and
+ * it was the only open-ended group that never got it.
  */
 function summarize(group: ScopeGroup): string {
   const names: string[] = [];
   let openEnded = false;
   for (const scope of group.scopes) {
-    if (scope.typePattern.includes("*")) openEnded = true;
+    if (isOpenEnded(scope)) openEnded = true;
     // Same chain the toggle list uses, humanized floor included. Stopping at
     // the curated map left an uncurated scope out of this sentence while the
     // list below still showed it, so the summary undercounted exactly the
@@ -322,6 +332,65 @@ function summarize(group: ScopeGroup): string {
  * registry description, then a humanized type name. A test pins every
  * default-bundle scope to an entry here, so widening a bundle without a
  * label fails the suite instead of shipping an auto-generated toggle.
+ *
+ * **A label may be shorter than its description. It may never be narrower
+ * than its scope.** An entry here wins over the description, so it is the
+ * whole of what this screen says about that grant, while the device screen
+ * has no toggles and reads the description out in full. A label naming a
+ * proper subset of what its pattern reaches therefore puts the smaller
+ * answer on the screen where somebody is ticking boxes, and the direction is
+ * what makes that a defect rather than a matter of taste: a grant that
+ * overstates its reach makes a person hesitate, and a grant that understates
+ * it makes them approve something larger than they think they are approving.
+ *
+ * `metadata` was "Type definitions" under that rule and is the worked
+ * example. The bare root projects to `{ "*": verb }`, so it reaches every
+ * metadata sub-resource, and its own list says it grows; the label named one
+ * of the two that exist today.
+ *
+ * **The rule has a second half: a label may not name a type its scope does
+ * not reach.** `core.entity` was "People and places", and a bare
+ * `core.entity` grant is exact, so `grantCoversScope` answers false for
+ * `core.entity.person` and false for `core.entity.place`. Both are
+ * requestable on their own and carry their own rows, labeled "Contacts" and
+ * "Places", so somebody ticking this one for their contacts granted nothing
+ * of the kind, and the type it does reach went unnamed. The registry calls
+ * `core.entity` a non-person entity and lists a company, a band, a team, a
+ * charity, a brand and a school, so "Organizations" is what the grant
+ * reaches. That half is asked of `grantCoversScope` rather than curated: a
+ * label naming a descendant its own pattern does not cover fails the suite.
+ *
+ * **A brand is the one member of that list "Organizations" does not name,
+ * and it stays as stated residue rather than being fixed.** Three things
+ * decide it. The type's own fields are organization-shaped: an officially
+ * registered legal name, a founding date, a logo. The grant reaches exactly
+ * one type, so unlike "People and places" nothing separately requestable
+ * goes unnamed by it, and the rule this docstring states is about reach.
+ * And no conjunction-free word covers a brand as well as a school, while
+ * "Organizations and brands" is precisely the shape the paragraph below
+ * refuses, so buying that member back costs the list-join rule. What is not
+ * acceptable is the label and the description disagreeing about it, which is
+ * why the description now stops where the label does.
+ *
+ * **Open-endedness is the one thing a label here cannot carry**, and the
+ * constraint is the sentence rather than the space above a switch.
+ * {@link summarize} joins these into a list, so an entry holding a comma or
+ * an "and" arrives there as two items: "Definitions in your space and any
+ * added later" joined with "Edge types" reads as one unpunctuated run of
+ * three. Saying that a grant reaches things which do not exist yet needs a
+ * conjunction, so a label cannot say it and stay a name. {@link subRow}
+ * states it on the row's second line instead, for every open-ended pattern
+ * rather than for the ones somebody remembered, which is what keeps this
+ * rule from needing a curator.
+ *
+ * **`CONSENT_SCOPE_DESCRIPTIONS` is under the same prohibition, for a
+ * different reason.** A description cannot carry it because a description is
+ * sometimes this label: `labelFor` falls through to one wherever nothing
+ * curated names the pattern, so a futurity clause written there for the
+ * device screen's sake lands on a toggle row already about to state the same
+ * fact. Both screens compose their own sentence from {@link isOpenEnded}
+ * instead, so neither map has to hold one and no renderer has to read
+ * English to find out whether a string it was handed has said it already.
  */
 export const SCOPE_LABELS: Record<string, string> = {
   "core.note": "Notes",
@@ -330,7 +399,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "core.highlight": "Highlights",
   "core.event": "Calendar",
   "core.message": "Messages",
-  "core.entity": "People and places",
+  "core.entity": "Organizations",
   "core.entity.person": "Contacts",
   "core.entity.place": "Places",
   "core.file": "Files",
@@ -367,7 +436,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.device": "Devices",
   "system.webhook": "Webhooks",
   "system.activity": "Activity",
-  metadata: "Type definitions",
+  metadata: "Definitions in your space",
 };
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
@@ -462,10 +531,42 @@ export function renderConsentScreen(params: ConsentParams): string {
       scope.kind !== "oidc"
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
-    const detail =
+    // Open-endedness is stated for every open-ended pattern rather than only
+    // for the ones a space can name members of today, and stated once.
+    // {@link isOpenEnded} is the whole of the condition: this row asks the
+    // grammar and nothing else, so no string anywhere can talk it out of
+    // saying so.
+    //
+    // **It was conditioned on the copy, and that is the bug this shape
+    // exists to make unrepresentable.** A curated label cannot carry the
+    // fact, because `SCOPE_LABELS` entries are joined into the group summary
+    // sentence and futurity needs a conjunction to say, which breaks the
+    // list. But a label is not always curated: `labelFor` falls through to
+    // the scope's description, and the description used to carry a futurity
+    // clause of its own for the device screen's sake. So the same sentence
+    // arrived as this row's label with the line about to repeat it, and the
+    // suppression that followed asked whether the label contained the word
+    // "later". A clause meaning futurity in other words slipped past it and
+    // was stated twice. A "later" meaning something else entirely, as in a
+    // deletion that stays recoverable, suppressed the line on a grant that
+    // then said nothing about reaching types nobody has registered. The copy
+    // no longer states it on either surface: `OPEN_ENDED_SENTENCE` is how
+    // the device screen gets it, composed there the same way.
+    //
+    // The expansion line absorbs the clause where there is one, since that
+    // line names today's members as well and a wildcard's reach reads as one
+    // fact rather than two. Which branch runs is a question about the
+    // enumeration, not about what any string says.
+    const open = isOpenEnded(scope);
+    const detailText =
       matched && matched.length > 0
-        ? `<span class="rmeta" style="display:block">${escapeHtml(`Today this covers ${matched.join(", ")}, plus any you add later`)}</span>`
-        : "";
+        ? `Today this covers ${matched.join(", ")}${open ? OPEN_ENDED_EXPANSION_TAIL : ""}`
+        : open
+          ? OPEN_ENDED_LINE
+          : "";
+    const detail = detailText
+      ? `<span class="rmeta" style="display:block">${escapeHtml(detailText)}</span>`
+      : "";
     // The per-type checkbox is what the form submits, so this attribute is
     // the whole of what `default_on: false` means: the literal is offered,
     // and ticking it is the grant.

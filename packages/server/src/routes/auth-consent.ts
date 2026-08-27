@@ -1515,7 +1515,18 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.message": "Messages and conversations.",
 
   // Entities
-  "core.entity": "Organizations and other entities.",
+  //
+  // `core.entity` names the same grant here that its toggle label names on
+  // the authorize screen, and "and other entities" was the half that did
+  // not. It reached wider than the label without saying how much wider, so
+  // one grant read two ways depending on which screen a person was looking
+  // at, and the narrower reading was the one above the toggles. The registry
+  // lists a company, a band, a team, a charity, a brand and a school. Three
+  // are named below and the rest sit under "organizations", a brand
+  // excepted, so the sentence lands where the label does instead of past it.
+  // The reasoning for keeping "Organizations" as that label and for
+  // accepting the brand as residue is at `SCOPE_LABELS`.
+  "core.entity": "Companies, teams, schools, and other organizations.",
   "core.entity.person": "People in your contacts.",
   "core.entity.place": "Places and venues.",
 
@@ -1526,7 +1537,29 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.file.video": "Videos.",
 
   // Media
-  "core.media": "Media: books, films, music, podcasts.",
+  //
+  // The same defect `core.entity` carried, on the surface that has no second
+  // line to soften it. "Media: books, films, music, podcasts." named four
+  // kinds a bare `core.media` grant reaches none of: the registry holds
+  // seven subtypes, each separately requestable with a scope of its own, and
+  // `grantCoversScope` answers false for every one of them. So the device
+  // screen, which prints this sentence and nothing else, described the grant
+  // by listing what it does not include.
+  //
+  // The replacement says what the grant does reach, which is media stored as
+  // `core.media` itself. It is deliberately awkward rather than vague: a
+  // sentence like "Media content" could not be checked against anything and
+  // so could never be found wrong again, which is a worse place to end up
+  // than the wrong list. This one is checkable against the registry, and it
+  // stays true when an eighth subtype is registered, because it names the
+  // relationship instead of the members.
+  //
+  // It also names no subtype, not even in the negative. "Media that is not a
+  // book or a film" would be true and would still put those words on the row
+  // of a grant that does not reach them, which is the thing the coverage
+  // guard reads for. The guard cannot see polarity and teaching it to would
+  // mean parsing negation, so the sentence stays positive.
+  "core.media": "Media saved without a more specific type.",
   "core.media.album": "Music albums.",
   "core.media.article": "Articles.",
   "core.media.book": "Books.",
@@ -1565,8 +1598,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // and update" told somebody approving a read that they were granting a
   // write. The read/write split is already carried by the screen's own
   // grouping and by the toggle the row sits on.
-  metadata:
-    "Custom data types, relationship types, and any others added later.",
+  metadata: "Custom data types and relationship types.",
   "metadata.types": "Custom data types in your space.",
   "metadata.edge_types": "Custom relationship types in your space.",
 
@@ -1575,9 +1607,37 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // types at check time and the grant reaches types nobody has registered
   // yet, so what the copy has to say is precisely what no registry entry
   // knows.
+  //
+  // **None of these sentences says that the grant reaches types nobody has
+  // registered yet, and none of them may.** Both screens compose that from
+  // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
+  // line, `describeCapabilities` appends `OPEN_ENDED_SENTENCE` to whichever
+  // of these it is about to print, and `isOpenEnded` is the single answer
+  // both read. So an entry here says what the grant reaches and stops.
+  //
+  // **The prohibition is not tidiness, it is the only way the two screens
+  // can be made to agree.** These sentences used to carry a futurity clause,
+  // because the device screen has no toggles and no second line and this is
+  // the whole of what it says about a grant. But `labelFor` on the authorize
+  // screen falls through to this map wherever nothing curated names the
+  // pattern, so the clause written for one screen arrived as the other
+  // screen's toggle label, directly above a line about to state the same
+  // thing. What reconciled them was a regex looking for the word "later" in
+  // the label, and a check on the copy cannot tell a clause that means
+  // futurity from a word that merely spells it: futurity phrased in other
+  // words was stated twice, and a "later" carrying no futurity at all
+  // silenced the line on a wildcard that then said nothing about its reach.
+  // Composing removes the collision rather than arbitrating it.
+  //
+  // The global wildcard is no longer an exemption. It read "Everything in
+  // your space." because that sentence cannot be falsified by a type
+  // registered tomorrow, which was all the device screen needed back when
+  // the device screen needed the copy to carry it. It needs nothing of the
+  // sort now, so `*` says what it reaches like every other entry and the
+  // screens add the rest.
   "*": "Everything in your space.",
-  "core.*": "All standard content types, including ones added later.",
-  "user.*": "Your custom types, including ones you define later.",
+  "core.*": "All standard content types.",
+  "user.*": "Your custom types.",
   "app.*": "Types this app defines for itself.",
 };
 

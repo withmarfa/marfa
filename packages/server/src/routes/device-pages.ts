@@ -17,6 +17,7 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { capabilityLabel } from "./capability-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
+import { isOpenEnded, OPEN_ENDED_SENTENCE } from "./scope-openness.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -47,11 +48,33 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Too many attempts for that code. Restart the sign-in on your other device.",
 };
 
+/** One data-scope line, with the futurity clause where the grammar calls for
+ *  it. Split out of {@link describeCapabilities} only so that the chain of
+ *  per-kind ternaries there stays readable. */
+function openEndedSuffixed(scope: ParsedScope, base: string): string {
+  return isOpenEnded(scope) ? `${base} ${OPEN_ENDED_SENTENCE}` : base;
+}
+
 /**
  * Resolve the human-readable description for a parsed scope, deduped across
  * the full set. OIDC literals and capability scopes map to friendly labels;
  * everything else uses the caller-supplied description, falling back to the
  * scope literal. The returned order follows first appearance in `scopes`.
+ *
+ * **An open-ended grant gets {@link OPEN_ENDED_SENTENCE} appended, composed
+ * here rather than written into the description.** This screen has no
+ * toggles and no second line, so one sentence per grant is the whole of what
+ * it says, and a grant reaching types nobody has registered yet has to say
+ * so somewhere. It used to say so in the copy, which put the clause on a
+ * string the authorize screen also uses as a toggle label, above a row about
+ * to state the same fact. {@link isOpenEnded} is the one answer both screens
+ * now ask, so neither has to inspect the other's copy to find out whether
+ * the point has already been made.
+ *
+ * The clause is appended even where no description resolved and the literal
+ * is standing in. That row is already degraded and says so by looking like a
+ * scope literal; how wide the grant is does not stop being true because the
+ * words for it went missing.
  *
  * The verb-less families are named rather than defaulted, because the
  * fallback is a literal this function rebuilds and the naive rebuild is
@@ -85,7 +108,7 @@ function describeCapabilities(
           (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
         : s.kind === "capability"
           ? (capabilityLabel(s.typePattern) ?? literal)
-          : (descriptions?.[s.typePattern] ?? literal);
+          : openEndedSuffixed(s, descriptions?.[s.typePattern] ?? literal);
     if (seen.has(human)) continue;
     seen.add(human);
     out.push(human);
