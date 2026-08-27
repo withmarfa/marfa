@@ -40,8 +40,8 @@
  *   3. Teardown of edges (`deleteBySource` / `deleteByTarget` would
  *      be N queries; do a single `DELETE FROM edges WHERE space_id`).
  *   4. Bulk-purge every item under the space (cascades metadata +
- *      versions via FK; search index needs explicit cleanup which
- *      `ItemStore.bulkPurge` already wires).
+ *      versions via FK; on Postgres the search vector is a column on the
+ *      row, so deleting the row is the whole of that cleanup).
  *   5. Space-scoped blob rows.
  *   6. `api_keys` + outbound/inbound webhooks + `space_quotas`.
  *   7. `auth_verification` rows referencing this user (the cancel
@@ -55,10 +55,14 @@
  *      `auth_account`, `auth_passkey`.
  *
  * The function takes the full `Storage` so step 4 / step 9 / step 10
- * flow through the store layer (search-index cleanup; audit log
- * insertion; sub-store delete methods). Cross-table raw SQL is used
- * only where bulk efficiency matters (edges, blobs, api_keys,
- * webhooks, space_quotas, auth_verification).
+ * flow through the store layer: the item purge and the audit writes are
+ * the store's own bulk operations, and reimplementing either as raw SQL
+ * here would duplicate the cascade rules they already encode. Both run
+ * on this transaction, which costs an installed request context because
+ * the stores hold a wrapped Drizzle instance and this helper does not.
+ * Cross-table raw SQL is used only where bulk efficiency matters and no
+ * store method exists (edges, blobs, api_keys, webhooks, space_quotas,
+ * auth_verification).
  */
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
@@ -121,15 +125,32 @@ export async function pgPurgeSpaceScopedRows(
 
   await tx.delete(edges).where(eq(edges.space_id, spaceId));
 
-  // Cascades metadata + versions via FK; the search index needs explicit
-  // cleanup, which `bulkPurge` already wires.
+  // Cascades metadata + versions via FK. On Postgres the search vector is a
+  // column on the row and goes with it, so deleting the row is the whole of
+  // the search-index cleanup rather than a separate step beside it.
   const spaceItems = await tx
     .select({ id: items.id })
     .from(items)
     .where(eq(items.space_id, spaceId));
   const ids = spaceItems.map((r) => r.id);
   if (ids.length > 0) {
-    await storage.items.bulkPurge(ids, spaceId);
+    // The purge runs on this transaction rather than beside it.
+    //
+    // `storage.items` holds the request-context-wrapped Drizzle instance
+    // while this helper runs on an unwrapped one and threads `tx` by hand.
+    // With no context installed the wrapper falls straight through to the
+    // pool, so `bulkPurge` opens a transaction on a second connection and
+    // commits independently: a caller that rolls back afterwards has already
+    // destroyed the items and still holds the account. It also holds a second
+    // pool connection for the length of the purge, so concurrent cascades cost
+    // two connections each out of the ten this pool carries.
+    //
+    // Installing the context resolves `bulkPurge`'s own `db.transaction` to
+    // a savepoint on this connection, which is what it already resolves to
+    // inside the bulk-action runner.
+    await pgRequestContext.run({ tx }, async () => {
+      await storage.items.bulkPurge(ids, spaceId);
+    });
   }
 
   await tx.delete(blobs).where(eq(blobs.space_id, spaceId));
@@ -193,8 +214,8 @@ export async function pgDeleteAccountCascade(
   cutoffIso: string,
 ): Promise<boolean> {
   // Runs as the connection owner (no ALS space context installed by the purger),
-  // bypassing per-space RLS. Search-index cleanup inside bulkPurge is best-effort
-  // with respect to this transaction — residual FTS rows are self-healing.
+  // bypassing per-space RLS. Every step reaching storage runs on this
+  // transaction, so a rollback leaves the account and its items as they were.
   return db.transaction(async (tx) => {
     // ---- 0. Race-safety re-check. ----------------------------------------
     // SELECT ... FOR UPDATE on the auth_user row. The lock blocks any
@@ -276,18 +297,15 @@ export async function pgDeleteAccountCascade(
     // delete that never happened.
     //
     // It also gives back a pool connection acquired while this transaction
-    // is held. A caller that holds one slot and then needs a second is the
-    // shape documented elsewhere here as the way to exhaust the pool under
-    // concurrency, and this was an instance of it.
+    // is held. The severe form of that shape recorded elsewhere here is a
+    // self-deadlock, which this path cannot reach because it holds no row
+    // lock the second connection would wait on. What it costs is one extra
+    // connection per concurrent cascade out of the ten this pool carries.
     //
-    // Scoped to these two calls rather than to the whole cascade. One
-    // other call reaches storage — `storage.items.bulkPurge` inside the
-    // space-scoped teardown — and it is outside this transaction for the
-    // same reason. Pulling it in would resolve its own `db.transaction` to
-    // a savepoint and change the failure behavior of the item purge and
-    // its search-index cleanup, which the docstring above already treats
-    // as best-effort with respect to this transaction. That is a change of
-    // its own, not a line to slip into this one.
+    // Scoped to these two calls rather than to the whole cascade. The one
+    // other call reaching storage — `storage.items.bulkPurge` inside the
+    // space-scoped teardown — installs the context at its own call site,
+    // for the same reason and with the same effect.
     await pgRequestContext.run({ tx }, async () => {
       // Redact the existing audit trail.
       await storage.audit.redactForUser(authUserId);
