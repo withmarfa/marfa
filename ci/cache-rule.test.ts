@@ -623,6 +623,15 @@ describe("the dependency cache rule in .github/workflows", () => {
     // The split has to respect parentheses, because the runner chain
     // carries its own `&&` (`github.event_name == 'push' && vars.X`) and a
     // naive split would shred the clause it is looking for.
+    //
+    // **There is no such step in the workflows today**, so this loop runs
+    // over an empty list and passes over nothing. Said out loud because a
+    // guard that silently matches nothing reports a confident pass, and
+    // this one is in that state deliberately: the step it was written for
+    // turned out to cache a directory nothing writes and was removed. The
+    // refusal above is the half doing work right now — it applies to any
+    // cache action that appears — and this is what lets that refusal be
+    // narrow rather than absolute when one does.
     for (const step of gatedCacheSteps) {
       const runsOn = expressionBody(step.runsOn);
       const gate = expressionBody(step.gate);

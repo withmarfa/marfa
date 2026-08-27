@@ -421,36 +421,24 @@ jobs:
         run: pnpm lint
       - if: needs.changes.outputs.code == 'true'
         run: pnpm format:check
-      # The OCR language model the step below needs, restored on the runners
-      # that would otherwise re-download it every run.
-      #
-      # This is the same rule the dependency cache carries, resolved through
-      # the same chain, and for the same reason in both directions. On the
-      # self-hosted pool the directory persists in `~/.cache` between jobs,
-      # so caching it would tar a store that is already there — the cost
-      # `ci/cache-rule.test.ts` exists to keep off that machine. On an
-      # ephemeral runner nothing survives the job, so without this every run
-      # pays the download before it can test anything.
-      #
-      # `actions/cache` is refused outright by that check unless it carries
-      # this condition, because the check cannot otherwise tell a cache that
-      # respects the rule from one that reinstates the tar somebody had
-      # removed.
-      - name: Restore the OCR language model
-        if: >-
-          ${{ needs.changes.outputs.code == 'true' &&
-          (startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-          || startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-')) }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/marfa-tessdata
-          key: marfa-tessdata-${{ runner.os }}-${{ runner.arch }}-v1
-
       # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts)
       # in this lane only — the PG lane covers dialect behavior, not the
-      # OCR library. The language model caches under ~/.cache on the
-      # self-hosted pool, so only the first run pays the download; on an
-      # ephemeral runner the step above is what supplies it.
+      # OCR library.
+      #
+      # `MARFA_ENRICHMENT_TESSDATA_DIR` is passed because the engine takes
+      # a cache path, and nothing writes to it. This said for a long time
+      # that the language model caches there on the pool so only the first
+      # run pays the download, and an ephemeral runner briefly grew an
+      # `actions/cache` step on that basis. Both were wrong: the directory
+      # does not exist on the pool, has never existed, and the cache step
+      # found nothing to restore and nothing to save. The test resolves
+      # its model from the installed package instead, which is why it
+      # takes about the same second on a managed runner as on the pool.
+      #
+      # Kept as a directory the engine may write to rather than removed,
+      # because a cache path it can use is cheaper than finding out later
+      # that it needed one. What is gone is the claim that it is load
+      # bearing.
       - if: needs.changes.outputs.code == 'true'
         run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
       - if: needs.changes.outputs.code == 'true'
