@@ -754,7 +754,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // The discriminator for the case above, which is otherwise satisfied by
     // a map whose every line ends "and any added later", copy that would
     // tell somebody granting one type that the grant grows. Two of these are
-    // the parents of open-ended neighbours, so they are the lines a blanket
+    // the parents of open-ended neighbors, so they are the lines a blanket
     // rewrite would take with it.
     const out = buildScopeDescriptions(
       ["core.note:read", "core.entity:read", "metadata.types:write"].map(
