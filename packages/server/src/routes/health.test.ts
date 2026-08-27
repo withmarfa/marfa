@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { healthRoutes } from "./health.js";
+import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
@@ -39,6 +40,10 @@ interface HealthBody {
   };
   placement?: { region?: string; location?: string; country?: string };
   database_connections?: unknown;
+}
+
+interface StoredValueBody extends HealthBody {
+  unrecognized_stored_values?: { rows: number; scanned: boolean };
 }
 
 interface DeadLetterBody extends HealthBody {
@@ -316,5 +321,119 @@ describe("GET /health placement", () => {
         expect(body.placement).toEqual({ region: "lon1" });
       },
     );
+  });
+});
+
+describe("GET /health unrecognized stored values", () => {
+  // Module state, exactly as `platformDrift` is, so one case would
+  // otherwise decide the next one's answer.
+  afterEach(() => {
+    setStoredValueScan({ scanned: false, values: [] });
+  });
+
+  function build(): ReturnType<typeof healthRoutes> {
+    return healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+  }
+
+  async function body(): Promise<StoredValueBody> {
+    return (await (await build().request("/")).json()) as StoredValueBody;
+  }
+
+  it("reports zero, and says it has not looked, before any boot has", async () => {
+    expect((await body()).unrecognized_stored_values).toEqual({
+      rows: 0,
+      scanned: false,
+    });
+  });
+
+  it("counts rows across every column rather than distinct values", async () => {
+    // "How many rows" is the question the motivating incident left
+    // unanswered, and the number is what tells one restored row from a
+    // whole table.
+    setStoredValueScan({
+      scanned: true,
+      values: [
+        { table: "users", column: "role", value: "owner", count: 40 },
+        { table: "items", column: "state", value: "quarantined", count: 2 },
+      ],
+    });
+
+    expect((await body()).unrecognized_stored_values).toEqual({
+      rows: 42,
+      scanned: true,
+    });
+  });
+
+  it("distinguishes a scan that failed from one that found nothing", async () => {
+    // The reachable scenario this field exists for: a newer image meets a
+    // database whose migration has not landed, Postgres raises `42703` on
+    // the missing column, the scan's catch fires and records nothing. With
+    // the count alone, the endpoint served exactly what a healthy instance
+    // serves — and the commit that argues a log line is not a signal would
+    // have put the failure signal for the reporting mechanism back on the
+    // log.
+    setStoredValueScan({ scanned: true, values: [] });
+    const clean = (await body()).unrecognized_stored_values;
+
+    setStoredValueScan({ scanned: false, values: [] });
+    const failed = (await body()).unrecognized_stored_values;
+
+    expect(clean).toEqual({ rows: 0, scanned: true });
+    expect(failed).toEqual({ rows: 0, scanned: false });
+    expect(failed).not.toEqual(clean);
+  });
+
+  it("stays ok while the count is non-zero", async () => {
+    // The shape decision, not the field. This copies `platform_types` and
+    // deliberately not `dead_letters`: a check earns the right to degrade
+    // only if something is wrong now, and this one can sit non-zero
+    // indefinitely because clearing it needs a migration or a hand
+    // `UPDATE` on somebody's schedule rather than a button. A component
+    // that can sit degraded forever teaches its readers to ignore the ones
+    // that matter. The severity lives on the boot log instead.
+    setStoredValueScan({
+      scanned: true,
+      values: [{ table: "users", column: "role", value: "owner", count: 40 }],
+    });
+
+    const res = await build().request("/");
+    const parsed = (await res.json()) as StoredValueBody;
+
+    expect(res.status).toBe(200);
+    expect(parsed.status).toBe("ok");
+    expect(parsed.unrecognized_stored_values).toEqual({
+      rows: 40,
+      scanned: true,
+    });
+  });
+
+  it("stays ok when the scan itself could not run", async () => {
+    // A scan that could not read is not the instance failing to serve.
+    setStoredValueScan({ scanned: false, values: [] });
+
+    const res = await build().request("/");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as StoredValueBody).status).toBe("ok");
+  });
+
+  it("carries the number and not the values", async () => {
+    // `/health` is unauthenticated, and the value itself would advertise
+    // the shape of a partially-applied migration to anyone who asks. The
+    // `scanned` flag is a boolean and carries no identifier, so it does
+    // not weaken this.
+    setStoredValueScan({
+      scanned: true,
+      values: [
+        { table: "users", column: "role", value: "tenant_admin", count: 40 },
+      ],
+    });
+
+    const text = await (await build().request("/")).text();
+    expect(text).not.toContain("tenant_admin");
+    expect(text).not.toContain("users");
   });
 });

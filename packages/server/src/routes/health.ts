@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { platformDrift } from "../storage/platform-drift.js";
+import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
@@ -414,6 +415,53 @@ export function healthRoutes(
     // "someone could tidy this up", it is a report.
     const platformTypes = { drifted: platformDrift().length };
 
+    // How many rows this instance holds whose stored value falls outside
+    // the union the build compares that column against. Counted at boot,
+    // so reading it costs nothing and cannot go stale against a running
+    // process.
+    //
+    // A count and nothing else, and here that is sharper than it is for
+    // the drift figure above: this endpoint is unauthenticated, and the
+    // value itself would advertise the shape of a partially-applied
+    // migration to anyone who asks. The true stored string is on the boot
+    // log, behind the operator's access to it.
+    //
+    // Not a component, and this is the shape decision rather than the
+    // field. It carries no status and never moves `overall`, which is
+    // `platform_types`'s shape and deliberately not `dead_letters`'s. The
+    // rule is already written into this file: a check earns the right to
+    // degrade only if something is wrong now. This one can sit non-zero
+    // indefinitely — clearing it needs a migration or a hand `UPDATE` on
+    // somebody's schedule, not a button — and a component that can sit
+    // degraded indefinitely teaches its readers to ignore the ones that
+    // matter. The severity lives on the boot log, which is `error`-level
+    // and names the table, the column, the true stored string and the
+    // count.
+    //
+    // Rows rather than distinct values: "how many rows" is the question
+    // the motivating incident left unanswered, and it is what tells one
+    // restored row from a whole table.
+    //
+    // `scanned` is here because zero rows has three meanings and this is
+    // one number over all of them: nothing recorded yet, nothing found,
+    // and looked-but-could-not-read. The third is reachable and is the
+    // scenario the whole feature exists for — a newer image meeting a
+    // database whose migration has not landed raises `42703`, the scan's
+    // catch fires, and without this field the endpoint would serve exactly
+    // what a healthy instance serves. It carries no identifier, so it does
+    // not touch the reason the values themselves stay off an
+    // unauthenticated endpoint.
+    //
+    // It still never moves `overall`. A scan that could not run is not the
+    // instance failing to serve, and the rule this block already follows
+    // says a check earns the right to degrade only if something is wrong
+    // now.
+    const scan = storedValueScan();
+    const storedValues = {
+      rows: scan.values.reduce((sum, v) => sum + v.count, 0),
+      scanned: scan.scanned,
+    };
+
     // How much of the connection ceiling this deployment is holding. Not a
     // component: it carries no status and never degrades the response. Pool
     // exhaustion has taken this deployment down twice and nothing published
@@ -447,6 +495,7 @@ export function healthRoutes(
       auth_mode: config.authMode,
       components,
       platform_types: platformTypes,
+      unrecognized_stored_values: storedValues,
       ...(databaseConnections && {
         database_connections: databaseConnections,
       }),
