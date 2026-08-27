@@ -185,14 +185,18 @@ const scopeSet = (...literals: string[]): ParsedScope[] =>
  * the copy actually takes rather than one row per scope.
  *
  * The last three are the branches that had no row here until the derived
- * check named them, and each is currently a failure a person can see. A
- * namespace wildcard has no curated copy at all, so it renders as its own
- * literal on the device screen and as a title-cased fragment of it on the
- * authorize screen; an integration's concrete type falls through to the type
- * registry, whose sentences are written for somebody reading API docs and run
- * to several hundred characters. Both are in the derived check's
- * known-uncovered list, and when copy lands for them these snapshots move,
- * which is the review that copy should get.
+ * check named them, and they are at two different stages. The two wildcards
+ * are the fix: `edge.*` and `google.*` rendered as their own literals on the
+ * device screen and as title-cased fragments of them on the authorize
+ * screen, and they now read as sentences, one curated and one derived from
+ * the publisher root it names. Previewing both is what says the derivation
+ * is the same copy a curated entry would be.
+ *
+ * The third is still a failure a person can see: an integration's concrete
+ * type falls through to the type registry, whose sentences are written for
+ * somebody reading API docs and run to several hundred characters. It stays
+ * in the derived check's known-uncovered list, and when copy lands for it
+ * these snapshots move, which is the review that copy should get.
  */
 const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // OIDC literals: `openid` rides along as a hidden field, `profile` is a row.
@@ -214,10 +218,13 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // A capability, which no request can carry today. See above.
   "capability.webhooks",
   // The wildcard over every relationship type, and the widest edge grant a
-  // client can ask for. Nothing has ever described it on either screen.
+  // client can ask for. Nothing described it on either screen until this
+  // preview showed what that looked like.
   "edge.*:read",
   // An integration's namespace wildcard, the family that grew past the four
-  // curated entries and was never caught up with.
+  // curated entries and is caught up with by a rule rather than by an entry.
+  // Previewed because a derived sentence is copy like any other and this is
+  // where copy gets read.
   "google.*:read",
   // An integration's concrete type, which reads as described and is not: the
   // curated map has no entry, so it falls through to the registry's Sync API

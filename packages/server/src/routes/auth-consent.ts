@@ -1616,6 +1616,15 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // yet, so what the copy has to say is precisely what no registry entry
   // knows.
   //
+  // **Only the patterns that carry no publisher handle are written out
+  // here.** Every other requestable wildcard names one, and
+  // `describeNamespaceWildcard` derives its sentence from that name rather
+  // than waiting for somebody to type it. The set of them is open: a space's
+  // publisher roots arrive from the database at boot and a new integration
+  // adds a pair, so a hand-written entry per wildcard closes today's set and
+  // reopens on the next one. An entry here still wins over the derivation,
+  // for a root whose sentence should say more than its name.
+  //
   // **None of these sentences says that the grant reaches types nobody has
   // registered yet, and none of them may.** Both screens compose that from
   // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
@@ -1647,6 +1656,22 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.*": "All standard content types.",
   "user.*": "Your custom types.",
   "app.*": "Types this app defines for itself.",
+
+  // The widest edge grant a client can ask for, and the relationship half of
+  // the two runtime tiers above. Written out for the same reason those are:
+  // the derivation puts a publisher's name in the sentence and none of these
+  // patterns carries one. `edge` is the kind prefix rather than a namespace,
+  // and `user` and `app` are reserved roots naming a tier the platform
+  // defines, so a derivation over one would print "Your User content."
+  //
+  // **Reserved is what makes this set closed enough to write out.** A
+  // reserved root cannot be claimed as a handle, and the only two that reach
+  // `edge.<root>.*` are the pair `deriveCustomTypeNamespaces` names
+  // structurally. A third arriving there gets no sentence rather than a
+  // wrong one, and the coverage guard says so.
+  "edge.*": "Every link between items in your space.",
+  "edge.user.*": "Links using the relationship types you define.",
+  "edge.app.*": "Links using the relationship types this app defines.",
 };
 
 /**
@@ -1728,6 +1753,72 @@ export async function resolveWildcardExpansions(
   return out;
 }
 
+/** The prefix an edge scope's `typePattern` carries, which is the kind
+ *  rather than part of any name. */
+const EDGE_PATTERN_PREFIX = "edge.";
+
+/**
+ * What a namespace wildcard reaches, derived from the publisher root it
+ * names, or undefined where the root is not a publisher's.
+ *
+ * **A rule rather than a table, because the set is open.** `buildAllowedScopes`
+ * publishes a wildcard pair per integration and another pair per publisher
+ * root boot installs from the `custom_types` table, so the patterns a client
+ * can request are not knowable when copy is written. A hand-written entry per
+ * wildcard closes the set that exists on the day it is written and reopens on
+ * the next integration, which is how eleven of them came to be shipping with
+ * no description at all while four had one.
+ *
+ * **Both shapes, one rule, because the root is the only thing either
+ * sentence needs.** `google.*` and `edge.google.*` are the same publisher
+ * seen from the two halves of the grammar, and they get different sentences
+ * because one grant is over things and the other is over the links between
+ * them. What they share is where the name comes from.
+ *
+ * Reserved roots return undefined rather than a sentence built on a tier
+ * name. Their patterns are curated in {@link CONSENT_SCOPE_DESCRIPTIONS},
+ * and a reserved root that ever reached here without an entry should read as
+ * the gap it is rather than as "Your User content."
+ *
+ * **The handle goes in verbatim, and prettifying it is the one change never
+ * to make here.** `RESERVED_HANDLE_WORDS` reserves a company's name as a
+ * bare word, so `google` is unclaimable and `google-drive` is not. A
+ * transform that split on hyphens and capitalized each word printed "Your
+ * Google Drive content." for a namespace anybody could register: the
+ * reservation blocked the name and the transform put it back. It also
+ * reached every user rather than the registering space's, because
+ * `resolveAllRuntimeCustomNamespaces` folds every space's roots into the
+ * allowlist instance-wide.
+ *
+ * Verbatim costs "Your readwise content." where "Your Readwise content."
+ * would have read better, and that is the whole price. It buys a sentence
+ * that cannot be read as a company's own name, and one that is injective:
+ * `a-b` and `a--b` are different namespaces and the transform rendered both
+ * as "A B".
+ *
+ * **A lowercase handle in a sentence is deliberate, not an oversight.** The
+ * page copy rules say to name the situation rather than the mechanism, and
+ * an identifier normally belongs behind a disclosure. A publisher handle is
+ * the exception: it is the identity the grant is actually over, and it is
+ * the only form of that identity nobody can dress up as somebody else.
+ */
+function describeNamespaceWildcard(scope: ParsedScope): string | undefined {
+  const root = subtreeWildcardRoot(scope.typePattern);
+  if (root === null) return undefined;
+  const isEdge = scope.kind === "edge";
+  // `edge.google.*` roots at `edge.google` and `edge.*` at the bare prefix,
+  // which leaves nothing to name and is curated instead.
+  const handle = isEdge ? root.slice(EDGE_PATTERN_PREFIX.length) : root;
+  // A root of more than one segment is a subtree of a namespace rather than
+  // the namespace itself (`core.media.*`), so its last segment is a type
+  // name and the sentences below would misread it as a publisher.
+  if (handle.length === 0 || handle.includes(".")) return undefined;
+  if (isReservedRoot(handle)) return undefined;
+  return isEdge
+    ? `Links ${handle} defines between your items.`
+    : `Your ${handle} content.`;
+}
+
 /**
  * The plain-English line one scope row gets, or undefined where the row
  * carries only its label.
@@ -1769,13 +1860,21 @@ function describeScope(scope: ParsedScope): string | undefined {
       // kind === "edge"; guard for the type-checker.
       const edgeType = scope.edgeType;
       if (!edgeType) return undefined;
-      // Curated user-facing copy wins. Falls back to the registry's
-      // engineering description for any edge type without a curated entry
+      // Curated user-facing copy wins, then the namespace rule, then the
+      // registry's engineering description for any edge type without either
       // (custom edge types registered at runtime).
-      return (
-        CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern] ??
-        EDGE_TYPE_REGISTRY.get(edgeType)?.description
-      );
+      const curated = CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
+      if (curated) return curated;
+      const derived = describeNamespaceWildcard(scope);
+      if (derived) return derived;
+      // A wildcard stops here rather than falling to the registry, for the
+      // reason the type branch below gives. `EDGE_TYPE_REGISTRY.get("google.*")`
+      // is undefined today because the registry is keyed on exact edge type
+      // ids, so the lookup happens to miss; a registry that ever answered a
+      // pattern would answer this one with one relation's copy standing in
+      // for a grant over a whole namespace.
+      if (subtreeWildcardRoot(scope.typePattern) !== null) return undefined;
+      return EDGE_TYPE_REGISTRY.get(edgeType)?.description;
     }
     case "metadata":
       // No registry fallback, because a metadata sub-resource is not a
@@ -1784,6 +1883,8 @@ function describeScope(scope: ParsedScope): string | undefined {
     case "type": {
       const curated = CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
       if (curated) return curated;
+      const derived = describeNamespaceWildcard(scope);
+      if (derived) return derived;
       // A wildcard returns here rather than falling to the registry, and the
       // distinction is not academic. `TYPE_REGISTRY.get("core.*")` is
       // undefined today because the registry is keyed on exact ids, so the

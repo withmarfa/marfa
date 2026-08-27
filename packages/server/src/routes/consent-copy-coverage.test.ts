@@ -39,6 +39,8 @@ import type { ParsedScope } from "@withmarfa/shared";
 import {
   CAPABILITY_SCOPES,
   EDGE_TYPE_REGISTRY,
+  isReservedHandle,
+  isValidHandle,
   parseScope,
   TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -175,15 +177,6 @@ function uncoveredBecause(
 interface UncoveredPattern {
   pattern: string;
   because: string;
-  /**
-   * Set on the entries this file invented rather than found: the injected
-   * publisher root's pair. They are gaps in the same sense as the rest and
-   * nobody can ever close them by writing a sentence, because the root is
-   * synthetic, so they must not be counted as work outstanding on a
-   * shipping surface. Anybody counting the gaps wants the number without
-   * these two.
-   */
-  synthetic?: true;
 }
 
 /**
@@ -206,103 +199,32 @@ interface UncoveredPattern {
  * add a plausible line here, and the surface has quietly shrunk again in
  * exactly the way this file exists to stop one level down.
  *
- * Three families, and they need different fixes. The first two are counted
- * separately because only one of them is work anybody can do.
+ * One family left, and the two that are gone are the reason the bucket
+ * counts below survive them. A wildcard and a concrete type need different
+ * fixes, so a wildcard rejoining this list has to be visible as its own
+ * number rather than as one more on a total.
  */
 const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [
   // ---------------------------------------------------------------------
-  // SHIPPING NAMESPACE WILDCARDS, of which there are eleven. The registry
-  // cannot close these at all: a wildcard matches at check time and reaches
-  // types nobody has registered yet, so there is nothing for a map keyed on
-  // concrete ids to return. Four are curated (`*`, `core.*`, `user.*`,
-  // `app.*`) and the rest never were — the curated map predates the
-  // wildcards being publishable.
+  // NAMESPACE WILDCARDS held eleven entries here and hold none.
   //
-  // A per-wildcard entry closes today's set and reopens on the next
-  // integration, so the fix is a rule that derives a wildcard's sentence
-  // from its root, with the curated four kept where they say something a
-  // rule cannot.
-  // ---------------------------------------------------------------------
-  {
-    pattern: "edge.*",
-    because:
-      "The wildcard over every relationship type, explicitly published as " +
-      "requestable and never described on either screen. The widest edge " +
-      "grant expressible, rendered as its own literal.",
-  },
-  {
-    pattern: "edge.user.*",
-    because:
-      "The relationship half of a space's own runtime types. `user.*` is " +
-      "curated and its edge counterpart was not.",
-  },
-  {
-    pattern: "edge.app.*",
-    because:
-      "The relationship half of the types an app defines for itself. " +
-      "`app.*` is curated and its edge counterpart was not.",
-  },
-  {
-    pattern: "google.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.google.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "raindrop.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.raindrop.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "readwise.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.readwise.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "todoist.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.todoist.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-
-  // ---------------------------------------------------------------------
-  // SYNTHETIC. The injected publisher root's pair, and the only two entries
-  // here that name nothing this build ships. They are marked and counted
-  // apart because a reader tallying the wildcard gaps wants ELEVEN, not
-  // thirteen: `acme` is this file's fixture, so no sentence anybody writes
-  // can close these, and a ticket that lists them is asking for work that
-  // does not exist.
+  // The registry could never have closed them: a wildcard matches at check
+  // time and reaches types nobody has registered yet, so a map keyed on
+  // concrete ids has nothing to return. What closed them is a rule rather
+  // than a table. `describeNamespaceWildcard` derives a wildcard's sentence
+  // from the publisher root it names. Seven patterns carry no publisher root
+  // (`*`, `core.*`, `user.*`, `app.*`, `edge.*`, `edge.user.*`,
+  // `edge.app.*`) and those stay curated, because a tier name is not a
+  // publisher's name and a derivation over one would print "Your User
+  // content."
   //
-  // They are still carried rather than filtered, because they are the one
-  // instance proving the shape: the root arrives from the database at boot,
-  // so no list written at authoring time can name it and only a derivation
-  // rule reaches it. Whatever closes the eleven above has to close these
-  // too, and if it cannot then it was a table rather than a rule.
+  // The two entries that used to name the injected `acme` root went with
+  // them, and that is the half worth noticing. Nobody could have written a
+  // sentence for a root that arrives from the database at boot, so their
+  // going is what says the fix generalizes rather than enumerates. It is
+  // asserted positively as well, below, since an empty bucket on its own is
+  // also what a deleted check looks like.
   // ---------------------------------------------------------------------
-  {
-    pattern: `${RUNTIME_PUBLISHER_ROOT}.*`,
-    synthetic: true,
-    because:
-      "A publisher root installed at boot. Unknowable when copy is " +
-      "written, so only a derivation can describe it.",
-  },
-  {
-    pattern: `edge.${RUNTIME_PUBLISHER_ROOT}.*`,
-    synthetic: true,
-    because:
-      "The relationship half of a boot-installed publisher root. Same " +
-      "reason as the pattern above.",
-  },
 
   // ---------------------------------------------------------------------
   // SHIPPING CONCRETE TYPES, of which there are sixteen. Types this build
@@ -448,7 +370,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
 
     // Collected rather than thrown on the first failure. This is the list
     // whoever closes the gap works from, and a message naming one pattern
-    // out of thirteen makes the work look thirteen times smaller than it is.
+    // out of sixteen makes the work look sixteen times smaller than it is.
     const failures: string[] = [];
     for (const scope of patterns) {
       const because = uncoveredBecause(scope, descriptions);
@@ -457,6 +379,145 @@ describe("the consent copy guard derives the scopes it checks", () => {
       failures.push(`${scope.typePattern}: ${because}`);
     }
     expect(failures.sort()).toEqual([]);
+  });
+
+  it("says what a wildcard reaches, including one nobody could have named", () => {
+    // The half an empty bucket cannot state. `KNOWN_UNCOVERED` holding no
+    // wildcards says the coverage check above stopped complaining, which is
+    // also what deleting the coverage check looks like. This says what a
+    // person now reads.
+    //
+    // **The injected root is what decides between a rule and a table.**
+    // `acme` is in no build, arrives the way a publisher root arrives at
+    // boot, and no sentence written at authoring time can name it, so copy
+    // resolving for it cannot have come from an entry somebody typed. The
+    // shipping integration root beside it is the other half: a derivation
+    // reaching only the synthetic case would be a rule nothing ships
+    // through.
+    const patterns = distinctPatterns(DESCRIBED_KINDS);
+    const descriptions = buildScopeDescriptions(patterns);
+    const byPattern = new Map(patterns.map((s) => [s.typePattern, s]));
+
+    for (const root of [RUNTIME_PUBLISHER_ROOT, "google"]) {
+      for (const pattern of [`${root}.*`, `edge.${root}.*`]) {
+        expect(
+          byPattern.get(pattern),
+          `${pattern} is not requestable`,
+        ).toBeDefined();
+        const copy = descriptions[pattern] ?? "";
+        expect(copy, pattern).toMatch(/\S/);
+        // Names the root, verbatim, which is two properties at once. A
+        // fixed sentence cannot have the first: "A group of related types."
+        // satisfies every other check here and tells a person nothing about
+        // which grant they are approving. A transform cannot have the
+        // second, which is the case below.
+        expect(copy, pattern).toContain(root);
+      }
+      // Two grants, two sentences. One reaches things and the other reaches
+      // the links between them, and a rule that printed the same line for
+      // both would describe an edge grant as if it were a content grant.
+      expect(descriptions[`${root}.*`]).not.toEqual(
+        descriptions[`edge.${root}.*`],
+      );
+    }
+
+    // **The rule's one refusal, asked directly because nothing requestable
+    // can observe it.** Every reserved root the allowlist publishes is
+    // curated, so curated copy answers first and a derivation over a tier
+    // name never surfaces. `system.*` is not requestable and is the shape
+    // that would embarrass it: "Your System content." is a publisher's
+    // sentence written about the platform, on the screen where somebody
+    // decides whether to trust an application.
+    expect(buildScopeDescriptions([parse("system.*:read")])).toEqual({});
+  });
+
+  it("names a namespace by its handle, never by a name somebody could claim", () => {
+    // **A consent screen naming the wrong company is the worst thing this
+    // copy can do, and the derivation reached it by being helpful.**
+    // `RESERVED_HANDLE_WORDS` reserves a company's name as a bare word and
+    // nothing else, so `google` is unclaimable and `google-drive` is
+    // claimable. A transform that split the handle on hyphens and
+    // capitalized each word then rendered `google-drive.*:read` as "Your
+    // Google Drive content." The reservation blocked the name and the
+    // transform supplied it, which is worse than never having reserved it.
+    //
+    // It was a regression rather than something inherited. With no copy at
+    // all the same scope reached the device screen as `google-drive.*:read`
+    // and the authorize screen as "Google-drive (all)", both of which read
+    // as identifiers. What replaced them was a possessive sentence naming a
+    // brand.
+    //
+    // **The reach is every space, not the registering one.**
+    // `resolveAllRuntimeCustomNamespaces` folds every space's publisher
+    // roots into the allowlist instance-wide, so a handle claimed anywhere
+    // makes its pattern requestable on everybody's consent screen.
+
+    // The premise, asked of the validator rather than assumed. If
+    // reservation ever grows to cover the hyphenated variants, this is what
+    // says so instead of the case below passing for a new reason.
+    expect(isReservedHandle("google")).toBe(true);
+    expect(isValidHandle("google")).toBe(false);
+    expect(isValidHandle("google-drive")).toBe(true);
+    // And the path is real: a claimed handle becomes a requestable literal.
+    expect(
+      buildAllowedScopes(getPermissionBundles(), ["google-drive"]),
+    ).toContain("google-drive.*:read");
+
+    // Hand-built rather than derived from the allowlist, which is the one
+    // place in this file that is right. The set under test is roots no build
+    // ships and no fixture can inject its way to caring about: what is being
+    // held is what the rule renders for a given root, not which roots are
+    // requestable. Every root the derived set contains is a single lowercase
+    // word, which is exactly why the multi-word branch shipped unreviewed.
+    const ADVERSARIAL = [
+      // A reserved company name with a claimable suffix. The defect.
+      "google-drive",
+      "apple-music",
+      "microsoft-365",
+      // A reserved structural word as a segment, which reads as a platform
+      // page rather than a namespace once it is title-cased.
+      "secure-login",
+      // `isValidHandle` refuses these three and `isValidTypeIdentifier`
+      // admits them, so they are reachable in keys mode, where nothing
+      // checks the handle, and through a platform credential.
+      "acme_corp",
+      "a--b",
+      "ab-",
+    ];
+
+    for (const handle of ADVERSARIAL) {
+      for (const pattern of [`${handle}.*`, `edge.${handle}.*`]) {
+        const literal = `${pattern}:read`;
+        const copy = buildScopeDescriptions([parse(literal)])[pattern] ?? "";
+        expect(copy, literal).toMatch(/\S/);
+        // **Verbatim, not a rendering of it, and that is the whole
+        // assertion.** Holding "contains something recognizably derived
+        // from the handle" is what a transform passes: "Your Google Drive
+        // content." names the root to a reader and contains no substring of
+        // `google-drive`. Requiring the handle exactly is what makes a
+        // future transform fail here rather than ship.
+        expect(copy, literal).toContain(handle);
+      }
+    }
+
+    // Injective, which the transform was not: it rendered `a-b` and `a--b`
+    // identically, and `ab` and `ab-` identically, so two distinct
+    // namespaces got one sentence and a person approving either was told
+    // the same thing about a different grant.
+    const PAIRS: [string, string][] = [
+      ["a-b", "a--b"],
+      ["ab", "ab-"],
+    ];
+    for (const [left, right] of PAIRS) {
+      for (const prefix of ["", "edge."]) {
+        const of = (handle: string): string | undefined =>
+          buildScopeDescriptions([parse(`${prefix}${handle}.*:read`)])[
+            `${prefix}${handle}.*`
+          ];
+        expect(of(left), `${prefix}${left}`).toMatch(/\S/);
+        expect(of(left), `${prefix}${left} vs ${right}`).not.toBe(of(right));
+      }
+    }
   });
 
   it("holds the known-uncovered list to its size and lets it only shrink", () => {
@@ -478,10 +539,11 @@ describe("the consent copy guard derives the scopes it checks", () => {
     //
     // So growth is a digit somebody had to change, which puts it in the
     // diff and in front of a reviewer. **Lowering these numbers is the
-    // work**: closing the wildcards takes the first to zero, and writing
-    // consent copy for the integration types takes the third to zero. The
-    // synthetic pair goes when a derivation rule reaches it, and never by
-    // anybody writing a sentence.
+    // work**: the wildcard count is at zero, and a rule rather than eleven
+    // entries is what took it there. Three patterns carrying no publisher
+    // root were curated and everything else derives, the two synthetic
+    // entries included, which no sentence could have reached. Writing
+    // consent copy for the integration types takes the other count to zero.
     //
     // Nothing today depends on this bound being right rather than merely
     // present, and that is luck rather than design. The description-map
@@ -491,16 +553,15 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // type outside `core.` and `system.` sits outside their reach, and is
     // the case this bound is actually for.
     const wildcards = KNOWN_UNCOVERED.filter((u) => u.pattern.endsWith(".*"));
-    const synthetic = KNOWN_UNCOVERED.filter((u) => u.synthetic === true);
-    expect(KNOWN_UNCOVERED).toHaveLength(29);
-    expect(wildcards.filter((u) => !u.synthetic)).toHaveLength(11);
-    expect(synthetic).toHaveLength(2);
+    expect(KNOWN_UNCOVERED).toHaveLength(16);
+    // Zero, and held as its own number rather than folded into the total. A
+    // wildcard rejoining this list is a family the derivation stopped
+    // reaching, which is a different failure from a type nobody wrote a
+    // sentence for, and a single total would let one pay for the other.
+    expect(wildcards).toHaveLength(0);
     expect(
       KNOWN_UNCOVERED.filter((u) => !u.pattern.endsWith(".*")),
     ).toHaveLength(16);
-    // Every synthetic entry is a wildcard, so the three counts partition the
-    // list and no entry can be added to one bucket by leaving another.
-    expect(synthetic.every((u) => u.pattern.endsWith(".*"))).toBe(true);
 
     // The per-entry half. An entry whose pattern has since been given copy
     // would go on suppressing a check that now passes, and an entry naming a

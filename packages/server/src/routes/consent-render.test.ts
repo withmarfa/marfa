@@ -1717,17 +1717,40 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     for (const [pattern, copy] of Object.entries(out)) {
       expect(copy, pattern).toMatch(/\S/);
     }
-    // A wildcard nobody curated gets nothing, rather than one matched type's
-    // copy standing in for a whole namespace.
-    expect(describeAll("readwise.*:read")).toEqual({});
+    // A wildcard nobody curated is derived from the publisher root it
+    // names. This asserted the blank it used to get, which was the defect
+    // rather than the contract: eleven shipping wildcards reached a consent
+    // screen as their own literal while these four had copy.
+    //
+    // The alternative the blank was protecting against is still refused, and
+    // is what the registry loop below holds: one matched type's sentence
+    // standing in for a whole namespace.
+    const derived = describeAll("readwise.*:read")["readwise.*"] ?? "";
+    expect(derived).toMatch(/\S/);
+    // The handle verbatim. A prettified one printed a company's name for a
+    // namespace anybody could claim; `consent-copy-coverage.test.ts` holds
+    // that case with the handles it actually fires on.
+    expect(derived).toContain("readwise");
+    for (const id of TYPE_REGISTRY.keys()) {
+      if (!id.startsWith("readwise.")) continue;
+      expect(derived, id).not.toBe(TYPE_REGISTRY.get(id)?.description);
+    }
   });
 
   it("cannot get a wildcard's copy from the type registry", () => {
     // The premise the wildcard arm does not rely on, pinned so that a
     // registry which started answering patterns fails here and points at the
     // arm rather than shipping one type's sentence as a namespace's.
-    for (const pattern of ["*", "core.*", "user.*", "app.*"]) {
+    for (const pattern of ["*", "core.*", "user.*", "app.*", "readwise.*"]) {
       expect(TYPE_REGISTRY.get(pattern), pattern).toBeUndefined();
+    }
+    // The same premise on the edge axis, which has an arm of its own now
+    // that `edge.<root>.*` is described. `EDGE_TYPE_REGISTRY` is keyed on
+    // concrete edge type ids, so a pattern misses; an edge registry that
+    // started answering one would answer a namespace grant with a single
+    // relation's copy.
+    for (const edgeType of ["*", "user.*", "app.*", "readwise.*"]) {
+      expect(EDGE_TYPE_REGISTRY.get(edgeType), edgeType).toBeUndefined();
     }
   });
 
@@ -1803,7 +1826,12 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // the moment the wildcard entries landed beside them.
     const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
     expect(out["*"]).toBe("Everything in your space.");
-    expect(out["edge.*"]).toBeUndefined();
+    // `edge.*` is described now, so the collision is held as a difference
+    // rather than as emptiness. Emptiness was only ever a stand-in: it said
+    // the wildcard entry had not leaked onto the edge axis, and it said so
+    // by the accident that nothing described `edge.*` at all.
+    expect(out["edge.*"]).toMatch(/\S/);
+    expect(out["edge.*"]).not.toBe(out["*"]);
     expect(out["edge.metadata"]).toBeUndefined();
     // The curated edge copy still resolves, keyed on the pattern. Held
     // against the registry's line rather than against emptiness: revert the
